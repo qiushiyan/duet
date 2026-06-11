@@ -14,7 +14,7 @@ Duet drives the same `claude` and `codex` CLIs the user already uses, with the s
 
 ### Stop anytime
 
-A run can be paused indefinitely. The state file at `.duet/runs/<run_id>.json` is a fast-access hint; the source of truth is the JSONL transcripts of all **three** sessions (implementer, reviewer, orchestrator). The user can stop at any gate, switch to manual `claude --resume <id>` / `codex exec resume <id>`, add turns by hand, and either resume duet later or never. On resume, the harness re-reads JSONL tails; the orchestrator re-derives position from the transcripts, not from cached offsets.
+A run can be paused indefinitely. The state file at `.duet/runs/<run_id>/state.json` is a fast-access hint; the source of truth is the JSONL transcripts of all **three** sessions (implementer, reviewer, orchestrator). The user can stop at any gate, switch to manual `claude --resume <id>` / `codex exec resume <id>`, add turns by hand, and either resume duet later or never. On resume, the harness re-reads JSONL tails; the orchestrator re-derives position from the transcripts, not from cached offsets.
 
 ### Personal tool, not OSS
 
@@ -90,7 +90,7 @@ The harness also owns:
 - **Worker subprocess plumbing** — spawn/resume worker sessions, completion detection, output capture, graceful kill (SIGTERM→SIGKILL escalation; the one bug *not* to inherit from prior art is sandcastle's missing `proc.kill()`). Prior art is vendored at `references/sandcastle/` (MIT — copy with attribution): exact CLI invocations in `src/AgentProvider.ts`, stream-line parsers for both CLIs, idle-vs-completion dual timeouts in `src/Orchestrator.ts` + ADR 0019, session-file lookup by id in `src/SessionStore.ts`. See `references/README.md` for the full per-repo borrowing guide.
 - **Read-only enforcement** — the orchestrator's tool surface contains no write/edit/bash tools. Its read-only nature is a property of the harness, not a promise in a prompt.
 - **Gate interception** — `ask_human` and `advance_phase` are harness-owned tool handlers: the handler persists the question/phase-exit at the moment of the call (the human-visible artifact exists before the model regains control), then instructs the orchestrator to end its turn; the harness exits when the turn ends. The interception is the handler side effect, not the permission system — the SDK's mechanical pauses corrupt resume (Q11).
-- **State persistence** — the state file is written **only at gates** (quiescent states with no live actors). Mid-phase crash recovery comes from the JSONL transcripts, which is where it always came from.
+- **State persistence** — the machine snapshot is written **only at quiescent states** (gates, flag-waits, done — states with no live actors). Mid-phase crash recovery comes from the JSONL transcripts, which is where it always came from.
 
 ### Layer 2 — Orchestrator (LLM agent)
 
@@ -101,10 +101,10 @@ A read-only agent whose system prompt is the workflow protocol operationalized �
 | Tool | What it does |
 |---|---|
 | `list_snippets()` | Read the built-in snippet library (keys + bodies). |
-| `send_prompt(role, tag?, body)` | Send a prompt to the implementer or reviewer and return the worker's response. `tag` names the source snippet; `body` is the final text. Every call logs the tag and the delta from the template. |
-| `ask_human(question, options?, context)` | Flag something for the human. Attended phase: resolves inline. AFK phase: the harness defers, queues the question, exits; the human answers via `duet continue --answer`. |
+| `send_prompt(role, tag, body)` | Send a prompt to the implementer or reviewer and return the worker's response. `tag` names the source snippet (`"custom"` when composed from scratch); `body` is the final text. Every call logs the tag and the body, so adaptation drift is auditable. |
+| `ask_human(question, context?)` | Flag something for the human. Always the cooperative pause: the handler persists the question, the run exits at quiescence, and the human answers via `duet continue --answer` — in attended phases they're at the terminal and answer in minutes; during AFK the question waits. |
 | `advance_phase(summary, artifacts)` | Declare the phase complete. Legal only when the phase's exit criteria are plausible; always lands on a human gate. |
-| `propose_snippet_edit(diff, rationale)` | Queue a persistent snippet-library change for the end-of-run gate. Never applied mid-run. |
+| `propose_snippet_edit(snippet_key, proposed_body, rationale)` | Queue a persistent snippet-library change for the human's end-of-run review. Never applied mid-run. |
 | `write_note(observation)` | Append a friction observation to `.duet/runs/<run_id>/notes.md` (the Q10 convention, with a second author). |
 
 #### Prompting and tool-surface conventions
@@ -124,7 +124,7 @@ Unchanged in shape from the 2026-05-26 design: resumed CLI sessions, transcripts
 - **Codex reviewer** — `codex exec -s read-only` is the correct minimal sandbox for a read-only reviewer (no `--dangerously-*` flags); resume is a verb (`codex exec resume <id>`) and **`--output-schema` works on resume** in codex-cli 0.133.0 (upstream issue fixed May 2026 by openai/codex#23123 — live-verified locally with a two-turn schema-enforced smoke test). Resume lacks `-s`/`-C` flags; pass `-c 'sandbox_mode="read-only"'` instead. Gotcha: an open stdin pipe makes `codex exec` block waiting for EOF — close stdin or pipe the prompt through it deliberately. Preferred wrapper: `@openai/codex-sdk` (thin spawn-the-CLI wrapper; rollouts still land in `~/.codex/sessions/`, so augmentation holds), pinned to the same release as the CLI, with the raw flags as known-working fallback. SDK source + docs vendored at `references/codex/`.
 - **Claude implementer** — a spawned `claude -p --output-format json --resume <id>`, writing the standard `~/.claude/projects/` transcripts and drawing from the subscription credit pool (see Q11). Headless permission posture: **`--permission-mode bypassPermissions`** (the user's 2026-06-11 decision) — the AFK implementer edits files, commits, and runs project commands (tests, typecheck, builds) with nobody at the keyboard, and the user accepts the unprompted-execution tradeoff on their own repos. Explicit deny rules still apply, and the CLI refuses to run as root.
 
-### Worker compaction (settled with the AFK phase — evidence in Q18)
+### Worker compaction (evidence: Q18)
 
 The compaction points in the workflow (`compact-for-plan`, `compact-for-review`) are implementer-side moves, and the mechanics are per-provider:
 
@@ -178,9 +178,9 @@ FINAL REVIEW (attended)
 | **Docs plan** | inside FINAL REVIEW | Approves the `/update-docs` proposal (skill-internal gate, surfaced as a harness gate). |
 | **Open PR** | end of run | Reads the PR description; approves opening. Non-negotiable; the PR is never auto-opened. |
 
-Plus **in-phase exception gates** whenever the orchestrator calls `ask_human` — inline during attended phases, queued during AFK.
+Plus **in-phase exception gates** whenever the orchestrator calls `ask_human`. The machinery is identical in every phase — the question is persisted, the process exits at quiescence, `duet continue --answer` resumes. What differs is the human: attended means they're at the terminal and the pause lasts minutes; AFK means the question waits hours until they return (with a desktop notification fired either way).
 
-During attended phases the human does not interject mid-turn; the orchestrator drives, and the gates plus `ask_human` flags are the interaction points. During the AFK phase the same machinery runs with the human absent: flags queue, the process exits, and `duet status` / `duet continue --answer` pick it up.
+During attended phases the human does not interject mid-turn; the orchestrator drives, and the gates plus `ask_human` flags are the interaction points.
 
 ### The final-gate packet and the CEO summary
 
@@ -206,7 +206,7 @@ Rationale: the user already evolves snippets mid-session by hand **(observed: pl
 
 Loop exit (another review round vs. converged) is **orchestrator judgment** — the thing the human currently does by reading the reviewer's response and feeling whether the remaining points are minor. Two deterministic backstops remain in the harness:
 
-- **Hard per-phase round caps** (generous — e.g. 2× the old caps: SPEC 6, PLAN 4, IMPL 6) as runaway protection, not as the exit mechanism. Hitting a backstop is itself an `ask_human` event.
+- **Hard per-phase round caps** (SPEC 6, PLAN 4, IMPL 6 — deliberately ~2× the round counts the manual sessions ever needed) as runaway protection, not as the exit mechanism. Hitting a backstop is itself an `ask_human` event.
 - **Budget caps** per invocation (`--max-budget-usd` on the Claude side) as cost protection.
 
 The old mechanisms this replaces: severity-label parsing (never built), `disagree.point` string-matching across rounds (the orchestrator now *reads* the disagreement and judges whether it's persistent and substantive — flagging via `ask_human` when it is), and fixed caps as the primary exit rule.
@@ -215,7 +215,7 @@ The midpoint checkpoint is orchestrator judgment too (invoke for large implement
 
 ## Worker structured output — demoted, not removed
 
-The 2026-05-26 design made `schemas/agent-response.json` the protocol contract: `needs_human` and `disagree` were how a judgment-free router detected exceptions. With an orchestrator that reads prose, the schema is no longer load-bearing. It may survive as a cheap scanning aid (a `response_text` envelope keeps routing mechanical), or be dropped per-role; this is Q16, decided empirically in the first slice. Two operational notes if it stays: the schema must remain OpenAI-strict-compliant, and `codex exec resume` has an open upstream issue with `--output-schema` (openai/codex#14343) that must be re-checked.
+The 2026-05-26 design made `schemas/agent-response.json` the protocol contract: `needs_human` and `disagree` were how a judgment-free router detected exceptions. With an orchestrator that reads prose, the schema is not load-bearing — workers currently run schema-free and the orchestrator reads their final messages. Whether a minimal `{response_text}` envelope earns its way back is Q16, decided from dogfooding evidence. Two operational notes if it does: the schema must remain OpenAI-strict-compliant, and `--output-schema` on `codex exec resume` works on the pinned CLI (verified — see Q16's resolution note).
 
 ## Invocation and lifecycle
 

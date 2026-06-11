@@ -238,7 +238,7 @@ The original analysis is preserved below as the record of what we considered.
 
 ## ~~Q10. Where does the dumb router actually fall short in practice, and which gaps justify an LLM judgment call?~~
 
-> **Reversed 2026-06-11.** The question assumed the dumb router ships first and LLM judgment gets added per documented pain point. The pivot answered it the other way and earlier than planned: the planlab corpus scan (22 sessions — see `docs/observed-pattern.md` §"Corpus scan: planlab") supplied the evidence three runs of Slice 1 were meant to gather. The router-vs-judgment gaps it predicted (pre-gate digests, stuck detection, conflict framing) are all subsumed by the orchestrator role. The **notes-file convention survives** — `.duet/runs/<run_id>.notes.md`, now written by both the human and the orchestrator's `write_note` tool. Rationale and costs of the reversal: `docs/automation-design.md` §"Design history".
+> **Reversed 2026-06-11.** The question assumed the dumb router ships first and LLM judgment gets added per documented pain point. The pivot answered it the other way and earlier than planned: the planlab corpus scan (22 sessions — see `docs/observed-pattern.md` §"Corpus scan: planlab") supplied the evidence three runs of Slice 1 were meant to gather. The router-vs-judgment gaps it predicted (pre-gate digests, stuck detection, conflict framing) are all subsumed by the orchestrator role. The **notes-file convention survives** — `.duet/runs/<run_id>/notes.md`, written by both the human and the orchestrator's `write_note` tool. Rationale and costs of the reversal: `docs/automation-design.md` §"Design history".
 
 **Answered (2026-05-26).** Answered by running Slice 1, not by speculation. To make the eventual answer extractable, adopt this convention starting with the first Slice 1 run:
 
@@ -337,7 +337,7 @@ The original analysis is preserved below as the record of what we considered.
 
 ## Q15. XState or a hand-rolled transition table for the harness statechart?
 
-> **Decided 2026-06-11: XState** (v5, added as a dependency at project init — the user's call at implementation kickoff). The caveats below remain the implementation guardrails: persist snapshots **only at gate states** (in-flight invoked actors restart blind on restore — the JSONL transcripts are the real resume state), keep the human-readable `.duet/runs/<run_id>.json` hint file alongside the machine snapshot, and treat `@statelyai/agent` as read-only inspiration (dormant, and architecturally inverse to this design).
+> **Decided 2026-06-11: XState** (v5, added as a dependency at project init — the user's call at implementation kickoff). The caveats below remain the implementation guardrails: persist snapshots **only at gate states** (in-flight invoked actors restart blind on restore — the JSONL transcripts are the real resume state), keep the human-readable `.duet/runs/<run_id>/state.json` hint file alongside the machine snapshot, and treat `@statelyai/agent` as read-only inspiration (dormant, and architecturally inverse to this design).
 >
 > **Implemented with Slice 1** (`src/harness/machine.ts`): phases invoke a promise-actor phase driver; gates *and* in-phase flag-waits are actor-less states tagged `quiescent`; snapshots persist only there, so no in-flight invoke is ever restored. `src/harness/machine.smoke.ts` asserts the hard guarantee offline (gate events at the wrong state are structural no-ops; persist/restore round-trips).
 
