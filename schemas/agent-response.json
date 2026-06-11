@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "duet agent response",
+  "description": "The structured response shape that every orchestrator-routed turn produces. Used with `claude --json-schema` and `codex exec --output-schema` on every cross-agent routing call. OpenAI-strict-compliant: every property in `properties` appears in `required`, and optional fields are nullable via `anyOf`. Empirically verified 2026-05-26 against claude-haiku-4-5 and codex gpt-5.5.",
+  "type": "object",
+  "required": ["response_text", "needs_human", "disagree"],
+  "additionalProperties": false,
+  "properties": {
+    "response_text": {
+      "type": "string",
+      "description": "The agent's main response. Prose/code/whatever the snippet asked for. This is what gets routed to the next agent, wrapped in the next snippet."
+    },
+    "needs_human": {
+      "description": "Non-null when the agent needs a product decision before proceeding. Orchestrator halts the phase and surfaces `reason` + optional `options` to the human at an in-phase exception gate.",
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["reason", "options"],
+          "additionalProperties": false,
+          "properties": {
+            "reason": {
+              "type": "string",
+              "description": "Why the agent needs a human decision. One sentence."
+            },
+            "options": {
+              "description": "Optional list of concrete answers the human can pick. Null if the question is open-ended.",
+              "anyOf": [
+                { "type": "null" },
+                { "type": "array", "items": { "type": "string" } }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "disagree": {
+      "type": "array",
+      "description": "Points the implementer rejects on first principles when responding to a reviewer's critique. Empty array if no disagreements. The orchestrator tracks `point` strings across rounds; if the same point recurs in two consecutive rounds, halt the phase and surface to the human.",
+      "items": {
+        "type": "object",
+        "required": ["point", "reasoning"],
+        "additionalProperties": false,
+        "properties": {
+          "point": {
+            "type": "string",
+            "description": "The reviewer's point being disputed, quoted or paraphrased."
+          },
+          "reasoning": {
+            "type": "string",
+            "description": "Why the implementer disagrees, from first principles."
+          }
+        }
+      }
+    }
+  }
+}

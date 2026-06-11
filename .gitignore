@@ -1,0 +1,16 @@
+# dependencies
+node_modules/
+
+# vendored reference clones — re-cloneable, deliberately unpinned (see references/README.md)
+references/*
+!references/README.md
+
+# duet run state (per-repo working data, never committed)
+.duet/
+
+# logs & OS noise
+*.log
+.DS_Store
+
+# claude code harness noise
+.claude/*.lock

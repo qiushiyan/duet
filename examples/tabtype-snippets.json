@@ -1,0 +1,108 @@
+{
+  "providers": [
+    "recent",
+    "files",
+    "app",
+    "manual",
+    "skills",
+    "git",
+    "docs",
+    "scripts"
+  ],
+  "snippets": [
+    {
+      "key": "sig",
+      "expand": "Best regards,\nTabType User"
+    },
+    {
+      "key": "email",
+      "expand": "user@example.com"
+    },
+    {
+      "key": "start-plan",
+      "expand": "Let's create a technical plan based on our discussion.\n\nStructure:\n1. Break the work into a few focused phases, each ending in its own commit.\n2. Prefer clean architecture and clear integration points over ad-hoc patches.\n3. If the existing architecture blocks a clean solution, redesign from first principles around the actual problem — using composition and data structures tailored to it.\n\nConstraints:\n- If you want to make a large change that affects current UX, stop and get my approval first. Provide a detailed rationale and 2+ alternatives with tradeoffs.\n- Throughout, weigh end-user impact and technical quality together — neither alone is enough."
+    },
+    {
+      "key": "review-implementation",
+      "expand": "The spec is updated per our discussion. I've done an initial implementation against it. Code-review my changes.\n\nEvaluate:\n- correctness \/ bugs\n- UX impact\n- performance\n- over-engineering\n- consistency with existing patterns\n- edge cases\n\nFor each issue: rate severity (critical \/ moderate \/ minor) and suggest a concrete fix with enough detail to act on. Beyond line-level review, also assess whether the implementation actually solves the intended problem.\n\nBelow is a commit summary for high-level context — review the current state of the codebase as a whole, not commit-by-commit."
+    },
+    {
+      "key": "review-updates",
+      "expand": "Per your suggestion, I've updated the relevant files.  Please recheck the files (summarized below for targeted updates. If you observe anything off track or unintended regressions, elaborate your disagreements. \n\n---\n\n"
+    },
+    {
+      "key": "commits-summary",
+      "expand": "Below is a summary of the commits — for high-level context on what changed and why. Don't review commit-by-commit; review the current state of the codebase as a whole, with these commits as context."
+    },
+    {
+      "key": "review-reflect",
+      "expand": "A senior engineer reviewed your changes and provided critical feedback below.\n\nFor each point:\n1. Assess whether it's valid — be honest, don't agree just to agree.\n2. If valid: propose a fix (which may be better than what the engineer suggested) and explain why.\n3. If you disagree: explain from first principles why the original is correct. If a fix is simple and improves system design, I suggest you work on it rather than defer because it is “minor.”\n\nDo not change any code yet — focus on analysis.\n\n---\n\n$0"
+    },
+    {
+      "key": "update-plan",
+      "expand": "The engineering team reviewed your plan and provided critical feedback below.\n\nFor each point:\n1. Assess whether it's valid — be honest, don't agree just to agree.\n2. If valid: update the plan accordingly. You may propose a better solution than the team suggested — explain why.\n3. If you disagree: explain from first principles why the spec is correct as-is.\n\n---\n\n$0"
+    },
+    {
+      "key": "update-spec",
+      "expand": "The engineering team reviewed your spec and provided critical feedback below.\n\nFor each point:\n1. Assess whether it's valid — be honest, don't agree just to agree.\n2. If valid: update the spec accordingly. You may propose a better solution than the team suggested — explain why.\n3. If you disagree: explain from first principles why the spec is correct as-is.\n\n---\n\n$0"
+    },
+    {
+      "key": "review-spec",
+      "expand": "Based on our discussion, I've drafted a spec for this feature. Review it critically.\n\nFor each point:\n- If you agree: add technical suggestions, caveats, or risks worth flagging.\n- If you disagree: give reasons and a concrete alternative. If the issue is architectural rather than local, say so and propose the structural fix.\n\nWeigh technical merit and UX goals together. Challenge assumptions and propose alternatives whenever they would lead to a better outcome — don't default to politeness.\n\n$0"
+    },
+    {
+      "key": "smart-adapt-skills",
+      "expand": "These references are general best practices, not prescriptions. Evaluate each suggestion against our specific codebase, architecture, and constraints before applying — discard what doesn't fit, adapt what does.\n\nIf you can't find a referenced skill, tell me immediately and I'll give you the exact path. Do not search for it yourself."
+    },
+    {
+      "key": "technical-difficulty",
+      "expand": "Don't measure technical difficulty by the amount of code changed. Instead, consider:\n- the complexity of the problem being solved\n- the number of components affected\n- the potential for unintended consequences\n- the level of uncertainty involved\n\nMost importantly: does this solve the core UX problem while maintaining a clean technical design?"
+    },
+    {
+      "key": "think-holistic",
+      "expand": "DO NOT CHANGE ANY CODE YET. Step back and reason about the module\/feature holistically before proposing any fix.\n\n1. State the real problem and the underlying UX goal in your own words. If my framing seems off, push back before going further.\n2. Evaluate the current design against that goal — where does it fall short, and is the issue local or structural?\n3. From first principles, present 2–3 approaches with concrete tradeoffs (complexity, blast radius, UX impact, future flexibility). Recommend one and explain why.\n\nDon't patch a flawed design with another patch. Don't shy away from large-scale changes when they're justified — but be explicit about what they cost."
+    },
+    {
+      "key": "refactor-guidelines",
+      "expand": "## Focus Areas\n\n### 1. Code Organization & Modularity\n- Extract cohesive modules: Identify logical groupings of functionality that can be separated into focused modules\n- Split large files: Break down files with multiple responsibilities into single-responsibility modules\n- Reduce coupling: Identify and minimize tight dependencies between components\n- Improve cohesion: Ensure related functionality stays together\n\n### 2. API Design & Interface Clarity\n- Simplify public interfaces: Reduce API surface area where appropriate\n- Consolidate related endpoints: Group similar functionality under coherent modules\n- Improve naming: Ensure functions, classes, and modules have clear, intention-revealing names\n- Establish clear boundaries: Define explicit interfaces between subsystems\n\n### 3. Code Reuse & Shared Utilities\n- Extract common patterns: Identify repeated code blocks and extract shared utilities\n- Create helper functions: Abstract repetitive operations into reusable helpers\n- Avoid duplication: Apply DRY (Don't Repeat Yourself) principle judiciously\n- Consider creating common libraries: For widely-used functionality across the codebase\n\n### 4. Code Hygiene\n- Remove dead code: Delete unused functions, classes, and variables\n- Eliminate obsolete tests: Remove tests for deleted functionality\n- Clean up commented code: Remove commented-out code blocks that are no longer relevant\n- Update stale documentation: Align comments and docs with current implementation\n\n## Design Patterns to Consider\nWhen refactoring, consider applying these patterns where appropriate:\n- Factory Pattern: For complex object creation logic\n- Strategy Pattern: For interchangeable algorithms or behaviors\n- Facade Pattern: To simplify complex subsystem interfaces\n- Repository Pattern: For data access abstraction\n- Dependency Injection: To reduce coupling and improve testability\n- Builder Pattern: For constructing complex objects step-by-step\n- Adapter Pattern: To integrate incompatible interfaces\n\n## Anti-Patterns to Avoid\nBe mindful of over-engineering by avoiding:\n- Premature abstraction: Don't create protocols\/interfaces used in only one place without clear future need\n- Speculative generality: Don't add flexibility \"just in case\" without concrete requirements\n- Excessive layering: Don't create layers of indirection that obscure rather than clarify\n- Over-modularization: Don't split code so finely that it becomes hard to follow the flow\n- Abstract base classes for single implementations: Wait until you have 2-3 implementations before abstracting\n- Configuration over convention: Prefer sensible defaults over requiring configuration\n- Framework creation: Resist building internal frameworks unless you have multiple consumers\n\n## Success Criteria\nQuality is not measured by lines of code, but by:\n- Readability: Can a new developer understand the code flow quickly?\n- Maintainability: Can changes be made safely without cascading effects?\n- Testability: Can components be tested in isolation?\n- Clear responsibility: Does each module have a well-defined, focused purpose?\n- Appropriate abstraction levels: Are abstractions justified by actual reuse or flexibility needs?\n- Minimal cognitive load: Does the architecture reduce mental overhead for understanding the system?\n\n## Approach\n- Analyze before acting: Understand the current structure and dependencies first\n- Identify pain points: Look for actual problems, not theoretical ones\n- Prioritize high-impact changes: Focus on areas that will yield the most benefit\n- Refactor incrementally: Make changes in small, testable steps\n- Preserve behavior: Ensure functionality remains unchanged unless explicitly intended\n- Validate with tests: Confirm existing tests pass after refactoring\n\n## Guiding Principles\n- YAGNI (You Aren't Gonna Need It): Only add what's needed now\n- KISS (Keep It Simple, Stupid): Prefer simple solutions over clever ones\n- Rule of Three: Consider abstracting after the third duplication, not the first\n- Single Responsibility: Each module should have one reason to change\n- Open\/Closed Principle: Open for extension, closed for modification (where it makes sense)"
+    },
+    {
+      "key": "tdd-implementation",
+      "expand": "Plan the implementation as a sequence of vertical slices.\n\nRead the TDD skill carefully before writing code — it's a resource for *how* to do this well, not a strict process to follow pedantically:\n- ~/.claude/skills/tdd/SKILL.md — vertical slices, what to test, common anti-patterns\n- ~/.claude/skills/tdd/tests.md — what high-quality tests look like (behavior-focused, parameterized via `test.for`, `expect.soft`, custom matchers)\n- ~/.claude/skills/tdd/mocking.md — mock only at system boundaries; never your own modules\n- ~/.claude/skills/tdd/interface-design.md — designing for testability via `test.extend` fixtures\n- ~/.claude/skills/tdd/deep-modules.md — small interface, deep implementation; the design lens that keeps the test surface small and tests stable across refactors\n- ~/.claude/skills/tdd/vitest-patterns.md — Vitest-specific APIs (only if this is a Vitest project)\n\nThe skill informs four things:\n1. **What to test** — observable behavior through public interfaces, critical paths. Not implementation details, not every possible edge case. Confirm with me what matters most if it's unclear.\n2. **How to write high-quality tests** — tests that survive refactors, with the right Vitest patterns (`test.extend` fixtures over `beforeEach`, `test.for` over copy-paste, `expect.soft` for multi-effect behaviors, `vi.mock` only at boundaries).\n3. **How to structure the work** — vertical slices, each a thin end-to-end change of \"one behavior + the code that makes it work\". Aim for deep modules (small interface, lots of implementation hidden behind it) — they shrink the test surface and keep each slice independently committable. This maps directly to your commit history: each commit is one slice, not \"all tests then all code\" or \"all implementation then a test file at the end\".\n4. **Which Vitest APIs to use** — only the ones that already exist and fit this project; don't introduce patterns the codebase doesn't use.\n\nYou don't need to follow strict red-green-refactor across the whole implementation. Apply it inside a single slice when the design is uncertain or the behavior is subtle and a failing test will give you real signal. For straightforward slices, writing test and code together is fine — the discipline that matters is \"one slice per commit\", not the keystroke order inside it.\n\nYou would also want to take a look at the improve-codebase-architecture skill, While this skill itself is for improving an existing design, it should also inform you in how to design a good architecture in the first place.\n\nConstraints:\n- Follow the implementation guidelines we established during the conversation. You may tweak small plan details on your own if exploration shows it's needed, but pause for approval before challenging a major direction.\n- Skip doc updates for now — we'll update docs after the technical implementation.\n- Break the work into a few focused commits, one per vertical slice. Create commits as you progress, not all at the end."
+    },
+    {
+      "key": "tdd-implementation-strict",
+      "expand": "Plan the implementation using strict test-driven development. Read ~/.claude/skills/tdd/SKILL.md and the files it references — treat them as the process, not just a guide.\n\nFollow the red-green-refactor loop literally for each behavior:\n1. RED — Write one failing test. Run it. Verify it fails for the right reason.\n2. GREEN — Write the minimum code to make it pass. No anticipating future tests, no speculative features.\n3. REFACTOR — Only while GREEN. If anything goes red, get back to green before restructuring.\n\nThen move to the next behavior. One test, one slice, one cycle. No batching tests up front and no batching implementation at the end.\n\nConstraints:\n- Follow the implementation guidelines we established during the conversation. You may tweak small plan details on your own if exploration shows it's needed, but pause for approval before challenging a major direction.\n- Skip doc updates for now — we'll update docs after the technical implementation.\n- Break the work into focused commits, one per red-green-refactor cycle. Create commits as you progress, not all at the end."
+    },
+    {
+      "key": "compare-notes",
+      "expand": "Before I judge your analysis, review the analysis from another engineer working on the same problem. They may have considered factors you missed, or vice versa.\n\nThink critically, compare notes, and try to synthesize the best of both — but don't change your position just because they disagree. If their reasoning is wrong, say so.\n\nTheir review below:\n\n---\n\n"
+    },
+    {
+      "key": "list-assumptions",
+      "expand": "Before proceeding, list every non-trivial assumption you're making — about the data, the system's current state, my actual intent, the failure modes, or what \"done\" looks like.\n\nGroup them as:\n- Verified (you've confirmed from the code or my message)\n- Likely (reasonable inference but unconfirmed)\n- Speculative (you're guessing)\n\nFlag the speculative ones as questions for me before proceeding."
+    },
+    {
+      "key": "trace-execution",
+      "expand": "Walk through this code step-by-step as if you were the runtime executing it. For each step, state:\n- what the variable values are\n- which branch is taken and why\n- what gets called, with what arguments\n\nUse a concrete example input. Stop and flag the moment behavior diverges from intent. Don't summarize — actually trace."
+    },
+    {
+      "key": "pr-description",
+      "expand": "Write a PR description for this work, aimed at a technical colleague who won't read the diff.\n\nFormat:\n1. Top (1–2 sentences): the direct impact in product or user-facing terms — what changed for the world, even if the work is purely technical. Lead with this.\n2. Body (3–5 sentences): the substance of what changed and why it was done this way. Mention specific components or functions only when they're load-bearing for the reader's mental model — don't enumerate them.\n\nAvoid:\n- a line-by-line or file-by-file changelog\n- references to line numbers\n- restating the obvious (e.g., \"added a function that does X\" when X was the whole point)\n\nThe reader should come away with a clear mental model of what we did and why — not how every piece works."
+    },
+    {
+      "key": "find-similar-bugs",
+      "expand": "We just fixed a bug. Before we commit, look across the codebase for other places where the same kind of bug is likely — same pattern, same assumption, same missing check.\n\nFor each candidate:\n- file and brief description\n- why this is the same class of bug\n- confidence (high \/ medium \/ low)\n\nDon't fix anything yet — just enumerate. We'll decide what to address."
+    }
+  ],
+  "settings": {
+    "scan_depth": 5,
+    "material": "glass",
+    "max_branch_age_days": 90,
+    "case_sensitive": false,
+    "appearance": "light",
+    "ignore_patterns": ["node_modules", ".git", "dist", "build"],
+    "badge_palette": "minimal"
+  },
+  "trigger": ";;"
+}

@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    // Node 24 runs .ts directly via type stripping — no build step.
+    // tsc is checker-only (`pnpm typecheck`); these flags keep source erasable.
+    "target": "esnext",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "rewriteRelativeImportExtensions": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["src"]
+}
