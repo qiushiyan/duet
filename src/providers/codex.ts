@@ -14,6 +14,11 @@ import type { RunTurnOptions, WorkerProvider, WorkerTurn } from './types.ts';
 export class CodexWorker implements WorkerProvider {
   readonly name = 'codex' as const;
   private readonly codex = new Codex();
+  private readonly timeoutMs: number;
+
+  constructor(config?: { timeoutMs?: number }) {
+    this.timeoutMs = config?.timeoutMs ?? 15 * 60_000;
+  }
 
   async runTurn(opts: RunTurnOptions): Promise<WorkerTurn> {
     const threadOptions = {
@@ -24,7 +29,7 @@ export class CodexWorker implements WorkerProvider {
       ? this.codex.resumeThread(opts.sessionId, threadOptions)
       : this.codex.startThread(threadOptions);
 
-    const turn = await thread.run(opts.prompt);
+    const turn = await thread.run(opts.prompt, { signal: AbortSignal.timeout(this.timeoutMs) });
 
     const sessionId = thread.id;
     if (!sessionId) throw new Error('codex worker turn completed without a thread id');

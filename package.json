@@ -1,13 +1,9 @@
 {
   "name": "duet",
   "version": "0.1.0",
-  "description": "Semi-AFK orchestrator for the two-agent cross-review workflow: a read-only LLM orchestrator routes a snippet protocol between an implementer and a reviewer, inside a code-enforced phase-and-gate skeleton.",
   "private": true,
+  "description": "Semi-AFK orchestrator for the two-agent cross-review workflow: a read-only LLM orchestrator routes a snippet protocol between an implementer and a reviewer, inside a code-enforced phase-and-gate skeleton.",
   "type": "module",
-  "engines": {
-    "node": ">=24"
-  },
-  "packageManager": "pnpm@11.2.2",
   "scripts": {
     "duet": "node src/cli.ts",
     "typecheck": "tsc --noEmit"
@@ -17,11 +13,16 @@
     "@openai/codex-sdk": "^0.133.0",
     "commander": "^15.0.0",
     "execa": "^9.6.1",
+    "smol-toml": "^1.6.1",
     "xstate": "^5.32.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^25.9.2",
     "typescript": "^6.0.3"
-  }
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@11.2.2"
 }

@@ -1,0 +1,553 @@
+# duet's snippet library — the protocol vocabulary the orchestrator selects from.
+#
+# Seeded 2026-06-11 from the user's live tabtype config (~/.config/tabtype/config.toml),
+# plus the proposed `ceo-summary` documented in docs/workflow-model.md. Per Q12
+# (docs/open-questions.md): approved propose_snippet_edit diffs apply to THIS copy;
+# porting changes back to tabtype stays a manual human step. No automatic sync.
+#
+# `$0` marks where the artifact / pasted content goes when the snippet is used
+# manually; the orchestrator substitutes the artifact there when adapting.
+
+[[snippets]]
+key = "think-holistic"
+expand = '''
+**DO NOT CHANGE ANY CODE YET.** Reason holistically — grounded in actual code, not assumptions.
+
+1. **Read the relevant code** to see how things work today. Trace real data/control flow, note existing constraints and why they exist, cite the files/functions you read. Without this, "first principles" is guessing.
+2. **Interview me about ambiguous product intent** (fuzzy terms, unclear scope, priorities you're guessing at) and **push back if my framing seems off**. One question at a time, each with your recommended answer. Don't ask what code can answer — you've just read it. **For clear, targeted bug fixes, skip this step.**
+3. **State the real problem** and the underlying UX goal **in your own words**, informed by what you read and learned.
+4. **Evaluate the current design** against the goal — local issue or structural?
+5. **Propose 2–3 approaches** from first principles, with tradeoffs (complexity, blast radius, UX impact, future flexibility). Recommend one and explain why.
+
+Don't patch a flawed design with another patch. Don't shy from structural changes when justified — but back "structurally wrong" claims with code, and name the cost.'''
+
+[[snippets]]
+key = "compare-notes"
+expand = '''
+Another engineer analyzed the same problem. Think critically, compare notes, synthesize the best of both — **don't change your position just because they disagree**. If their reasoning is wrong, say so. For each disagreement, take a clear position and explain why; **don't split the difference**.
+
+Their analysis below:
+
+---
+
+$0'''
+
+[[snippets]]
+key = "write-spec"
+expand = '''
+Now, write the spec to `docs/superpowers/specs/`. Ground problem and approach in actual code — read the relevant modules first if you haven't. **Tight prose beats exhaustive sections.**
+
+**Structure around the flow of the change:**
+- **Distinguish current vs. desired** — what's preserved vs. what's changing.
+- **Name the coupling decision** — extension of an existing concept, or intentionally independent?
+- **Use implementation anchors** (modules, functions, files) attached to the flow — not the main narrative.
+
+A tree-style before/after often makes the change crisp — adapt the format (tree, prose, diagram) to what fits:
+
+  Current:
+    User submits form
+    └─ Validation runs
+       └─ Record saved
+          └─ Confirmation shown
+
+  Desired:
+    User submits form
+    └─ Validation runs
+       └─ Record saved
+          └─ Webhook fired
+          └─ Confirmation shown
+
+**Be concrete, not vague.** Vague verbs — "improve", "enhance", "polish", "better", "optimize", "streamline" and friends — name a *direction*, not a *decision*; they quietly defer the real choice to implementation, which defeats the point of writing a spec. Say **what** changes: the specific behavior, state, or outcome that differs, and the rule or shape that produces it. Concrete ≠ exhaustive, though — pin the decision, not the mechanics (no line-level edits or code). E.g. "improve error handling" → "on a failed webhook, retry with backoff, then surface a dismissible banner instead of failing silently."
+
+The spec is a high-level implementation plan — technical content is fine, but stay at that level. **Don't smuggle in later-stage details:**
+- **Skip** line-by-line edits, function renames, exact call-site changes — designed later.
+- **No** doc update plans — later.
+- **Testing:** name behaviors that matter at a high level; leave specific test cases, fixtures, and mocking boundaries for later.
+- Phases are fine; **no precise commit order** — sequencing later.
+
+**Do not include any time/effort estimates** ("2 days", "~3 hours"), describe the work itself.
+
+If you have remaining product questions or major technical uncertainty, interview me before you write.'''
+
+[[snippets]]
+key = "review-spec"
+expand = '''
+I've drafted a spec. Review critically — verify problem statements and intended solutions against the actual code.
+
+The spec is intentionally high-level: problem, UX goal, conceptual approach, non-goals, open questions. It IS moderately technical (can name modules, functions, composition patterns) but **defers line-level details, test design, doc plans, and commit order** — those come later.
+
+**Altitude lens:**
+- Vagueness on implementation details (signatures, helper internals, specific test cases) → **intentional, don't ask for more**.
+- Vagueness on concepts the spec should answer (data flow, ordering, failure modes, scope, edge cases, current vs. desired distinction, coupling to existing concepts) → **bug, flag it**.
+- Technical content the spec DOES propose (names, placement, composition, boundaries) → **fair game; propose better if awkward**.
+
+**Push hard on:**
+- Are we solving the right problem? Is the UX goal right?
+- Does the conceptual approach hold up: data flow, state, ordering, failure modes, performance, backward compat, migrations?
+- Spec ↔ code mismatches.
+- Cleaner alternative approaches.
+- Non-goals + open questions: anything in-scope that should defer? Anything missing from the uncertainty list?
+
+**Per point:**
+- Agree → add technical suggestions, caveats, or risks worth flagging.
+- Disagree → give reasons and a concrete alternative. If architectural, say so and propose the structural fix.
+
+Weigh technical merit and UX goals together. **Challenge assumptions and propose alternatives** — don't default to politeness. Don't say "not specific enough" without naming the unanswered concept.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "update-spec"
+expand = '''
+Engineering team's review feedback on your spec below. **For each point:**
+1. **Assess validity** — be honest, don't agree just to agree.
+2. **If valid:** update the spec. You may propose a better solution than suggested — explain why.
+3. **If you disagree:** explain from first principles why the spec is correct as-is.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "review-spec-again"
+expand = '''
+Spec updated per your review. Re-check — focus on **whether feedback was integrated or hand-waved**, and whether revisions introduced new issues.
+
+**For each previously-flagged point:**
+- Did the update address the concern, or hand-wave it?
+- Did it introduce a new problem (over-corrected, broke an unrelated section)?
+- Still wrong → restate concretely and propose the structural fix.
+
+Same altitude lens as before — spec stays high-level, don't demand line-level details, test cases, or doc plans. **New issues OK; don't relitigate settled points.**
+
+---
+
+$0'''
+
+[[snippets]]
+key = "update-spec-again"
+expand = '''
+Round-2 reviewer feedback on the spec below. Apply valid points and update. Disagreements: explain briefly, don't dwell — **this round is about converging**. Major disagreement needing my input → flag clearly and **stop** instead of pushing through.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "compact-for-plan"
+expand = '''
+/compact Transitioning from spec exploration to technical implementation planning. Compact for **focus on the settled path** — keep the decisions, drop how we reached them.
+
+**Preserve:**
+- The final settled spec — problem, UX goal, conceptual approach, non-goals, open questions.
+- Architectural direction: module/function names, composition shape, coupling decision (extension vs. independent).
+- *Why* we chose this approach — but not the alternatives we rejected.
+- Spec-stage deferral rules: line-level edits, test cases, doc plans, commit order are designed **later** — don't pre-empt them in the plan.
+
+**Drop or summarize:**
+- Brainstorming alternatives and tradeoff debates that didn't win.
+- Synthesis between competing analyses from different agents.
+- Round-1 spec critiques the final spec already addresses.
+- Code reads and exploration that fed the spec — conclusions live in the spec; the reading process isn't needed.
+'''
+
+[[snippets]]
+key = "reread-context"
+expand = '''
+Reread the files this change touches and rebuild your mental model from the actual code, not memory — trace the real data/control flow, note existing constraints, and find the seams the work will build on. **No code yet.**'''
+
+[[snippets]]
+key = "tdd-plan"
+expand = '''
+Plan the implementation as vertical slices based on the latest spec. Reread the spec first.
+
+Go detailed — name each slice, list specific test cases, sketch helpers and fixtures, cite line numbers for changes in existing code. **Don't pre-write full code bodies** — describe tests and helpers; actual code happens during red-green-refactor.
+
+Read these as a lens, not a checklist (adapt; drop what doesn't fit):
+- `~/.claude/skills/tdd/SKILL.md` — vertical slices, what to test, anti-patterns
+- `~/.claude/skills/tdd/tests.md` — behavior-focused tests; `test.for`, `expect.soft`, custom matchers
+- `~/.claude/skills/tdd/mocking.md` — mock only at boundaries, never your own modules
+- `~/.claude/skills/tdd/interface-design.md` — testability via `test.extend` fixtures
+- `~/.claude/skills/tdd/deep-modules.md` — small interface, deep implementation; keeps the test surface small and tests stable across refactors
+- `~/.claude/skills/tdd/vitest-patterns.md` — Vitest APIs *(TS-Vitest projects only)*
+- `~/.claude/skills/improve-codebase-architecture/SKILL.md` — also informs designing well from the start
+
+**What to test:** observable behavior through public interfaces and critical paths — not implementation details or every edge case. Skip UI tests unless requested; focus on pure business logic. Confirm with me if unclear.
+
+**Slice = one meaningful unit — a subsystem or a cluster of related behaviors.** Be ambitious: group a behavior with the behaviors and wiring that belong with it into one slice a reviewer can grasp as a single idea — the mechanical steps that serve it (an import, mounting a component, wiring) ride in that slice, not slices of their own. Lean larger; split only when two parts are genuinely unrelated or a slice grows too big to hold in your head. Aim for deep modules (small interface, hidden implementation) — shrinks the test surface, keeps slices independently committable. **Prefer slicings that delete concepts** (branches, modes, helper layers disappear) over ones that just spread them. Commits follow slices — that's implied; don't engineer commit boundaries.
+
+Strict red-green-refactor isn't required throughout — apply it inside a slice when design is uncertain or behavior is subtle and a failing test gives real signal. For straightforward slices, writing test + code together is fine. **The discipline is "one slice per commit", not keystroke order.**
+
+Constraints:
+- Follow our settled implementation guidelines. Tweak small details if exploration warrants; pause before challenging major direction.
+- Skip doc updates — we'll do those after implementation.
+- Commit per slice, not all at the end.'''
+
+[[snippets]]
+key = "tdd-plan-strict"
+expand = '''
+Plan the implementation using **strict TDD**. Read `~/.claude/skills/tdd/SKILL.md` and the files it references — **treat them as the process, not just a guide**.
+
+Go detailed — name each slice, list specific test cases, sketch helpers and fixtures, cite functions for changes in existing files. **Don't pre-write full code bodies** — describe tests and helpers; actual code happens during red-green-refactor.
+
+Follow red-green-refactor literally per behavior:
+1. **RED** — One failing test. Run it. Verify it fails for the right reason.
+2. **GREEN** — Minimum code to pass. No anticipating future tests, no speculative features.
+3. **REFACTOR** — Only while green. Anything goes red → back to green first.
+
+Then next behavior. **One test, one slice, one cycle.** No batching tests up front, no batching implementation at the end.
+
+Constraints:
+- Follow settled implementation guidelines. Tweak small details if needed; pause before challenging major direction.
+- Skip doc updates — after implementation.
+- One commit per RGR cycle, as you progress.'''
+
+[[snippets]]
+key = "start-plan"
+expand = '''
+Create a technical plan from our discussion.
+
+**Structure:**
+1. A few focused phases, each ending in its own commit.
+2. **Delete complexity, don't rearrange it.** Concepts, modes, and branches should disappear, not get moved around. Prefer clean architecture and clear integration points over ad-hoc patches — the right plan should feel inevitable, not clever.
+3. If existing architecture blocks a clean solution, redesign from first principles around the actual problem — composition and data structures tailored to it.
+4. **Verification per phase** — for each phase, say how you'll confirm it works: the key behaviors to test (not exhaustive), or another check where a test doesn't fit. Note anything deliberately left unverified and why.
+
+**Constraints:**
+- Large UX-affecting changes → **stop, get my approval first**. Provide rationale and 2+ alternatives with tradeoffs.
+- Weigh end-user impact and technical quality together — neither alone is enough.'''
+
+[[snippets]]
+key = "review-plan"
+expand = '''
+Spec updated. I've drafted an implementation plan. Review with the same rigor as the spec.
+
+Background (skim as a lens, don't recite):
+- `~/.agents/skills/tdd/SKILL.md` — vertical slices, behavior-focused tests, when to mock
+- `~/.agents/skills/improve-codebase-architecture/SKILL.md` — deep modules, seams, the deletion test
+
+**Adapt; drop what doesn't fit our use case.**
+
+**Altitude lens:**
+- Vagueness on full code bodies (test implementations, function bodies) → **intentional, don't ask for them**.
+- Vagueness on anything else — slice boundaries, sequencing, specific test cases, helper internals, fixture shape, line-level placement, module shape, integration seams, what the spec left open → **bug, flag it**.
+- Technical content the plan DOES propose — slice choice, test cases, helper design, names, composition, deep-module shape → **fair game; propose better if a slice is wrong, a test case missing, a helper awkward, sequencing off, or a module shallow**.
+
+**Per point:**
+- Agree → add technical suggestions, caveats, or risks worth flagging.
+- Disagree → give reasons and a concrete alternative. If architectural, say so and propose the structural fix.
+
+Challenge sequencing, scope, choice of vertical slices, **whether the plan deletes complexity or just rearranges it**, and **whether the resulting modules are deep or shallow** — not just surface details. The right plan should feel inevitable. Don't default to politeness.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "update-plan"
+expand = '''
+Engineering team's review feedback on your plan below. **For each point:**
+1. **Assess validity** — be honest, don't agree just to agree.
+2. **If valid:** update the plan. You may propose a better solution than suggested — explain why.
+3. **If you disagree:** explain from first principles why the plan is correct as-is.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "review-plan-again"
+expand = '''
+Plan updated per your review. Re-check — focus on **whether feedback was integrated or hand-waved**, and whether revisions introduced new issues.
+
+**For each previously-flagged point:**
+- Did the update address the concern, or hand-wave it?
+- Did it introduce a new problem (over-corrected, broke an unrelated section)?
+- Still wrong → restate concretely and propose the structural fix.
+
+Same altitude lens as before — don't demand full code bodies; the plan describes tests and helpers but doesn't pre-write them. **New issues OK; don't relitigate settled points.**
+
+---
+
+$0'''
+
+[[snippets]]
+key = "update-plan-again"
+expand = '''
+Round-2 reviewer feedback on the plan below. Apply valid points and update. Disagreements: explain briefly, don't dwell — **this round is about converging**. Major disagreement needing my input → flag clearly and **stop** instead of pushing through.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "midpoint-status"
+expand = '''
+Pausing mid-implementation for a checkpoint review. Summarize the current state so a reviewer can pick it up cold — **status snapshot, not a self-review**.
+
+- **Where we are:** which slices are done and committed, and the slice you paused at (e.g. "4 of ~12").
+- **What's done:** per completed slice, the behavior it added and any decision worth knowing — one line each, no code dumps.
+- **What's left:** the remaining slices in planned order, briefly.
+- **Test state:** what's covered so far and at what altitude, plus any test debt you've deferred (slices committed light on tests, placeholder mocks) — surface it rather than let it hide.
+- **Deviations & surprises:** where the code diverged from the plan, what turned out harder or different than expected, and any plan assumption that didn't hold. **Be candid here — this is the highest-signal part.**
+- **Open questions / risks** you're carrying into the rest of the work.
+
+Ground it in the actual commits and code, not memory.'''
+
+[[snippets]]
+key = "review-midpoint"
+expand = '''
+Implementation is **paused mid-way** — only some slices are done; the rest are intentionally not built yet. Review the work so far AND set up the rest to go well. **Read the actual code, not just the status report below.**
+
+Two jobs:
+
+**1. Review what's done.**
+- **Correctness & tests** of completed slices — bugs, edge cases, test altitude.
+- **Foundation soundness** — everything left builds on this. Are the abstractions, seams, and data structures chosen so far going to *hold* for the remaining slices, or will they need to be torn up later? Code-judo, spaghetti growth, thin abstractions, leaky boundaries, wrong canonical layer — flag them now while they're cheap.
+- **Plan ↔ code tracking** — silent deviations, missing planned tests for *completed* slices.
+
+**2. Guide the rest.**
+- **Gotchas & traps** the remaining slices will hit given the current code — invariants to keep, sequencing hazards, places the existing shape fights what's coming.
+- **Plan course-correction** — given what the code actually revealed, does the remaining plan still hold? Re-sequence, re-scope, or reshape a slice if warranted — say so explicitly. A remaining slice that could *delete* something already written is a win; call it out.
+- **Tips** — existing helpers/patterns to reuse instead of reinventing.
+
+**Time-axis altitude lens:**
+- Slices not yet reached → **intentionally undone, do NOT flag as missing**.
+- A foundational/structural problem that will **compound** across the remaining slices → **highest priority** — catching it at slice 4 is far cheaper than at slice 12. Flag loudly.
+- A purely local nit in completed code that doesn't affect what's left → note briefly or leave it for the final review; **don't dwell**.
+
+**Per issue:** mark **fix-before-continuing** vs **fine to defer to the final review**, and give a concrete fix with file/function references.
+
+Status report from the implementer below for context.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "respond-midpoint"
+expand = '''
+Mid-point review feedback below. **Triage first — no code changes yet.** For each point:
+1. **Assess validity** — be honest, don't agree just to agree.
+2. **If valid, sort it:**
+   - **Fix before continuing** — foundational problems the remaining slices would build on top of. These get fixed first.
+   - **Fold into the remaining plan** — adjust, re-sequence, or re-scope upcoming slices; note which slice absorbs it.
+   - You may propose a better fix than suggested — explain why.
+3. **If you disagree:** explain from first principles why the current code or plan is right as-is.
+
+**Course-corrections to the remaining plan** — engage with the reframing, don't counter with a narrower local patch or defer a deletion as "future work."
+
+**Test fallout** — where a finding reveals a test gap in a completed slice, fix it alongside the now-problems; where it reshapes an upcoming slice, fold the test change into that slice's plan.
+
+Then summarize the updated plan: what you'll fix now, then the remaining slices in order. **Wait for my go-ahead before changing code.**
+
+---
+
+$0'''
+
+[[snippets]]
+key = "compact-for-review"
+expand = '''
+/compact A long implementation is finished and about to go into code review. Compact for a **focused window ready for review** — keep what lets you defend and revise the work, drop how you got there.
+
+**Preserve:**
+- Implementation status: what this work set out to do (feature, refactor, or fix) and what's now built.
+- The load-bearing mental model: the core abstractions, data/control flow, and invariants — plus the critical files where the real logic lives, so you can reason about feedback without re-reading everything.
+- Key decisions and *why* — especially the contestable ones a reviewer will probe; keep the rationale so you can defend or reconsider each from first principles.
+- Deviations from the plan, known risk areas, and current test state — the spots most likely to draw scrutiny.
+
+**Drop:**
+- The step-by-step build process: red-green-refactor cycles, intermediate states, debugging detours, dead ends.
+- Superseded plan iterations, brainstorming, and exploration reads — keep the conclusions, not the path.'''
+
+[[snippets]]
+key = "commits-summary"
+expand = '''
+Commits summary for high-level context — what changed and why. **Don't review commit-by-commit;** review the current state of the codebase as a whole, with these commits as context.'''
+
+[[snippets]]
+key = "implementation-handoff"
+expand = '''
+Implementation finished. Write a handoff that orients the reviewer fast — **report what changed and point them at what matters.** Ground it in the actual code and commits, not memory.
+
+This is a guided map, **not a self-review** — don't grade your own work ("correct", "clean", "well-tested"); that's the reviewer's call. Do surface where the bodies are buried.
+
+- **What & why:** the problem solved, tied back to the spec — a line or two.
+- **Change map:** the files/modules touched, with the **load-bearing** ones marked. Skip trivial churn — the reviewer can read the diff; tell them where to start.
+- **Key decisions & tradeoffs:** judgment calls made while implementing, especially structural ones (a boundary drawn here, a concept collapsed there), and any alternative you weighed and rejected.
+- **Deviations from spec/plan:** where the code diverged and why. **Be candid.**
+- **Tests:** what's covered and at what altitude (behavior vs. internals), plus what you deliberately left untested and why.
+- **Where to look hardest:** the riskiest, most complex, or least-certain changes — anything you're unsure about or that fought you. This is the part that earns its keep.'''
+
+[[snippets]]
+key = "review-implementation"
+expand = '''
+Spec and plan settled. Code-review my implementation. **Read the actual code, not just commit messages.**
+
+**Lens:**
+- Implementation is fair game across the board — correctness, structure, test quality, performance, readability, edge cases, pattern consistency.
+- Plan ↔ code mismatches → flag silent deviations (missing planned tests, missing helpers, scope creep).
+- Spec/plan are settled — **don't relitigate approved decisions**. If a fundamental issue only surfaces from the code, say so explicitly; don't smuggle it in as a "small fix."
+
+**Evaluate:**
+
+- **Correctness** — bugs, edge cases, failure modes.
+- **Solves the problem** — does the implementation actually solve the spec's problem, not just pass its own tests?
+- **Test quality** — right altitude (behavior, not internals), covers planned cases + obvious additions, survives plausible refactors, uses project patterns.
+- **UX & performance** — user-facing impact, performance characteristics.
+- **Structural quality — be ambitious, not just local:**
+    - **Code-judo:** is there a reframing that deletes whole branches/helpers/modes/layers — not just rearranges them?  Do not stop at "this could be a bit cleaner." Look for opportunities to reframe the change so that whole branches, helpers, modes, conditionals, or layers disappear entirely.
+    - **Spaghetti growth:** ad-hoc conditionals or special cases bolted into unrelated flows = design problem, not a stylistic nit. Push the logic behind its own abstraction.
+    - **Thin abstractions:** pass-through wrappers, identity helpers, abstractions that add indirection without buying clarity — flag them.
+    - **Boundary cleanliness:** casts, `any`, `unknown`, optionality papering over unclear invariants — push for an explicit contract.
+    - **Canonical layer:** is the logic in the right module/package, or leaking across boundaries? Prefer existing canonical helpers over near-duplicates.
+
+**Per issue:**
+- Severity: **critical** (blocks merge) / **moderate** (fix before merge) / **minor** (nice-to-have).
+- Concrete fix with file/function references and enough detail to act on.
+- No "this could be cleaner" without a concrete alternative.
+
+**Approval bar:** don't pass because it works. Structural regressions and missed code-judo opportunities are presumptive blockers — flag as **critical**, not minor.
+
+Implementation report below — treat it as a starting point: the implementer's pointers to reduce your overhead, not the boundary of your review. Review the whole feature against its actual goal, and actively look for what the report leaves out; if you only check what the implementer surfaced, it isn't an independent review.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "respond-review"
+expand = '''
+Senior engineer's review feedback below. **For each point:**
+1. **Assess validity** — be honest, don't agree just to agree.
+2. **If valid:** propose a fix (may be better than suggested) and explain why.
+3. **If you disagree:** explain from first principles why the original is correct. Simple fixes that improve design → **work on them, don't defer as "minor"**.
+
+**Structural feedback** — engage with the reframing the reviewer proposed. Don't counter with a narrower local patch, and don't defer the deletion path as "future work."
+
+**Test implications** — for each valid finding, reason about what it means for the tests (analysis only — don't write them yet):
+- **Why didn't a test catch this?** A genuine coverage gap (untested behavior), or a weak test that should have caught it but didn't — wrong altitude, asserting internals, over-mocked? A bug that slipped through is a signal about test quality, not just a missing case.
+- **What does the fix change in the suite?** A new test for the now-correct behavior, a strengthened existing test, or tests to **delete** because the fix removes the behavior or branch they covered.
+
+**Do not change any code yet — focus on analysis.**
+
+---
+
+$0'''
+
+[[snippets]]
+key = "review-implementation-again"
+expand = '''
+Updated the files per your suggestions (summarized below for targeted re-check). Focus on **whether feedback was actually integrated**, and flag any off-track changes or unintended regressions. Elaborate disagreements.
+
+**Test changes** — where a fix touched tests, check they hold up: new or strengthened tests actually cover the behavior that slipped (right altitude, not asserting internals), and any deleted test was genuinely made obsolete, not dropped to get to green.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "respond-review-again"
+expand = '''
+Round-2 reviewer feedback below. Apply valid points and update the code. Disagreements: explain briefly, don't dwell — **this round is about converging**. Major disagreement needing my input → flag clearly and **stop** instead of pushing through.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "compact-for-cleanup"
+expand = '''
+/compact Implementation is essentially done and polished through review — only small, non-blocking tasks remain (docs, minor fixes, cleanup). Compact for a **focused window on the finished code**, not on how we built it.
+
+**Preserve:**
+- What the feature does and its user-facing intent — enough to write accurate docs.
+- The current state of the implementation: what was built and where it lives (key modules/files), and any decision or invariant docs or callers must respect.
+- The remaining tasks — the specific docs, fixes, and cleanup still to do.
+
+**Drop:**
+- The whole spec → plan → review journey: alternatives, plan iterations, review rounds, and the back-and-forth that produced the code.
+- Reasoning debates and superseded critiques — the code already reflects their conclusions.'''
+
+[[snippets]]
+key = "pr-description"
+expand = '''
+Write a PR description aimed at a technical colleague who **won't read the diff**.
+
+**Format:**
+1. **Top (1–2 sentences):** direct impact in product/user-facing terms — what changed for the world, even if work is purely technical. Lead with this.
+2. **Body (3–5 sentences):** the substance of what changed and why it was done this way. Name components/functions **only when load-bearing** for the reader's mental model — don't enumerate.
+
+**Avoid:** line-by-line or file-by-file changelogs, line number references, restating the obvious (e.g., "added a function that does X" when X was the whole point).
+
+Reader should leave with a clear mental model of **what we did and why** — not how every piece works.'''
+
+[[snippets]]
+key = "find-similar-bugs"
+expand = '''
+Bug just fixed. Before committing, sweep the codebase for other places likely to have the same pattern — same assumption, same missing check.
+
+**Per candidate:**
+- file + brief description
+- why same class of bug
+- confidence (high / medium / low)
+
+**Don't fix yet** — just enumerate. We'll decide what to address.'''
+
+[[snippets]]
+key = "list-assumptions"
+expand = '''
+List every non-trivial assumption you're making — about the data, system state, my actual intent, failure modes, or what "done" looks like.
+
+**Group as:**
+- **Verified** — confirmed from code or my message
+- **Likely** — reasonable inference, unconfirmed
+- **Speculative** — guessing
+
+Flag the speculative ones as questions for me before proceeding.'''
+
+[[snippets]]
+key = "trace-execution"
+expand = '''
+Walk through this code step-by-step as if you were the runtime. **Per step:**
+- variable values
+- which branch is taken and why
+- what gets called, with what arguments
+
+Use a concrete example input. **Stop and flag the moment behavior diverges from intent.** Don't summarize — actually trace.'''
+
+[[snippets]]
+key = "smart-adapt-skills"
+expand = '''
+References are **general best practices, not prescriptions**. Evaluate each suggestion against our codebase, architecture, and constraints before applying — **discard what doesn't fit, adapt what does**.
+
+Can't find a referenced skill? Tell me immediately for the exact path. **Don't search for it yourself.**'''
+
+[[snippets]]
+key = "technical-difficulty"
+expand = '''
+**Don't measure technical difficulty by lines changed.** Instead, consider:
+- complexity of the problem being solved
+- number of components affected
+- potential for unintended consequences
+- level of uncertainty involved
+
+**Most importantly:** does this solve the core UX problem while maintaining a clean technical design?'''
+
+[[snippets]]
+key = "ceo-summary"
+expand = '''
+Implementation and follow-up reviews are done. Write a CEO-facing summary of this PR — for me, and for explaining the work to a colleague without walking them through the diff.
+
+Start non-technical, in this order:
+
+1. What the PR does, from a product perspective
+2. Bugs fixed
+3. Features added
+4. What problems it solves
+
+Then the technical side at a very high level — the approach and the one or two decisions a CTO would care about. No file paths, no function names, no implementation play-by-play.
+
+This is CEO/CTO altitude: outcomes first, technology last. Drop any section that's empty. Tight prose beats exhaustive sections.'''

@@ -16,9 +16,10 @@ export class ClaudeWorker implements WorkerProvider {
     model: string;
     /** Per-invocation cost ceiling — day-one rail per Q11 economics. */
     maxBudgetUsd?: number;
+    timeoutMs?: number;
   };
 
-  constructor(config: { model: string; maxBudgetUsd?: number }) {
+  constructor(config: { model: string; maxBudgetUsd?: number; timeoutMs?: number }) {
     this.config = config;
   }
 
@@ -32,12 +33,21 @@ export class ClaudeWorker implements WorkerProvider {
       args.push('--disallowed-tools', 'Write,Edit,NotebookEdit,Bash,Task');
     }
 
+    if (!opts.readOnly) {
+      // The implementer edits artifacts and commits them; headless -p mode has
+      // no permission prompt to accept those, so pre-approve the narrow set.
+      args.push('--permission-mode', 'acceptEdits');
+      args.push('--allowedTools', 'Bash(git add:*),Bash(git commit:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*)');
+    }
+
     // Prompt goes through stdin (argv has length limits; snippet bodies wrapping
-    // whole artifacts can be long).
+    // whole artifacts can be long). On timeout execa sends SIGTERM, then
+    // SIGKILL after the grace period — the proc.kill() sandcastle forgot.
     const { stdout } = await execa('claude', args, {
       cwd: opts.cwd,
       input: opts.prompt,
-      timeout: 15 * 60_000,
+      timeout: this.config.timeoutMs ?? 15 * 60_000,
+      forceKillAfterDelay: 10_000,
     });
 
     // `--output-format json` emits an array of all session messages on

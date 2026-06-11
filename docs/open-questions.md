@@ -299,7 +299,9 @@ The original analysis is preserved below as the record of what we considered.
 
 **What would change the answer.** The credit change making SDK-based orchestration uneconomical for multi-hour phases, or `defer`/resume proving unreliable in the spike.
 
-## Q12. Where does duet's snippet library live, and how do edits flow back to tabtype?
+## ~~Q12. Where does duet's snippet library live, and how do edits flow back to tabtype?~~
+
+**Answered (2026-06-11, with Slice 1).** As believed: duet owns `snippets.toml` at the repo root, mirroring tabtype's schema, seeded from the user's **live** tabtype config (33 snippets) plus the documented `ceo-summary`. `list_snippets` reads it (`src/snippets.ts`); approved `propose_snippet_edit` diffs apply to this copy; porting back to tabtype stays a manual human step — no automatic sync. Re-seed by rerunning the conversion against `~/.config/tabtype/config.toml` if the libraries drift apart in the wrong direction.
 
 **Why it matters.** The orchestrator needs `list_snippets()` to see the library and `propose_snippet_edit` to evolve it — so the library must be machine-readable files duet owns, while the human's manual workflow keeps using the tabtype config. Two copies of the same protocol now exist. This also covers the `ceo-summary` snippet, which is documented in `docs/workflow-model.md` ahead of existing in tabtype at all.
 
@@ -315,7 +317,17 @@ The original analysis is preserved below as the record of what we considered.
 
 **What would change the answer.** Slice 1+ runs. Every flag and every bounce gets reviewed afterward via the notes file: should this have been flagged? Should that have been? Recurring misses become instruction edits or, if instructions can't fix it, a harness-level rule.
 
-## Q14. What is the new Slice 1?
+## ~~Q14. What is the new Slice 1?~~
+
+**Answered (2026-06-11, shipped).** Built larger than scoped — the Q11 spike de-risked the substrate, so Slice 1 became the **complete attended PLANNING phase** ("Slice 1++"): `duet new --spec <draft> [--framing <file>]` runs SPEC loop → Commit-spec gate → PLAN loop → Plan-approval gate, with `duet continue --approve/--reject/--answer`, `duet status`, `duet runs`. The harness is the XState statechart (`src/harness/machine.ts`, gates and flag-waits actor-less + quiescent-tagged; `src/harness/machine.smoke.ts` asserts gate events are structural no-ops); the driver (`src/harness/driver.ts`) hosts all six orchestrator tools with the cooperative pause.
+
+Verified by a live end-to-end run on a scratch repo (run `20260611-1048-4ec2`): SPEC loop 2 rounds (the reviewer read the *real* `.duet/runs/` layout duet had just written, found the draft spec's data model fictional, and the loop rewrote it against reality), gate, PLAN loop 2 rounds (orchestrator chose `start-plan` over `tdd-plan` from the framing, caught the implementer silently dropping a commit confirmation, ran a tight `-again` round), gate, done. Both `-again` variants used correctly; judgment exit well under the backstop caps; three product questions correctly **held for the gate** instead of interrupting mid-loop; two `write_note` friction observations of exactly the kind Q13 needs. Cost: $1.45 orchestrator + $2.42 claude workers + ~1.2M codex input tokens.
+
+Known simplifications, deliberate: no `compact-for-plan` between phases (worker context is manageable at planning scale; compaction lands with the AFK phase), no `--framing`-entry front half (onboard/frame/synthesize), serial runs not enforced. Next slice: the AFK IMPLEMENTATION phase on this machinery.
+
+The original analysis is preserved below as the record of what we considered.
+
+---
 
 **Why it matters.** The old Slice 1 (Q8) validated dumb routing: subprocess management, schema enforcement, string-match exception detection. The pivot's risky surface is different: the orchestrator's tool loop, per-turn prompt adaptation quality, gate interception, and `defer`-based pause/resume.
 
@@ -326,6 +338,8 @@ The original analysis is preserved below as the record of what we considered.
 ## Q15. XState or a hand-rolled transition table for the harness statechart?
 
 > **Decided 2026-06-11: XState** (v5, added as a dependency at project init — the user's call at implementation kickoff). The caveats below remain the implementation guardrails: persist snapshots **only at gate states** (in-flight invoked actors restart blind on restore — the JSONL transcripts are the real resume state), keep the human-readable `.duet/runs/<run_id>.json` hint file alongside the machine snapshot, and treat `@statelyai/agent` as read-only inspiration (dormant, and architecturally inverse to this design).
+>
+> **Implemented with Slice 1** (`src/harness/machine.ts`): phases invoke a promise-actor phase driver; gates *and* in-phase flag-waits are actor-less states tagged `quiescent`; snapshots persist only there, so no in-flight invoke is ever restored. `src/harness/machine.smoke.ts` asserts the hard guarantee offline (gate events at the wrong state are structural no-ops; persist/restore round-trips).
 
 **Why it matters.** The skeleton's one hard guarantee — gates transition only on human events; agent events at a gate are no-ops — must be structural, not conventional.
 

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "xstate-v5": {
+      "source": "statelyai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/xstate-v5/SKILL.md",
+      "computedHash": "5395d58e38da39477cfa61d2b388777a88f021d16ec0f8d4ce6653b487d98fb3"
+    }
+  }
+}
