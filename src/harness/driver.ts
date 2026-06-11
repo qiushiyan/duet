@@ -109,7 +109,7 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
 
     tool(
       'send_prompt',
-      'Send a prompt to a worker agent and return its final response. Each role is one persistent session: a later call to the same role continues that worker’s conversation, so refer back to earlier turns instead of repeating context the worker has already seen. Worker turns are slow (often minutes) — prefer one well-composed prompt over several small ones. Sending the reviewer a prompt whose tag starts with "review" counts as a review round against the phase’s backstop cap.',
+      'Send a prompt to a worker agent and return its final response. Each role is one persistent session: a later call to the same role continues that worker’s conversation, so refer back to earlier turns instead of repeating context the worker has already seen. Worker turns are slow (often minutes) — prefer one well-composed prompt over several small ones. Sending the reviewer a prompt whose tag starts with "review" counts as a review round against the phase’s backstop cap. A claude-bound worker’s context can be deliberately compacted: a body that is literally "/compact " followed by your instructions (e.g. an adapted compact-for-* snippet) resets that session in place, keeping what the instructions name; codex-bound workers compact themselves automatically, so this applies only to claude.',
       {
         role: z
           .enum(['implementer', 'reviewer'])
@@ -177,7 +177,7 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
 
     tool(
       'ask_human',
-      'Flag a question for the human: product or direction calls, environment actions only they can take (deploys, credentials, migrations), or blockers you cannot route around. Route technical and content questions to a worker instead — the human is the editor-in-chief, not a third engineer. The human may be away; if so the question is queued and the run pauses until they answer.',
+      'Flag a question for the human: product or direction calls, environment actions only they can take (deploys, credentials, migrations), or blockers you cannot route around. Route technical and content questions to a worker instead — the human is the editor-in-chief, not a third engineer. Asking always pauses the run until the answer arrives: minutes when the human is at the terminal, hours during the AFK phase — so make every question self-contained, and let questions that can wait for a gate wait.',
       {
         question: z.string().describe('The question, self-contained enough to answer from a phone.'),
         context: z.string().optional().describe('One or two sentences of background the human needs to answer well.'),
@@ -198,7 +198,7 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
           content: [
             {
               type: 'text' as const,
-              text: 'The human is away, so your question has been queued and the run is pausing. End your turn with a one-line status — anything you do past this point happens without the answer you just asked for. The run resumes with the human’s answer.',
+              text: 'Your question is queued and the run is pausing until the human answers. End your turn with a one-line status — anything you do past this point happens without the answer you just asked for. The run resumes with the human’s answer.',
             },
           ],
         };
@@ -209,7 +209,11 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
       'advance_phase',
       'Declare the current phase complete. Legal only when the phase’s exit criteria are met (the review loop converged, open points are minor or settled). Always lands on a human gate — your summary is what the human decides from, so make it honest about what changed, what was rejected, and what remains open.',
       {
-        summary: z.string().describe('What the reviewer flagged, what changed, rejections with rationale, open points.'),
+        summary: z
+          .string()
+          .describe(
+            'The gate packet the human decides from: what the reviewer flagged, what changed, rejections with rationale, open points. For the implementation phase, lead with the CEO summary verbatim, then review history, deviations from the plan, and test state.',
+          ),
         artifacts: z.array(z.string()).describe('Paths or descriptions of the phase’s outputs (e.g. the spec file).'),
       },
       async (args) => {
