@@ -265,9 +265,26 @@ But these are guesses. The discipline is: run MVP first, watch where the human r
 
 **What would change the answer.** Three real MVP runs on `itell/apps/platform` features of varying shape. For each run, note: where did the human want more than the router provided? Where did the router route something that should have been flagged? Each pain point becomes a candidate; only ones that recur across runs justify a permanent LLM call.
 
-## Q11. What substrate runs the orchestrator?
+## ~~Q11. What substrate runs the orchestrator?~~
 
 > **Scope note (2026-06-11):** with role–provider decoupling, this question is about the **claude provider's** implementation of the orchestrator role — the default and only orchestrator-capable provider in v1. The codex provider's path to the same contract is Q17.
+
+**Answered (2026-06-11, by the spike at `src/spike/q11.ts`).** The Claude Agent SDK (0.3.170) is the substrate, **with one design correction**: the pause is cooperative, not mechanical. Spike results, all live-verified end to end (orchestrator routed `review-spec` → codex and `update-spec` → claude through the Provider interface, queued an `ask_human`, exited, resumed, answered, reported):
+
+- **Read-only by tool surface works.** `tools: []` hides all built-ins; the two custom tools (`send_prompt`, `ask_human`) via `tool()` + `createSdkMcpServer()` + `allowedTools` work as documented. Caveat for Slice 1: the user's own config still leaks into the surface — claude.ai connector MCP servers, plugins, and LSP appeared alongside the orchestrator tools. Harden with `settingSources` / `strictMcpConfig` when building the real harness.
+- **The pause mechanism: both "mechanical" options corrupt resume; the cooperative pause works.** Verified by three minimal repros kept at `src/spike/repro-*.ts`:
+  - `repro-resume-mcp.ts` — plain resume after a normally ended turn **keeps SDK MCP tools working** (tool re-invoked successfully on the resumed session).
+  - `repro-defer-resume.ts` — PreToolUse `permissionDecision: 'defer'` pauses cleanly (`terminal_reason: 'tool_deferred'`, `deferred_tool_use` populated on the result) **but the resumed session loses the SDK MCP server entirely** — every orchestrator tool call fails with "No such tool available". `alwaysLoad: true` does not help. The deferred call is also *not* re-prompted on resume.
+  - `repro-deny-resume.ts` — `canUseTool` `{behavior: 'deny', interrupt: true}` ends the run as `error_during_execution`/`aborted_streaming`, and resuming that session crashes the SDK with an `ede_diagnostic` error.
+  - **The working pattern:** the `ask_human` *handler itself* queues the question, persists state, and returns "human is AFK — end your turn now"; the orchestrator ends its turn normally; the process exits; `--resume` later delivers the answer in the resume prompt. The pause is enforced by the harness side effect (question persisted at the moment of the call), not by the permission system; the orchestrator obeyed the end-turn instruction cleanly in the spike.
+- **Session resume preserves context fully** (same session id, the resumed orchestrator continued mid-protocol without re-orientation), and the transcript lands in `~/.claude/projects/` — manually resumable, per the augmentation principle. One quirk: the resumed query immediately re-emits the prior run's result message (zero-cost replay) before the new turn's messages.
+- **Operational gotchas:** SDK MCP tool calls that outlive 60s (every `send_prompt` does — worker turns take minutes) need `CLAUDE_CODE_STREAM_CLOSE_TIMEOUT` raised in `env`. `alwaysLoad: true` on the MCP server keeps the tools out of tool-search deferral. Current CLI `--output-format json` returns an **array of messages**, not a bare result object — the worker parser must select `type === 'result'`.
+- **Cost (one full spike run, opus-4-8 orchestrator + opus-4-8 implementer):** orchestrator $0.27 (incl. the resume turn at $0.04), implementer $0.80 for one `update-spec` turn, reviewer ~100k input / ~2k output codex tokens. Extrapolated, a full multi-phase run plausibly lands in the $5–15 claude-side range — within the post-2026-06-15 monthly pools, but `maxBudgetUsd` (already wired, $10/invocation in the spike) stays day-one.
+- **Free Q13 evidence:** when the implementer worker turn errored twice (a spike bug, later fixed), the orchestrator retried once, explicitly refused to fabricate the worker's output or review the spec itself, and queued a well-formed `ask_human` with full context. Triage instructions held under failure.
+
+The original analysis is preserved below as the record of what we considered.
+
+---
 
 **Why it matters.** The orchestrator is now an LLM agent that must be read-only (by tool surface), hold a session across a multi-hour phase, pause-and-resume at `ask_human` flags with the process exiting in between, and leave an inspectable transcript per the augmentation principle.
 

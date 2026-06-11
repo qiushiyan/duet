@@ -32,7 +32,7 @@ If duet ever starts to feel like it's *requiring* you to use it, the design has 
 
 - Pattern analysis: drafted from one full session (`examples/claude-code-session.jsonl` + `examples/codex-session.jsonl`), corroborated by a 22-session corpus scan of the user's planlab history (`docs/observed-pattern.md` §"Corpus scan: planlab", 2026-06-11).
 - Design: **pivoted 2026-06-11** from a dumb state-machine router to the three-role architecture above. The pivot's rationale, costs, and what survived are in `docs/automation-design.md` §"Design history"; the phase/gate model and snippet vocabulary (including the proposed `ceo-summary` snippet) are in `docs/workflow-model.md`.
-- Implementation: **started 2026-06-11** at the repo root — flat structure, `src/` for source, no separate `mvp/` directory. Stack: XState v5 (Q15 decided), execa, zod, commander, `@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk`; Node 24 runs the TypeScript directly. First milestones: the Q11 substrate spike, then Slice 1 (orchestrator-driven SPEC review loop, Q14).
+- Implementation: **started 2026-06-11** at the repo root — flat structure, `src/` for source, no separate `mvp/` directory. Stack: XState v5 (Q15 decided), execa, zod, commander, `@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk`; Node 24 runs the TypeScript directly. The **Q11 substrate spike passed** the same day (`src/spike/q11.ts` — read-only SDK orchestrator, cross-provider routing through `src/providers/`, cooperative ask_human pause + resume; findings in `docs/open-questions.md` Q11). Next milestone: Slice 1 (orchestrator-driven SPEC review loop, Q14).
 
 ## Reading order
 
