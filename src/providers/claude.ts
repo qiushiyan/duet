@@ -34,10 +34,12 @@ export class ClaudeWorker implements WorkerProvider {
     }
 
     if (!opts.readOnly) {
-      // The implementer edits artifacts and commits them; headless -p mode has
-      // no permission prompt to accept those, so pre-approve the narrow set.
-      args.push('--permission-mode', 'acceptEdits');
-      args.push('--allowedTools', 'Bash(git add:*),Bash(git commit:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*)');
+      // The implementer edits, commits, and runs project commands (tests,
+      // typecheck, builds) with nobody at the keyboard — headless -p mode has
+      // no permission prompt. bypassPermissions is the user's deliberate
+      // posture for their own repos (2026-06-11 decision); the CLI still
+      // honors explicit deny rules and refuses to run as root.
+      args.push('--permission-mode', 'bypassPermissions');
     }
 
     // Prompt goes through stdin (argv has length limits; snippet bodies wrapping
@@ -73,8 +75,15 @@ export class ClaudeWorker implements WorkerProvider {
     if (envelope.is_error || envelope.subtype !== 'success') {
       throw new Error(`claude worker turn failed (${envelope.subtype}): ${envelope.result ?? ''}`);
     }
+    // A /compact turn succeeds with an empty result (the CLI emits only a
+    // compact_boundary event) — name what happened so the orchestrator isn't
+    // handed a blank response.
+    const text =
+      !envelope.result && opts.prompt.trimStart().startsWith('/compact')
+        ? '(session compacted — context was reset per the instructions; the conversation continues from the summary)'
+        : (envelope.result ?? '');
     return {
-      text: envelope.result ?? '',
+      text,
       sessionId: envelope.session_id,
       costUsd: envelope.total_cost_usd,
       tokens:

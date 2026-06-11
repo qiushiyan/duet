@@ -16,10 +16,15 @@ import type { DriverInput, DriverOutput } from './driver.ts';
  * operational state lives on disk in the run dir, owned by the driver.
  *
  * ```
- * specLoop ──advanced──▶ commitSpecGate ──approve──▶ planLoop ──advanced──▶ planApprovalGate ──approve──▶ done
+ * specLoop ──advanced──▶ commitSpecGate ──approve──▶ planLoop ──advanced──▶ planApprovalGate
  *   │ ▲ flagged             │ reject ▲                 │ ▲ flagged              │ reject ▲
  *   ▼ │ answer              ▼────────┘                 ▼ │ answer               ▼────────┘
- * specFlagWait                                      planFlagWait
+ * specFlagWait                                      planFlagWait                │ approve   ← human walks away
+ *                                                                               ▼
+ *                                  done ◀──approve── shipGate ◀──advanced── implLoop
+ *                                                      │ reject ▲              │ ▲ flagged
+ *                                                      ▼────────┘              ▼ │ answer
+ *                                                                           implFlagWait
  * ```
  */
 
@@ -99,8 +104,38 @@ export const duetMachine = setup({
     planApprovalGate: {
       tags: ['quiescent', 'gate'],
       on: {
-        'human.approve': { target: 'done' },
+        'human.approve': { target: 'implLoop' },
         'human.reject': { target: 'planLoop' },
+      },
+    },
+    implLoop: {
+      tags: ['phase'],
+      invoke: {
+        src: 'phaseDriver',
+        input: ({ context }) => ({ runId: context.runId, cwd: context.cwd, phase: 'impl' as const }),
+        onDone: [
+          {
+            guard: { type: 'isAdvanced', params: ({ event }) => ({ output: event.output }) },
+            target: 'shipGate',
+          },
+          { target: 'implFlagWait' },
+        ],
+        onError: { target: 'implFlagWait' },
+      },
+    },
+    implFlagWait: {
+      tags: ['quiescent', 'flag-wait'],
+      on: {
+        'human.answer': { target: 'implLoop' },
+      },
+    },
+    shipGate: {
+      tags: ['quiescent', 'gate'],
+      on: {
+        // FINAL REVIEW is not built yet — approving the Ship gate ends the
+        // run; verification/docs/PR happen manually for now.
+        'human.approve': { target: 'done' },
+        'human.reject': { target: 'implLoop' },
       },
     },
     done: {

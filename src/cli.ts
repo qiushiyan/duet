@@ -7,6 +7,7 @@ import type { AnyMachineSnapshot } from 'xstate';
 import { loadRoleBindings } from './config.ts';
 import { duetMachine } from './harness/machine.ts';
 import { ROUND_CAPS } from './harness/driver.ts';
+import { notify } from './notify.ts';
 import {
   createRun,
   latestRun,
@@ -50,7 +51,20 @@ async function driveToQuiescence(
   saveRunState(fresh);
   actor.stop();
   printStatus(fresh, snapshot);
+  await notify(`duet ${fresh.runId}`, describeStop(fresh, snapshot));
   return snapshot;
+}
+
+function describeStop(state: RunState, snapshot: AnyMachineSnapshot): string {
+  if (snapshot.status === 'done') return 'run complete — the Ship gate is approved';
+  const machineState = state.machineState ?? '';
+  if (state.pendingQuestion && machineState.includes('FlagWait')) {
+    return `question queued: ${state.pendingQuestion.question}`;
+  }
+  if (machineState === 'commitSpecGate') return 'Commit-spec gate — spec ready for review';
+  if (machineState === 'planApprovalGate') return 'Plan-approval gate — plan ready for review';
+  if (machineState === 'shipGate') return 'Ship gate — implementation packet ready';
+  return `stopped at ${machineState}`;
 }
 
 function printStatus(state: RunState, snapshot?: AnyMachineSnapshot): void {
@@ -60,7 +74,7 @@ function printStatus(state: RunState, snapshot?: AnyMachineSnapshot): void {
   console.log(`spec:     ${state.specPath}`);
   if (state.lastActivity) console.log(`last:     ${state.lastActivity}`);
   console.log(
-    `rounds:   spec ${state.rounds.spec ?? 0}/${ROUND_CAPS.spec}, plan ${state.rounds.plan ?? 0}/${ROUND_CAPS.plan}`,
+    `rounds:   spec ${state.rounds.spec ?? 0}/${ROUND_CAPS.spec}, plan ${state.rounds.plan ?? 0}/${ROUND_CAPS.plan}, impl ${state.rounds.impl ?? 0}/${ROUND_CAPS.impl}`,
   );
   console.log(
     `cost:     orchestrator $${state.costs.orchestratorUsd.toFixed(2)}, claude workers $${state.costs.claudeWorkersUsd.toFixed(2)}, codex ${state.costs.codexTokens.input}/${state.costs.codexTokens.output} tokens`,
@@ -77,10 +91,14 @@ function printStatus(state: RunState, snapshot?: AnyMachineSnapshot): void {
     return;
   }
 
-  if (machineState === 'commitSpecGate' || machineState === 'planApprovalGate') {
-    const phase = machineState === 'commitSpecGate' ? 'spec' : 'plan';
+  if (machineState === 'commitSpecGate' || machineState === 'planApprovalGate' || machineState === 'shipGate') {
+    const phase = machineState === 'commitSpecGate' ? 'spec' : machineState === 'planApprovalGate' ? 'plan' : 'impl';
     const summary = state.phaseSummaries[phase];
-    console.log(`\n━━━ ${phase.toUpperCase()} gate — the orchestrator's summary ━━━`);
+    const heading =
+      machineState === 'shipGate'
+        ? 'SHIP gate — the orchestrator’s packet (CEO summary first)'
+        : `${phase.toUpperCase()} gate — the orchestrator's summary`;
+    console.log(`\n━━━ ${heading} ━━━`);
     if (summary) {
       console.log(summary.summary);
       if (summary.artifacts.length > 0) console.log(`\nartifacts: ${summary.artifacts.join(', ')}`);
@@ -88,11 +106,14 @@ function printStatus(state: RunState, snapshot?: AnyMachineSnapshot): void {
     console.log(`\ndecide with:`);
     console.log(`  duet continue ${state.runId} --approve`);
     console.log(`  duet continue ${state.runId} --reject "<feedback>"`);
+    if (machineState === 'shipGate') {
+      console.log(`\n(approving ends the run — FINAL REVIEW (verification, docs, PR) is manual for now)`);
+    }
     return;
   }
 
   if (snapshot?.status === 'done' || machineState === 'done') {
-    console.log(`\nrun complete — the plan is approved.`);
+    console.log(`\nrun complete — the Ship gate is approved. FINAL REVIEW (verification, docs, PR) is yours, manually, for now.`);
     if (state.snippetProposals.length > 0) {
       console.log(`\n━━━ queued snippet proposals (your end-of-run editorial review) ━━━`);
       for (const p of state.snippetProposals) {
@@ -117,7 +138,7 @@ program
 
 program
   .command('new')
-  .description('Start a run: orchestrator-driven SPEC review loop → gate → PLAN loop → gate.')
+  .description('Start a run: SPEC loop → gate → PLAN loop → gate (walk away) → AFK IMPLEMENTATION → Ship gate.')
   .requiredOption('--spec <path>', 'path to the draft spec file (the entry artifact)')
   .option('--framing <file>', 'project briefing file — the only place project knowledge enters')
   .option('--orchestrator <provider[:model]>', 'role binding override (claude[:model] only in v1)')

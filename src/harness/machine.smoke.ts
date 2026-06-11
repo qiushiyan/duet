@@ -16,7 +16,10 @@ const script: DriverOutput[] = [
   { outcome: 'advanced' }, // spec resume after answer → gate
   { outcome: 'advanced' }, // spec re-entry after gate reject → gate again
   { outcome: 'flagged' }, // plan entry → queued question
-  { outcome: 'advanced' }, // plan resume → final gate
+  { outcome: 'advanced' }, // plan resume → plan-approval gate
+  { outcome: 'flagged' }, // impl entry → queued question
+  { outcome: 'advanced' }, // impl resume → ship gate
+  { outcome: 'advanced' }, // impl re-entry after ship reject → ship gate again
 ];
 const calls: Array<{ phase: string }> = [];
 
@@ -68,21 +71,36 @@ actor.send({ type: 'human.reject' });
 snap = await waitFor(actor, quiescent);
 assert.equal(snap.value, 'commitSpecGate', 'reject re-runs the loop back to the gate');
 
-// 6. Approve → plan phase → flag → answer → final gate → approve → done.
+// 6. Approve → plan phase → flag → answer → plan-approval gate.
 actor.send({ type: 'human.approve' });
 snap = await waitFor(actor, quiescent);
 assert.equal(snap.value, 'planFlagWait');
 actor.send({ type: 'human.answer' });
 snap = await waitFor(actor, quiescent);
 assert.equal(snap.value, 'planApprovalGate');
+
+// 7. Plan approval enters the AFK impl phase (not done); flag → answer → ship gate.
+actor.send({ type: 'human.approve' });
+snap = await waitFor(actor, quiescent);
+assert.equal(snap.value, 'implFlagWait');
+assert.equal(snap.can({ type: 'human.approve' }), false, 'ship-gate events at impl flag-wait must be no-ops');
+actor.send({ type: 'human.answer' });
+snap = await waitFor(actor, quiescent);
+assert.equal(snap.value, 'shipGate');
+
+// 8. Ship gate: answer is a no-op; reject re-runs the impl loop; approve ends the run.
+assert.equal(snap.can({ type: 'human.answer' }), false);
+actor.send({ type: 'human.reject' });
+snap = await waitFor(actor, quiescent);
+assert.equal(snap.value, 'shipGate', 'reject re-runs the impl loop back to the ship gate');
 actor.send({ type: 'human.approve' });
 snap = await waitFor(actor, (s) => s.status === 'done');
 assert.equal(snap.value, 'done');
 
-// 7. The driver saw the phases in order, once per (re-)entry.
+// 9. The driver saw the phases in order, once per (re-)entry.
 assert.deepEqual(
   calls.map((c) => c.phase),
-  ['spec', 'spec', 'spec', 'plan', 'plan'],
+  ['spec', 'spec', 'spec', 'plan', 'plan', 'impl', 'impl', 'impl'],
 );
 
 console.log('machine smoke: all assertions passed');

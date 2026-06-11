@@ -95,7 +95,7 @@ Evidence for the move: the user repeatedly makes a free-form "CEO-reframe" reque
 
 ## What each phase produces
 
-- **PLANNING** → a committed spec file (path per project convention, e.g. `docs/superpowers/specs/YYYY-MM-DD-<slug>.md` **(observed)**) and an approved plan (in-conversation or a sibling plan file).
+- **PLANNING** → a committed spec file (path per project convention, e.g. `docs/superpowers/specs/YYYY-MM-DD-<slug>.md` **(observed)**) and an approved plan file (path named by the framing; a repo file rather than in-conversation, because implementation-phase compaction re-anchors on it — the orchestrator flags the human if the framing names no plan location).
 - **IMPLEMENTATION** → commits (one per slice, plus review-fix commits), the implementation handoff, the review history, and the CEO summary.
 - **FINAL REVIEW** → doc updates, the PR description, a pushed branch, and an opened PR.
 

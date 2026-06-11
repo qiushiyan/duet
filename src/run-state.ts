@@ -13,7 +13,7 @@ import type { RoleBindings } from './config.ts';
  * `codex exec resume`, and come back (or never).
  */
 
-export type PhaseName = 'spec' | 'plan';
+export type PhaseName = 'spec' | 'plan' | 'impl';
 export type Voice = 'orchestrator' | 'implementer' | 'reviewer';
 
 export interface RunState {

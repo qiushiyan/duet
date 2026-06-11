@@ -368,6 +368,15 @@ The original analysis is preserved below as the record of what we considered.
 
 **What would change the answer.** Actually wanting the configuration (the user today runs orchestrator-on-claude). Until then this is deliberately unbuilt — the provider interface allows it; nobody pays for it. If/when wanted: a half-day spike mirroring Q11's, against the same harness tools.
 
+## ~~Q18. How does worker context get compacted mid-run?~~
+
+**Answered (2026-06-11, by live probes and source reading — settled before the AFK phase was built on it).** Per provider, asymmetrically:
+
+- **claude workers: deliberate compaction via a literal `/compact` prompt.** Sending `/compact <instructions>` as the prompt to `claude -p --resume <id>` triggers native compaction headlessly — live-verified on the installed CLI, **including via stdin** (the exact path `src/providers/claude.ts` uses): the CLI emits a `compact_boundary` system event, the session id is unchanged, and a held fact survived compaction per the instructions while filler was dropped (~$0.02/compaction at Haiku). A compaction turn returns an *empty* result envelope; the provider substitutes a synthetic "(session compacted …)" text so the orchestrator isn't handed a blank response. The orchestrator times compaction (impl-phase entry prompt) and sends the adapted `compact-for-review` body after the `/compact` token, mirroring the manual workflow exactly.
+- **codex workers: native auto-compaction only — never send a compaction command.** `/compact` is TUI-only; in `codex exec` it lands as a literal user message (verified in the rollout transcript). But auto-compaction lives in `codex-rs/core`'s session turn loop (pre-sampling check + tool-call loop boundaries), shared by every frontend including `exec` and the SDK, with a default threshold of **90% of the model's context window** (`codex-rs/protocol/src/openai_models.rs`, pinned 0.133.0 source at `references/codex/`). The known failure (openai/codex#16033) only reproduces when `model_context_window` / `model_auto_compact_token_limit` are explicitly overridden in `~/.codex/config.toml`; the user's config has neither, and duet never writes that file (augmentation principle).
+
+**Residual:** deliberate compaction for a codex-bound *implementer* would need the session-rotation pattern (old session writes the summary, new session seeded with it) — same status as Q17: designed-but-unbuilt until someone actually runs that binding. And the codex auto-compaction evidence is source + issue-thread, not a live 230k-token run; if a reviewer ever crashes at the context ceiling, check those two config keys first.
+
 ## Suggested order of attack
 
 Q1–Q10 resolved 2026-05-26 (Q7/Q8/Q10 carry 2026-06-11 amendment/reversal notes). The pivot's questions:
@@ -380,4 +389,4 @@ Q1–Q10 resolved 2026-05-26 (Q7/Q8/Q10 carry 2026-06-11 amendment/reversal note
 6. **Q13 (triage precision)** — answered by running Slice 1+ and reviewing flags via the notes file, same discipline Q10 originally prescribed.
 7. **Q17 (codex-as-orchestrator)** — deferred until the configuration is actually wanted; the role-bindings design keeps the door open at zero cost.
 
-When Slice 1 starts producing notes, further questions (Q18+) land here.
+When runs start producing notes, further questions (Q19+) land here.

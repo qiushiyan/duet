@@ -69,12 +69,35 @@ ${readFileSync(join(state.cwd, state.specPath), 'utf8')}
 The human approved the spec at the commit-spec gate. Run the PLAN phase:
 
 1. Have the implementer commit the approved spec file (${state.specPath}) with a conventional message, as its own commit.
-2. Send the implementer a planning prompt — base it on the tdd-plan snippet when the work is test-shaped, start-plan otherwise (read the framing and spec to judge which; if genuinely unclear, that's a process call you may make). The plan lives in the implementer's reply, not a file, unless the framing says otherwise.
-3. Run the plan review loop: review-plan to the reviewer, update-plan to the implementer, -again variants for later rounds. Plans are reviewable at a finer altitude than specs — test cases, fixtures, and line-level references are fair game; only full code bodies are deferred.
-4. The backstop cap for this phase is ${roundCap} review rounds; converge well before it.
-5. When converged, call advance_phase with a summary. The human walks away after approving this gate, so the summary should give them confidence the plan is workable end to end.
+2. Decide where the plan file lives: the framing names the project's plan location (path or directory convention). The plan must be a file in the repo — implementation may compact the implementer's context, and the plan file is what later turns re-anchor on. If the framing doesn't name a plan location, ask_human for one before drafting.
+3. Send the implementer a planning prompt — base it on the tdd-plan snippet when the work is test-shaped, start-plan otherwise (read the framing and spec to judge which; if genuinely unclear, that's a process call you may make). The implementer writes the plan to the file and reports it.
+4. Run the plan review loop: review-plan to the reviewer (point it at the plan file's path as well as the content), update-plan to the implementer, -again variants for later rounds. Plans are reviewable at a finer altitude than specs — test cases, fixtures, and line-level references are fair game; only full code bodies are deferred.
+5. The backstop cap for this phase is ${roundCap} review rounds; converge well before it.
+6. When converged, call advance_phase with a summary, listing the plan file among the artifacts. The human walks away after approving this gate, so the summary should give them confidence the plan is workable end to end.
 
 Throughout: flag product or direction questions with ask_human; tactical questions bounce to the worker.
+</task>`;
+}
+
+export function implPhaseEntryPrompt(state: RunState, roundCap: number): string {
+  const compactionStep =
+    state.bindings.implementer.provider === 'claude'
+      ? `Compaction is yours to time: when the implementer's context has grown heavy with build-process detail (typically after the last slice, before the handoff — earlier if a long implementation is degrading), send the implementer a prompt whose body is literally "/compact " followed by your adapted compact-for-review instructions. The session compacts natively in place and the turn returns a confirmation; follow with a reread-context turn pointing at the plan file and the spec so the implementer re-anchors on the artifacts rather than the dropped journey.`
+      : `The implementer runs on codex, which compacts its own context automatically — never send a compaction command. When you judge the context has reset (or before the handoff), a reread-context turn pointing at the plan file and the spec keeps the implementer anchored on the artifacts.`;
+
+  return `<task>
+The human approved the plan and walked away — this is the AFK IMPLEMENTATION phase. You drive it end to end; ask_human still works but now queues the question and pauses the whole run until the human returns, so a flag is a real stop, not a quick check-in. Make each one self-contained, and let everything that can wait for the Ship gate wait.
+
+The arc:
+
+1. Have the implementer commit the approved plan file with a conventional message, as its own commit.
+2. Drive the implementer through the plan's slices: one commit per slice, tests with the slice per the plan's verification story. Batch at your judgment — worker turns are slow, so a single turn may cover a few small slices, but ask for a report each turn (what landed, test state, commits) so you can steer.
+3. For large implementations (roughly 10+ slices), run the midpoint checkpoint at your judgment: midpoint-status from the implementer, review-midpoint to the reviewer, respond-midpoint back. The reviewer weights foundational problems highest — they compound across every remaining slice — and treats unreached slices as intentionally undone, not missing.
+4. ${compactionStep}
+5. When all slices are in: implementation-handoff from the implementer, then the review loop — review-implementation to the reviewer, respond-review to the implementer, -again variants for later rounds, fix commits as they're accepted. The backstop cap for this phase is ${roundCap} review rounds; converge well before it.
+6. Last act, after the loop converges: send the implementer ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review history (rounds run, points raised, resolved, disputed), deviations from the plan, and the test state. The human returns from hours away and decides to ship from this packet alone — make it carry everything.
+
+Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
 </task>`;
 }
 
@@ -82,8 +105,8 @@ export function answerResumePrompt(answer: string): string {
   return `The human answered your queued question: ${JSON.stringify(answer)}. Continue the phase from where you paused, taking their answer into account.`;
 }
 
-export function feedbackResumePrompt(phase: 'spec' | 'plan', feedback: string): string {
-  const artifact = phase === 'spec' ? 'spec' : 'plan';
+export function feedbackResumePrompt(phase: 'spec' | 'plan' | 'impl', feedback: string): string {
+  const artifact = phase === 'spec' ? 'spec' : phase === 'plan' ? 'plan' : 'implementation';
   return `At the gate, the human sent the ${artifact} back with this feedback: ${JSON.stringify(
     feedback,
   )}. Re-enter the ${artifact} loop to address it — route the feedback to the implementer (the human is the editor-in-chief; their feedback outranks reviewer opinions), run whatever review rounds the changes warrant, and advance the phase again when converged.`;

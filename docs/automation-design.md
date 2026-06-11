@@ -2,7 +2,7 @@
 
 This document describes the duet design as of the **2026-06-11 pivot**: a three-role architecture in which an intelligent, read-only LLM **orchestrator** routes the snippet protocol between an **implementer** and a **reviewer**, inside a deterministic phase-and-gate skeleton enforced in code. It supersedes the dumb-router design of 2026-05-26. The reversal and its rationale are recorded in §"Design history" below; the affected open questions carry amendment notes (`docs/open-questions.md` Q7, Q8, Q10) and the new questions the pivot raises are Q11–Q17.
 
-**Implementation status:** the attended PLANNING phase of this design is implemented and live-verified (`src/harness/` statechart + driver, `src/cli.ts`, `src/providers/`; the verifying run is recorded in Q14). The AFK IMPLEMENTATION and FINAL REVIEW phases, inter-phase worker compaction, the framing-entry front half of PLANNING, `--tmux`, and notifications are design-only.
+**Implementation status:** the attended PLANNING phase is implemented and live-verified (`src/harness/` statechart + driver, `src/cli.ts`, `src/providers/`; the verifying run is recorded in Q14). The AFK IMPLEMENTATION phase is implemented (plan-approval gate → slices → midpoint/compaction at orchestrator judgment → handoff → review loop → `ceo-summary` → Ship gate) along with worker compaction (Q18) and macOS notifications at every quiescent stop — not yet live-verified by a real AFK run. Approving the Ship gate currently ends the run: the FINAL REVIEW phase, the framing-entry front half of PLANNING, and `--tmux` remain design-only.
 
 ## Design principles
 
@@ -122,7 +122,16 @@ Adopted 2026-06-11 from Anthropic's published guidance, first applied in the Q11
 Unchanged in shape from the 2026-05-26 design: resumed CLI sessions, transcripts in the standard locations, invoked per turn by the harness on the orchestrator's instruction. Driving mechanics verified 2026-06-11 against the locally installed CLIs:
 
 - **Codex reviewer** — `codex exec -s read-only` is the correct minimal sandbox for a read-only reviewer (no `--dangerously-*` flags); resume is a verb (`codex exec resume <id>`) and **`--output-schema` works on resume** in codex-cli 0.133.0 (upstream issue fixed May 2026 by openai/codex#23123 — live-verified locally with a two-turn schema-enforced smoke test). Resume lacks `-s`/`-C` flags; pass `-c 'sandbox_mode="read-only"'` instead. Gotcha: an open stdin pipe makes `codex exec` block waiting for EOF — close stdin or pipe the prompt through it deliberately. Preferred wrapper: `@openai/codex-sdk` (thin spawn-the-CLI wrapper; rollouts still land in `~/.codex/sessions/`, so augmentation holds), pinned to the same release as the CLI, with the raw flags as known-working fallback. SDK source + docs vendored at `references/codex/`.
-- **Claude implementer** — either an Agent SDK `query()` session with full tools or a spawned `claude -p --output-format stream-json --resume <id>`; both write the same `~/.claude/projects/` transcripts and both draw from the same subscription credit pool (see Q11).
+- **Claude implementer** — a spawned `claude -p --output-format json --resume <id>`, writing the standard `~/.claude/projects/` transcripts and drawing from the subscription credit pool (see Q11). Headless permission posture: **`--permission-mode bypassPermissions`** (the user's 2026-06-11 decision) — the AFK implementer edits files, commits, and runs project commands (tests, typecheck, builds) with nobody at the keyboard, and the user accepts the unprompted-execution tradeoff on their own repos. Explicit deny rules still apply, and the CLI refuses to run as root.
+
+### Worker compaction (settled with the AFK phase — evidence in Q18)
+
+The compaction points in the workflow (`compact-for-plan`, `compact-for-review`) are implementer-side moves, and the mechanics are per-provider:
+
+- **claude** — the orchestrator sends the implementer a prompt whose body is literally `/compact ` followed by the adapted compaction snippet; the session compacts natively in place (same session id, `compact_boundary` event, instructions honored — live-verified headlessly, including via the stdin path the provider uses). The provider substitutes a synthetic confirmation for the compaction turn's empty result. A `reread-context` turn pointing at the plan file and spec re-anchors the implementer afterward.
+- **codex** — auto-compaction only, built into the core session engine every frontend shares (default threshold: 90% of the model's context window). Duet never sends codex a compaction command and never touches `~/.codex/config.toml` (whose `model_context_window` / `model_auto_compact_token_limit` overrides are the one known way to break exec-mode auto-compaction).
+
+This is also why **the plan must be a file in the repo** (path named by the framing; the orchestrator flags the human if the framing is silent): compaction drops the implementer's journey, and the plan file plus the committed spec are what post-compaction turns re-anchor on.
 
 ## Question triage
 
@@ -210,7 +219,7 @@ The 2026-05-26 design made `schemas/agent-response.json` the protocol contract: 
 
 ## Invocation and lifecycle
 
-CLI surface (implemented in `src/cli.ts` for the PLANNING phase):
+CLI surface (implemented in `src/cli.ts` through the PLANNING and AFK IMPLEMENTATION phases; approving the Ship gate ends the run while FINAL REVIEW remains unbuilt):
 
 | Command | What it does |
 |---|---|
@@ -228,6 +237,8 @@ State persistence: the run dir `.duet/runs/<run_id>/` holds `state.json` (the hu
 Settled 2026-06-11. Duet owns its subprocesses and writes **one append-only log file per voice** (orchestrator, implementer, reviewer) under `.duet/runs/<run_id>/`. Without tmux, the same lines stream to duet's stdout with colored `[voice]` prefixes (the concurrently/turbo idiom). With `--tmux`, duet shells out (~5 tmux commands via execa, no library) to open panes each running `tail -n +1 -F` on a voice's log file — `-n +1` so a late-opened pane replays the full transcript.
 
 The properties this buys: killing tmux doesn't kill agents; killing duet doesn't corrupt tmux; one code path produces lines and two dumb sinks consume them; and the log files are themselves inspectable-without-duet artifacts. The rejected alternative is the claude-squad architecture (agents live *inside* tmux sessions, state read back by `capture-pane` screen-scraping) — vendored as the anti-model at `references/claude-squad/` (AGPL — read-only inspiration, no code reuse).
+
+Separately from the viewer, every quiescent stop fires a best-effort macOS notification (`src/notify.ts`) — gate reached, question queued, or run complete — because the AFK phase's whole point is that the human is elsewhere when those land. Notification failure is silently swallowed; `duet status` carries the same information.
 
 ## What the MVP should *not* do
 

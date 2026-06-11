@@ -16,6 +16,7 @@ import {
   ORCHESTRATOR_SYSTEM_PROMPT,
   answerResumePrompt,
   feedbackResumePrompt,
+  implPhaseEntryPrompt,
   nudgeContinuePrompt,
   planPhaseEntryPrompt,
   specPhaseEntryPrompt,
@@ -43,11 +44,21 @@ export interface DriverOutput {
 }
 
 /** Runaway backstops, not exit mechanisms — generous by design (2× the old caps). */
-export const ROUND_CAPS: Record<PhaseName, number> = { spec: 6, plan: 4 };
+export const ROUND_CAPS: Record<PhaseName, number> = { spec: 6, plan: 4, impl: 6 };
 
-const ORCHESTRATOR_MAX_BUDGET_USD = 15;
-const WORKER_MAX_BUDGET_USD = 10;
-const WORKER_TURN_TIMEOUT_MS = 30 * 60_000;
+/**
+ * Per-phase rails. The AFK impl phase runs 1–3 hours with many worker turns,
+ * so its ceilings are wider; hitting any of them flags the human rather than
+ * crashing (the budget-exhausted result subtype and worker-timeout error both
+ * land on the existing flag paths).
+ */
+const ORCHESTRATOR_MAX_BUDGET_USD: Record<PhaseName, number> = { spec: 15, plan: 15, impl: 30 };
+const WORKER_MAX_BUDGET_USD: Record<PhaseName, number> = { spec: 10, plan: 10, impl: 25 };
+const WORKER_TURN_TIMEOUT_MS: Record<PhaseName, number> = {
+  spec: 30 * 60_000,
+  plan: 30 * 60_000,
+  impl: 60 * 60_000,
+};
 
 export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<DriverOutput> {
   const state = loadRunState(cwd, runId);
@@ -58,23 +69,25 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
   if (pendingMessage?.kind === 'answer') delete state.pendingQuestion;
   saveRunState(state);
 
+  const workerBudgetUsd = WORKER_MAX_BUDGET_USD[phase];
+  const workerTimeoutMs = WORKER_TURN_TIMEOUT_MS[phase];
   const providers: Record<'implementer' | 'reviewer', WorkerProvider> = {
     implementer:
       state.bindings.implementer.provider === 'claude'
         ? new ClaudeWorker({
             model: state.bindings.implementer.model ?? 'claude-opus-4-8',
-            maxBudgetUsd: WORKER_MAX_BUDGET_USD,
-            timeoutMs: WORKER_TURN_TIMEOUT_MS,
+            maxBudgetUsd: workerBudgetUsd,
+            timeoutMs: workerTimeoutMs,
           })
-        : new CodexWorker({ timeoutMs: WORKER_TURN_TIMEOUT_MS }),
+        : new CodexWorker({ timeoutMs: workerTimeoutMs }),
     reviewer:
       state.bindings.reviewer.provider === 'claude'
         ? new ClaudeWorker({
             model: state.bindings.reviewer.model ?? 'claude-opus-4-8',
-            maxBudgetUsd: WORKER_MAX_BUDGET_USD,
-            timeoutMs: WORKER_TURN_TIMEOUT_MS,
+            maxBudgetUsd: workerBudgetUsd,
+            timeoutMs: workerTimeoutMs,
           })
-        : new CodexWorker({ timeoutMs: WORKER_TURN_TIMEOUT_MS }),
+        : new CodexWorker({ timeoutMs: workerTimeoutMs }),
   };
 
   // Per-invocation flags the tool handlers and the loop share.
@@ -296,7 +309,7 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
       'mcp__orchestrator__propose_snippet_edit',
       'mcp__orchestrator__write_note',
     ],
-    maxBudgetUsd: ORCHESTRATOR_MAX_BUDGET_USD,
+    maxBudgetUsd: ORCHESTRATOR_MAX_BUDGET_USD[phase],
     systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
     // send_prompt calls outlive the default 60s SDK MCP stream window.
     env: { ...process.env, CLAUDE_CODE_STREAM_CLOSE_TIMEOUT: String(2 * 60 * 60_000) },
@@ -372,9 +385,9 @@ function buildPrompt(
   if (!state.phaseStarted[phase]) {
     state.phaseStarted[phase] = true;
     saveRunState(state);
-    return phase === 'spec'
-      ? specPhaseEntryPrompt(state, ROUND_CAPS.spec)
-      : planPhaseEntryPrompt(state, ROUND_CAPS.plan);
+    if (phase === 'spec') return specPhaseEntryPrompt(state, ROUND_CAPS.spec);
+    if (phase === 'plan') return planPhaseEntryPrompt(state, ROUND_CAPS.plan);
+    return implPhaseEntryPrompt(state, ROUND_CAPS.impl);
   }
   if (pendingMessage?.kind === 'answer') return answerResumePrompt(pendingMessage.text);
   if (pendingMessage?.kind === 'feedback') return feedbackResumePrompt(phase, pendingMessage.text);
