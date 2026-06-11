@@ -71,8 +71,9 @@ function aliveDriverPid(state: RunState): number | undefined {
 
 function printWatchHints(state: RunState, pid: number, phaseLabel: string): void {
   console.log(`${phaseLabel} running in the background (pid ${pid})`);
-  console.log(`  live logs:  duet view ${state.runId}`);
-  console.log(`  status:     duet status ${state.runId}`);
+  console.log(`  inline logs:  duet logs ${state.runId}`);
+  console.log(`  tmux panes:   duet view ${state.runId}`);
+  console.log(`  status:       duet status ${state.runId}`);
   console.log(`you'll get a notification at the next gate or queued question`);
 }
 
@@ -380,6 +381,21 @@ program
     if (!state) fail('no runs found in this project');
     await openTmuxView(state);
     console.log(`raw logs: ${join(runDirOf(state.cwd, state.runId))}/{orchestrator,implementer,reviewer,driver}.log`);
+  });
+
+program
+  .command('logs')
+  .description('Stream the run’s driver narration inline — replays from the start, then follows. Ctrl-C detaches; the run is unaffected.')
+  .argument('[runId]', 'run id (defaults to the latest run in this project)')
+  .action(async (runId: string | undefined) => {
+    const cwd = process.cwd();
+    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
+    if (!state) fail('no runs found in this project');
+    const path = join(runDirOf(state.cwd, state.runId), 'driver.log');
+    console.log(`following ${path} — Ctrl-C detaches (the run keeps going)\n`);
+    // tail -F waits for the file if the driver hasn't written yet; SIGINT
+    // here kills only the tail, never the detached driver.
+    await execa('tail', ['-n', '+1', '-F', path], { stdio: 'inherit', reject: false });
   });
 
 program

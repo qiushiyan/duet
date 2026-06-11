@@ -235,6 +235,7 @@ CLI surface (implemented in `src/cli.ts` across the full arc):
 | `duet new [--spec <draft-path>] [--framing <file>] [--orchestrator …] [--impl …] [--reviewer …] [--tmux]` | Starts a run. With neither `--spec` nor `--framing`, opens `$VISUAL`/`$EDITOR` on `duet-framing.md` in the project (template-seeded; GUI editors like VS Code get `--wait` injected) and starts framing-only from what the user saves — an empty or untouched file aborts. With a draft spec, enters at the spec review rounds; framing-only entry runs the FRAME phase first (onboard → think-holistic → compare-notes → Direction gate) and the spec is drafted after it. Returns immediately; the phase runs in a detached driver to its next gate or queued flag. |
 | `duet continue [run_id] [--approve \| --reject "…" \| --answer "…"] [--tmux]` | Resumes past the current gate or answers a queued `ask_human` flag; defaults to the latest run. Returns immediately (detached driver); refused while the run's phase is still driving. With no flags: status if running, crash recovery if not. `--tmux` opens or reuses the run's viewer. |
 | `duet view [run_id]` | Opens (or reuses) the tmux viewer for a run and prints the raw log paths. |
+| `duet logs [run_id]` | Streams the driver narration inline (replay + follow of `driver.log`) — the foreground view `new` used to hold. Ctrl-C detaches; the run is unaffected. |
 | `duet status [run_id]` | Current state, queued flags, phase summaries, round counts vs. caps, costs, queued snippet proposals, next command. |
 | `duet runs` | Lists known runs in the project. |
 
