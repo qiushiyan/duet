@@ -98,43 +98,61 @@ const providers: Record<'implementer' | 'reviewer', WorkerProvider> = {
 
 const sendPrompt = tool(
   'send_prompt',
-  'Send a prompt to a worker agent and return its response. `tag` names the source snippet this prompt was built from; `body` is the final prompt text after your per-turn adaptation.',
+  'Send a prompt to a worker agent and return its final response. Each role is one persistent session: a later call to the same role continues that worker’s conversation, so refer back to earlier turns instead of repeating context the worker has already seen. Worker turns are slow (often minutes) — prefer one well-composed prompt over several small ones.',
   {
-    role: z.enum(['implementer', 'reviewer']),
-    tag: z.string().describe('Source snippet key, e.g. "review-spec". Use "custom" if composed from scratch.'),
-    body: z.string().describe('The full prompt text to send.'),
+    role: z
+      .enum(['implementer', 'reviewer'])
+      .describe('implementer produces and revises artifacts; reviewer critiques them (read-only).'),
+    tag: z.string().describe('Source snippet key this prompt was built from, e.g. "review-spec". Use "custom" if composed from scratch.'),
+    body: z.string().describe('The full prompt text to send, after your per-turn adaptation.'),
   },
   async (args) => {
     const provider = providers[args.role];
     console.log(
       `\n[send_prompt] → ${args.role} (${provider.name})  tag=${args.tag}  body=${args.body.length} chars`,
     );
-    const turn = await provider.runTurn({
-      prompt: args.body,
-      sessionId: state.workerSessions[args.role],
-      readOnly: args.role === 'reviewer',
-      cwd: REPO_ROOT,
-    });
-    state.workerSessions[args.role] = turn.sessionId;
-    if (turn.costUsd) state.costs.claudeWorkerUsd += turn.costUsd;
-    if (provider.name === 'codex' && turn.tokens) {
-      state.costs.codexTokens.input += turn.tokens.input;
-      state.costs.codexTokens.output += turn.tokens.output;
+    try {
+      const turn = await provider.runTurn({
+        prompt: args.body,
+        sessionId: state.workerSessions[args.role],
+        readOnly: args.role === 'reviewer',
+        cwd: REPO_ROOT,
+      });
+      state.workerSessions[args.role] = turn.sessionId;
+      if (turn.costUsd) state.costs.claudeWorkerUsd += turn.costUsd;
+      if (provider.name === 'codex' && turn.tokens) {
+        state.costs.codexTokens.input += turn.tokens.input;
+        state.costs.codexTokens.output += turn.tokens.output;
+      }
+      saveState(state);
+      console.log(
+        `[send_prompt] ← ${args.role} responded (${turn.text.length} chars, session ${turn.sessionId})`,
+      );
+      return { content: [{ type: 'text' as const, text: turn.text }] };
+    } catch (err) {
+      // Actionable, steering error: name the failure layer and prescribe the
+      // recovery path, so the orchestrator doesn't have to invent one.
+      const detail = err instanceof Error ? err.message : String(err);
+      console.log(`[send_prompt] ✗ ${args.role} turn failed: ${detail}`);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `The ${args.role} worker's turn failed at the infrastructure layer (${detail}). The worker never saw your prompt, so this is not a content problem. Retry this same send_prompt call once; if the retry also fails, stop routing and report the failure to the human via ask_human instead of continuing the round.`,
+          },
+        ],
+        isError: true,
+      };
     }
-    saveState(state);
-    console.log(
-      `[send_prompt] ← ${args.role} responded (${turn.text.length} chars, session ${turn.sessionId})`,
-    );
-    return { content: [{ type: 'text' as const, text: turn.text }] };
   },
 );
 
 const askHuman = tool(
   'ask_human',
-  'Flag a question for the human. The human may be away; the question is queued and the run pauses until they answer.',
+  'Flag a question for the human: product or direction calls, environment actions only they can take (deploys, credentials, migrations), or blockers you cannot route around. Route technical and content questions to a worker instead — the human is the editor-in-chief, not a third engineer. The human may be away; if so the question is queued and the run pauses until they answer.',
   {
-    question: z.string(),
-    context: z.string().optional().describe('One or two sentences of context the human needs.'),
+    question: z.string().describe('The question, self-contained enough to answer from a phone.'),
+    context: z.string().optional().describe('One or two sentences of background the human needs to answer well.'),
   },
   async (args) => {
     askHumanHandlerInvoked = true;
@@ -155,7 +173,7 @@ const askHuman = tool(
       content: [
         {
           type: 'text' as const,
-          text: 'The human is AFK. Your question has been queued and the run will pause. End your turn NOW with a one-line status; do not take any further action. The run resumes when the human answers.',
+          text: 'The human is away, so your question has been queued and the run is pausing. End your turn with a one-line status — anything you do past this point happens without the answer you just asked for. The run resumes with the human’s answer.',
         },
       ],
     };
@@ -182,8 +200,16 @@ function orchestratorOptions(resumeSessionId?: string): Options {
     },
     allowedTools: ['mcp__orchestrator__send_prompt', 'mcp__orchestrator__ask_human'],
     maxBudgetUsd: 10,
-    systemPrompt:
-      'You are the orchestrator of a two-agent engineering workflow. You command an implementer and a reviewer through the send_prompt tool, routing each one’s output to the other. You are read-only: you never write files, never run commands, and never answer a product or technical question with your own opinion — you do triage, not substance. When something needs the human, use ask_human.',
+    systemPrompt: `You are the orchestrator of a two-agent engineering workflow: an implementer who produces artifacts (specs, plans, code) and a reviewer who critiques them. You drive the protocol — choose and adapt each prompt, route each worker's output to the other, judge when a review loop has converged, and decide what needs the human.
+
+<division_of_labor>
+Three parties answer three kinds of questions, and keeping them separate is what keeps the human's judgment in the loop:
+- Workers answer technical and content questions. When one arises, route it to a worker with process guidance ("decide per the plan and record the decision").
+- The human answers product, direction, and environment questions (anything touching deploys, credentials, migrations, or scope). Flag those with ask_human.
+- You answer neither kind. Your judgments are about process: who speaks next, whether a loop has converged, what to flag. If you notice yourself forming an opinion about an artifact's content, treat that as a signal to route or flag — an orchestrator opinion would influence the work invisibly, bypassing the human's gates.
+</division_of_labor>
+
+You have no write access by design; every repository effect happens through the workers.`,
     env: { ...process.env, CLAUDE_CODE_STREAM_CLOSE_TIMEOUT: '900000' },
     stderr: (data: string) => {
       if (process.env['SPIKE_DEBUG']) console.error(`[orchestrator stderr] ${data}`);
@@ -243,25 +269,28 @@ async function cmdRun(): Promise<void> {
   const reviewSpec = loadSnippet('review-spec');
   const updateSpec = loadSnippet('update-spec');
 
-  const prompt = `Run ONE round of the spec review protocol on the draft spec below, then pause for the human.
-
-Steps, in order:
-
-1. Send the reviewer a review-spec prompt wrapping the full draft spec. Base it on the snippet template below (the "$0" marks where the artifact goes); adapt freely where context warrants, and pass the snippet key as \`tag\`.
-2. Send the implementer an update-spec prompt wrapping the reviewer's full feedback, based on the update-spec template. The implementer should reply with the revised spec text in its message.
-3. After both turns, call ask_human exactly once: report in one or two sentences how the round went (how much the reviewer pushed back, whether the implementer disagreed with anything), and ask whether to run another round or stop here. If the tool result says the human is AFK and the question was queued, end your turn immediately as it instructs — the run pauses and resumes when they answer.
-4. When the human's answer arrives (as an ask_human result or in a later message): do NOT run more rounds regardless of the answer (this is a one-round spike). End with a short final report: what the reviewer flagged, what the implementer changed or rejected, and what you would do next in a real run.
-
-Remember: you never evaluate the spec yourself and never answer substance — route, judge convergence, and flag.
-
---- snippet template: review-spec ---
+  // Per Anthropic prompting guidance: longform data first (XML-tagged), the
+  // task last; positive instructions with motivation over bare prohibitions.
+  const prompt = `<documents>
+<document name="snippet-template: review-spec">
 ${reviewSpec}
-
---- snippet template: update-spec ---
+</document>
+<document name="snippet-template: update-spec">
 ${updateSpec}
+</document>
+<document name="draft-spec" source="src/spike/fixture-spec.md">
+${draftSpec}
+</document>
+</documents>
 
---- draft spec (src/spike/fixture-spec.md) ---
-${draftSpec}`;
+<task>
+Run one round of the spec review protocol on the draft spec above, then pause for the human. This is a one-round calibration run: its purpose is to exercise the routing, so a single round followed by your report is the complete job.
+
+1. Send the reviewer a review-spec prompt wrapping the full draft spec. Base it on the snippet template (the "$0" marks where the artifact goes); adapt it where context warrants, and pass the snippet key as \`tag\`.
+2. Send the implementer an update-spec prompt wrapping the reviewer's full feedback, based on the update-spec template. Ask the implementer to reply with the revised spec text in its message.
+3. Call ask_human once with a one-or-two-sentence report on the round (how much the reviewer pushed back, whether the implementer disagreed with anything) and the question of whether to run another round or stop. If the tool result says the question was queued, end your turn with a one-line status — the run pauses and resumes when the human answers.
+4. When the answer arrives, close out the run with a short final report: what the reviewer flagged, what the implementer changed or rejected, and what you would do next in a real run. Whatever the answer says, the report is your last act — round 2, if the human wants one, happens in a separate run.
+</task>`;
 
   console.log('[spike] starting orchestrator (phase A: route one round, then queue ask_human)');
   await drive(prompt);

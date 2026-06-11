@@ -105,6 +105,16 @@ A read-only agent whose system prompt is the workflow protocol operationalized �
 | `propose_snippet_edit(diff, rationale)` | Queue a persistent snippet-library change for the end-of-run gate. Never applied mid-run. |
 | `write_note(observation)` | Append a friction observation to `.duet/runs/<run_id>.notes.md` (the Q10 convention, with a second author). |
 
+#### Prompting and tool-surface conventions
+
+Adopted 2026-06-11 from Anthropic's published guidance ([prompting best practices](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices), [writing effective tools for agents](https://www.anthropic.com/engineering/writing-tools-for-agents), [effective context engineering](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)), first applied in the Q11 spike. These bind every prompt and tool the harness ships:
+
+- **Artifacts first, task last, XML-tagged.** Orchestrator prompts put longform content (snippet templates, specs, worker output) at the top in `<documents>`/`<document>` tags and the instructions in a `<task>` block at the end — measurably better on long inputs, and unambiguous about what is data vs. instruction.
+- **Thinking framework over prohibition.** Prefer positive instructions that set up the intended behavior, and give the *why* when a constraint matters (the model generalizes from motivation). The system prompt's `<division_of_labor>` block is the canonical example: instead of "never answer substance," it explains who answers what and why an orchestrator opinion would bypass the human gates. Avoid aggressive emphasis ("CRITICAL", "exactly once", all-caps) — current models overtrigger on it.
+- **Tool descriptions are prompts.** Write them like onboarding a new teammate, and surface the implicit, load-bearing facts: `send_prompt`'s description states that each role is one persistent session (don't re-send context) and that worker turns are slow (prefer one composed prompt over many small ones); `ask_human`'s description carries the triage rule itself.
+- **Errors prescribe the recovery path.** A failed tool call returns an LLM-facing message that names the failure layer ("the worker never saw your prompt — this is not a content problem") and says what to do next ("retry once; if it fails again, ask_human"), so the orchestrator doesn't improvise recovery. Never surface bare tracebacks or opaque codes.
+- **Tool results nudge the next step.** When a result changes what the orchestrator should do (a queued `ask_human`, a backstop cap hit), the result text says so explicitly and gives the reason — a mini-context that steers, e.g. "your question has been queued and the run is pausing; end your turn — anything past this point happens without the answer you just asked for."
+
 ### Layer 3 — Workers
 
 Unchanged in shape from the 2026-05-26 design: resumed CLI sessions, transcripts in the standard locations, invoked per turn by the harness on the orchestrator's instruction. Driving mechanics verified 2026-06-11 against the locally installed CLIs:
