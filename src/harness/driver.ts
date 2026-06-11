@@ -135,7 +135,25 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
   let questionQueued = false;
   let stagedAnswer = pendingMessage?.kind === 'answer' ? pendingMessage.text : null;
 
+  // Colored [tag] prefixes on plain stdout — the no-tmux sink of the same
+  // lines the voice logs carry (the concurrently/turbo idiom). TTY-only so
+  // piped output stays clean.
+  const TAG_COLORS: Record<string, string> = {
+    '[orchestrator]': '\x1b[36m', // cyan
+    '[send_prompt]': '\x1b[32m', // green
+    '[ask_human]': '\x1b[33m', // yellow
+    '[advance_phase]': '\x1b[33m',
+    '[create_branch]': '\x1b[33m',
+    '[propose_snippet_edit]': '\x1b[33m',
+  };
   const log = (line: string) => {
+    if (process.stdout.isTTY) {
+      const tag = Object.keys(TAG_COLORS).find((t) => line.startsWith(t));
+      if (tag) {
+        console.log(`${TAG_COLORS[tag]}${tag}\x1b[0m${line.slice(tag.length)}`);
+        return;
+      }
+    }
     console.log(line);
   };
 

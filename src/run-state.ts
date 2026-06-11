@@ -126,8 +126,8 @@ export function loadMachineSnapshot(state: RunState): unknown | undefined {
 
 /**
  * One append-only log per voice (docs/automation-design.md §"Visualization").
- * Plain text, inspectable without duet; a future `--tmux` opens panes running
- * `tail -n +1 -F` on these files.
+ * Plain text, inspectable without duet; `--tmux` (src/tmux-view.ts) opens
+ * panes running `tail -n +1 -F` on these files.
  */
 export function appendVoiceLog(state: RunState, voice: Voice, header: string, body?: string): void {
   const path = join(runDirOf(state.cwd, state.runId), `${voice}.log`);

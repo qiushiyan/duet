@@ -9,6 +9,7 @@ import { loadRoleBindings } from './config.ts';
 import { duetMachine } from './harness/machine.ts';
 import { ROUND_CAPS } from './harness/driver.ts';
 import { notify } from './notify.ts';
+import { openTmuxView } from './tmux-view.ts';
 import {
   createRun,
   latestRun,
@@ -171,7 +172,8 @@ program
   .option('--orchestrator <provider[:model]>', 'role binding override (claude[:model] only in v1)')
   .option('--impl <provider[:model]>', 'implementer binding override')
   .option('--reviewer <provider[:model]>', 'reviewer binding override')
-  .action(async (opts: { spec?: string; framing?: string; orchestrator?: string; impl?: string; reviewer?: string }) => {
+  .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
+  .action(async (opts: { spec?: string; framing?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean }) => {
     const cwd = process.cwd();
     if (!opts.spec && !opts.framing) {
       fail('provide --spec, --framing, or both — a framing-only run drafts the spec itself, but needs the briefing to do it');
@@ -205,6 +207,7 @@ program
       bindings,
     });
     console.log(`run ${state.runId} created — entering the ${specPath ? 'SPEC review loop' : 'FRAME phase'}`);
+    if (opts.tmux) await openTmuxView(state);
     console.log(
       `roles: orchestrator=${bindings.orchestrator.provider}:${bindings.orchestrator.model ?? ''} implementer=${bindings.implementer.provider}${bindings.implementer.model ? ':' + bindings.implementer.model : ''} reviewer=${bindings.reviewer.provider}${bindings.reviewer.model ? ':' + bindings.reviewer.model : ''}\n`,
     );
@@ -218,10 +221,12 @@ program
   .option('--approve', 'approve the current gate')
   .option('--reject <feedback>', 'send the artifact back with feedback')
   .option('--answer <text>', 'answer the queued question')
-  .action(async (runId: string | undefined, opts: { approve?: boolean; reject?: string; answer?: string }) => {
+  .option('--tmux', 'open (or reuse) the tmux viewer for this run')
+  .action(async (runId: string | undefined, opts: { approve?: boolean; reject?: string; answer?: string; tmux?: boolean }) => {
     const cwd = process.cwd();
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
     if (!state) fail('no runs found in this project (start one with: duet new --spec <path>)');
+    if (opts.tmux) await openTmuxView(state);
 
     const chosen = [opts.approve, opts.reject, opts.answer].filter((v) => v !== undefined);
     if (chosen.length > 1) fail('choose one of --approve, --reject, --answer');
