@@ -20,6 +20,8 @@ If duet ever starts to feel like it's *requiring* you to use it, the design has 
 
 ## What's here
 
+- `src/` — the implementation. `cli.ts` (the `duet` command: `new`, `continue`, `status`, `runs`); `harness/` (the XState statechart whose gates only human events can cross, and the orchestrator phase driver hosting the six harness tools); `providers/` (the minimal worker interface with `claude` and `codex` implementations); `run-state.ts`, `config.ts`, `snippets.ts`; `spike/` (the Q11 substrate spike and the SDK-behavior repros it produced — kept as executable evidence).
+- `snippets.toml` — duet's snippet library, mirroring tabtype's schema (seeded from the user's live config plus `ceo-summary`). The orchestrator reads it via `list_snippets`; approved `propose_snippet_edit` diffs apply here; porting back to tabtype is a manual human step.
 - `docs/observed-pattern.md` — turn-by-turn breakdown of one real session, with timestamps and the snippet used at each turn.
 - `docs/workflow-model.md` — the abstracted state machine. Phases, snippet vocabulary, loop semantics, what's stable vs. what's variable.
 - `docs/automation-design.md` — what to automate (router), what to keep human-gated (editor-in-chief), and a sketch of a minimal orchestrator architecture.
@@ -31,9 +33,11 @@ If duet ever starts to feel like it's *requiring* you to use it, the design has 
 
 ## Status
 
-- Pattern analysis: drafted from one full session (`examples/claude-code-session.jsonl` + `examples/codex-session.jsonl`), corroborated by a 22-session corpus scan of the user's planlab history (`docs/observed-pattern.md` §"Corpus scan: planlab", 2026-06-11).
-- Design: **pivoted 2026-06-11** from a dumb state-machine router to the three-role architecture above. The pivot's rationale, costs, and what survived are in `docs/automation-design.md` §"Design history"; the phase/gate model and snippet vocabulary (including the proposed `ceo-summary` snippet) are in `docs/workflow-model.md`.
-- Implementation: **started 2026-06-11** at the repo root — flat structure, `src/` for source, no separate `mvp/` directory. Stack: XState v5 (Q15 decided), execa, zod, commander, `@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk`; Node 24 runs the TypeScript directly. The **Q11 substrate spike passed** the same day (`src/spike/q11.ts` — read-only SDK orchestrator, cross-provider routing through `src/providers/`, cooperative ask_human pause + resume; findings in `docs/open-questions.md` Q11), and **Slice 1 shipped and passed live** the same day too: the complete attended PLANNING phase (`duet new --spec` → SPEC loop → gate → PLAN loop → gate, all six orchestrator tools, XState harness, run state under `.duet/runs/`; Q14 records the verifying run). Next milestone: dogfooding on real features, then the AFK IMPLEMENTATION phase.
+**Working today — the attended PLANNING phase, end to end.** In a project repo, `duet new --spec <draft> [--framing <file>]` starts an orchestrator-driven SPEC review loop and exits at the Commit-spec gate; `duet continue [--approve | --reject "…" | --answer "…"]` crosses gates and answers queued flags, through the PLAN loop to the Plan-approval gate; `duet status` / `duet runs` inspect. Run state lives under `.duet/runs/<id>/` (state hint, machine snapshot, one log per voice, notes file). Verified by a live end-to-end run recorded in `docs/open-questions.md` Q14 (~$4 claude-side per planning run at Opus).
+
+**Not built yet:** the AFK IMPLEMENTATION phase and FINAL REVIEW phase (the statechart ends at plan approval), worker context compaction between phases, the onboard/frame/synthesize front half of PLANNING, `--tmux` viewing, notifications, and codex-as-orchestrator (Q17).
+
+**Underneath:** pattern analysis from one fully-annotated session corroborated by a 22-session corpus scan (`docs/observed-pattern.md`); the three-role design with its rationale and history (`docs/automation-design.md`); resolved and open design questions (`docs/open-questions.md` — Q1–Q12, Q14–Q15 resolved; Q13 triage precision, Q16 worker schema, and Q17 are open, the first two awaiting dogfooding evidence). Stack: Node 24 running TypeScript directly (no build step), XState v5, execa, zod, commander, `@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk` pinned to the local CLI version. Checks: `pnpm typecheck` and `node src/harness/machine.smoke.ts`.
 
 ## Reading order
 

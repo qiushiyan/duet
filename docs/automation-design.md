@@ -1,6 +1,8 @@
 # Automation design
 
-This document describes the duet design as of the **2026-06-11 pivot**: a three-role architecture in which an intelligent, read-only LLM **orchestrator** routes the snippet protocol between an **implementer** and a **reviewer**, inside a deterministic phase-and-gate skeleton enforced in code. It supersedes the dumb-router design of 2026-05-26. The reversal and its rationale are recorded in §"Design history" below; the affected open questions carry amendment notes (`docs/open-questions.md` Q7, Q8, Q10) and the new questions the pivot raises are Q11–Q16.
+This document describes the duet design as of the **2026-06-11 pivot**: a three-role architecture in which an intelligent, read-only LLM **orchestrator** routes the snippet protocol between an **implementer** and a **reviewer**, inside a deterministic phase-and-gate skeleton enforced in code. It supersedes the dumb-router design of 2026-05-26. The reversal and its rationale are recorded in §"Design history" below; the affected open questions carry amendment notes (`docs/open-questions.md` Q7, Q8, Q10) and the new questions the pivot raises are Q11–Q17.
+
+**Implementation status:** the attended PLANNING phase of this design is implemented and live-verified (`src/harness/` statechart + driver, `src/cli.ts`, `src/providers/`; the verifying run is recorded in Q14). The AFK IMPLEMENTATION and FINAL REVIEW phases, inter-phase worker compaction, the framing-entry front half of PLANNING, `--tmux`, and notifications are design-only.
 
 ## Design principles
 
@@ -103,7 +105,7 @@ A read-only agent whose system prompt is the workflow protocol operationalized �
 | `ask_human(question, options?, context)` | Flag something for the human. Attended phase: resolves inline. AFK phase: the harness defers, queues the question, exits; the human answers via `duet continue --answer`. |
 | `advance_phase(summary, artifacts)` | Declare the phase complete. Legal only when the phase's exit criteria are plausible; always lands on a human gate. |
 | `propose_snippet_edit(diff, rationale)` | Queue a persistent snippet-library change for the end-of-run gate. Never applied mid-run. |
-| `write_note(observation)` | Append a friction observation to `.duet/runs/<run_id>.notes.md` (the Q10 convention, with a second author). |
+| `write_note(observation)` | Append a friction observation to `.duet/runs/<run_id>/notes.md` (the Q10 convention, with a second author). |
 
 #### Prompting and tool-surface conventions
 
@@ -208,18 +210,18 @@ The 2026-05-26 design made `schemas/agent-response.json` the protocol contract: 
 
 ## Invocation and lifecycle
 
-CLI surface (sketch; same spirit as before, amended for the per-phase process model):
+CLI surface (implemented in `src/cli.ts` for the PLANNING phase):
 
 | Command | What it does |
 |---|---|
-| `duet new (--framing <file> \| --spec <draft-path>) [--impl …] [--reviewer …]` | Starts a run. `--framing` enters PLANNING; `--spec` enters at the spec review rounds (the Slice 1 entry). Runs the current phase to its next gate or queued flag, then exits. |
-| `duet continue <run_id> [--approve \| --reject "…" \| --answer "…"]` | Resumes past the current gate or answers a queued `ask_human` flag. |
-| `duet status <run_id>` | Current phase, queued flags, latest artifacts, round counts, last orchestrator action. |
-| `duet runs` | Lists known runs. |
+| `duet new --spec <draft-path> [--framing <file>] [--orchestrator …] [--impl …] [--reviewer …]` | Starts a run at the spec review rounds; `--framing` supplies the project briefing alongside. Runs the current phase to its next gate or queued flag, then exits. (A framing-only entry that runs PLANNING's onboard/frame/synthesize front half is designed but not built.) |
+| `duet continue [run_id] [--approve \| --reject "…" \| --answer "…"]` | Resumes past the current gate or answers a queued `ask_human` flag; defaults to the latest run. With no flags, re-enters a run that stopped mid-phase (crash recovery — the driver re-derives position from the transcripts). |
+| `duet status [run_id]` | Current state, queued flags, phase summaries, round counts vs. caps, costs, queued snippet proposals, next command. |
+| `duet runs` | Lists known runs in the project. |
 
-The framing input format is unchanged from the 2026-05-26 design: a single markdown file sent verbatim, structure by convention not contract, `--framing -` for stdin, per-agent overrides available. The framing is also the orchestrator's project briefing — it is the only place project knowledge enters the system.
+The framing input is a single markdown file sent verbatim, structure by convention not contract. The framing is also the orchestrator's project briefing — it is the only place project knowledge enters the system.
 
-State persistence: the state struct (`run_id`, phase, gate, queued flags, worker session ids, orchestrator session id, artifact paths, history) flushes to `.duet/runs/<run_id>.json` **at gates only**. All three JSONL transcripts are the source of truth.
+State persistence: the run dir `.duet/runs/<run_id>/` holds `state.json` (the human-readable hint: state value, session ids, queued flags, rounds, costs, proposals), `machine.json` (the statechart snapshot, written **only at quiescent states** — gates, flag-waits, done), one append-only log per voice, and `notes.md`. All three JSONL transcripts are the source of truth.
 
 ### Visualization: tmux is a viewer, never the runtime
 
