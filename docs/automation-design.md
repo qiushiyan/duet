@@ -107,13 +107,13 @@ A read-only agent whose system prompt is the workflow protocol operationalized �
 
 #### Prompting and tool-surface conventions
 
-Adopted 2026-06-11 from Anthropic's published guidance ([prompting best practices](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices), [writing effective tools for agents](https://www.anthropic.com/engineering/writing-tools-for-agents), [effective context engineering](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)), first applied in the Q11 spike. These bind every prompt and tool the harness ships:
+Adopted 2026-06-11 from Anthropic's published guidance, first applied in the Q11 spike. The full reference — the distilled guidance, the duet house patterns, and the source links — is **`docs/prompting-and-tool-design.md`**; consult it whenever writing or revising a prompt, tool definition, or tool result. The five binding rules:
 
-- **Artifacts first, task last, XML-tagged.** Orchestrator prompts put longform content (snippet templates, specs, worker output) at the top in `<documents>`/`<document>` tags and the instructions in a `<task>` block at the end — measurably better on long inputs, and unambiguous about what is data vs. instruction.
-- **Thinking framework over prohibition.** Prefer positive instructions that set up the intended behavior, and give the *why* when a constraint matters (the model generalizes from motivation). The system prompt's `<division_of_labor>` block is the canonical example: instead of "never answer substance," it explains who answers what and why an orchestrator opinion would bypass the human gates. Avoid aggressive emphasis ("CRITICAL", "exactly once", all-caps) — current models overtrigger on it.
-- **Tool descriptions are prompts.** Write them like onboarding a new teammate, and surface the implicit, load-bearing facts: `send_prompt`'s description states that each role is one persistent session (don't re-send context) and that worker turns are slow (prefer one composed prompt over many small ones); `ask_human`'s description carries the triage rule itself.
-- **Errors prescribe the recovery path.** A failed tool call returns an LLM-facing message that names the failure layer ("the worker never saw your prompt — this is not a content problem") and says what to do next ("retry once; if it fails again, ask_human"), so the orchestrator doesn't improvise recovery. Never surface bare tracebacks or opaque codes.
-- **Tool results nudge the next step.** When a result changes what the orchestrator should do (a queued `ask_human`, a backstop cap hit), the result text says so explicitly and gives the reason — a mini-context that steers, e.g. "your question has been queued and the run is pausing; end your turn — anything past this point happens without the answer you just asked for."
+1. **Artifacts first, task last, XML-tagged** — longform content at the top in `<documents>` tags, instructions in a `<task>` block at the end.
+2. **Thinking framework over prohibition** — positive instructions carrying the *why*; no aggressive emphasis (current models overtrigger on it).
+3. **Tool descriptions surface the implicit, load-bearing facts** (e.g. `send_prompt`: roles are persistent sessions; worker turns are slow).
+4. **Errors prescribe the recovery path** — name the failure layer, say what to do next; never bare tracebacks.
+5. **Results that change the agent's next step say so explicitly, with the reason** (the `ask_human` queued-response nudge that makes the cooperative pause work).
 
 ### Layer 3 — Workers
 

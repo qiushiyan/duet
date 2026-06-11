@@ -17,15 +17,16 @@ As of the **2026-06-11 pivot**, the design has three roles: a read-only, intelli
 3. `docs/workflow-model.md` — the abstracted state machine (phases, snippet vocabulary, loop semantics).
 4. `docs/automation-design.md` — what to automate, what to gate on humans, sketch of an MVP.
 5. `docs/open-questions.md` — Q1–Q10 resolved (with 2026-06-11 amendment/reversal notes on Q7/Q8/Q10); Q11–Q16 are the pivot's open questions gating implementation. The strike-through structure preserves the historical reasoning behind each decision; read this to understand *why* the design is what it is, and to find the operational conventions (e.g., per-run notes file) that emerged from the answers.
-6. `examples/` — verbatim copies of the source materials the analysis is built on:
+6. `docs/prompting-and-tool-design.md` — the prompt-design and tool-design reference, distilled from Anthropic's published guidance (sources linked inside). **Consult this whenever writing or revising an agent prompt, tool definition, tool result, or error message** — it carries duet's five binding conventions (artifacts-first/XML prompts, thinking-framework-over-prohibition, descriptions-surface-the-implicit, errors-prescribe-recovery, results-nudge-next-step) and the house patterns from the Q11 spike.
+7. `examples/` — verbatim copies of the source materials the analysis is built on:
    - `claude-code-session.jsonl` — the implementer's session log.
    - `codex-session.jsonl` — the reviewer's session log.
    - `tabtype-snippets.json` — the snippet vocabulary that defines the protocol.
    - `skills/onboarding/SKILL.md` — verbatim copy of the iTELL `/onboarding` skill.
    - `skills/update-docs/SKILL.md` — verbatim copy of the iTELL `/update-docs` skill.
    - `skills/update-docs/SKILL.orchestrator.md` — proposed orchestrator-aware variant of the same skill. Diff is a single conditional in Step 4. Referenced by `docs/open-questions.md` Q2.
-7. `schemas/agent-response.json` — the JSON Schema from the pre-pivot design, empirically verified against both CLIs (`claude --json-schema` / `codex exec --output-schema`). **Demoted 2026-06-11**: exception detection (`needs_human`, `disagree`) is now the orchestrator's judgment; whether a minimal envelope survives is `docs/open-questions.md` Q16.
-8. `references/` — shallow clones of external repos kept as design references (added 2026-06-11; not dependencies, not pinned). **Check `references/README.md` before copying any code** — it records each repo's purpose and license boundary: sandcastle and pi-mono are MIT (copy with attribution), the Codex SDK is Apache-2.0 (copy with attribution), claude-squad is AGPL (read-only inspiration), and the Claude Agent SDK is proprietary (consume as an npm dependency; read source only to understand the API).
+8. `schemas/agent-response.json` — the JSON Schema from the pre-pivot design, empirically verified against both CLIs (`claude --json-schema` / `codex exec --output-schema`). **Demoted 2026-06-11**: exception detection (`needs_human`, `disagree`) is now the orchestrator's judgment; whether a minimal envelope survives is `docs/open-questions.md` Q16.
+9. `references/` — shallow clones of external repos kept as design references (added 2026-06-11; not dependencies, not pinned). **Check `references/README.md` before copying any code** — it records each repo's purpose and license boundary: sandcastle and pi-mono are MIT (copy with attribution), the Codex SDK is Apache-2.0 (copy with attribution), claude-squad is AGPL (read-only inspiration), and the Claude Agent SDK is proprietary (consume as an npm dependency; read source only to understand the API).
 
 ## Conventions
 
