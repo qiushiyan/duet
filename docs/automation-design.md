@@ -71,13 +71,13 @@ model = "claude-opus-4-8"     # any Anthropic model ID; e.g. claude-fable-5
 
 [roles.implementer]
 provider = "claude"
-model = "claude-opus-4-8"
+model = "claude-fable-5"
 
 [roles.reviewer]
 provider = "codex"            # no model key — ~/.codex/config.toml governs
 ```
 
-Per-run CLI flags override the file: `--orchestrator <provider[:model]>`, `--impl <provider[:model]>`, `--reviewer <provider[:model]>` (e.g. `--impl claude:claude-opus-4-6`, `--reviewer codex`). The file above is also the **shipped default** when absent: `{orchestrator: claude/opus, implementer: claude/opus, reviewer: codex}` — matching the user's current setup and the observed sessions.
+Per-run CLI flags override the file: `--orchestrator <provider[:model]>`, `--impl <provider[:model]>`, `--reviewer <provider[:model]>` (e.g. `--impl claude:claude-opus-4-6`, `--reviewer codex`). The file above is also the **shipped default** when absent: `{orchestrator: claude/claude-opus-4-8, implementer: claude/claude-fable-5, reviewer: codex}` — the implementer rides the most capable model because it writes the artifacts; the orchestrator's process judgments sit well within Opus.
 
 ## Architecture: three layers
 

@@ -2,6 +2,7 @@ import { createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk'
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { execa } from 'execa';
 import { z } from 'zod';
+import { DEFAULT_CLAUDE_MODEL } from '../config.ts';
 import { ClaudeWorker } from '../providers/claude.ts';
 import { CodexWorker } from '../providers/codex.ts';
 import type { WorkerProvider } from '../providers/types.ts';
@@ -115,7 +116,7 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
     implementer:
       state.bindings.implementer.provider === 'claude'
         ? new ClaudeWorker({
-            model: state.bindings.implementer.model ?? 'claude-opus-4-8',
+            model: state.bindings.implementer.model ?? DEFAULT_CLAUDE_MODEL.implementer,
             maxBudgetUsd: workerBudgetUsd,
             timeoutMs: workerTimeoutMs,
           })
@@ -123,7 +124,7 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
     reviewer:
       state.bindings.reviewer.provider === 'claude'
         ? new ClaudeWorker({
-            model: state.bindings.reviewer.model ?? 'claude-opus-4-8',
+            model: state.bindings.reviewer.model ?? DEFAULT_CLAUDE_MODEL.reviewer,
             maxBudgetUsd: workerBudgetUsd,
             timeoutMs: workerTimeoutMs,
           })
@@ -399,7 +400,7 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
   ];
 
   const options: Options = {
-    model: state.bindings.orchestrator.model ?? 'claude-opus-4-8',
+    model: state.bindings.orchestrator.model ?? DEFAULT_CLAUDE_MODEL.orchestrator,
     cwd: state.cwd,
     // Read-only by construction: no built-in tools, only the harness MCP
     // server, and no user-config MCP servers (strictMcpConfig — the Q11 spike

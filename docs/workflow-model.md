@@ -8,7 +8,7 @@ This document abstracts the workflow into a model an orchestrator can implement,
 - **Implementer** — produces specs, plans, code, handoffs, summaries. Claude Code in the observed sessions.
 - **Reviewer** — critiques specs, plans, and committed code at the right altitude. Codex in the observed sessions.
 
-**Roles are decoupled from providers** (2026-06-11): each role binds to a provider (`claude` — with a per-role Anthropic model ID — or `codex` — no model key; the user's own codex config governs) via the role-bindings config file, with per-run CLI overrides. The shipped default matches the observed sessions: orchestrator and implementer on claude/Opus, reviewer on codex. See `docs/automation-design.md` §"Roles are decoupled from providers" for the config format and the per-role capability contract (the orchestrator role is claude-only in v1; codex-as-orchestrator is a designed extension, Q17).
+**Roles are decoupled from providers** (2026-06-11): each role binds to a provider (`claude` — with a per-role Anthropic model ID — or `codex` — no model key; the user's own codex config governs) via the role-bindings config file, with per-run CLI overrides. The shipped default: orchestrator on claude/Opus 4.8, implementer on claude/Fable 5, reviewer on codex. See `docs/automation-design.md` §"Roles are decoupled from providers" for the config format and the per-role capability contract (the orchestrator role is claude-only in v1; codex-as-orchestrator is a designed extension, Q17).
 
 ## The phases
 
