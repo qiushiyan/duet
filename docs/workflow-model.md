@@ -103,6 +103,10 @@ Evidence for the move: the user repeatedly makes a free-form "CEO-reframe" reque
 
 Each review loop has the same shape: artifact → reviewer critique → implementer revision-or-pushback → *another round?* The "another round?" decision is the orchestrator's judgment — the same call the human currently makes by reading whether remaining points are substantive. The harness keeps hard per-phase round caps purely as runaway backstops; hitting one raises an `ask_human` flag. Disagreement handling is judgment too: the orchestrator reads pushback and flags the human when a disagreement is persistent and substantive, replacing the old `disagree.point` string-matching across rounds.
 
+## Branch discipline
+
+One branch per run, fixed before the first worker prompt. Either the human creates it before starting, or the orchestrator does (by judging whether the current branch already fits the problem — `docs/automation-design.md` §"Branch policy"). The workers are takers, not deciders: every first prompt to a worker names the working branch and states that branch management is settled outside their sessions. All commits of a run — spec, plan, slices, fixes, docs — land on that one branch, which is what the `open` step eventually pushes and turns into the PR.
+
 ## What's not in the protocol
 
 - Tactical mid-implementation clarifications — bounced back to the worker by the orchestrator's triage rule (process, not substance).

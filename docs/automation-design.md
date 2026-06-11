@@ -103,7 +103,8 @@ A read-only agent whose system prompt is the workflow protocol operationalized �
 | `list_snippets()` | Read the built-in snippet library (keys + bodies). |
 | `send_prompt(role, tag, body)` | Send a prompt to the implementer or reviewer and return the worker's response. `tag` names the source snippet (`"custom"` when composed from scratch); `body` is the final text. Every call logs the tag and the body, so adaptation drift is auditable. |
 | `ask_human(question, context?)` | Flag something for the human. Always the cooperative pause: the handler persists the question, the run exits at quiescence, and the human answers via `duet continue --answer` — in attended phases they're at the terminal and answer in minutes; during AFK the question waits. |
-| `advance_phase(summary, artifacts)` | Declare the phase complete. Legal only when the phase's exit criteria are plausible; always lands on a human gate. |
+| `advance_phase(summary, artifacts, spec_path?)` | Declare the phase complete. Legal only when the phase's exit criteria are plausible; lands on the phase's human gate (the `open` sub-phase, which runs after the last gate, advances straight to done). `spec_path` reports where the spec file landed when the phase produced it (framing-only entry). |
+| `create_branch(name)` | Create and switch to the run's working branch (§"Branch policy"). Harness-executed; structurally legal only before the first worker prompt. |
 | `propose_snippet_edit(snippet_key, proposed_body, rationale)` | Queue a persistent snippet-library change for the human's end-of-run review. Never applied mid-run. |
 | `write_note(observation)` | Append a friction observation to `.duet/runs/<run_id>/notes.md` (the Q10 convention, with a second author). |
 
@@ -174,13 +175,21 @@ FINAL REVIEW (attended)
 | **Direction** | inside PLANNING | "Does this direction match what I meant?" |
 | **Commit spec** | inside PLANNING | "Spec is solid; commit and move on." |
 | **Plan approval** | PLANNING → IMPLEMENTATION | "Plan is workable." This is the walk-away point. |
-| **Ship** | IMPLEMENTATION → FINAL REVIEW | Reads the final-gate packet (below); runs environment verification; "ship" / "another round" / specific changes. |
-| **Docs plan** | inside FINAL REVIEW | Approves the `/update-docs` proposal (skill-internal gate, surfaced as a harness gate). |
-| **Open PR** | end of run | Reads the PR description; approves opening. Non-negotiable; the PR is never auto-opened. |
+| **Ship** | IMPLEMENTATION → FINAL REVIEW | Reads the final-gate packet (below); runs environment verification (migrations, smoke tests — the human as environment proxy acts *here*, before deciding); "ship" / "another round" / specific changes. |
+| **Docs plan** | inside FINAL REVIEW | Approves the docs-update proposal (a skill-internal gate when the project has a docs skill, surfaced as a harness gate). Reject-with-feedback is the adjust path. |
+| **Open PR** | end of run | Reads the PR description; approves opening. Non-negotiable; the PR is never opened without this gate. Approval authorizes the mechanics: the implementer pushes the branch and runs `gh pr create`, and the run ends with the PR URL in its final summary. |
 
 Plus **in-phase exception gates** whenever the orchestrator calls `ask_human`. The machinery is identical in every phase — the question is persisted, the process exits at quiescence, `duet continue --answer` resumes. What differs is the human: attended means they're at the terminal and the pause lasts minutes; AFK means the question waits hours until they return (with a desktop notification fired either way).
 
 During attended phases the human does not interject mid-turn; the orchestrator drives, and the gates plus `ask_human` flags are the interaction points.
+
+In the harness, the three top-level phases decompose into machine sub-phases, each on the same loop/flag-wait/gate idiom: PLANNING is `frame` (onboard → think-holistic in both workers → compare-notes synthesis → Direction gate; runs only on framing-only entry) then `spec` (draft on framing-only entry, then review rounds → Commit-spec gate) then `plan` (→ Plan-approval gate); IMPLEMENTATION is `impl` (→ Ship gate); FINAL REVIEW is `docs` (drive the docs update to its proposal → Docs-plan gate) then `pr` (execute the approved docs plan, draft `pr-description` → Open-PR gate) then `open` (push + `gh pr create` → done, no further gate). The review-loop sub-phases (`spec`, `plan`, `impl`) must run at least one review round before `advance_phase`; the others (`frame`, `docs`, `pr`, `open`) may advance without one — their substance is synthesis or mechanics, and the reviewer is available but optional. Backstop caps: spec 6, plan 4, impl 6, frame/docs/pr 2, open 1.
+
+### Branch policy
+
+A run works on **exactly one branch, fixed before the first worker prompt** — created either by the human before `duet new`, or by the orchestrator. The harness reports the repo's current branch in the first phase's entry prompt; the orchestrator judges whether it already looks like the working branch for this problem (a feature branch whose name fits the framing) and proceeds on it, or — when the run sits on the default branch or an unrelated one — calls `create_branch` with a name it chooses. The git side (`git switch -c`) is harness-executed; the tool is structurally legal only before any worker session exists, so mid-run branch switches are unrepresentable.
+
+Workers take the branch as given: the orchestrator names the working branch in its first prompt to each worker, with the instruction that branch management is settled outside their sessions. Branch creation has exactly two owners — the human before the run, or the orchestrator before the first routed prompt — and is never a worker's call.
 
 ### The final-gate packet and the CEO summary
 
@@ -206,7 +215,7 @@ Rationale: the user already evolves snippets mid-session by hand **(observed: pl
 
 Loop exit (another review round vs. converged) is **orchestrator judgment** — the thing the human currently does by reading the reviewer's response and feeling whether the remaining points are minor. Two deterministic backstops remain in the harness:
 
-- **Hard per-phase round caps** (SPEC 6, PLAN 4, IMPL 6 — deliberately ~2× the round counts the manual sessions ever needed) as runaway protection, not as the exit mechanism. Hitting a backstop is itself an `ask_human` event.
+- **Hard per-phase round caps** (spec 6, plan 4, impl 6 — deliberately ~2× the round counts the manual sessions ever needed; frame/docs/pr 2, open 1) as runaway protection, not as the exit mechanism. Hitting a backstop is itself an `ask_human` event.
 - **Budget caps** per invocation (`--max-budget-usd` on the Claude side) as cost protection.
 
 The old mechanisms this replaces: severity-label parsing (never built), `disagree.point` string-matching across rounds (the orchestrator now *reads* the disagreement and judges whether it's persistent and substantive — flagging via `ask_human` when it is), and fixed caps as the primary exit rule.
@@ -243,7 +252,7 @@ Separately from the viewer, every quiescent stop fires a best-effort macOS notif
 ## What the MVP should *not* do
 
 - **Auto-merge or auto-open the PR.** Never. The Open PR gate is the handoff to human product judgment.
-- **Let the orchestrator write.** No write/edit/bash tools in its surface — a property of the harness. It commands workers; it never touches the repo.
+- **Let the orchestrator write.** No write/edit/bash tools in its surface — a property of the harness. It commands workers; it never touches artifact content. The single, deliberate exception is `create_branch` (§"Branch policy"): a harness-executed ref creation before any work exists — the orchestrator supplies the judgment and the name, the harness runs the git command, and the tool is structurally unavailable once a worker has been prompted.
 - **Let the orchestrator answer substance.** Triage only. Product, environment → human; tactical → bounced to the worker.
 - **Apply snippet-library edits mid-run.** Proposals queue to the end-of-run gate.
 - **Run a daemon or concurrent runs per repo.** The process lives through a phase, exits at gates; runs stay serial.
