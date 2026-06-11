@@ -42,7 +42,7 @@ The original analysis is preserved below as the record of what we considered.
 
 **Implication for the orchestrator design.** Skills with built-in human gates are orchestrator-friendly, not orchestrator-hostile. The state machine should accept skill gates as a category of phase boundary. Other skills the workflow uses (`/onboarding` at the start; the TDD skill *read* by the agent inside `tdd-implementation`, not invoked via slash command) need no orchestrator handling.
 
-**What still needs empirical verification (deferred to first MVP run).** That `claude -p --resume <id> "ORCHESTRATOR_RESUME_FROM_PROPOSAL — proceed to Step 5."` actually reaches the modified Step 4 logic and skips correctly. The risk is low (the conditional is plain text in the skill, agents follow conditionals reliably), but worth confirming in the spike.
+**What still needs empirical verification (deferred to first MVP run).** That `claude -p --resume <id> "ORCHESTRATOR_RESUME_FROM_PROPOSAL — proceed to Step 5."` actually reaches the modified Step 4 logic and skips correctly. The risk is low (the conditional is plain text in the skill, agents follow conditionals reliably), but worth confirming in the spike. *Partially verified 2026-06-11: custom slash-command expansion on a resumed `-p` session works (live probe — a `.claude/commands` command invoked as the second turn of a resumed session expanded and executed correctly); the remaining unknown is only the skill-specific conditional, not the mechanics.*
 
 The original analysis is preserved below as the record of what we considered.
 

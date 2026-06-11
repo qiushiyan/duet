@@ -2,7 +2,7 @@
 
 This document describes the duet design as of the **2026-06-11 pivot**: a three-role architecture in which an intelligent, read-only LLM **orchestrator** routes the snippet protocol between an **implementer** and a **reviewer**, inside a deterministic phase-and-gate skeleton enforced in code. It supersedes the dumb-router design of 2026-05-26. The reversal and its rationale are recorded in §"Design history" below; the affected open questions carry amendment notes (`docs/open-questions.md` Q7, Q8, Q10) and the new questions the pivot raises are Q11–Q17.
 
-**Implementation status:** the attended PLANNING phase is implemented and live-verified (`src/harness/` statechart + driver, `src/cli.ts`, `src/providers/`; the verifying run is recorded in Q14). The AFK IMPLEMENTATION phase is implemented (plan-approval gate → slices → midpoint/compaction at orchestrator judgment → handoff → review loop → `ceo-summary` → Ship gate) along with worker compaction (Q18) and macOS notifications at every quiescent stop — not yet live-verified by a real AFK run. Approving the Ship gate currently ends the run: the FINAL REVIEW phase, the framing-entry front half of PLANNING, and `--tmux` remain design-only.
+**Implementation status:** the full arc is implemented (`src/harness/` statechart + driver, `src/cli.ts`, `src/providers/`) — framing-only entry (FRAME → Direction gate), the SPEC and PLAN loops of attended PLANNING, the AFK IMPLEMENTATION phase (slices → midpoint/compaction at orchestrator judgment → handoff → review loop → `ceo-summary` → Ship gate), and FINAL REVIEW (docs proposal → Docs-plan gate; docs apply + `pr-description` → Open-PR gate; push + `gh pr create` → done), with worker compaction (Q18), the branch policy (`create_branch`), and macOS notifications at every quiescent stop. The SPEC/PLAN half is live-verified (the run is recorded in Q14); the frame, impl, docs, pr, and open phases are smoke-tested and await their first real runs. `--tmux` and codex-as-orchestrator (Q17) are not built.
 
 ## Design principles
 
@@ -228,11 +228,11 @@ The 2026-05-26 design made `schemas/agent-response.json` the protocol contract: 
 
 ## Invocation and lifecycle
 
-CLI surface (implemented in `src/cli.ts` through the PLANNING and AFK IMPLEMENTATION phases; approving the Ship gate ends the run while FINAL REVIEW remains unbuilt):
+CLI surface (implemented in `src/cli.ts` across the full arc):
 
 | Command | What it does |
 |---|---|
-| `duet new --spec <draft-path> [--framing <file>] [--orchestrator …] [--impl …] [--reviewer …]` | Starts a run at the spec review rounds; `--framing` supplies the project briefing alongside. Runs the current phase to its next gate or queued flag, then exits. (A framing-only entry that runs PLANNING's onboard/frame/synthesize front half is designed but not built.) |
+| `duet new [--spec <draft-path>] [--framing <file>] [--orchestrator …] [--impl …] [--reviewer …]` | Starts a run (at least one of `--spec`/`--framing`). With a draft spec, enters at the spec review rounds; framing-only entry runs the FRAME phase first (onboard → think-holistic → compare-notes → Direction gate) and the spec is drafted after it. Runs the current phase to its next gate or queued flag, then exits. |
 | `duet continue [run_id] [--approve \| --reject "…" \| --answer "…"]` | Resumes past the current gate or answers a queued `ask_human` flag; defaults to the latest run. With no flags, re-enters a run that stopped mid-phase (crash recovery — the driver re-derives position from the transcripts). |
 | `duet status [run_id]` | Current state, queued flags, phase summaries, round counts vs. caps, costs, queued snippet proposals, next command. |
 | `duet runs` | Lists known runs in the project. |

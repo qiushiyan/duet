@@ -2,6 +2,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
 import { Command } from 'commander';
+import { execa } from 'execa';
 import { createActor, waitFor } from 'xstate';
 import type { AnyMachineSnapshot } from 'xstate';
 import { loadRoleBindings } from './config.ts';
@@ -33,7 +34,7 @@ async function driveToQuiescence(
   options?: { snapshot?: unknown; event?: { type: 'human.approve' | 'human.reject' | 'human.answer' } },
 ): Promise<AnyMachineSnapshot> {
   const actor = createActor(duetMachine, {
-    input: { runId: state.runId, cwd: state.cwd },
+    input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
     ...(options?.snapshot ? { snapshot: options.snapshot as never } : {}),
   });
   actor.start();
@@ -56,26 +57,51 @@ async function driveToQuiescence(
 }
 
 function describeStop(state: RunState, snapshot: AnyMachineSnapshot): string {
-  if (snapshot.status === 'done') return 'run complete — the Ship gate is approved';
+  if (snapshot.status === 'done') return 'run complete — the PR is open';
   const machineState = state.machineState ?? '';
   if (state.pendingQuestion && machineState.includes('FlagWait')) {
     return `question queued: ${state.pendingQuestion.question}`;
   }
+  if (machineState === 'directionGate') return 'Direction gate — synthesized direction ready';
   if (machineState === 'commitSpecGate') return 'Commit-spec gate — spec ready for review';
   if (machineState === 'planApprovalGate') return 'Plan-approval gate — plan ready for review';
   if (machineState === 'shipGate') return 'Ship gate — implementation packet ready';
+  if (machineState === 'docsPlanGate') return 'Docs-plan gate — proposal ready';
+  if (machineState === 'openPrGate') return 'Open-PR gate — PR description ready';
   return `stopped at ${machineState}`;
 }
+
+const GATE_PHASE = {
+  directionGate: 'frame',
+  commitSpecGate: 'spec',
+  planApprovalGate: 'plan',
+  shipGate: 'impl',
+  docsPlanGate: 'docs',
+  openPrGate: 'pr',
+} as const;
+
+const GATE_HEADING: Record<keyof typeof GATE_PHASE, string> = {
+  directionGate: 'DIRECTION gate — the synthesized direction',
+  commitSpecGate: "SPEC gate — the orchestrator's summary",
+  planApprovalGate: "PLAN gate — the orchestrator's summary",
+  shipGate: 'SHIP gate — the orchestrator’s packet (CEO summary first)',
+  docsPlanGate: 'DOCS-PLAN gate — the proposal',
+  openPrGate: 'OPEN-PR gate — the PR description',
+};
 
 function printStatus(state: RunState, snapshot?: AnyMachineSnapshot): void {
   const machineState = state.machineState ?? '(not started)';
   console.log(`\n━━━ duet run ${state.runId} ━━━`);
   console.log(`state:    ${machineState}`);
-  console.log(`spec:     ${state.specPath}`);
+  console.log(`spec:     ${state.specPath ?? '(not yet drafted — framing-only entry)'}`);
+  if (state.branch) console.log(`branch:   ${state.branch}`);
   if (state.lastActivity) console.log(`last:     ${state.lastActivity}`);
-  console.log(
-    `rounds:   spec ${state.rounds.spec ?? 0}/${ROUND_CAPS.spec}, plan ${state.rounds.plan ?? 0}/${ROUND_CAPS.plan}, impl ${state.rounds.impl ?? 0}/${ROUND_CAPS.impl}`,
-  );
+  const roundOrder: Array<'frame' | 'spec' | 'plan' | 'impl' | 'docs' | 'pr'> = ['frame', 'spec', 'plan', 'impl', 'docs', 'pr'];
+  const rounds = roundOrder
+    .filter((p) => (state.rounds[p] ?? 0) > 0 || p === 'spec' || p === 'plan' || p === 'impl')
+    .map((p) => `${p} ${state.rounds[p] ?? 0}/${ROUND_CAPS[p]}`)
+    .join(', ');
+  console.log(`rounds:   ${rounds}`);
   console.log(
     `cost:     orchestrator $${state.costs.orchestratorUsd.toFixed(2)}, claude workers $${state.costs.claudeWorkersUsd.toFixed(2)}, codex ${state.costs.codexTokens.input}/${state.costs.codexTokens.output} tokens`,
   );
@@ -91,14 +117,10 @@ function printStatus(state: RunState, snapshot?: AnyMachineSnapshot): void {
     return;
   }
 
-  if (machineState === 'commitSpecGate' || machineState === 'planApprovalGate' || machineState === 'shipGate') {
-    const phase = machineState === 'commitSpecGate' ? 'spec' : machineState === 'planApprovalGate' ? 'plan' : 'impl';
-    const summary = state.phaseSummaries[phase];
-    const heading =
-      machineState === 'shipGate'
-        ? 'SHIP gate — the orchestrator’s packet (CEO summary first)'
-        : `${phase.toUpperCase()} gate — the orchestrator's summary`;
-    console.log(`\n━━━ ${heading} ━━━`);
+  if (machineState in GATE_PHASE) {
+    const gate = machineState as keyof typeof GATE_PHASE;
+    const summary = state.phaseSummaries[GATE_PHASE[gate]];
+    console.log(`\n━━━ ${GATE_HEADING[gate]} ━━━`);
     if (summary) {
       console.log(summary.summary);
       if (summary.artifacts.length > 0) console.log(`\nartifacts: ${summary.artifacts.join(', ')}`);
@@ -106,14 +128,19 @@ function printStatus(state: RunState, snapshot?: AnyMachineSnapshot): void {
     console.log(`\ndecide with:`);
     console.log(`  duet continue ${state.runId} --approve`);
     console.log(`  duet continue ${state.runId} --reject "<feedback>"`);
-    if (machineState === 'shipGate') {
-      console.log(`\n(approving ends the run — FINAL REVIEW (verification, docs, PR) is manual for now)`);
+    if (gate === 'shipGate') {
+      console.log(`\n(verify in your environment before deciding — migrations, smoke tests; approving enters FINAL REVIEW: docs → PR description → Open-PR gate)`);
+    }
+    if (gate === 'openPrGate') {
+      console.log(`\n(approving opens the PR: the implementer pushes the branch and runs gh pr create)`);
     }
     return;
   }
 
   if (snapshot?.status === 'done' || machineState === 'done') {
-    console.log(`\nrun complete — the Ship gate is approved. FINAL REVIEW (verification, docs, PR) is yours, manually, for now.`);
+    console.log(`\nrun complete — the PR is open.`);
+    const open = state.phaseSummaries.open;
+    if (open) console.log(open.summary);
     if (state.snippetProposals.length > 0) {
       console.log(`\n━━━ queued snippet proposals (your end-of-run editorial review) ━━━`);
       for (const p of state.snippetProposals) {
@@ -138,17 +165,23 @@ program
 
 program
   .command('new')
-  .description('Start a run: SPEC loop → gate → PLAN loop → gate (walk away) → AFK IMPLEMENTATION → Ship gate.')
-  .requiredOption('--spec <path>', 'path to the draft spec file (the entry artifact)')
+  .description('Start a run: [FRAME →] SPEC → PLAN (walk away) → AFK IMPLEMENTATION → DOCS → PR → opened PR.')
+  .option('--spec <path>', 'path to a draft spec file; omit to start from the framing alone (the FRAME phase drafts it)')
   .option('--framing <file>', 'project briefing file — the only place project knowledge enters')
   .option('--orchestrator <provider[:model]>', 'role binding override (claude[:model] only in v1)')
   .option('--impl <provider[:model]>', 'implementer binding override')
   .option('--reviewer <provider[:model]>', 'reviewer binding override')
-  .action(async (opts: { spec: string; framing?: string; orchestrator?: string; impl?: string; reviewer?: string }) => {
+  .action(async (opts: { spec?: string; framing?: string; orchestrator?: string; impl?: string; reviewer?: string }) => {
     const cwd = process.cwd();
-    const specPath = relative(cwd, resolve(cwd, opts.spec));
-    if (!existsSync(resolve(cwd, specPath))) {
-      fail(`spec file not found: ${opts.spec}`);
+    if (!opts.spec && !opts.framing) {
+      fail('provide --spec, --framing, or both — a framing-only run drafts the spec itself, but needs the briefing to do it');
+    }
+    let specPath: string | undefined;
+    if (opts.spec) {
+      specPath = relative(cwd, resolve(cwd, opts.spec));
+      if (!existsSync(resolve(cwd, specPath))) {
+        fail(`spec file not found: ${opts.spec}`);
+      }
     }
     const bindings = loadRoleBindings({
       ...(opts.orchestrator ? { orchestrator: opts.orchestrator } : {}),
@@ -157,8 +190,21 @@ program
     });
     const framing = opts.framing ? readFileSync(resolve(cwd, opts.framing), 'utf8') : undefined;
 
-    const state = createRun({ cwd, specPath, ...(framing ? { framing } : {}), bindings });
-    console.log(`run ${state.runId} created — entering the SPEC review loop`);
+    let branch: string | undefined;
+    try {
+      branch = (await execa('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd })).stdout.trim();
+    } catch {
+      // Not a git repo (or detached weirdness) — the orchestrator will surface it.
+    }
+
+    const state = createRun({
+      cwd,
+      ...(specPath ? { specPath } : {}),
+      ...(framing ? { framing } : {}),
+      ...(branch ? { branch } : {}),
+      bindings,
+    });
+    console.log(`run ${state.runId} created — entering the ${specPath ? 'SPEC review loop' : 'FRAME phase'}`);
     console.log(
       `roles: orchestrator=${bindings.orchestrator.provider}:${bindings.orchestrator.model ?? ''} implementer=${bindings.implementer.provider}${bindings.implementer.model ? ':' + bindings.implementer.model : ''} reviewer=${bindings.reviewer.provider}${bindings.reviewer.model ? ':' + bindings.reviewer.model : ''}\n`,
     );
@@ -208,7 +254,7 @@ program
     // Validate the event against the restored state before committing side
     // effects, so a wrong flag gets a friendly error instead of a no-op.
     const probe = createActor(duetMachine, {
-      input: { runId: state.runId, cwd: state.cwd },
+      input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
       snapshot: snapshot as never,
     });
     const restored = probe.getSnapshot() as AnyMachineSnapshot;
@@ -249,7 +295,7 @@ program
     }
     for (const r of all) {
       const waiting = r.pendingQuestion ? 'waiting-on-answer' : '';
-      console.log(`${r.runId}  ${r.machineState ?? '?'}  ${waiting}  ${r.specPath}`);
+      console.log(`${r.runId}  ${r.machineState ?? '?'}  ${waiting}  ${r.specPath ?? '(framing-only)'}`);
     }
   });
 

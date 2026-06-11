@@ -13,7 +13,7 @@ import type { RoleBindings } from './config.ts';
  * `codex exec resume`, and come back (or never).
  */
 
-export type PhaseName = 'spec' | 'plan' | 'impl';
+export type PhaseName = 'frame' | 'spec' | 'plan' | 'impl' | 'docs' | 'pr' | 'open';
 export type Voice = 'orchestrator' | 'implementer' | 'reviewer';
 
 export interface RunState {
@@ -21,10 +21,16 @@ export interface RunState {
   createdAt: string;
   /** Project root the run operates on (workers and orchestrator run here). */
   cwd: string;
-  /** Path to the draft spec, relative to cwd. */
-  specPath: string;
+  /**
+   * Path to the spec, relative to cwd. Set at creation on spec-entry runs;
+   * on framing-only entry it's recorded when the spec phase advances
+   * (the orchestrator reports it via advance_phase's spec_path).
+   */
+  specPath?: string;
   /** Project briefing from --framing — the only place project knowledge enters. */
   framing?: string;
+  /** The run's working branch (captured at creation; updated by create_branch). */
+  branch?: string;
   bindings: RoleBindings;
 
   /** Mirror of the machine's state value, for humans and `duet status`. */
@@ -66,8 +72,9 @@ const SNAPSHOT_FILE = 'machine.json';
 
 export function createRun(opts: {
   cwd: string;
-  specPath: string;
+  specPath?: string;
   framing?: string;
+  branch?: string;
   bindings: RoleBindings;
 }): RunState {
   const now = new Date();
@@ -77,8 +84,9 @@ export function createRun(opts: {
     runId,
     createdAt: now.toISOString(),
     cwd: opts.cwd,
-    specPath: opts.specPath,
+    ...(opts.specPath ? { specPath: opts.specPath } : {}),
     ...(opts.framing ? { framing: opts.framing } : {}),
+    ...(opts.branch ? { branch: opts.branch } : {}),
     bindings: opts.bindings,
     workerSessions: {},
     phaseStarted: {},
@@ -90,7 +98,7 @@ export function createRun(opts: {
   const dir = runDirOf(opts.cwd, runId);
   mkdirSync(dir, { recursive: true });
   saveRunState(state);
-  appendNote(state, 'human', `run created (spec: ${opts.specPath})`);
+  appendNote(state, 'human', `run created (${opts.specPath ? `spec: ${opts.specPath}` : 'framing-only entry'})`);
   return state;
 }
 

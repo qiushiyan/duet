@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { RunState } from '../run-state.ts';
+import type { PhaseName, RunState } from '../run-state.ts';
 
 /**
  * Orchestrator prompts, written to the conventions in
@@ -30,23 +30,54 @@ Call write_note when you notice friction worth remembering — a snippet that di
 
 When a phase's exit criteria are met, call advance_phase with an honest summary — it always lands on a human gate, so the summary is what the human decides from.`;
 
+/**
+ * The branch-policy paragraph for the run's first phase entry. Empty once a
+ * worker has been prompted — by then the branch is fixed and create_branch
+ * is structurally unavailable.
+ */
+function branchPolicyParagraph(state: RunState): string {
+  if (state.workerSessions.implementer || state.workerSessions.reviewer) return '';
+  return `
+Branch: the run works on exactly one branch, fixed before your first worker prompt. The repo is currently on "${state.branch ?? 'unknown'}". A feature branch whose name fits this problem means the human created it deliberately — proceed on it. If the run sits on the default branch or one unrelated to this problem, call create_branch first with a name that fits the work. Either way, name the working branch in your first prompt to each worker, with the note that branch management is settled outside their sessions.
+`;
+}
+
 function documentsBlock(state: RunState): string {
-  const specContent = readFileSync(join(state.cwd, state.specPath), 'utf8');
   const docs = [
     state.framing
       ? `<document name="framing" description="the human's project briefing for this run">\n${state.framing}\n</document>`
       : '',
-    `<document name="draft-spec" path="${state.specPath}">\n${specContent}\n</document>`,
+    state.specPath
+      ? `<document name="draft-spec" path="${state.specPath}">\n${readFileSync(join(state.cwd, state.specPath), 'utf8')}\n</document>`
+      : '',
   ].filter(Boolean);
   return `<documents>\n${docs.join('\n')}\n</documents>`;
 }
 
+export function framePhaseEntryPrompt(state: RunState, roundCap: number): string {
+  return `${documentsBlock(state)}
+
+<task>
+No spec exists yet — run the FRAME phase: both workers build an independent understanding of the problem, then the implementer synthesizes, and the human checks the direction at the Direction gate.
+${branchPolicyParagraph(state)}
+The shape of the phase:
+1. Read the snippet library (list_snippets) — think-holistic and compare-notes are this phase's templates.
+2. Onboard each worker in your first prompt to it: the framing says how (a project skill to invoke — include its /name in the worker's prompt and the CLI expands it — or files to read). Fold the onboarding, the working branch, and the problem statement from the framing into that first prompt.
+3. Send think-holistic to each worker independently — same problem, two unshared analyses.
+4. Send the reviewer's analysis to the implementer with compare-notes: critique, synthesize, don't capitulate.
+5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
+
+Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
+</task>`;
+}
+
 export function specPhaseEntryPrompt(state: RunState, roundCap: number): string {
+  if (!state.specPath) return specDraftEntryPrompt(state, roundCap);
   return `${documentsBlock(state)}
 
 <task>
 Run the SPEC review loop on the draft spec above, then advance to the commit-spec gate.
-
+${branchPolicyParagraph(state)}
 The shape of the loop:
 1. Read the snippet library (list_snippets) — the review-spec / update-spec snippets (and their -again variants for later rounds) are the templates for this loop.
 2. Send the reviewer a review-spec prompt wrapping the current spec. The reviewer runs read-only in the repo, so it can also read ${state.specPath} and related code directly — point it at the path as well as quoting the content.
@@ -58,17 +89,35 @@ Throughout: flag product or direction questions with ask_human as they arise; ta
 </task>`;
 }
 
+function specDraftEntryPrompt(state: RunState, roundCap: number): string {
+  return `<task>
+The human approved the direction at the Direction gate. Draft the spec, then run its review loop to the commit-spec gate.
+
+The shape of the phase:
+1. Decide where the spec file lives — the framing names the project's spec location. If it doesn't, ask_human for one before drafting.
+2. Send the implementer a write-spec prompt carrying the approved direction; it writes the spec file and reports the path and content.
+3. Run the review loop: review-spec to the reviewer (point it at the file's path as well as the content), update-spec to the implementer, -again variants for later rounds. The backstop cap is ${roundCap} review rounds; converge well before it.
+4. When converged, call advance_phase with the summary and with spec_path set to the spec file's repo-relative path — the harness records it for the later phases.
+
+Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
+</task>`;
+}
+
 export function planPhaseEntryPrompt(state: RunState, roundCap: number): string {
-  return `<documents>
+  const specRef = state.specPath ?? 'the approved spec file (you know its path from the spec phase)';
+  const documents = state.specPath
+    ? `<documents>
 <document name="approved-spec" path="${state.specPath}">
 ${readFileSync(join(state.cwd, state.specPath), 'utf8')}
 </document>
 </documents>
 
-<task>
+`
+    : '';
+  return `${documents}<task>
 The human approved the spec at the commit-spec gate. Run the PLAN phase:
 
-1. Have the implementer commit the approved spec file (${state.specPath}) with a conventional message, as its own commit.
+1. Have the implementer commit the approved spec file (${specRef}) with a conventional message, as its own commit.
 2. Decide where the plan file lives: the framing names the project's plan location (path or directory convention). The plan must be a file in the repo — implementation may compact the implementer's context, and the plan file is what later turns re-anchor on. If the framing doesn't name a plan location, ask_human for one before drafting.
 3. Send the implementer a planning prompt — base it on the tdd-plan snippet when the work is test-shaped, start-plan otherwise (read the framing and spec to judge which; if genuinely unclear, that's a process call you may make). The implementer writes the plan to the file and reports it.
 4. Run the plan review loop: review-plan to the reviewer (point it at the plan file's path as well as the content), update-plan to the implementer, -again variants for later rounds. Plans are reviewable at a finer altitude than specs — test cases, fixtures, and line-level references are fair game; only full code bodies are deferred.
@@ -101,15 +150,62 @@ Throughout: flag product, direction, and environment questions with ask_human (t
 </task>`;
 }
 
+export function docsPhaseEntryPrompt(state: RunState, roundCap: number): string {
+  return `<task>
+The human approved the Ship gate — the implementation is verified and shipping. Run the DOCS phase to its proposal:
+
+1. The framing names how this project updates its docs (often a project skill — include its /name in the implementer's prompt and the CLI expands it — otherwise conventions to follow). If the framing names nothing, have the implementer survey the repo's docs and derive the impact from what shipped.
+2. Drive the implementer to the docs-update proposal: which documents change and how. The proposal is this phase's whole product — when a skill has an internal approval step, run it exactly up to that step; applying changes happens after the human approves.
+3. A review round is available when the proposal warrants one (backstop cap ${roundCap}); most docs plans go straight to the gate.
+4. Call advance_phase with the proposal verbatim in the summary — the human approves or adjusts it at the Docs-plan gate.
+
+Throughout: flag product or direction questions with ask_human; tactical questions bounce to the worker.
+</task>`;
+}
+
+export function prPhaseEntryPrompt(state: RunState, roundCap: number): string {
+  return `<task>
+The human approved the docs plan (their adjustments, if any, arrived as gate feedback). Finish the run's artifacts:
+
+1. Have the implementer apply the approved docs plan and commit the doc changes. If a skill was paused at its internal approval step, resume it past that step — when the framing says the skill recognizes a resume token, send it; otherwise tell the implementer the plan is approved and to proceed with applying it.
+2. Send the implementer the pr-description snippet — the PR body for a technical colleague who won't read the diff.
+3. A review round on the description is available when it warrants one (backstop cap ${roundCap}).
+4. Call advance_phase with the PR title and description verbatim in the summary — the human reads exactly this at the Open-PR gate and decides whether to open.
+
+Throughout: flag product or direction questions with ask_human; tactical questions bounce to the worker.
+</task>`;
+}
+
+export function openPhaseEntryPrompt(state: RunState): string {
+  return `<task>
+The human approved opening the PR — that approval covers the mechanics, so run them:
+
+1. Have the implementer push the working branch and open the PR with gh pr create, using the approved title and description, and report the PR URL.
+2. Call advance_phase with the PR URL leading the summary — this completes the run.
+
+If the push or PR creation fails for an environment reason (auth, remote, permissions), that's the human's to fix: ask_human with the error.
+</task>`;
+}
+
 export function answerResumePrompt(answer: string): string {
   return `The human answered your queued question: ${JSON.stringify(answer)}. Continue the phase from where you paused, taking their answer into account.`;
 }
 
-export function feedbackResumePrompt(phase: 'spec' | 'plan' | 'impl', feedback: string): string {
-  const artifact = phase === 'spec' ? 'spec' : phase === 'plan' ? 'plan' : 'implementation';
+const GATE_ARTIFACT: Record<PhaseName, string> = {
+  frame: 'direction analysis',
+  spec: 'spec',
+  plan: 'plan',
+  impl: 'implementation',
+  docs: 'docs plan',
+  pr: 'PR description',
+  open: 'PR opening', // unreachable — the open phase has no gate to reject from
+};
+
+export function feedbackResumePrompt(phase: PhaseName, feedback: string): string {
+  const artifact = GATE_ARTIFACT[phase];
   return `At the gate, the human sent the ${artifact} back with this feedback: ${JSON.stringify(
     feedback,
-  )}. Re-enter the ${artifact} loop to address it — route the feedback to the implementer (the human is the editor-in-chief; their feedback outranks reviewer opinions), run whatever review rounds the changes warrant, and advance the phase again when converged.`;
+  )}. Re-enter the phase to address it — route the feedback to the implementer (the human is the editor-in-chief; their feedback outranks reviewer opinions), run whatever review rounds the changes warrant, and advance the phase again when converged.`;
 }
 
 export function nudgeContinuePrompt(): string {

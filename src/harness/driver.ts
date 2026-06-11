@@ -1,5 +1,6 @@
 import { createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { execa } from 'execa';
 import { z } from 'zod';
 import { ClaudeWorker } from '../providers/claude.ts';
 import { CodexWorker } from '../providers/codex.ts';
@@ -15,10 +16,14 @@ import type { PhaseName, RunState } from '../run-state.ts';
 import {
   ORCHESTRATOR_SYSTEM_PROMPT,
   answerResumePrompt,
+  docsPhaseEntryPrompt,
   feedbackResumePrompt,
+  framePhaseEntryPrompt,
   implPhaseEntryPrompt,
   nudgeContinuePrompt,
+  openPhaseEntryPrompt,
   planPhaseEntryPrompt,
+  prPhaseEntryPrompt,
   specPhaseEntryPrompt,
 } from './orchestrator-prompts.ts';
 
@@ -43,8 +48,23 @@ export interface DriverOutput {
   outcome: 'advanced' | 'flagged';
 }
 
-/** Runaway backstops, not exit mechanisms — generous by design (2× the old caps). */
-export const ROUND_CAPS: Record<PhaseName, number> = { spec: 6, plan: 4, impl: 6 };
+/** Runaway backstops, not exit mechanisms — generous by design (~2× observed rounds). */
+export const ROUND_CAPS: Record<PhaseName, number> = {
+  frame: 2,
+  spec: 6,
+  plan: 4,
+  impl: 6,
+  docs: 2,
+  pr: 2,
+  open: 1,
+};
+
+/**
+ * Phases whose substance IS the review loop — advance_phase refuses with
+ * zero rounds there. The others (synthesis, docs mechanics, PR mechanics)
+ * may legitimately advance without the reviewer.
+ */
+const REVIEW_LOOP_PHASES: ReadonlySet<PhaseName> = new Set(['spec', 'plan', 'impl']);
 
 /**
  * Per-phase rails. The AFK impl phase runs 1–3 hours with many worker turns,
@@ -52,12 +72,32 @@ export const ROUND_CAPS: Record<PhaseName, number> = { spec: 6, plan: 4, impl: 6
  * crashing (the budget-exhausted result subtype and worker-timeout error both
  * land on the existing flag paths).
  */
-const ORCHESTRATOR_MAX_BUDGET_USD: Record<PhaseName, number> = { spec: 15, plan: 15, impl: 30 };
-const WORKER_MAX_BUDGET_USD: Record<PhaseName, number> = { spec: 10, plan: 10, impl: 25 };
+const ORCHESTRATOR_MAX_BUDGET_USD: Record<PhaseName, number> = {
+  frame: 15,
+  spec: 15,
+  plan: 15,
+  impl: 30,
+  docs: 10,
+  pr: 10,
+  open: 5,
+};
+const WORKER_MAX_BUDGET_USD: Record<PhaseName, number> = {
+  frame: 10,
+  spec: 10,
+  plan: 10,
+  impl: 25,
+  docs: 10,
+  pr: 10,
+  open: 5,
+};
 const WORKER_TURN_TIMEOUT_MS: Record<PhaseName, number> = {
+  frame: 30 * 60_000,
   spec: 30 * 60_000,
   plan: 30 * 60_000,
   impl: 60 * 60_000,
+  docs: 30 * 60_000,
+  pr: 30 * 60_000,
+  open: 15 * 60_000,
 };
 
 export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<DriverOutput> {
@@ -206,8 +246,56 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
     ),
 
     tool(
+      'create_branch',
+      'Create and switch to the run’s working branch — for when the repo sits on its default branch (or one unrelated to this problem) at run start. The branch is fixed once a worker has been prompted, so this is only callable before your first send_prompt; after creating it, name the branch in your first prompt to each worker with the note that branch management is settled outside their sessions.',
+      {
+        name: z.string().describe('Branch name fitting the work and the project’s conventions, e.g. "feat/queued-flags".'),
+      },
+      async (args) => {
+        if (state.workerSessions.implementer || state.workerSessions.reviewer) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: 'A worker has already been prompted, so the run’s branch is fixed — creating one now would strand the work done so far. Continue on the current branch; if it is genuinely wrong, that is the human’s call: ask_human.',
+              },
+            ],
+            isError: true,
+          };
+        }
+        try {
+          await execa('git', ['switch', '-c', args.name], { cwd: state.cwd, timeout: 30_000 });
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Branch creation failed at the git layer (${detail}). If the name already exists, choose another; if the failure looks environmental (locks, permissions), ask_human with the error.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        state.branch = args.name;
+        state.lastActivity = `create_branch (${args.name})`;
+        saveRunState(state);
+        log(`[create_branch] switched to ${args.name}`);
+        appendVoiceLog(state, 'orchestrator', `create_branch (${args.name})`);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Created and switched to "${args.name}" — the run’s working branch. Name it in your first prompt to each worker, with the note that branch management is settled outside their sessions.`,
+            },
+          ],
+        };
+      },
+    ),
+
+    tool(
       'advance_phase',
-      'Declare the current phase complete. Legal only when the phase’s exit criteria are met (the review loop converged, open points are minor or settled). Always lands on a human gate — your summary is what the human decides from, so make it honest about what changed, what was rejected, and what remains open.',
+      'Declare the current phase complete. Legal only when the phase’s exit criteria are met (the review loop converged, open points are minor or settled). Lands on the phase’s human gate — your summary is what the human decides from, so make it honest about what changed, what was rejected, and what remains open.',
       {
         summary: z
           .string()
@@ -215,10 +303,14 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
             'The gate packet the human decides from: what the reviewer flagged, what changed, rejections with rationale, open points. For the implementation phase, lead with the CEO summary verbatim, then review history, deviations from the plan, and test state.',
           ),
         artifacts: z.array(z.string()).describe('Paths or descriptions of the phase’s outputs (e.g. the spec file).'),
+        spec_path: z
+          .string()
+          .optional()
+          .describe('Repo-relative path of the spec file, when this phase produced or moved it — the harness records it for later phases.'),
       },
       async (args) => {
         const roundsRun = state.rounds[phase] ?? 0;
-        if (roundsRun === 0) {
+        if (REVIEW_LOOP_PHASES.has(phase) && roundsRun === 0) {
           return {
             content: [
               {
@@ -229,6 +321,7 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
             isError: true,
           };
         }
+        if (args.spec_path) state.specPath = args.spec_path;
         state.phaseSummaries[phase] = { summary: args.summary, artifacts: args.artifacts };
         state.lastActivity = `advance_phase (${phase})`;
         saveRunState(state);
@@ -310,6 +403,7 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
       'mcp__orchestrator__send_prompt',
       'mcp__orchestrator__ask_human',
       'mcp__orchestrator__advance_phase',
+      'mcp__orchestrator__create_branch',
       'mcp__orchestrator__propose_snippet_edit',
       'mcp__orchestrator__write_note',
     ],
@@ -389,9 +483,23 @@ function buildPrompt(
   if (!state.phaseStarted[phase]) {
     state.phaseStarted[phase] = true;
     saveRunState(state);
-    if (phase === 'spec') return specPhaseEntryPrompt(state, ROUND_CAPS.spec);
-    if (phase === 'plan') return planPhaseEntryPrompt(state, ROUND_CAPS.plan);
-    return implPhaseEntryPrompt(state, ROUND_CAPS.impl);
+    const cap = ROUND_CAPS[phase];
+    switch (phase) {
+      case 'frame':
+        return framePhaseEntryPrompt(state, cap);
+      case 'spec':
+        return specPhaseEntryPrompt(state, cap);
+      case 'plan':
+        return planPhaseEntryPrompt(state, cap);
+      case 'impl':
+        return implPhaseEntryPrompt(state, cap);
+      case 'docs':
+        return docsPhaseEntryPrompt(state, cap);
+      case 'pr':
+        return prPhaseEntryPrompt(state, cap);
+      case 'open':
+        return openPhaseEntryPrompt(state);
+    }
   }
   if (pendingMessage?.kind === 'answer') return answerResumePrompt(pendingMessage.text);
   if (pendingMessage?.kind === 'feedback') return feedbackResumePrompt(phase, pendingMessage.text);
