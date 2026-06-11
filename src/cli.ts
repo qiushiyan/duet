@@ -8,6 +8,7 @@ import type { AnyMachineSnapshot } from 'xstate';
 import { loadRoleBindings } from './config.ts';
 import { duetMachine } from './harness/machine.ts';
 import { ROUND_CAPS } from './harness/driver.ts';
+import { editFramingForRun } from './framing-editor.ts';
 import { notify } from './notify.ts';
 import { openTmuxView } from './tmux-view.ts';
 import {
@@ -168,15 +169,20 @@ program
   .command('new')
   .description('Start a run: [FRAME →] SPEC → PLAN (walk away) → AFK IMPLEMENTATION → DOCS → PR → opened PR.')
   .option('--spec <path>', 'path to a draft spec file; omit to start from the framing alone (the FRAME phase drafts it)')
-  .option('--framing <file>', 'project briefing file — the only place project knowledge enters')
+  .option('--framing <file>', 'project briefing file — the only place project knowledge enters; omit both flags to write it in your editor')
   .option('--orchestrator <provider[:model]>', 'role binding override (claude[:model] only in v1)')
   .option('--impl <provider[:model]>', 'implementer binding override')
   .option('--reviewer <provider[:model]>', 'reviewer binding override')
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
   .action(async (opts: { spec?: string; framing?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean }) => {
     const cwd = process.cwd();
-    if (!opts.spec && !opts.framing) {
-      fail('provide --spec, --framing, or both — a framing-only run drafts the spec itself, but needs the briefing to do it');
+    let framingFile = opts.framing;
+    if (!opts.spec && !framingFile) {
+      try {
+        framingFile = await editFramingForRun(cwd);
+      } catch (err) {
+        fail(err instanceof Error ? err.message : String(err));
+      }
     }
     let specPath: string | undefined;
     if (opts.spec) {
@@ -190,7 +196,7 @@ program
       ...(opts.impl ? { implementer: opts.impl } : {}),
       ...(opts.reviewer ? { reviewer: opts.reviewer } : {}),
     });
-    const framing = opts.framing ? readFileSync(resolve(cwd, opts.framing), 'utf8') : undefined;
+    const framing = framingFile ? readFileSync(resolve(cwd, framingFile), 'utf8') : undefined;
 
     let branch: string | undefined;
     try {

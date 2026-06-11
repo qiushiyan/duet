@@ -232,7 +232,7 @@ CLI surface (implemented in `src/cli.ts` across the full arc):
 
 | Command | What it does |
 |---|---|
-| `duet new [--spec <draft-path>] [--framing <file>] [--orchestrator …] [--impl …] [--reviewer …] [--tmux]` | Starts a run (at least one of `--spec`/`--framing`). With a draft spec, enters at the spec review rounds; framing-only entry runs the FRAME phase first (onboard → think-holistic → compare-notes → Direction gate) and the spec is drafted after it. Runs the current phase to its next gate or queued flag, then exits. |
+| `duet new [--spec <draft-path>] [--framing <file>] [--orchestrator …] [--impl …] [--reviewer …] [--tmux]` | Starts a run. With neither `--spec` nor `--framing`, opens `$VISUAL`/`$EDITOR` on `duet-framing.md` in the project (template-seeded; GUI editors like VS Code get `--wait` injected) and starts framing-only from what the user saves — an empty or untouched file aborts. With a draft spec, enters at the spec review rounds; framing-only entry runs the FRAME phase first (onboard → think-holistic → compare-notes → Direction gate) and the spec is drafted after it. Runs the current phase to its next gate or queued flag, then exits. |
 | `duet continue [run_id] [--approve \| --reject "…" \| --answer "…"] [--tmux]` | Resumes past the current gate or answers a queued `ask_human` flag; defaults to the latest run. With no flags, re-enters a run that stopped mid-phase (crash recovery — the driver re-derives position from the transcripts). `--tmux` opens or reuses the run's viewer. |
 | `duet status [run_id]` | Current state, queued flags, phase summaries, round counts vs. caps, costs, queued snippet proposals, next command. |
 | `duet runs` | Lists known runs in the project. |
