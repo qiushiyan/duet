@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve, relative } from 'node:path';
+import { spawn } from 'node:child_process';
+import { closeSync, existsSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve, relative } from 'node:path';
 import { Command } from 'commander';
 import { execa } from 'execa';
 import { createActor, waitFor } from 'xstate';
@@ -17,6 +18,7 @@ import {
   listRuns,
   loadMachineSnapshot,
   loadRunState,
+  runDirOf,
   saveMachineSnapshot,
   saveRunState,
 } from './run-state.ts';
@@ -24,12 +26,55 @@ import type { RunState } from './run-state.ts';
 
 /**
  * duet — one-shot CLI, alive through a phase (docs/automation-design.md
- * §"Not a daemon — but alive through a phase"). Each invocation drives the
- * statechart to the next quiescent state (a gate, a queued flag, or done),
- * persists, and exits. The human resumes with `duet continue`.
+ * §"Not a daemon — but alive through a phase"). `new` and gate-crossing
+ * `continue` invocations return immediately: the phase is driven by a
+ * detached per-phase child (`_drive`) that runs the statechart to the next
+ * quiescent state (a gate, a queued flag, or done), persists, notifies, and
+ * exits. Nothing runs between quiescent stops — still no resident daemon —
+ * but the invoking terminal stays free for follow-up duet commands.
  */
 
 const QUIESCENCE_TIMEOUT_MS = 6 * 60 * 60_000;
+
+/**
+ * Spawn the detached phase driver and return its pid. Its stdout/stderr go
+ * to `.duet/runs/<id>/driver.log` (crash evidence lives there); the pid file
+ * is how later invocations refuse to start a second concurrent driver.
+ */
+function spawnDrive(state: RunState, eventType?: 'approve' | 'reject' | 'answer'): number {
+  const runDir = runDirOf(state.cwd, state.runId);
+  const out = openSync(join(runDir, 'driver.log'), 'a');
+  const child = spawn(
+    process.execPath,
+    [process.argv[1]!, '_drive', state.runId, ...(eventType ? [eventType] : [])],
+    { cwd: state.cwd, detached: true, stdio: ['ignore', out, out] },
+  );
+  closeSync(out);
+  writeFileSync(join(runDir, 'driver.pid'), `${child.pid}\n`);
+  child.unref();
+  return child.pid!;
+}
+
+/** The driver pid when one is alive for this run, else undefined. */
+function aliveDriverPid(state: RunState): number | undefined {
+  const path = join(runDirOf(state.cwd, state.runId), 'driver.pid');
+  if (!existsSync(path)) return undefined;
+  const pid = Number.parseInt(readFileSync(path, 'utf8'), 10);
+  if (!Number.isFinite(pid)) return undefined;
+  try {
+    process.kill(pid, 0);
+    return pid;
+  } catch {
+    return undefined; // stale pid — the driver exited (or crashed)
+  }
+}
+
+function printWatchHints(state: RunState, pid: number, phaseLabel: string): void {
+  console.log(`${phaseLabel} running in the background (pid ${pid})`);
+  console.log(`  live logs:  duet view ${state.runId}`);
+  console.log(`  status:     duet status ${state.runId}`);
+  console.log(`you'll get a notification at the next gate or queued question`);
+}
 
 async function driveToQuiescence(
   state: RunState,
@@ -95,6 +140,10 @@ function printStatus(state: RunState, snapshot?: AnyMachineSnapshot): void {
   const machineState = state.machineState ?? '(not started)';
   console.log(`\n━━━ duet run ${state.runId} ━━━`);
   console.log(`state:    ${machineState}`);
+  const livePid = aliveDriverPid(state);
+  if (livePid !== undefined && livePid !== process.pid) {
+    console.log(`phase:    running in the background (pid ${livePid})`);
+  }
   console.log(`spec:     ${state.specPath ?? '(not yet drafted — framing-only entry)'}`);
   if (state.branch) console.log(`branch:   ${state.branch}`);
   if (state.lastActivity) console.log(`last:     ${state.lastActivity}`);
@@ -212,12 +261,13 @@ program
       ...(branch ? { branch } : {}),
       bindings,
     });
-    console.log(`run ${state.runId} created — entering the ${specPath ? 'SPEC review loop' : 'FRAME phase'}`);
+    console.log(`run ${state.runId} created`);
     if (opts.tmux) await openTmuxView(state);
     console.log(
       `roles: orchestrator=${bindings.orchestrator.provider}:${bindings.orchestrator.model ?? ''} implementer=${bindings.implementer.provider}${bindings.implementer.model ? ':' + bindings.implementer.model : ''} reviewer=${bindings.reviewer.provider}${bindings.reviewer.model ? ':' + bindings.reviewer.model : ''}\n`,
     );
-    await driveToQuiescence(state);
+    const pid = spawnDrive(state);
+    printWatchHints(state, pid, specPath ? 'SPEC review loop' : 'FRAME phase');
   });
 
 program
@@ -237,19 +287,34 @@ program
     const chosen = [opts.approve, opts.reject, opts.answer].filter((v) => v !== undefined);
     if (chosen.length > 1) fail('choose one of --approve, --reject, --answer');
 
+    // A phase driver already running owns this run — a second one would race
+    // it on the orchestrator session and the state file.
+    const runningPid = aliveDriverPid(state);
+    if (runningPid !== undefined) {
+      if (chosen.length > 0) {
+        fail(
+          `the phase is still running (pid ${runningPid}) — there's no gate or flag to act on yet; watch with: duet view ${state.runId}`,
+        );
+      }
+      printStatus(state);
+      console.log(`\nphase running in the background (pid ${runningPid}) — live logs: duet view ${state.runId}`);
+      return;
+    }
+
     const snapshot = loadMachineSnapshot(state);
 
     if (!snapshot) {
-      // No quiescent snapshot — the run crashed mid-phase (or was killed).
-      // Recreate from the start state; the driver re-derives position from
-      // the run state + transcripts (which is where truth always lived).
+      // No quiescent snapshot and no live driver — the run crashed mid-phase
+      // (or was killed). Re-enter; the driver re-derives position from the
+      // run state + transcripts (which is where truth always lived).
       if (chosen.length > 0) {
         fail(
           'this run has no gate to act on (it stopped mid-phase) — rerun without flags to let it pick up from the transcripts',
         );
       }
       console.log(`run ${state.runId}: no quiescent snapshot — re-entering the current phase from the transcripts`);
-      await driveToQuiescence(state);
+      const pid = spawnDrive(state);
+      printWatchHints(state, pid, 'recovered phase');
       return;
     }
 
@@ -281,7 +346,40 @@ program
     if (opts.answer !== undefined) state.pendingMessage = { kind: 'answer', text: opts.answer };
     saveRunState(state);
 
-    await driveToQuiescence(state, { snapshot, event });
+    const eventType = event.type.split('.')[1] as 'approve' | 'reject' | 'answer';
+    const pid = spawnDrive(state, eventType);
+    printWatchHints(state, pid, `phase (after --${eventType})`);
+  });
+
+// Internal: the detached phase driver `new`/`continue` spawn. Drives the
+// statechart to the next quiescent stop, persists, notifies, exits.
+const driveCommand = new Command('_drive')
+  .argument('<runId>')
+  .argument('[eventType]')
+  .action(async (runId: string, eventType?: string) => {
+    const state = loadRunState(process.cwd(), runId);
+    const snapshot = loadMachineSnapshot(state);
+    const event =
+      eventType === 'approve' || eventType === 'reject' || eventType === 'answer'
+        ? ({ type: `human.${eventType}` } as { type: 'human.approve' | 'human.reject' | 'human.answer' })
+        : undefined;
+    await driveToQuiescence(state, {
+      ...(snapshot ? { snapshot } : {}),
+      ...(event ? { event } : {}),
+    });
+  });
+program.addCommand(driveCommand, { hidden: true });
+
+program
+  .command('view')
+  .description('Open (or reuse) the tmux viewer: one live pane per voice, tailing the run logs.')
+  .argument('[runId]', 'run id (defaults to the latest run in this project)')
+  .action(async (runId: string | undefined) => {
+    const cwd = process.cwd();
+    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
+    if (!state) fail('no runs found in this project');
+    await openTmuxView(state);
+    console.log(`raw logs: ${join(runDirOf(state.cwd, state.runId))}/{orchestrator,implementer,reviewer,driver}.log`);
   });
 
 program

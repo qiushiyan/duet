@@ -22,7 +22,7 @@ Built for one developer's use across their own projects. The CLI is project-agno
 
 ### Not a daemon — but alive through a phase
 
-*Amended from the 2026-05-26 "per-gate process" rule.* The process model is now **per-phase, not per-gate**: a `duet` invocation runs one phase (which may take 1–3 hours during AFK implementation), exits at the next gate or queued exception, and persists state. Nothing runs when no phase is active; there is still no daemon, no GUI, no webhook listener. The amendment exists because an intelligent orchestrator must hold its session open *across* the many routed turns inside a phase — but gates remain process exits, which is what keeps the semi-AFK shape (answer a gate from any terminal, hours later).
+*Amended from the 2026-05-26 "per-gate process" rule.* The process model is **per-phase, not per-gate**: each phase (which may take 1–3 hours during AFK implementation) is driven by a detached child process that exits at the next gate or queued exception, persisting state. The invoking `duet new` / `duet continue` returns immediately — it stages the human's input, spawns the driver (`_drive`, stdout to `.duet/runs/<id>/driver.log`, pid in `driver.pid`), and frees the terminal for follow-up duet commands; a pid guard refuses to start a second driver for a run whose phase is still running. Nothing runs when no phase is active; there is still no resident daemon, no GUI, no webhook listener. An intelligent orchestrator must hold its session open *across* the many routed turns inside a phase — but gates remain process exits, which is what keeps the semi-AFK shape (answer a gate from any terminal, hours later).
 
 ## Design history — the 2026-06-11 pivot
 
@@ -232,14 +232,15 @@ CLI surface (implemented in `src/cli.ts` across the full arc):
 
 | Command | What it does |
 |---|---|
-| `duet new [--spec <draft-path>] [--framing <file>] [--orchestrator …] [--impl …] [--reviewer …] [--tmux]` | Starts a run. With neither `--spec` nor `--framing`, opens `$VISUAL`/`$EDITOR` on `duet-framing.md` in the project (template-seeded; GUI editors like VS Code get `--wait` injected) and starts framing-only from what the user saves — an empty or untouched file aborts. With a draft spec, enters at the spec review rounds; framing-only entry runs the FRAME phase first (onboard → think-holistic → compare-notes → Direction gate) and the spec is drafted after it. Runs the current phase to its next gate or queued flag, then exits. |
-| `duet continue [run_id] [--approve \| --reject "…" \| --answer "…"] [--tmux]` | Resumes past the current gate or answers a queued `ask_human` flag; defaults to the latest run. With no flags, re-enters a run that stopped mid-phase (crash recovery — the driver re-derives position from the transcripts). `--tmux` opens or reuses the run's viewer. |
+| `duet new [--spec <draft-path>] [--framing <file>] [--orchestrator …] [--impl …] [--reviewer …] [--tmux]` | Starts a run. With neither `--spec` nor `--framing`, opens `$VISUAL`/`$EDITOR` on `duet-framing.md` in the project (template-seeded; GUI editors like VS Code get `--wait` injected) and starts framing-only from what the user saves — an empty or untouched file aborts. With a draft spec, enters at the spec review rounds; framing-only entry runs the FRAME phase first (onboard → think-holistic → compare-notes → Direction gate) and the spec is drafted after it. Returns immediately; the phase runs in a detached driver to its next gate or queued flag. |
+| `duet continue [run_id] [--approve \| --reject "…" \| --answer "…"] [--tmux]` | Resumes past the current gate or answers a queued `ask_human` flag; defaults to the latest run. Returns immediately (detached driver); refused while the run's phase is still driving. With no flags: status if running, crash recovery if not. `--tmux` opens or reuses the run's viewer. |
+| `duet view [run_id]` | Opens (or reuses) the tmux viewer for a run and prints the raw log paths. |
 | `duet status [run_id]` | Current state, queued flags, phase summaries, round counts vs. caps, costs, queued snippet proposals, next command. |
 | `duet runs` | Lists known runs in the project. |
 
 The framing input is a single markdown file sent verbatim, structure by convention not contract. The framing is also the orchestrator's project briefing — it is the only place project knowledge enters the system.
 
-State persistence: the run dir `.duet/runs/<run_id>/` holds `state.json` (the human-readable hint: state value, session ids, queued flags, rounds, costs, proposals), `machine.json` (the statechart snapshot, written **only at quiescent states** — gates, flag-waits, done), one append-only log per voice, and `notes.md`. All three JSONL transcripts are the source of truth.
+State persistence: the run dir `.duet/runs/<run_id>/` holds `state.json` (the human-readable hint: state value, session ids, queued flags, rounds, costs, proposals), `machine.json` (the statechart snapshot, written **only at quiescent states** — gates, flag-waits, done), one append-only log per voice, `driver.log` + `driver.pid` (the detached phase driver's stdout and liveness), and `notes.md`. All three JSONL transcripts are the source of truth.
 
 ### Visualization: tmux is a viewer, never the runtime
 
