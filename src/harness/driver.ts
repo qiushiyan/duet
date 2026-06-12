@@ -8,7 +8,9 @@ import { createWorkers } from '../providers/index.ts';
 import {
   appendVoiceLog,
   consumeHumanInput,
+  listPendingSteers,
   loadRunState,
+  markSteersDelivered,
   saveRunState,
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
@@ -24,6 +26,7 @@ import {
   openPhaseEntryPrompt,
   planPhaseEntryPrompt,
   prPhaseEntryPrompt,
+  renderSteerBlock,
   specPhaseEntryPrompt,
 } from './orchestrator-prompts.ts';
 
@@ -203,7 +206,35 @@ async function drivePhase(
   }
 }
 
+/**
+ * The turn's prompt: the phase entry or resume prompt, plus any steers that
+ * missed their delivery window (the phase ended, or the run was paused, before
+ * another tool result could carry them). Draining here mirrors
+ * consumeHumanInput's consume-then-crash trade: a crash between this drain and
+ * the turn reaching the model loses the carry — accepted, the voice log keeps
+ * the evidence — where not draining would redeliver into every later prompt.
+ */
 function buildPrompt(
+  state: RunState,
+  phase: PhaseName,
+  pendingMessage: HumanMessage | undefined,
+): string {
+  const base = basePrompt(state, phase, pendingMessage);
+  const steers = listPendingSteers(state);
+  if (steers.length === 0) return base;
+  markSteersDelivered(state, steers);
+  for (const steer of steers) {
+    appendVoiceLog(
+      state,
+      'orchestrator',
+      `human steer carried forward (staged ${steer.stagedAt}${steer.stagedDuring ? `, during ${steer.stagedDuring}` : ''})`,
+      steer.text,
+    );
+  }
+  return `${base}\n\n${renderSteerBlock(steers, 'carried')}`;
+}
+
+function basePrompt(
   state: RunState,
   phase: PhaseName,
   pendingMessage: HumanMessage | undefined,

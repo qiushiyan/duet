@@ -6,8 +6,16 @@ import { PHASE } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
 import type { WorkerProvider, WorkerRole } from '../providers/types.ts';
 import { getSnippet, renderSnippetLibrary } from '../snippets.ts';
-import { appendNote, appendVoiceLog, gateAttended, saveRunState } from '../run-store.ts';
+import {
+  appendNote,
+  appendVoiceLog,
+  gateAttended,
+  listPendingSteers,
+  markSteersDelivered,
+  saveRunState,
+} from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
+import { renderSteerBlock } from './orchestrator-prompts.ts';
 
 /**
  * The orchestrator's tool surface — the seven harness tools and every
@@ -360,5 +368,39 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     ),
   ];
 
-  return { tools, outcome };
+  /**
+   * Steer delivery rides every tool result (docs/specs/2026-06-12-concierge-package.md):
+   * after a handler produces its result — refusals included — pending human
+   * steers are appended as a tagged block and consumed. Two exceptions, one
+   * rule: steers deliver only on results that CONTINUE the phase. A call that
+   * set an outcome flag (advance requested, question queued) is ending the
+   * turn, and guidance appended to a dying turn lands and dies — those steers
+   * stay pending and ride the next harness prompt instead (carry-forward,
+   * src/harness/driver.ts). Peek → append → mark-delivered order: a crash in
+   * between redelivers (a repeated instruction is benign where a lost one is
+   * not). The steer path is fail-soft — it must never corrupt a tool result.
+   */
+  const withSteerDelivery = (def: SdkMcpToolDefinition<any>): SdkMcpToolDefinition<any> => ({
+    ...def,
+    handler: async (args, extra) => {
+      const result = await def.handler(args, extra);
+      if (outcome.advanceRequested || outcome.questionQueued) return result;
+      try {
+        const steers = listPendingSteers(state);
+        if (steers.length === 0) return result;
+        result.content.push({ type: 'text' as const, text: renderSteerBlock(steers, 'live') });
+        markSteersDelivered(state, steers);
+        for (const steer of steers) {
+          appendVoiceLog(state, 'orchestrator', `human steer delivered (staged ${steer.stagedAt})`, steer.text);
+        }
+        log(`[steer] delivered ${steers.length} human steer(s) on ${def.name}'s result`);
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        log(`[steer] delivery failed (${detail}) — steers remain staged for the next result`);
+      }
+      return result;
+    },
+  });
+
+  return { tools: tools.map(withSteerDelivery), outcome };
 }

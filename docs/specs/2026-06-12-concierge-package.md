@@ -90,5 +90,7 @@ This package touches `driver.ts`, `tools.ts`, and the run store — the code liv
 
 ## Open questions
 
-- Should *delivered* steers be folded into the next gate packet's history ("mid-phase guidance received: …") so the human sees their own steers reflected at the stop? Leaning yes via the voice log; decide in the plan.
-- Does the steer block appear in `advance_phase`'s acknowledgement when steers arrived during the final tool call of a phase? Edge of the carry-forward rule; decide in the plan.
+Both resolved at plan time (`docs/plans/2026-06-12-concierge-package.md` §Decisions):
+
+- ~~Should *delivered* steers be folded into the next gate packet's history so the human sees their own steers reflected at the stop?~~ **Yes, by instruction, not mechanism:** the orchestrator's `<human_steers>` system-prompt paragraph tells it to note received guidance in its `advance_phase` packet; the voice logs and `steers/delivered/` are the structural audit trail. Code folding steer text into packets would be the harness editorializing.
+- ~~Does the steer block appear in `advance_phase`'s acknowledgement when steers arrived during the final tool call of a phase?~~ **No — steers never deliver into a dying turn.** When a call set an outcome flag (advance requested, question queued) the drain is skipped: guidance appended to a turn the orchestrator has been told to end lands and dies. Held steers ride carry-forward into the next harness prompt, where they can still shape routing. The one `ask_human` path that continues the phase (a staged answer fed back inline) delivers normally.

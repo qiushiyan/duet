@@ -2,7 +2,7 @@ import { describe, expect } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { runPhase } from '../src/harness/driver.ts';
 import type { RunOrchestratorTurn } from '../src/harness/driver.ts';
-import { loadRunState, saveRunState } from '../src/run-store.ts';
+import { listPendingSteers, loadRunState, saveRunState, stageSteer } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**
@@ -134,6 +134,78 @@ describe('infrastructure failure', () => {
     const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
     expect(result).toEqual({ outcome: 'flagged' });
     expect(loadRunState(projectDir, run.runId).pendingQuestion?.question).toBe('the real question');
+  });
+});
+
+describe('steer carry-forward (steers that missed their phase ride the next prompt)', () => {
+  const advanceScript = () =>
+    scriptedSession(async (ctx) => {
+      await callTool(ctx, 'advance_phase', { summary: 's', artifacts: [] });
+      return [success()];
+    });
+
+  test('a steer staged between phases lands in the next entry prompt with provenance — and is consumed', async ({
+    projectDir,
+    run,
+  }) => {
+    await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, advanceScript().runTurn);
+    const staged = loadRunState(projectDir, run.runId);
+    stageSteer(staged, 'skip the migration for now', 'frame');
+
+    const spec = advanceScript();
+    await runPhase({ runId: run.runId, cwd: projectDir, phase: 'spec' }, spec.runTurn);
+
+    expect.soft(spec.prompts[0]).toContain('Draft the spec'); // the entry prompt, intact
+    expect.soft(spec.prompts[0]).toContain('staged_during="frame phase"');
+    expect.soft(spec.prompts[0]).toContain('skip the migration for now');
+    expect.soft(spec.prompts[0]).toContain('judge its freshness');
+    expect.soft(listPendingSteers(loadRunState(projectDir, run.runId))).toEqual([]);
+  });
+
+  test('a steer staged while a question waited rides the answer-resume prompt alongside the answer', async ({
+    projectDir,
+    run,
+  }) => {
+    const entry = scriptedSession(async (ctx) => {
+      await callTool(ctx, 'ask_human', { question: 'scope?' });
+      return [success()];
+    });
+    await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, entry.runTurn);
+
+    const staged = loadRunState(projectDir, run.runId);
+    stageSteer(staged, 'late thought: keep it small', 'frame');
+    staged.pendingMessage = { kind: 'answer', text: 'narrow it' };
+    saveRunState(staged);
+
+    const resume = advanceScript();
+    await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, resume.runTurn);
+    expect.soft(resume.prompts[0]).toContain('The human answered your queued question: "narrow it"');
+    expect.soft(resume.prompts[0]).toContain('late thought: keep it small');
+  });
+
+  test('gate-feedback resume and crash-recovery re-entry carry pending steers the same way', async ({
+    projectDir,
+    run,
+  }) => {
+    await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, advanceScript().runTurn);
+
+    // Reject path: feedback staged, steer pending.
+    let staged = loadRunState(projectDir, run.runId);
+    stageSteer(staged, 'note for the rework');
+    staged.pendingMessage = { kind: 'feedback', text: 'invert the scope' };
+    saveRunState(staged);
+    const rework = advanceScript();
+    await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, rework.runTurn);
+    expect.soft(rework.prompts[0]).toContain('"invert the scope"');
+    expect.soft(rework.prompts[0]).toContain('note for the rework');
+
+    // Crash-recovery path: nothing staged, steer pending, nudge prompt carries it.
+    staged = loadRunState(projectDir, run.runId);
+    stageSteer(staged, 'note for the recovery');
+    const recovery = advanceScript();
+    await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, recovery.runTurn);
+    expect.soft(recovery.prompts[0]).toContain('Continue the phase');
+    expect.soft(recovery.prompts[0]).toContain('note for the recovery');
   });
 });
 

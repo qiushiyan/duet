@@ -5,7 +5,7 @@ import { describe, expect, vi } from 'vitest';
 import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { createPhaseTools } from '../src/harness/tools.ts';
 import type { PhaseName } from '../src/phases.ts';
-import { loadRunState, runDirOf } from '../src/run-store.ts';
+import { listPendingSteers, loadRunState, runDirOf, stageSteer } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import { FakeWorker, test } from './helpers/fixtures.ts';
 
@@ -283,6 +283,106 @@ describe('advance_phase (the gate packet)', () => {
     const open = harness(run, { phase: 'open' });
     const openResult = await open.call('advance_phase', { summary: 'PR: https://example.com/pr/1', artifacts: [] });
     expect(text(openResult)).toContain('the run is complete');
+  });
+});
+
+describe('steer delivery (every phase-continuing tool result)', () => {
+  const blockOf = (result: ToolResult): string =>
+    result.content
+      .map((c) => (c as { text?: string }).text ?? '')
+      .filter((t) => t.includes('<human_steer'))
+      .join('\n');
+
+  test('a staged steer arrives on the next tool result, verbatim and tagged — then never twice', async ({
+    run,
+  }) => {
+    const { call } = harness(run);
+    const steer = stageSteer(run, 'drop the retry tests');
+
+    const first = await call('write_note', { observation: 'n1' });
+    const block = blockOf(first);
+    expect.soft(block).toContain(`<human_steer staged_at="${steer.stagedAt}">`);
+    expect.soft(block).toContain('drop the retry tests');
+    expect.soft(block).toContain('editor-in-chief');
+    expect.soft(listPendingSteers(run)).toEqual([]);
+
+    const second = await call('write_note', { observation: 'n2' });
+    expect(blockOf(second)).toBe('');
+  });
+
+  test('delivery rides refusal results too', async ({ run }) => {
+    const { call } = harness(run);
+    const args = { role: 'reviewer', tag: 'review-spec', body: 'full template' };
+    await call('send_prompt', args);
+
+    stageSteer(run, 'mid-phase note');
+    const refusal = await call('send_prompt', args); // the warn-once template refusal
+    expect.soft(refusal.isError).toBe(true);
+    expect.soft(blockOf(refusal)).toContain('mid-phase note');
+  });
+
+  test('multiple staged steers deliver together, in staging order', async ({ run }) => {
+    const { call } = harness(run);
+    stageSteer(run, 'first note');
+    stageSteer(run, 'second note');
+
+    const block = blockOf(await call('write_note', { observation: 'n' }));
+    expect.soft(block).toContain('first note');
+    expect.soft(block).toContain('second note');
+    expect.soft(block.indexOf('first note')).toBeLessThan(block.indexOf('second note'));
+  });
+
+  test('a steer staged while a worker turn is in flight lands on that turn’s own result', async ({ run }) => {
+    let finish!: (turn: { text: string; sessionId: string }) => void;
+    const slow = new FakeWorker('codex');
+    slow.runTurn = () => new Promise((resolve) => (finish = resolve));
+    const { call } = harness(run, { reviewer: slow });
+
+    const pending = call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    await new Promise((r) => setTimeout(r, 0)); // let the turn start
+    stageSteer(run, 'staged mid-turn');
+    finish({ text: 'done', sessionId: 's' });
+
+    expect(blockOf(await pending)).toContain('staged mid-turn');
+  });
+
+  test('advance_phase’s acknowledgement never carries steers — they stay pending for carry-forward', async ({
+    run,
+  }) => {
+    const { call } = harness(run, { phase: 'frame' });
+    stageSteer(run, 'arrived during the final call');
+
+    const ack = await call('advance_phase', { summary: 'done', artifacts: [] });
+    expect.soft(blockOf(ack)).toBe('');
+    expect.soft(listPendingSteers(run).map((s) => s.text)).toEqual(['arrived during the final call']);
+  });
+
+  test('a queued ask_human’s acknowledgement never carries steers — they stay pending', async ({ run }) => {
+    const { call } = harness(run);
+    stageSteer(run, 'arrived as the run paused');
+
+    const ack = await call('ask_human', { question: 'scope?' });
+    expect.soft(blockOf(ack)).toBe('');
+    expect.soft(listPendingSteers(run)).toHaveLength(1);
+  });
+
+  test('ask_human answered from a staged answer continues the phase — and does deliver', async ({ run }) => {
+    const { call } = harness(run, { stagedAnswer: 'narrow it' });
+    stageSteer(run, 'also: keep the old name');
+
+    const result = await call('ask_human', { question: 'scope?' });
+    expect.soft(blockOf(result)).toContain('keep the old name');
+    expect.soft(listPendingSteers(run)).toEqual([]);
+  });
+
+  test('delivery lands in the orchestrator voice log', async ({ projectDir, run }) => {
+    const { call } = harness(run);
+    stageSteer(run, 'logged note');
+    await call('write_note', { observation: 'n' });
+
+    const log = readFileSync(join(runDirOf(projectDir, run.runId), 'orchestrator.log'), 'utf8');
+    expect.soft(log).toContain('human steer delivered');
+    expect.soft(log).toContain('logged note');
   });
 });
 

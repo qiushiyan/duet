@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { PHASE } from '../phases.ts';
 import type { GatePhase, PhaseName } from '../phases.ts';
 import { gateAttended } from '../run-store.ts';
-import type { RunState } from '../run-store.ts';
+import type { RunState, Steer } from '../run-store.ts';
 
 /**
  * Orchestrator prompts, written to the conventions in
@@ -30,6 +30,10 @@ A review loop runs: artifact → reviewer critique (review-*) → implementer re
 
 Across turns, a snippet splits a different way: a behavioral frame (the discipline plus your collapsed specifics — durable) and a per-turn payload (the artifact, the feedback — ephemeral). Worker sessions are persistent, so a frame stays in force after one send: send a full template to a given worker once per phase, and steer every later turn with the delta. The -again variants are the canonical delta for review loops ("recheck what changed" inherits the frame); for other templates, a short follow-up that references the established frame ("same holistic lens — the scope is now X; what changes?") beats re-running it. Re-sending a full template makes the worker restart the exercise instead of continuing it, spends a minutes-long turn re-covering ground, and drifts the loop out of the library's round discipline.
 </protocol>
+
+<human_steers>
+The human can steer the run mid-phase: a note staged from outside arrives appended to one of your tool results as a <human_steer> block (or rides a later harness prompt when the phase ended first). A steer is the human steering the run — the same authority as gate feedback, in smaller form; it outranks reviewer opinions. Process it into your routing from the moment it arrives: relay it into worker prompts where it bears on their work, let it settle process questions you were weighing, and note in your advance_phase packet what guidance arrived and how it shaped the routing — the human should see their own words reflected at the stop. There is no reply channel mid-phase: a steer is processed, not answered, and receiving one is never by itself a reason to ask_human — the human chose the non-pausing channel deliberately. Steers do not count toward any review-round cap.
+</human_steers>
 
 <recording>
 Call write_note when you notice friction worth remembering — a snippet that didn't fit, a triage call you were unsure about, a worker that needed unusual hand-holding. These notes are how the workflow improves between runs.
@@ -240,6 +244,27 @@ The human approved opening the PR — that approval covers the mechanics, so run
 
 If the push or PR creation fails for an environment reason (auth, remote, permissions), that's the human's to fix: ask_human with the error.
 </task>`;
+}
+
+/**
+ * The steer block, rendered for its two delivery surfaces: appended to a
+ * live tool result ('live') or carried into the next harness prompt when
+ * the steer missed its phase ('carried' — provenance attached, staleness
+ * handed to judgment). One renderer so the <human_steer> shape and the
+ * steering sentence stay identical everywhere the orchestrator meets them.
+ */
+export function renderSteerBlock(steers: Steer[], mode: 'live' | 'carried'): string {
+  const blocks = steers
+    .map((s) => {
+      const provenance = mode === 'carried' && s.stagedDuring ? ` staged_during="${s.stagedDuring} phase"` : '';
+      return `<human_steer staged_at="${s.stagedAt}"${provenance}>\n${s.text}\n</human_steer>`;
+    })
+    .join('\n');
+  const sentence =
+    mode === 'live'
+      ? 'The human sent this mid-phase guidance just now. It is the editor-in-chief’s voice — fold it into your routing from this point; it outranks reviewer opinions and does not count toward any cap.'
+      : 'The human staged this guidance while no orchestrator turn could receive it (provenance above). It is the editor-in-chief’s voice — judge its freshness yourself: fold in what still applies, drop what a later gate decision or answer has superseded. It does not count toward any cap.';
+  return `${blocks}\n${sentence}`;
 }
 
 export function answerResumePrompt(answer: string): string {
