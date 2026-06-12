@@ -5,7 +5,6 @@ import { createInterface } from 'node:readline';
 import { Command } from 'commander';
 import { execa } from 'execa';
 import { createActor } from 'xstate';
-import type { AnyMachineSnapshot } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
 import { loadRoleBindings } from './config.ts';
 import { DEFAULT_FRAMING_FILE, resolveRunInputs } from './framing.ts';
@@ -13,12 +12,13 @@ import { aliveDriverPid, driveToQuiescence, probeRunPosition, spawnDrive } from 
 import type { HumanEvent } from './harness/lifecycle.ts';
 import { duetMachine } from './harness/machine.ts';
 import { phaseOfGateState } from './phases.ts';
-import { renderStatus, steerRefusal } from './status.ts';
+import { buildStatusModel, renderStatus, steerRefusal } from './status.ts';
 import { openTmuxView } from './tmux-view.ts';
 import {
   createRun,
   gateAttended,
   latestRun,
+  listPendingSteers,
   listRuns,
   loadMachineSnapshot,
   loadRunState,
@@ -36,14 +36,9 @@ import type { RunState, Voice } from './run-store.ts';
  * immediately — phases run in the detached `_drive` child.
  */
 
-function showStatus(state: RunState, snapshot?: AnyMachineSnapshot): void {
-  const pid = aliveDriverPid(state);
-  console.log(
-    renderStatus(state, {
-      ...(snapshot?.status === 'done' ? { done: true } : {}),
-      ...(pid !== undefined && pid !== process.pid ? { livePid: pid } : {}),
-    }),
-  );
+function showStatus(state: RunState, json = false): void {
+  const model = buildStatusModel(state, probeRunPosition(state), listPendingSteers(state));
+  console.log(json ? JSON.stringify(model, null, 2) : renderStatus(model));
 }
 
 function printWatchHints(state: RunState, pid: number, phaseLabel: string): void {
@@ -243,7 +238,7 @@ const driveCommand = new Command('_drive')
       ...(snapshot ? { snapshot } : {}),
       ...(event ? { event } : {}),
     });
-    showStatus(stop.state, stop.snapshot);
+    showStatus(stop.state);
   });
 program.addCommand(driveCommand, { hidden: true });
 
@@ -352,11 +347,12 @@ program
   .command('status')
   .description('Show a run’s phase, queued flags, rounds, costs, and next command.')
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
-  .action((runId: string | undefined) => {
+  .option('--json', 'machine-readable status: the StatusModel, with a discriminated "stop" naming the channel that acts there (the schema the concierge skill reads; additive-only)')
+  .action((runId: string | undefined, opts: { json?: boolean }) => {
     const cwd = process.cwd();
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
     if (!state) fail('no runs found in this project');
-    showStatus(state);
+    showStatus(state, opts.json ?? false);
   });
 
 program

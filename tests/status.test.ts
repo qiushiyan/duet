@@ -1,6 +1,11 @@
 import { describe, expect } from 'vitest';
-import { describeStop, renderStatus, steerRefusal } from '../src/status.ts';
+import { buildStatusModel, describeStop, renderStatus, steerRefusal } from '../src/status.ts';
+import type { RunState } from '../src/run-store.ts';
+import type { RunPosition } from '../src/harness/lifecycle.ts';
 import { test } from './helpers/fixtures.ts';
+
+const render = (run: RunState, position: RunPosition): string =>
+  renderStatus(buildStatusModel(run, position, []));
 
 describe('describeStop (the notification body)', () => {
   test('names the gate that is ready', ({ run }) => {
@@ -48,11 +53,102 @@ describe('steerRefusal (the steer channel gate)', () => {
   });
 });
 
+describe('buildStatusModel (the one derivation both renderers and --json consume)', () => {
+  test('discriminates the stop across all five kinds, each carrying its acting command', ({ run }) => {
+    run.pendingQuestion = { question: 'migrate?', context: 'slice 3' };
+    run.phaseSummaries.spec = { summary: 'spec summary', artifacts: ['docs/spec.md'] };
+    run.phaseSummaries.open = { summary: 'PR: https://example.com/pr/7', artifacts: [] };
+
+    const gate = buildStatusModel(run, { kind: 'gate', phase: 'spec' }, []).stop;
+    expect.soft(gate).toMatchObject({
+      kind: 'gate',
+      gate: 'commitSpecGate',
+      packet: { summary: 'spec summary', artifacts: ['docs/spec.md'] },
+      commands: {
+        approve: `duet continue ${run.runId} --approve`,
+        reject: `duet continue ${run.runId} --reject "<feedback>"`,
+      },
+    });
+
+    const flag = buildStatusModel(run, { kind: 'flag', phase: 'impl' }, []).stop;
+    expect.soft(flag).toEqual({
+      kind: 'flag',
+      question: 'migrate?',
+      context: 'slice 3',
+      command: `duet continue ${run.runId} --answer "<your answer>"`,
+    });
+
+    expect.soft(buildStatusModel(run, { kind: 'running', pid: 7, phase: 'impl' }, []).stop).toEqual({
+      kind: 'running',
+      pid: 7,
+      phase: 'impl',
+    });
+
+    expect.soft(buildStatusModel(run, { kind: 'crashed', phase: 'impl' }, []).stop).toEqual({
+      kind: 'crashed',
+      phase: 'impl',
+      command: `duet continue ${run.runId}`,
+    });
+
+    expect.soft(buildStatusModel(run, { kind: 'done' }, []).stop).toEqual({
+      kind: 'done',
+      summary: 'PR: https://example.com/pr/7',
+    });
+  });
+
+  test('the schema promise: a fully-populated model pins its key set (additive-only)', ({ run }) => {
+    run.branch = 'feat/x';
+    run.specPath = 'docs/spec.md';
+    run.machineState = 'shipGate';
+    run.gatesAt = ['impl', 'pr'];
+    run.autoApprovals = [{ gate: 'directionGate', at: '2026-06-12T03:14:00.000Z' }];
+    run.lastActivity = 'send_prompt → reviewer';
+    const model = buildStatusModel(run, { kind: 'gate', phase: 'impl' }, [
+      { file: 'f.json', text: 'note', stagedAt: 'now' },
+    ]);
+
+    expect(Object.keys(model).sort()).toEqual([
+      'autoApprovals',
+      'branch',
+      'costs',
+      'createdAt',
+      'gatesAt',
+      'lastActivity',
+      'machineState',
+      'pendingSteers',
+      'rounds',
+      'runId',
+      'snippetProposals',
+      'specPath',
+      'stop',
+    ]);
+  });
+
+  test('pending steers carry text and provenance, never the file handle', ({ run }) => {
+    const model = buildStatusModel(run, { kind: 'running', pid: 1, phase: 'impl' }, [
+      { file: 'internal.json', text: 'drop the retry tests', stagedAt: 't1', stagedDuring: 'impl' },
+    ]);
+    expect(model.pendingSteers).toEqual([{ stagedAt: 't1', stagedDuring: 'impl', text: 'drop the retry tests' }]);
+  });
+
+  test('rounds run against their caps; auto-approvals carry packet headlines', ({ run }) => {
+    run.rounds = { spec: 2, frame: 1 };
+    run.autoApprovals = [{ gate: 'directionGate', at: '2026-06-12T03:14:00.000Z' }];
+    run.phaseSummaries.frame = { summary: 'Direction: invert the scope\nmore detail', artifacts: [] };
+    const model = buildStatusModel(run, { kind: 'running', pid: 1, phase: 'spec' }, []);
+
+    expect.soft(model.rounds).toContainEqual({ phase: 'spec', used: 2, cap: 6 });
+    expect.soft(model.rounds).toContainEqual({ phase: 'frame', used: 1, cap: 2 });
+    expect.soft(model.rounds.find((r) => r.phase === 'docs')).toBeUndefined();
+    expect.soft(model.autoApprovals[0]?.headline).toBe('Direction: invert the scope');
+  });
+});
+
 describe('renderStatus', () => {
   test('a gate stop shows the packet, the heading, and the decide-with commands', ({ run }) => {
     run.machineState = 'commitSpecGate';
     run.phaseSummaries.spec = { summary: 'reviewer flagged the data model; fixed', artifacts: ['docs/spec.md'] };
-    const out = renderStatus(run);
+    const out = render(run, { kind: 'gate', phase: 'spec' });
 
     expect.soft(out).toContain("━━━ SPEC gate — the orchestrator's summary ━━━");
     expect.soft(out).toContain('reviewer flagged the data model; fixed');
@@ -63,16 +159,16 @@ describe('renderStatus', () => {
 
   test('gates with verification stakes carry their hint', ({ run }) => {
     run.machineState = 'shipGate';
-    expect(renderStatus(run)).toContain('verify in your environment before deciding');
+    expect(render(run, { kind: 'gate', phase: 'impl' })).toContain('verify in your environment before deciding');
 
     run.machineState = 'openPrGate';
-    expect(renderStatus(run)).toContain('approving opens the PR');
+    expect(render(run, { kind: 'gate', phase: 'pr' })).toContain('approving opens the PR');
   });
 
   test('a queued question takes over the action section', ({ run }) => {
     run.machineState = 'implFlagWait';
     run.pendingQuestion = { question: 'migrate now?', context: 'schema change in slice 3' };
-    const out = renderStatus(run);
+    const out = render(run, { kind: 'flag', phase: 'impl' });
 
     expect.soft(out).toContain('QUEUED QUESTION for you:');
     expect.soft(out).toContain('migrate now?');
@@ -86,7 +182,7 @@ describe('renderStatus', () => {
     run.gatesAt = ['impl', 'pr'];
     run.autoApprovals = [{ gate: 'directionGate', at: '2026-06-12T03:14:00.000Z' }];
     run.phaseSummaries.frame = { summary: 'Direction: invert the scope\nmore detail', artifacts: [] };
-    const out = renderStatus(run);
+    const out = render(run, { kind: 'gate', phase: 'impl' });
 
     expect.soft(out).toContain('while you were away — gates auto-approved (pre-authorized):');
     expect.soft(out).toContain('✓ directionGate  2026-06-12 03:14  Direction: invert the scope');
@@ -97,7 +193,7 @@ describe('renderStatus', () => {
     run.machineState = 'done';
     run.phaseSummaries.open = { summary: 'PR: https://example.com/pr/7', artifacts: [] };
     run.snippetProposals.push({ snippetKey: 'review-spec', proposedBody: 'b', rationale: 'missed X', at: 'now' });
-    const out = renderStatus(run);
+    const out = render(run, { kind: 'done' });
 
     expect.soft(out).toContain('run complete — the PR is open.');
     expect.soft(out).toContain('PR: https://example.com/pr/7');
@@ -108,7 +204,7 @@ describe('renderStatus', () => {
   test('shows the live phase driver and the round counters against their caps', ({ run }) => {
     run.machineState = 'specFlagWait';
     run.rounds = { spec: 2, frame: 1 };
-    const out = renderStatus(run, { livePid: 4242 });
+    const out = render(run, { kind: 'running', pid: 4242, phase: 'spec' });
 
     expect.soft(out).toContain('phase:    running in the background (pid 4242)');
     expect.soft(out).toContain('frame 1/2');
@@ -116,5 +212,25 @@ describe('renderStatus', () => {
     expect.soft(out).toContain('plan 0/4');
     expect.soft(out).toContain('impl 0/6');
     expect.soft(out).not.toContain('docs 0');
+  });
+
+  test('staged steers awaiting delivery are listed with their text', ({ run }) => {
+    run.machineState = 'implFlagWait';
+    const out = renderStatus(
+      buildStatusModel(run, { kind: 'running', pid: 1, phase: 'impl' }, [
+        { file: 'f.json', text: 'drop the retry tests', stagedAt: '2026-06-12T10:30:00.000Z', stagedDuring: 'impl' },
+      ]),
+    );
+
+    expect.soft(out).toContain('staged steers awaiting delivery:');
+    expect.soft(out).toContain('• 2026-06-12 10:30  drop the retry tests');
+  });
+
+  test('a crashed phase names itself and the resume command', ({ run }) => {
+    run.machineState = 'planApprovalGate';
+    const out = render(run, { kind: 'crashed', phase: 'impl' });
+
+    expect.soft(out).toContain('the impl phase stopped mid-flight');
+    expect.soft(out).toContain(`resume with:  duet continue ${run.runId}`);
   });
 });
