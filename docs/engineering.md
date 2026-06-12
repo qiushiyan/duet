@@ -19,15 +19,16 @@ Placement rule for any new rule: violating it would break the human's authority 
 |---|---|---|
 | `src/phases.ts` | The arc as data: phase order, gate state names + human copy, round caps, budgets, timeouts, review-loop posture | The single source. Machine states derive from it; every consumer looks up |
 | `src/harness/machine.ts` | The statechart skeleton | Each phase = loop + flag-wait + gate, built from the table |
-| `src/harness/tools.ts` | The orchestrator's seven tools and every protocol rail | The deepest module: 7-handler interface, all enforcement inside |
-| `src/harness/driver.ts` | One phase = one orchestrator SDK session; outcome mapping (advanced / flagged / stuck / crashed) | SDK behind the injectable `RunOrchestratorTurn` seam |
-| `src/harness/lifecycle.ts` | The detached `_drive` process, pid guard, quiescence loop, `gates_at` auto-cross | The only place machine actors run for real |
-| `src/harness/orchestrator-prompts.ts` | System prompt + phase entry/resume prompts | Governed by `prompting-and-tool-design.md` |
-| `src/run-store.ts` | `.duet/runs/<id>/` persistence: state hint, machine snapshot, voice logs, notes; the CLI↔driver input-staging handshake | Atomic writes; `state.json` is a HINT — transcripts are truth |
+| `src/harness/tools.ts` | The orchestrator's seven tools, every protocol rail, and steer delivery (pending steers ride every phase-continuing result) | The deepest module: 7-handler interface, all enforcement inside |
+| `src/harness/driver.ts` | One phase = one orchestrator SDK session; outcome mapping (advanced / flagged / stuck / crashed); steer carry-forward into prompts | SDK behind the injectable `RunOrchestratorTurn` seam |
+| `src/harness/lifecycle.ts` | The detached `_drive` process, pid guard, quiescence loop, `gates_at` auto-cross, and `probeRunPosition` (where a run is) | The only place machine actors run for real |
+| `src/harness/orchestrator-prompts.ts` | System prompt + phase entry/resume prompts + the steer block renderer | Governed by `prompting-and-tool-design.md` |
+| `src/run-store.ts` | `.duet/runs/<id>/` persistence: state hint, machine snapshot, voice logs, notes; the CLI↔driver input-staging handshake; the steer store (`steers/`, file-per-steer, rename-consume) | Atomic writes; `state.json` is a HINT — transcripts are truth |
 | `src/providers/` | The worker seam: contract (`types.ts`), claude + codex adapters, factory (`index.ts`) | Exactly two providers, by design |
 | `src/framing.ts` | The framing's whole journey: template, editor flow, frontmatter parse, flag-vs-frontmatter resolution | The machine/prose boundary rule lives here |
-| `src/status.ts` | Run state → human-facing strings, pure | No fs, no process table, no xstate |
-| `src/cli.ts` | Command wiring only | Behavior lives behind it |
+| `src/status.ts` | RunState + position → the status model; two renderers (human text, `--json` verbatim), pure | No fs, no process table, no xstate; the JSON schema is additive-only, pinned by test |
+| `src/cli.ts` | Command wiring only | Behavior lives behind it; parses under `import.meta.main`, so the command table imports side-effect free |
+| `skills/duet-concierge/` | The shipped concierge skill: relay disciplines, the channel table, the supervision recipe, the CLI reference | Zero runtime; coherence-guarded by `tests/skill.test.ts` |
 | `src/colorize.ts`, `tmux-view.ts`, `notify.ts` | View glue — best-effort, never allowed to affect the run | Deliberately untested |
 | `src/spike/` | The substrate spike + SDK pause/resume repros — executable evidence | Not tests; do not modernize |
 
@@ -50,6 +51,8 @@ Rule: a new abstraction earns a seam only when a second adapter exists or a test
 - **Rails as tool results.** Every rail is a handler that *refuses with steering text*: template-economy warn-once-then-allow, review-round backstop caps, branch-fixed-after-first-prompt, advance-needs-a-review-round. A rail isn't real until its result text tells the orchestrator what to do instead (prompting doc, convention 5).
 - **Cooperative pause.** `ask_human` persists the question at call time, the result text says "end your turn", the process exits at quiescence. Mechanical SDK interrupts corrupt resume — proven, with executable repros (`src/spike/repro-*.ts`).
 - **Staging handshake.** Human input crosses the CLI→driver process boundary via `stageHumanInput`/`consumeHumanInput`, consumed exactly once so a retried driver can't replay an answer. Known edge, chosen deliberately: a crash after consume loses the staged text — the crash question asks the human to re-supply, which beats risking double-delivery into a session that may have already used it.
+- **Steer channel.** The human's mid-phase voice rides tool results: file-per-steer staging under `steers/` (never `state.json` — a CLI write would race a live driver's saves), delivery appended to every phase-continuing result, carry-forward through the next harness prompt otherwise. The crash trade inverts the staging handshake's: deliver-then-consume, so a crash *redelivers* rather than loses (a repeated instruction is benign where a lost one is not). Turn-ending results (advance recorded, question queued) never carry steers — guidance delivered into a dying turn lands and dies — and the delivery path is fail-soft: a steer bug must never corrupt a tool result.
+- **Position probe.** Where a run is cannot be read from the snapshot alone — persistence is quiescence-only, so mid-phase the snapshot shows the *previous* stop. `probeRunPosition` joins driver liveness, the parked snapshot, and the state evidence the driver writes continuously (`phaseStarted`, `pendingQuestion`) into running / gate / flag / crashed / done; a crashed position names how its dead crossing is re-uttered (`approve` / `answer`), so bare `duet continue` recovers every crash shape. Steer gating, crash recovery, and the status model all derive from this one probe.
 - **Crash = flag.** Any infrastructure failure lands the run on an actionable queued question, never a silent state; a question the orchestrator already queued is never overwritten by a crash question.
 - **View-time color.** Log files are plain text always — they are the inspectable-without-duet artifacts. One palette (`colorize.ts`), applied only where a human is watching.
 - **Atomic writes** (temp + rename) for everything crash recovery reads: `state.json`, `machine.json`.
@@ -75,6 +78,7 @@ Standalone `tests/`, not co-located: the test surface is the public interface, a
 - Never mock our own modules; when tempted, write a third adapter for the seam instead.
 - Deliberately untested: view glue (its designed failure mode is already "degrade to a one-line note") and the thin codex SDK wrapper.
 - `tests/snippets.test.ts` guards the hand-edited `snippets.toml` and cross-checks every snippet key the orchestrator prompts name — a broken library fails a five-second test, not a $90 run.
+- `tests/skill.test.ts` guards the shipped concierge skill the same way: every duet verb and flag the skill names must exist on the imported command table, and read verbs must be the only pre-approvals — a renamed flag fails in five seconds, not in a phone session.
 
 ## Build & publish
 

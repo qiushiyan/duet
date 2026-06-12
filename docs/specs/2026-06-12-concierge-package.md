@@ -1,6 +1,6 @@
 # Concierge package: remote interaction via Claude Code
 
-**Status:** Draft. **Date:** 2026-06-12. Product decisions settled by interview — `docs/future-directions.md` §Active carries the verdicts; this spec turns them into a buildable shape.
+**Status:** Implemented (plan: `docs/plans/2026-06-12-concierge-package.md`; awaiting its first live remote session). **Date:** 2026-06-12. Product decisions settled by interview — `docs/future-directions.md` §Active carries the verdicts; this spec turned them into the buildable shape.
 
 ## Summary
 
