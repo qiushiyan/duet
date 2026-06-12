@@ -45,6 +45,21 @@ Related rules:
 - **Golden rule:** show the prompt to a colleague with minimal context; if they'd be confused, the model will be too.
 - **Prefer general instructions over prescriptive step lists** for reasoning ("think thoroughly about whether the loop has converged" beats a hand-written decision tree). Use numbered steps only when order/completeness genuinely matters.
 
+### Snippet adaptation: collapse generality, preserve discipline
+
+The orchestrator's snippet templates are two layers, and its adaptation instruction (the `<protocol>` block in `src/harness/orchestrator-prompts.ts`) is built on the split:
+
+- **Discipline** — the altitude lens, the ordering, the guardrails. Hard-won, durable across runs. Specialize, never subtract; a genuinely misfitting guardrail is `propose_snippet_edit` territory, not a per-turn drop.
+- **Generality** — either/or hedges ("the feature added or bug fixed"), generic examples, open formats. Deliberate: one template covers many runs, while a turn faces exactly one. Adaptation = collapsing the generality onto the actual task — the real bug named, the project's modules swapped in, inapplicable branches dropped, gate decisions folded in.
+
+The motivation attached (framework-with-why, per the rule above): a worker reading a concretized template starts at the task; a verbatim-generic one spends part of a slow turn deriving the template-to-task mapping itself. The boundary attached: concretize the task, never the solution — adaptation is the channel through which an orchestrator opinion could reach an artifact invisibly, so the division-of-labor rule extends explicitly to prompt composition.
+
+The behavior predates its design: the first real run collapsed write-spec's ~2k-char generic template into a 4.3k-char run-specific prompt — actual workstreams, file/line anchors, run-specific non-goals, gate-approved decisions folded in — with every guardrail intact (planlab run `20260611-1542-aeca`, implementer voice log) **(observed)**. The framework's job is making that designed rather than borrowed from one model's judgment.
+
+Authoring corollary for `snippets.toml`: hedged generality in a template is load-bearing, not vagueness to fix — write what varies between runs as the hedge, hard-code only the discipline, and let the orchestrator collapse the rest.
+
+The send boundary carries the "self-check before finishing" rule at the moment it matters: send_prompt is framed as a commit (the body persists in the worker's session; there is no unsend), and the orchestrator is told to read its composed body once against the template's discipline and the run's specifics before calling. No preview tool exists by design — the harness sends the body verbatim, so a preview would echo what the orchestrator just composed; its own context is the draft surface, and the post-send corrective is the delta mechanics, not a re-send.
+
 ### Examples
 
 Few-shot examples are the most reliable way to steer format, tone, and structure. Make them relevant (mirror the real use case), diverse (cover edge cases, vary enough to avoid unintended pattern-matching), and wrapped in `<example>`/`<examples>` tags. 3–5 examples is the sweet spot. Curate canonical examples rather than enumerating exhaustive edge-case rules — "examples are the pictures worth a thousand words."

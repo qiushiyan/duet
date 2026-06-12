@@ -218,7 +218,7 @@ The full proposed snippet body lives in `docs/workflow-model.md` §"Proposed sni
 
 Two-tier, settled 2026-06-11:
 
-- **Per-turn: free.** Each routed turn, the orchestrator may use a snippet verbatim, adapt it to context (file paths, project vocabulary, focus), or compose a custom prompt. Every `send_prompt` logs the source tag and the delta from the template — drift is auditable in the orchestrator's transcript.
+- **Per-turn: free.** Each routed turn, the orchestrator adapts the snippet to the run at hand — collapsing the template's deliberate generality onto the actual task while keeping its discipline intact, never steering the solution (`docs/prompting-and-tool-design.md` §"Snippet adaptation") — or composes a custom prompt when nothing fits. Every `send_prompt` logs the source tag and the delta from the template — drift is auditable in the orchestrator's transcript.
 - **Library: gated.** Persistent snippet changes are proposals (`propose_snippet_edit`), accumulated and presented at the end-of-run gate for human approval. The library only changes with the user's editorial sign-off.
 
 Rationale: the user already evolves snippets mid-session by hand **(observed: planlab b7487993 08:10–08:28Z, revising `.tabtype.local.toml`)** — so evolution is a real workflow behavior, but a bad adaptation that persists silently would compound across every later run, the same early-correction-leverage logic the `review-midpoint` snippet encodes.

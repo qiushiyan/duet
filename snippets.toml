@@ -1,9 +1,9 @@
 # duet's snippet library — the protocol vocabulary the orchestrator selects from.
 #
 # Seeded 2026-06-11 from the user's live tabtype config (~/.config/tabtype/config.toml),
-# plus the proposed `ceo-summary` documented in docs/workflow-model.md. Per Q12
-# (docs/open-questions.md): approved propose_snippet_edit diffs apply to THIS copy;
-# porting changes back to tabtype stays a manual human step. No automatic sync.
+# plus the proposed `ceo-summary` documented in docs/workflow-model.md. Approved
+# propose_snippet_edit diffs apply to THIS copy; porting changes back to tabtype
+# stays a manual human step. No automatic sync.
 #
 # `$0` marks where the artifact / pasted content goes when the snippet is used
 # manually; the orchestrator substitutes the artifact there when adapting.
@@ -37,7 +37,14 @@ key = "write-spec"
 expand = '''
 Now, write the spec to `docs/superpowers/specs/`. Ground problem and approach in actual code — read the relevant modules first if you haven't. **Tight prose beats exhaustive sections.**
 
-**Structure around the flow of the change:**
+**Open with a leader-facing summary.** The spec's first section reports the change the way you'd report it to your leader:
+- What we're adding or fixing, in product terms — the feature, the bug, the problem it solves.
+- The approach we're taking, and the scope of the change.
+- The boundary once it lands: what's fixed, what isn't, and what's explicitly deferred (one-line why each).
+
+Technical detail belongs in this section only when it makes the solution easier to digest or the problem easier to understand — context, not elaboration. Someone who reads nothing else should still know what they're getting and not getting.
+
+**Structure the body around the flow of the change:**
 - **Distinguish current vs. desired** — what's preserved vs. what's changing.
 - **Name the coupling decision** — extension of an existing concept, or intentionally independent?
 - **Use implementation anchors** (modules, functions, files) attached to the flow — not the main narrative.

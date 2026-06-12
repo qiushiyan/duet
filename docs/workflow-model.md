@@ -56,7 +56,7 @@ The protocol substance is the snippets — they encode the altitude lenses, the 
 |---|---|---|---|
 | `think-holistic` | → both | FRAME | "Don't change code. Reason from first principles; 2–3 approaches with tradeoffs." |
 | `compare-notes` | reviewer → implementer | SYNTHESIZE | "Another engineer's analysis; critique, synthesize, don't capitulate." |
-| `write-spec` | → implementer | SPEC | Draft the spec; defer line-level detail, test design, doc plans. |
+| `write-spec` | → implementer | SPEC | Draft the spec, opening with a leader-facing summary (what/approach/scope/deferred); defer line-level detail, test design, doc plans. |
 | `review-spec` / `review-spec-again` | implementer → reviewer | SPEC rounds | Critique at spec altitude / verify round-1 feedback was integrated. |
 | `update-spec` / `update-spec-again` | reviewer → implementer | SPEC rounds | Assess validity, revise or push back / apply round-2 inline, converge. |
 | `compact-for-plan` | → implementer | COMPACT | Context reset shaped for planning: keep spec + rationale, drop the journey. |
@@ -93,7 +93,7 @@ Then the technical side at a very high level — the approach and the one or two
 This is CEO/CTO altitude: outcomes first, technology last. Drop any section that's empty. Tight prose beats exhaustive sections.'''
 ```
 
-Evidence for the move: the user repeatedly makes a free-form "CEO-reframe" request in real sessions ("Can you step back and give me a more CEO-facing description of how we plan to design this…" — planlab `b7487993` 07:22:37Z, `a463ad80` 07:12:21Z, `e9607005` 05:12:52Z **(observed)**), and the original example session ended with a "CEO-readable" PR description (`docs/observed-pattern.md`). The planning-stage reframe and this final-stage summary are the same move at two altitudes; only the final-stage one is formalized as a snippet for now. `ceo-summary` and `pr-description` both run — the former feeds the human gate, the latter feeds the PR body.
+Evidence for the move: the user repeatedly makes a free-form "CEO-reframe" request in real sessions ("Can you step back and give me a more CEO-facing description of how we plan to design this…" — planlab `b7487993` 07:22:37Z, `a463ad80` 07:12:21Z, `e9607005` 05:12:52Z **(observed)**), and the original example session ended with a "CEO-readable" PR description (`docs/observed-pattern.md`). The planning-stage reframe and this final-stage summary are the same move at two altitudes; the planning-stage variant is folded into `write-spec` as its mandatory leader-facing opening section (2026-06-12), the final-stage one is this snippet. `ceo-summary` and `pr-description` both run — the former feeds the human gate, the latter feeds the PR body.
 
 ## What each phase produces
 
