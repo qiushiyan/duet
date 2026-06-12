@@ -2,51 +2,45 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## What this repo is
+## What
 
-`duet` is a research-docs-plus-implementation repo: the repo root is the source code (pnpm + TypeScript, flat structure — no separate `mvp/` directory), and the research half (`docs/`, `examples/`, `schemas/`) is authoritative for *what* the code builds. Node 24 runs `.ts` directly — there is no build step; the checks are `pnpm typecheck` and `node src/harness/machine.smoke.ts` (offline statechart assertions).
+`duet` — personal semi-AFK orchestrator for one developer's two-agent workflow: a read-only LLM **orchestrator** routes a snippet protocol between an **implementer** and a **reviewer**, inside a code-enforced skeleton whose human gates agents cannot cross. Repo = design docs (authoritative for *what* to build) + implementation at root (pnpm + TS, no build step).
 
-The experiment: the human author has a stable manual workflow for developing features with two coding agents — one **implementer**, one **reviewer** — and currently acts as a clipboard router between them, plus as editor-in-chief at a few key gates. The goal is to capture that workflow precisely enough to build a **semi-AFK orchestrator** that automates the routing while leaving the gates to the human.
+Status: full arc implemented (`new` → FRAME → SPEC → PLAN → AFK IMPL → Ship gate → DOCS → PR → opened PR). FRAME→Ship live-verified (Q14 scratch run + first real planlab run, ~$93 claude-side); docs/pr/open phases uncrossed. Q17 (codex-as-orchestrator) deliberately unbuilt.
 
-The design has three roles: a read-only, intelligent LLM **orchestrator** (drives the snippet protocol, adapts prompts per-turn, judges loop exits, triages questions — never writes, never answers substance) commanding the implementer and reviewer, inside a code-enforced skeleton of three phases (attended PLANNING → AFK IMPLEMENTATION → attended FINAL REVIEW) whose human gates agents cannot cross. Roles are **decoupled from providers**: each binds to the `claude` provider (per-role Anthropic model ID) or the `codex` provider (no model key — the user's own codex config governs) via a minimal role-bindings config file, the one config duet ships (`docs/automation-design.md` §"Roles are decoupled from providers"). This reversed an earlier "dumb state-machine router" design; the rationale is in `docs/automation-design.md` §"Design history" and the strike-through notes on `docs/open-questions.md` Q7/Q8/Q10.
+## Commands
 
-**Implementation status:** the full arc is implemented — `duet new [--spec <draft>] [--framing <file>]` (bare invocation opens `$VISUAL`/`$EDITOR` on a template `duet-framing.md`; framing-only entry runs the FRAME phase first) and `duet continue` drive: FRAME → Direction gate → SPEC → Commit-spec gate → PLAN → Plan-approval gate (the walk-away point) → AFK IMPL (plan commit → slices → midpoint/compaction at orchestrator judgment → handoff → review rounds → `ceo-summary`) → Ship gate → DOCS proposal → Docs-plan gate → PR (apply docs plan, `pr-description`) → Open-PR gate → OPEN (push + `gh pr create`) → done with the PR URL (`src/cli.ts`, harness in `src/harness/`, workers in `src/providers/`, run state under `.duet/runs/<id>/`; phases run in a detached `_drive` child so commands return immediately, with a pid guard against concurrent drivers; macOS notification at every quiescent stop via `src/notify.ts`; `duet view` / `--tmux` tmux viewer via `src/tmux-view.ts`, `duet logs` inline follow of the driver narration, `duet takeover <role>` for manual session handover). FRAME through the Ship gate is live-verified — the Q14 scratch run plus the first real-feature run (planlab `20260611-1542-aeca`: framing-only entry, a human scope inversion absorbed as Direction-gate feedback, midpoint checkpoint, 3 impl review rounds, full ship packet; ~$93 claude-side + ~82M codex input tokens); the docs, pr, and open phases are smoke-tested and await their first crossing. Codex-as-orchestrator (Q17) is the one designed-but-unbuilt piece. One branch per run, fixed before the first worker prompt (`create_branch`, the one orchestrator tool with a repo side effect — refs only, never artifacts). The `ask_human` pause is **cooperative** (the tool handler persists the question and instructs the orchestrator to end its turn; the SDK's mechanical pauses corrupt resume — Q11 and `src/spike/repro-*.ts`). Worker compaction is per-provider (Q18): claude workers via a literal `/compact <instructions>` prompt (verified headless), codex via built-in auto-compaction — codex never receives a compaction command. The claude implementer runs `--permission-mode bypassPermissions` (the user's deliberate AFK posture). Project skills invoke headlessly by including `/skill-name` in a worker prompt — verified to work on resumed `-p` sessions. Stack: XState v5 (Q15), execa 9, zod 4, commander, smol-toml, `@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk` (pinned alongside the codex CLI version).
+- `pnpm typecheck` — checker-only tsc. No build: Node 24 runs `.ts` directly. Erasable syntax only (no enum/namespace/param-properties); explicit `.ts` import extensions.
+- `node src/harness/machine.smoke.ts` — offline statechart assertions.
+- `node src/cli.ts` — the CLI: `new [--spec][--framing][--tmux]` (bare = $EDITOR on template duet-framing.md) / `continue [--approve|--reject "…"|--answer "…"]` / `status` / `runs` / `view` / `logs` / `takeover <role>`. Phases run in a detached `_drive` child (stdout → `.duet/runs/<id>/driver.log`, pid guard against concurrent drivers); commands return immediately.
 
-## What's here, and the reading order
+## Architecture (3 layers)
 
-1. `README.md` — one-screen orientation, including current implementation status.
-2. `docs/observed-pattern.md` — turn-by-turn breakdown of one real session, with timestamps and snippet usage.
-3. `docs/workflow-model.md` — the abstracted state machine (phases, snippet vocabulary, loop semantics).
-4. `docs/automation-design.md` — the design: three layers, tool surface, triage rules, phases/gates, loop semantics, role–provider config, what not to build.
-5. `docs/open-questions.md` — Q1–Q12, Q14–Q15, and Q18 resolved; Q13 (triage precision) and Q16 (worker schema) await dogfooding evidence; Q17 (codex-as-orchestrator) is deliberately unbuilt. The strike-through structure preserves the historical reasoning behind each decision; read this to understand *why* the design is what it is, and to find the operational conventions (e.g., per-run notes file) that emerged from the answers.
-6. `docs/prompting-and-tool-design.md` — the prompt-design and tool-design reference, distilled from Anthropic's published guidance (sources linked inside). **Consult this whenever writing or revising an agent prompt, tool definition, tool result, or error message** — it carries duet's five binding conventions (artifacts-first/XML prompts, thinking-framework-over-prohibition, descriptions-surface-the-implicit, errors-prescribe-recovery, results-nudge-next-step) and the house patterns from the Q11 spike.
-7. `src/` and `snippets.toml` — the implementation. `src/cli.ts` (`duet new` / `continue` / `status` / `runs` / `view` / `logs` / `takeover`, plus the hidden `_drive` the detached phase driver runs as); `src/harness/machine.ts` (the XState statechart — gates and flag-waits are actor-less, quiescent-tagged states only human events cross; snapshots persist only at quiescence) with `machine.smoke.ts` asserting that offline; `src/harness/driver.ts` (the orchestrator session and its seven tools: `list_snippets`, `send_prompt`, `ask_human`, `advance_phase`, `create_branch`, `propose_snippet_edit`, `write_note` — plus the template-economy and cap rails on `send_prompt`); `src/harness/orchestrator-prompts.ts`; `src/providers/` (the worker interface, `claude` + `codex`); `src/run-state.ts`, `src/config.ts`, `src/snippets.ts`, `src/framing-editor.ts`, `src/tmux-view.ts`, `src/notify.ts`; `src/spike/` (the Q11 spike and SDK-behavior repros, kept as executable evidence). `snippets.toml` is the orchestrator's snippet library (tabtype schema; Q12 governs sync).
-8. `examples/` — verbatim copies of the source materials the analysis is built on:
-   - `claude-code-session.jsonl` — the implementer's session log.
-   - `codex-session.jsonl` — the reviewer's session log.
-   - `tabtype-snippets.json` — the snippet vocabulary that defines the protocol.
-   - `skills/onboarding/SKILL.md` — verbatim copy of the iTELL `/onboarding` skill.
-   - `skills/update-docs/SKILL.md` — verbatim copy of the iTELL `/update-docs` skill.
-   - `skills/update-docs/SKILL.orchestrator.md` — proposed orchestrator-aware variant of the same skill. Diff is a single conditional in Step 4. Referenced by `docs/open-questions.md` Q2.
-9. `schemas/agent-response.json` — the JSON Schema from the pre-pivot design, empirically verified against both CLIs (`claude --json-schema` / `codex exec --output-schema`). **Demoted 2026-06-11**: exception detection (`needs_human`, `disagree`) is now the orchestrator's judgment; whether a minimal envelope survives is `docs/open-questions.md` Q16.
-10. `references/` — shallow clones of external repos kept as design references (added 2026-06-11; not dependencies, not pinned). **Check `references/README.md` before copying any code** — it records each repo's purpose and license boundary: sandcastle and pi-mono are MIT (copy with attribution), the Codex SDK is Apache-2.0 (copy with attribution), claude-squad is AGPL (read-only inspiration), and the Claude Agent SDK is proprietary (consume as an npm dependency; read source only to understand the API).
+1. **Harness** — `src/harness/machine.ts`: XState statechart frame→spec→plan→impl→docs→pr→open, each = loop + flag-wait + gate. Gates/flag-waits are actor-less `quiescent`-tagged states; only `human.*` events cross; snapshots persist only at quiescence. Gate-skipping structurally unrepresentable.
+2. **Orchestrator** — `src/harness/driver.ts`: Agent SDK session, one phase per invocation, 7 SDK-MCP tools (`list_snippets`, `send_prompt`, `ask_human`, `advance_phase`, `create_branch`, `propose_snippet_edit`, `write_note`). Entry prompts in `src/harness/orchestrator-prompts.ts`.
+3. **Workers** — `src/providers/`: claude (`claude -p --resume`, implementer runs `bypassPermissions`) + codex (SDK pinned to local CLI version). Roles decoupled from providers via `~/.config/duet/config.toml`; defaults orchestrator=claude-opus-4-8, implementer=claude-fable-5, reviewer=codex.
+
+Run state `.duet/runs/<id>/`: `state.json` is a hint — the 3 provider JSONL transcripts are truth. `notes.md` = dogfooding journal (Q13 evidence).
+
+Load-bearing mechanics (evidence: `docs/open-questions.md`):
+- `ask_human` pause is **cooperative** (handler persists question, orchestrator ends turn, process exits) — SDK mechanical pauses corrupt resume; executable repros in `src/spike/` (Q11).
+- Worker compaction per provider (Q18): claude = literal `/compact <instructions>` prompt via send_prompt; codex = built-in auto-compaction, never send it a command.
+- Template economy: full snippet once per phase per worker, deltas/-again after; warn-once-then-allow rail in send_prompt.
+- One branch per run, fixed before first worker prompt; `create_branch` = the only orchestrator repo side effect (refs, never artifacts).
+
+## Docs (read before redesigning anything)
+
+- `README.md` — orientation + verified-vs-not status.
+- `docs/automation-design.md` — THE design: layers, tool surface, triage rules, gates, branch policy, lifecycle, what-not-to-build.
+- `docs/open-questions.md` — why each decision is what it is; strike-through = resolved, history intentional. Open: Q13 (triage precision), Q16 (worker schema) — both await more runs.
+- `docs/prompting-and-tool-design.md` — **consult whenever touching any agent prompt, tool description, tool result, or error message**; carries the 5 binding conventions + house patterns.
+- `docs/workflow-model.md` / `docs/observed-pattern.md` — the abstracted protocol / the evidence sessions.
+- `snippets.toml` — the orchestrator's snippet library (tabtype schema; porting edits back to tabtype is manual, Q12).
+- `references/` — external repo clones; **check `references/README.md` license boundaries before copying anything** (claude-squad AGPL = read-only; Agent SDK proprietary = dependency only).
 
 ## Conventions
 
-- **Evidence-backed claims.** When making a claim about the workflow, cite the relevant turn / line in `examples/*.jsonl`, or quote the snippet from `examples/tabtype-snippets.json`. The whole point of keeping the example files in-repo is so claims stay falsifiable.
-- **Label generality.** Tag claims as **(observed)** when they come from the single example session, **(general)** when they come from the user's broader description of their workflow. Conflating the two is the main thing to avoid — there is exactly one session of evidence, and the user's described pattern has more variance.
-- **Docs lead, code follows.** The design phase concluded with the 2026-06-11 pivot; implementation now lives at the repo root (`src/`). Further doc edits should be in service of implementation feedback, dogfooding notes, or new evidence from sampled sessions — not another redesign. When code and docs disagree, treat it as a doc bug or a design regression to resolve explicitly, not silently.
-- **No build step.** Node 24 native type stripping runs `src/*.ts` directly; `tsconfig.json` is checker-only (`pnpm typecheck`). Keep syntax erasable (no `enum`/`namespace`/parameter properties) and use explicit `.ts` import extensions.
-- **Personal tool, not OSS.** Duet is built for one developer's use across their own projects, not as a product for thousands of users. The CLI itself is project-agnostic — it doesn't ship with skills, doesn't bundle project conventions, doesn't introspect codebases. Project-specific knowledge — which skills to invoke, where specs go, which models to default to — is the user's job to provide in the framing turn for each run. The user knows their projects; the CLI runs the workflow protocol. Don't add fallbacks, project-detection logic, configuration layers, or generalization beyond what the immediate use case requires. "Make it work for the way the author works, don't make it work for everyone."
-- **Augmentation, never lock-in.** Everything duet produces must be useful and inspectable without duet itself: JSONL transcripts go to the standard `~/.claude/projects/...` and `~/.codex/sessions/...` locations; branches and commits look like manual ones; the structured output schema is enforced by the CLIs themselves, not by a duet wrapper. The user must be able to stop using duet mid-run, continue manually, and either resume duet later or never — without the state file becoming an obstacle. The state file is a hint; the JSONL transcripts are the source of truth.
-
-## Common edits
-
-The likely classes of edit going forward:
-
-- Tuning the still-uncrossed phases (docs, pr, open) from their first real runs, and the verified ones from accumulating run evidence — entry prompts in `src/harness/orchestrator-prompts.ts`, caps and rails in `src/harness/driver.ts`.
-- Acting on dogfooding evidence: reviewing `.duet/runs/<run_id>/notes.md` (written by both the human and the orchestrator's `write_note` tool) to tune triage instructions (Q13), orchestrator prompts (`src/harness/orchestrator-prompts.ts`), and snippets (`snippets.toml` — porting accepted changes back to tabtype is a manual step, per Q12).
-- Adding new design questions (Q19+) to `docs/open-questions.md` as operational notes accumulate; recording resolved ones in place with the strike-through convention.
-- Adding a new sampled session to `examples/` (per the Q3 sampling plan in `docs/open-questions.md`) and updating `docs/observed-pattern.md` with the phase-presence findings.
-- Refining `docs/automation-design.md` (tool surface, triage rules) as runs reveal friction. If any worker schema survives Q16, edits to `schemas/agent-response.json` must preserve OpenAI-strict compliance (every property in `properties` listed in `required`, optionals via `anyOf null`).
-- Tightening `docs/workflow-model.md` if additional sessions show that parts currently labeled "stable" are actually variable.
+- **Docs lead, code follows.** Code/docs disagreement = doc bug or design regression; resolve explicitly, never silently.
+- **Evidence-backed claims.** Workflow claims cite `examples/*.jsonl` turns or snippets; tag **(observed)** vs **(general)**.
+- **Personal tool, not OSS.** Project knowledge enters only via the framing turn. No fallbacks, no project detection, no config beyond role bindings.
+- **Augmentation, never lock-in.** Every artifact usable without duet (standard transcript locations, normal branches/commits); manual takeover and resume must always work; state file never an obstacle.
