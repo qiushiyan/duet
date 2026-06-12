@@ -13,7 +13,7 @@ Product goals — the bar every change is measured against:
 - **Semi-AFK.** Walk away at plan approval; return to a ship packet or a well-formed queued question. Nothing runs between quiescent stops — no daemon.
 - **Personal tool, not OSS.** Project knowledge enters only via the framing turn; the only config is role→provider bindings; exactly two providers.
 
-Status: full arc implemented (`new` → FRAME → SPEC → PLAN → AFK IMPL → Ship gate → DOCS → PR → opened PR). FRAME→Ship live-verified (Q14 scratch run + first real planlab run, ~$93 claude-side); docs/pr/open phases uncrossed; gate pre-authorization awaits its first overnight run (Q20). Q17 (codex-as-orchestrator) deliberately unbuilt.
+Status: full arc implemented (`new` → FRAME → SPEC → PLAN → AFK IMPL → Ship gate → DOCS → PR → opened PR). FRAME→Ship live-verified (a scratch run + the first real planlab run, ~$93 claude-side); docs/pr/open phases uncrossed; gate pre-authorization awaits its first overnight run (Q20). Codex-as-orchestrator deliberately unbuilt (Q17).
 
 ## Commands
 
@@ -28,7 +28,7 @@ Status: full arc implemented (`new` → FRAME → SPEC → PLAN → AFK IMPL →
 - `src/providers/` — the worker seam: contract, claude + codex adapters, factory. `src/run-store.ts` — run-dir persistence (atomic) + the CLI↔driver input-staging handshake. `src/framing.ts` — template, editor flow, frontmatter boundary. `src/status.ts` — pure rendering. `src/cli.ts` — wiring only. View glue: `colorize.ts`, `tmux-view.ts`, `notify.ts`.
 - Run state `.duet/runs/<id>/`: `state.json` is a hint — the 3 provider JSONL transcripts are truth. `notes.md` = dogfooding journal (Q13/Q19/Q20 evidence).
 
-Invariants that bite if forgotten (full reasoning: `docs/engineering.md`, `docs/open-questions.md`): the `ask_human` pause is cooperative — mechanical SDK pauses corrupt resume (Q11, repros in `src/spike/`); claude workers compact via a literal `/compact` prompt, codex auto-compacts and must never be sent a command (Q18); one branch per run, fixed before the first worker prompt; worker budget is per-turn and must never shape scope (Q19); log files stay plain text — color is view-time only; runtime artifacts live under self-ignored `.duet/`, never the repo root.
+Invariants that bite if forgotten (full reasoning: `docs/engineering.md`, `docs/open-questions.md`): the `ask_human` pause is cooperative — mechanical SDK pauses corrupt resume (repros in `src/spike/`); claude workers compact via a literal `/compact` prompt, codex auto-compacts and must never be sent a command; one branch per run, fixed before the first worker prompt; worker budget is per-turn and must never shape scope (Q19); log files stay plain text — color is view-time only; runtime artifacts live under self-ignored `.duet/`, never the repo root.
 
 ## Docs (read before redesigning anything)
 
@@ -38,7 +38,7 @@ Invariants that bite if forgotten (full reasoning: `docs/engineering.md`, `docs/
 - `docs/open-questions.md` — why each decision is what it is; strike-through = resolved, compressed to verdict + pointer (full deliberations in git history; Q numbers are stable — never renumber). Open: Q13 (triage precision), Q16 (worker schema), Q19 (run-level budget), Q20 (pre-auth precision) — all await more runs.
 - `docs/prompting-and-tool-design.md` — **consult whenever touching any agent prompt, tool description, tool result, or error message**; carries the 5 binding conventions + house patterns.
 - `docs/workflow-model.md` / `docs/observed-pattern.md` — the abstracted protocol / the evidence sessions.
-- `snippets.toml` — the orchestrator's snippet library (tabtype schema; guarded by `tests/snippets.test.ts`; porting edits back to tabtype is manual, Q12).
+- `snippets.toml` — the orchestrator's snippet library (tabtype schema; guarded by `tests/snippets.test.ts`; porting edits back to tabtype is a manual human step).
 - `references/` — external repo clones; **check `references/README.md` license boundaries before copying anything** (claude-squad AGPL = read-only; Agent SDK proprietary = dependency only).
 
 ## Conventions

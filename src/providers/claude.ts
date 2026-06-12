@@ -65,7 +65,7 @@ export class ClaudeWorker implements WorkerProvider {
 
   private readonly config: {
     model: string;
-    /** Per-invocation cost ceiling — day-one rail per Q11 economics. */
+    /** Per-invocation cost ceiling — day-one rail; headless usage draws from a metered subscription credit pool. */
     maxBudgetUsd?: number;
     timeoutMs?: number;
   };

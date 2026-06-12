@@ -74,7 +74,7 @@ Plus user-invoked project skills at ONBOARD and UPDATE_DOCS (duet doesn't bundle
 
 ## Proposed snippet: `ceo-summary`
 
-Mandated 2026-06-11. Fired by the orchestrator as the last act of the IMPLEMENTATION phase, once implementation and follow-up reviews are done; its output leads the Ship-gate packet. The audience is the user first and a colleague second — semi-developer-facing, so non-technical aspects lead and technology comes last, at CEO/CTO altitude. Documented here ahead of being added to the tabtype library (Q12 covers how the duet and tabtype copies stay in sync).
+Mandated 2026-06-11. Fired by the orchestrator as the last act of the IMPLEMENTATION phase, once implementation and follow-up reviews are done; its output leads the Ship-gate packet. The audience is the user first and a colleague second — semi-developer-facing, so non-technical aspects lead and technology comes last, at CEO/CTO altitude. Documented here ahead of being added to the tabtype library (duet owns `snippets.toml`; porting to the tabtype config is a manual human step).
 
 ```toml
 [[snippets]]

@@ -1,6 +1,6 @@
 # Prompting and tool design
 
-Reference for designing duet's agent prompts and tool surfaces, distilled 2026-06-11 from Anthropic's published guidance and first applied in the Q11 spike (`src/spike/q11.ts`). Consult this when writing or revising any orchestrator/worker prompt, tool definition, or tool result — the surfaces it governs live in `src/harness/orchestrator-prompts.ts` (prompts) and `src/harness/tools.ts` (tool descriptions, results, errors).
+Reference for designing duet's agent prompts and tool surfaces, distilled 2026-06-11 from Anthropic's published guidance and first applied in the substrate spike (`src/spike/q11.ts`). Consult this when writing or revising any orchestrator/worker prompt, tool definition, or tool result — the surfaces it governs live in `src/harness/orchestrator-prompts.ts` (prompts) and `src/harness/tools.ts` (tool descriptions, results, errors).
 
 Sources (re-check when models change — guidance is versioned to model generations):
 
@@ -97,7 +97,7 @@ When a tool result changes what the agent should do next, the result text says s
 
 > The human is away, so your question has been queued and the run is pausing. End your turn with a one-line status — anything you do past this point happens without the answer you just asked for. The run resumes with the human's answer.
 
-This is what makes the cooperative pause (Q11) reliable without any mechanical enforcement. Backstop-cap hits and `advance_phase` acknowledgements get the same treatment.
+This is what makes the cooperative pause reliable without any mechanical enforcement. Backstop-cap hits and `advance_phase` acknowledgements get the same treatment.
 
 A house variant for soft constraints: **warn-once-then-allow**. When the agent attempts something usually-but-not-always wrong (duet's case: re-sending a full snippet template to a worker that already holds it), the first attempt returns a steering error naming the why and the alternatives; repeating the identical call passes. Judgment keeps the override; the harness makes the override deliberate and leaves both calls in the transcript. Prefer this over hard blocks whenever the rule has legitimate exceptions — a hard block is the dumb-router trap of approximating judgment with mechanism.
 

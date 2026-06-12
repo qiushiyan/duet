@@ -31,7 +31,7 @@ import {
  * The phase driver — Layer 2's runtime. One invocation drives the
  * orchestrator session through one phase until it either advances
  * (advance_phase called, exit criteria summarized) or pauses on a queued
- * ask_human flag. The cooperative-pause pattern is Q11's verified mechanism:
+ * ask_human flag. The cooperative-pause pattern is the spike-verified mechanism:
  * tool handlers persist state at the moment of the call, the result text
  * nudges the orchestrator to end its turn, and the process exits at
  * quiescence — never a mechanical mid-call interrupt (those corrupt resume;
@@ -74,7 +74,7 @@ const sdkTurn: RunOrchestratorTurn = ({ prompt, options, tools }) =>
           version: '0.1.0',
           tools,
           // Tools must be present when a RESUMED session's first prompt is
-          // built; without alwaysLoad, resume races MCP startup (Q11 finding).
+          // built; without alwaysLoad, resume races MCP startup (spike finding).
           alwaysLoad: true,
         }),
       },
@@ -136,7 +136,7 @@ async function drivePhase(
     cwd: state.cwd,
     // Read-only by construction: no built-in tools, only the harness MCP
     // server (attached by sdkTurn), and no user-config MCP servers
-    // (strictMcpConfig — the Q11 spike showed claude.ai connectors and
+    // (strictMcpConfig — the substrate spike showed claude.ai connectors and
     // plugins leaking into the surface).
     tools: [],
     strictMcpConfig: true,

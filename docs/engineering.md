@@ -29,7 +29,7 @@ Placement rule for any new rule: violating it would break the human's authority 
 | `src/status.ts` | Run state → human-facing strings, pure | No fs, no process table, no xstate |
 | `src/cli.ts` | Command wiring only | Behavior lives behind it |
 | `src/colorize.ts`, `tmux-view.ts`, `notify.ts` | View glue — best-effort, never allowed to affect the run | Deliberately untested |
-| `src/spike/` | Q11 executable evidence (SDK pause/resume repros) | Not tests; do not modernize |
+| `src/spike/` | The substrate spike + SDK pause/resume repros — executable evidence | Not tests; do not modernize |
 
 ## Seams
 
@@ -48,7 +48,7 @@ Rule: a new abstraction earns a seam only when a second adapter exists or a test
 
 - **Phase table.** Adding or tuning a phase is one row in `phases.ts`. A `Record<PhaseName, …>` appearing anywhere else means the field belongs in the table.
 - **Rails as tool results.** Every rail is a handler that *refuses with steering text*: template-economy warn-once-then-allow, review-round backstop caps, branch-fixed-after-first-prompt, advance-needs-a-review-round. A rail isn't real until its result text tells the orchestrator what to do instead (prompting doc, convention 5).
-- **Cooperative pause.** `ask_human` persists the question at call time, the result text says "end your turn", the process exits at quiescence. Mechanical SDK interrupts corrupt resume — proven, with executable repros (`src/spike/repro-*.ts`, Q11).
+- **Cooperative pause.** `ask_human` persists the question at call time, the result text says "end your turn", the process exits at quiescence. Mechanical SDK interrupts corrupt resume — proven, with executable repros (`src/spike/repro-*.ts`).
 - **Staging handshake.** Human input crosses the CLI→driver process boundary via `stageHumanInput`/`consumeHumanInput`, consumed exactly once so a retried driver can't replay an answer. Known edge, chosen deliberately: a crash after consume loses the staged text — the crash question asks the human to re-supply, which beats risking double-delivery into a session that may have already used it.
 - **Crash = flag.** Any infrastructure failure lands the run on an actionable queued question, never a silent state; a question the orchestrator already queued is never overwritten by a crash question.
 - **View-time color.** Log files are plain text always — they are the inspectable-without-duet artifacts. One palette (`colorize.ts`), applied only where a human is watching.

@@ -37,7 +37,7 @@ describe('phase table ⇄ machine coherence', () => {
   test('quiescent states are exactly the gates, flag-waits, and done — nothing else ever persists', () => {
     // The lifecycle loop persists snapshots wherever this tag appears; a
     // state tagged quiescent by mistake would persist a snapshot with a live
-    // actor, which restore cannot resume (the Q15 guardrail).
+    // actor, which restore cannot resume (the persistence guardrail).
     const quiescent = Object.entries(duetMachine.states)
       .filter(([, node]) => node.tags.includes('quiescent'))
       .map(([name]) => name)

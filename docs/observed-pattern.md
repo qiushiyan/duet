@@ -95,13 +95,13 @@ Other snippets in the config (`refactor-guidelines`, `pr-description`, `find-sim
 - Whether onboarding-before-everything is universal or specific to "new feature in a moderately-understood area."
 - How the user behaves when CC and CX *disagree strongly* — in this session they converged, with the implementer mostly accepting reviewer critiques.
 
-These are listed in `docs/open-questions.md` (Q3, Q5) as things to validate by sampling more sessions. The design accommodates the unknowns: Slice 1 doesn't presume the full protocol applies to all feature types (it only runs the SPEC review loop), and divergence handling is the orchestrator's judgment whenever it appears, regardless of frequency.
+These are noted in `docs/open-questions.md` as things to validate by sampling more sessions. The design accommodates the unknowns: Slice 1 doesn't presume the full protocol applies to all feature types (it only runs the SPEC review loop), and divergence handling is the orchestrator's judgment whenever it appears, regardless of frequency.
 
 ## Corpus scan: planlab (2026-06-11)
 
 A second, much larger evidence source: the user's planlab project history — **22 sessions, 2026-05-29 → 2026-06-11**, at `~/.claude/projects/-Users-qiushi-dev-planlab-main/` (plus one parallel worktree session at `-Users-qiushi-dev-planlab-code-review-bash/`). Six are full-arc "epic" sessions (8–17 MB, 6–34 h wall clock): `b7487993`, `a463ad80`, `e9607005`, `d7e3acbb`, `adc2aa8c`, `2c6a7f46`. Unlike the iTELL session above, these files are **not copied into `examples/`** (~93 MB); claims below cite `(session-id, timestamp)` and are verifiable with `jq 'select(.timestamp=="…")' <file>`. All findings **(observed)** across this corpus.
 
-This scan is what moved the 2026-06-11 pivot from speculation to evidence (it delivered, early, what Q10 planned to learn from three Slice 1 runs):
+This scan is what moved the 2026-06-11 pivot from speculation to evidence (it delivered, early, the router-gap evidence the pre-pivot plan expected to gather from three dogfood runs):
 
 1. **The phase arc replicates.** All six epic sessions follow onboard → adversarial cross-review → spec (rounds) → boundary `/compact` → plan (rounds) → sliced implementation (midpoint checkpoint when large) → handoff → review rounds → docs/PR. Snippet usage counts across the corpus: `compare-notes`-style ×15, `respond-review` ×10, `update-plan` ×7, `update-spec` ×5 + `update-spec-again` ×5, `tdd-plan` ×5, `write-spec` ×4, `respond-review-again` ×3, `implementation-handoff` ×1, `respond-midpoint` ×1.
 2. **The routing tax is concentrated and real.** `/copy` ×41; ~84 sub-60-char glue messages ("go ahead", "continue with the rest"); ~36 reviewer outputs pasted raw without a snippet header; spec/plan loops demand a human touch every 7–15 minutes, implementation stretches 1–3 h punctuated only by "continue" nudges.

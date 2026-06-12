@@ -14,7 +14,7 @@ import type { RunState } from '../run-store.ts';
  * protocol rail they enforce: once-per-phase template economy
  * (warn-once-then-allow), review-round backstop caps, the
  * branch-fixed-after-first-prompt rule, advance-needs-a-review-round, and
- * the cooperative ask_human pause (Q11). This module IS the orchestrator's
+ * the cooperative ask_human pause (repros: src/spike/). This module IS the orchestrator's
  * interface to the run; the driver only hosts it inside an SDK session.
  *
  * Handlers persist state at the moment of the call (the human-visible

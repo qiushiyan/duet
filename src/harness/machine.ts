@@ -30,7 +30,7 @@ import type { PhaseName } from '../phases.ts';
  *                                          done ◀── openLoop ◀─────┘
  * ```
  *
- * Q15 guardrail: snapshots are persisted only in `quiescent`-tagged states
+ * Persistence guardrail: snapshots are persisted only in `quiescent`-tagged states
  * (no live actors), so a restored snapshot never has to blind-restart an
  * in-flight invoke. The machine's context is the run id + cwd + entry mode —
  * all operational state lives on disk in the run dir, owned by the driver.

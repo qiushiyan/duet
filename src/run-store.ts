@@ -240,7 +240,7 @@ export function appendVoiceLog(state: RunState, voice: Voice, header: string, bo
   appendFileSync(path, block);
 }
 
-/** The Q10 notes-file convention, written by both the human and the orchestrator. */
+/** The notes file — the run's dogfooding journal, written by both the human and the orchestrator. */
 export function appendNote(state: RunState, author: 'human' | 'orchestrator', note: string): void {
   const path = join(runDirOf(state.cwd, state.runId), 'notes.md');
   appendFileSync(path, `- ${new Date().toISOString()} [${author}] ${note}\n`);

@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 /**
  * Duet's snippet library — `snippets.toml` at the repo root, seeded from the
- * user's tabtype config plus the documented `ceo-summary` (Q12). The
+ * user's tabtype config plus the documented `ceo-summary`. The
  * orchestrator reads it via `list_snippets`; approved `propose_snippet_edit`
  * diffs apply here, and porting back to tabtype stays a manual human step.
  */
