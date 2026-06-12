@@ -49,7 +49,12 @@ function printWatchHints(state: RunState, pid: number, phaseLabel: string): void
   console.log(`you'll get a notification at the next gate or queued question`);
 }
 
-const program = new Command();
+/**
+ * The command table, exported for the skill coherence test (tests/skill.test.ts),
+ * which cross-checks every verb and flag the shipped concierge skill names.
+ * Building it has no side effects; parsing runs only under import.meta.main.
+ */
+export const program = new Command();
 
 /** Exit with an error message (commander's error() is typed never). */
 // A function declaration so TS narrows after calls (never-returning arrows don't).
@@ -370,4 +375,6 @@ program
     }
   });
 
-await program.parseAsync(process.argv);
+if (import.meta.main) {
+  await program.parseAsync(process.argv);
+}
