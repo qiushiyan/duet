@@ -1,6 +1,7 @@
 ---
 name: duet-concierge
-description: Supervise and act on a duet run on the human's behalf. duet is a CLI that orchestrates a semi-autonomous two-agent AI engineering workflow — an LLM orchestrator routes an implementer and a reviewer through spec → plan → implementation → PR, pausing at human decision gates. Use this skill whenever the user mentions duet or a run ("how's the run?", "what's it doing?"), wants to act on a stop ("approve", "reject — but change X", "answer its question"), wants to steer or redirect work already in flight, wants to start a run by describing the work, or asks you to watch a run and tell them when it needs them — even when they don't say "duet" but are clearly checking on an automated coding run.
+description: The remote interface to a duet run — duet is a CLI that orchestrates a semi-autonomous two-agent AI engineering workflow (an LLM orchestrator routing an implementer and a reviewer through spec → plan → implementation → PR, pausing at human decision gates). Loads the concierge role for a dedicated supervision session, usually paired with /remote-control: read the run, brief the human, relay their decisions, answers, and mid-phase steers verbatim, start runs from dictation, and watch for stops with turn-ending reports.
+disable-model-invocation: true
 allowed-tools: Bash(duet status:*), Bash(duet logs:*), Bash(duet runs:*)
 ---
 
@@ -105,4 +106,4 @@ Two pieces make this safe and reachable from anywhere:
 
 This skill pre-approves only the read verbs (`status`, `logs`, `runs`); `duet steer` and `duet new` prompt normally unless the human chooses to allow them.
 
-2. **A dedicated session.** Supervision is shallow work on sparse turns — a fast, inexpensive model serves it well (e.g. `claude --model sonnet`). Connect remote control (`/remote-control`) so the session is reachable from the phone, then start the watch loop.
+2. **A dedicated session.** This skill is invoked explicitly (`/duet-concierge`), never auto-triggered — a session that merely mentions runs and gates (say, one developing duet itself) must not inherit the relay role. Supervision is shallow work on sparse turns, so a fast, inexpensive model serves it well (e.g. `claude --model sonnet`): invoke the skill, connect remote control (`/remote-control`) so the session is reachable from the phone, then start the watch loop.

@@ -40,6 +40,10 @@ describe('the duet-concierge skill coheres with the CLI', () => {
     const fm = frontmatterOf(skillMd);
     expect.soft(fm['name']).toBe('duet-concierge');
     expect.soft(fm['description']).toBeTruthy();
+    // Explicit invocation only: auto-triggering would load the relay role
+    // into any session that merely mentions runs and gates — including
+    // sessions developing duet itself.
+    expect.soft(fm['disable-model-invocation']).toBe('true');
 
     const tools = (fm['allowed-tools'] ?? '').split(',').map((t) => t.trim());
     expect(tools.length).toBeGreaterThan(0);
