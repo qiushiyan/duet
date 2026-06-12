@@ -38,6 +38,7 @@ Invariants that bite if forgotten (full reasoning: `docs/engineering.md`, `docs/
 - `docs/open-questions.md` — why each decision is what it is; strike-through = resolved, compressed to verdict + pointer (full deliberations in git history; Q numbers are stable — never renumber). Open: Q13 (triage precision), Q16 (worker schema), Q19 (run-level budget), Q20 (pre-auth precision) — all await more runs.
 - `docs/prompting-and-tool-design.md` — **consult whenever touching any agent prompt, tool description, tool result, or error message**; carries the 5 binding conventions + house patterns.
 - `docs/workflow-model.md` / `docs/observed-pattern.md` — the abstracted protocol / the evidence sessions.
+- `docs/future-directions.md` — the product-direction ledger: active next step (Claude Code as the interaction layer), shelved directions + revisit triggers, declined candidates. Check before proposing a new direction.
 - `snippets.toml` — the orchestrator's snippet library (tabtype schema; guarded by `tests/snippets.test.ts`; porting edits back to tabtype is a manual human step).
 - `references/` — external repo clones; **check `references/README.md` license boundaries before copying anything** (claude-squad AGPL = read-only; Agent SDK proprietary = dependency only).
 
