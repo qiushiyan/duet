@@ -96,7 +96,7 @@ program
   .option('--framing <file>', 'project briefing file — the only place project knowledge enters; omit both flags to write it in your editor')
   .option(
     '--gates-at <phases>',
-    'phases whose gates you attend (from: frame, spec, plan, impl, docs, pr — or the preset "overnight" = frame,spec); the rest are pre-authorized and auto-cross with their packets recorded; pr is always attended; default: every gate',
+    'phases whose gates you attend (from: frame, spec, plan, impl, docs, pr — or a preset: "skip-plan" = walk away at spec approval, return at the Ship gate; "overnight" = frame,spec); the rest are pre-authorized and auto-cross with their packets recorded; pr is always attended; default: every gate',
   )
   .option('--orchestrator <provider[:model]>', 'role binding override (claude[:model] only in v1)')
   .option('--impl <provider[:model]>', 'implementer binding override')

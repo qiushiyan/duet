@@ -78,10 +78,11 @@ When the human describes new work, you draft the **framing file** — the one do
 
 ```
 duet new --framing .duet/<name>.md
+duet new --framing .duet/<name>.md --gates-at skip-plan
 duet new --framing .duet/<name>.md --gates-at overnight
 ```
 
-The second form pre-authorizes the later gates (the human attends only the early ones — `--gates-at` takes a phase list or the `overnight` preset; the Open-PR gate always stays attended). Suggest it when they say they're going to bed.
+`--gates-at` pre-authorizes the gates of unlisted phases (it takes a phase list or a preset; the Open-PR gate always stays attended). `skip-plan` means "walk away once the spec is approved, return at the Ship gate" — suggest it when the human says they trust the plan loop; `overnight` auto-crosses everything after the spec — suggest it when they say they're going to bed.
 
 ## Supervising
 

@@ -7,7 +7,7 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | Command | What it does |
 |---|---|
 | `duet new --framing <file>` | Start a run from a framing file (the project briefing — the only place project knowledge enters). Returns immediately; the first phase runs in a detached driver. |
-| `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates (`frame, spec, plan, impl, docs, pr` — or the preset `overnight` = frame,spec). The rest are pre-authorized and auto-cross with their packets recorded. `pr` is always attended. |
+| `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates (`frame, spec, plan, impl, docs, pr` — or a preset: `skip-plan` = walk away at spec approval, return at the Ship gate; `overnight` = frame,spec). The rest are pre-authorized and auto-cross with their packets recorded. `pr` is always attended. |
 | `duet new --spec <path>` | Start at the spec review loop from a draft spec (skips the FRAME phase). |
 | `duet continue <run-id> --approve` | Approve the current gate. |
 | `duet continue <run-id> --approve "<rider>"` | Approve with a rider: agreement with the direction plus adjustments, delivered into the next phase as gate feedback in approving form. The human's "yes, but…" in one command. |
@@ -98,8 +98,10 @@ A markdown file: an optional `---`-fenced frontmatter block holding only fixed m
 
 ```markdown
 ---
-# gates_at: frame, spec     — phases whose gates the human attends; the rest
-#                             auto-cross. Preset: overnight = frame,spec.
+# gates_at: skip-plan       — phases whose gates the human attends; the rest
+#                             auto-cross. Presets: skip-plan (walk away at spec
+#                             approval, return at the Ship gate), overnight
+#                             (= frame,spec). Or a list, e.g. "frame, spec".
 # spec: path/to/draft.md    — enter at the spec review loop (skips FRAME).
 ---
 

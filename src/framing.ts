@@ -38,9 +38,11 @@ export const DEFAULT_FRAMING_FILE = join('.duet', 'framing-draft.md');
 export const FRAMING_TEMPLATE = `---
 # Machine-parsed options (fixed values the harness acts on; judgment-weighed
 # detail belongs in the prose below). Uncomment to use.
-# gates_at: frame, spec   — phases whose gates you attend; the rest are
+# gates_at: skip-plan     — phases whose gates you attend; the rest are
 #                           pre-authorized and auto-cross with packets
-#                           recorded. Preset: overnight = frame,spec.
+#                           recorded. Presets: skip-plan (walk away at spec
+#                           approval, return at the Ship gate) and overnight
+#                           (= frame,spec). Or a list, e.g. "frame, spec".
 #                           pr is always attended. Default: every gate.
 # spec: path/to/draft.md  — enter at the spec review loop (skips FRAME).
 ---
@@ -144,7 +146,14 @@ export async function composeInEditor(instructions: string): Promise<string> {
 
 /** Named presets — pure aliases for gate lists, never a separate vocabulary. */
 const GATES_AT_PRESETS: Record<string, GatePhase[]> = {
+  /** Attend nothing after the spec — the full sleep posture. */
   overnight: ['frame', 'spec'],
+  /**
+   * Walk away at spec approval, return at the Ship gate — the plan loop runs
+   * unattended. Born from run evidence (the human reports rubber-stamping
+   * plan gates); whether this earns default status is Q20's evidence stream.
+   */
+  'skip-plan': ['frame', 'spec', 'impl', 'docs'],
 };
 
 export interface FramingFrontmatter {
@@ -169,7 +178,7 @@ export function parseGatesAt(value: string): GatePhase[] {
   for (const name of names) {
     if (!(GATE_PHASES as readonly string[]).includes(name)) {
       throw new Error(
-        `gates_at: "${name}" is not a gate-bearing phase — use a list from {${GATE_PHASES.join(', ')}} or the preset "overnight" (= frame,spec). The open phase has no gate; pr is always attended.`,
+        `gates_at: "${name}" is not a gate-bearing phase — use a list from {${GATE_PHASES.join(', ')}} or a preset: "overnight" (= frame,spec) or "skip-plan" (= frame,spec,impl,docs — walk away at spec approval, return at the Ship gate). The open phase has no gate; pr is always attended.`,
       );
     }
     if (!gates.includes(name as GatePhase)) gates.push(name as GatePhase);

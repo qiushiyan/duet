@@ -9,6 +9,7 @@ describe('parseGatesAt', () => {
     { input: 'frame,spec', expected: ['frame', 'spec', 'pr'] },
     { input: 'frame spec  plan', expected: ['frame', 'spec', 'plan', 'pr'] },
     { input: 'overnight', expected: ['frame', 'spec', 'pr'] },
+    { input: 'skip-plan', expected: ['frame', 'spec', 'impl', 'docs', 'pr'] },
     { input: 'pr', expected: ['pr'] },
     { input: 'frame,frame,spec', expected: ['frame', 'spec', 'pr'] },
   ])('"$input" → $expected (pr always attended)', ({ input, expected }) => {

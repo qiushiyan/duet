@@ -117,7 +117,7 @@ Numbering note: Q1–Q10 predate the 2026-06-11 pivot to an intelligent orchestr
 
 **Current belief.** The right default for runs the human consciously judges low-ambiguity — the per-run choice is the point, and the recorded packets plus the status while-you-were-away section give the morning review enough to catch drift. Reject-at-the-next-attended-gate plus run abandonment cover the deep-error case without re-open-an-earlier-phase machinery.
 
-**What would change the answer.** Overnight runs reviewed each morning: how often did an encoded recommendation get reversed, and at what rework cost? Did the escape hatch fire — or fail to fire when it should have? Recurring morning reversals at one particular gate argue for attending that gate by default; a wasted overnight arc argues for tightening the throwaway test.
+**What would change the answer.** Overnight runs reviewed each morning: how often did an encoded recommendation get reversed, and at what rework cost? Did the escape hatch fire — or fail to fire when it should have? Recurring morning reversals at one particular gate argue for attending that gate by default; a wasted overnight arc argues for tightening the throwaway test. The inverse is under watch too: the human reports rubber-stamping the **plan gate** (2026-06-12, second run), so the `skip-plan` preset exists to gather that evidence — if its recorded plan packets never provoke a morning wince across a few runs, plan-gate attendance stops being the default by a documented decision here; until the evidence exists, the conservative default stands.
 
 ## What remains
 
