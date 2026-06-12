@@ -7,7 +7,7 @@ import { execa } from 'execa';
 import { createActor } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
 import { loadRoleBindings } from './config.ts';
-import { DEFAULT_FRAMING_FILE, resolveRunInputs } from './framing.ts';
+import { DEFAULT_FRAMING_FILE, composeInEditor, resolveRunInputs } from './framing.ts';
 import { aliveDriverPid, driveToQuiescence, probeRunPosition, spawnDrive, waitForRunStop } from './harness/lifecycle.ts';
 import type { HumanEvent } from './harness/lifecycle.ts';
 import { duetMachine } from './harness/machine.ts';
@@ -157,11 +157,17 @@ program
   .command('continue')
   .description('Resume a run past its gate or queued flag.')
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
-  .option('--approve', 'approve the current gate')
-  .option('--reject <feedback>', 'send the artifact back with feedback')
+  .option(
+    '--approve [rider]',
+    'approve the current gate, optionally with a rider — adjustments that ride into the next phase as gate feedback in approving form. Bare --approve opens $EDITOR (save empty to approve without a rider)',
+  )
+  .option(
+    '--reject [feedback]',
+    'send the artifact back; the feedback reaches the orchestrator verbatim. Bare --reject opens $EDITOR to compose it (an empty result aborts the rejection)',
+  )
   .option('--answer <text>', 'answer the queued question')
   .option('--tmux', 'open (or reuse) the tmux viewer for this run')
-  .action(async (runId: string | undefined, opts: { approve?: boolean; reject?: string; answer?: string; tmux?: boolean }) => {
+  .action(async (runId: string | undefined, opts: { approve?: boolean | string; reject?: boolean | string; answer?: string; tmux?: boolean }) => {
     const cwd = process.cwd();
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
     if (!state) fail('no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
@@ -227,7 +233,7 @@ program
       return;
     }
 
-    const eventType = opts.approve
+    const eventType = opts.approve !== undefined
       ? ('approve' as const)
       : opts.reject !== undefined
         ? ('reject' as const)
@@ -241,7 +247,8 @@ program
     const event: HumanEvent = { type: `human.${eventType}` };
 
     // Validate the event against the restored state before committing side
-    // effects, so a wrong flag gets a friendly error instead of a no-op.
+    // effects (or opening an editor), so a wrong flag gets a friendly error
+    // instead of a no-op.
     if (restored.status === 'done') fail(`run ${state.runId} is complete — nothing to continue`);
     if (!restored.can(event)) {
       fail(
@@ -250,7 +257,35 @@ program
       );
     }
 
-    if (opts.reject !== undefined) stageHumanInput(state, { kind: 'feedback', text: opts.reject });
+    // An optional-value flag swallows the next token, so a run id typed after
+    // the flag would silently become the text. Catch the certain mistake.
+    for (const value of [opts.approve, opts.reject]) {
+      if (typeof value === 'string' && listRuns(cwd).some((r) => r.runId === value)) {
+        fail(
+          `"${value}" is a run id, but it was parsed as the flag's text — put the run id before the flag (duet continue ${value} --approve), or quote the text if you really meant it.`,
+        );
+      }
+    }
+
+    // A bare flag means "compose in the editor" — a shell flag is a hostile
+    // place for substantial feedback (the text is discarded after staging).
+    if (opts.reject !== undefined) {
+      const feedback =
+        typeof opts.reject === 'string'
+          ? opts.reject
+          : await composeInEditor('Rejecting the gate: write the feedback that sends the artifact back. It reaches the orchestrator verbatim, as editor-in-chief input.');
+      if (!feedback.trim()) {
+        fail('rejection aborted — no feedback written. A reject sends the artifact back, and the orchestrator routes the rework from your why.');
+      }
+      stageHumanInput(state, { kind: 'feedback', text: feedback });
+    }
+    if (opts.approve !== undefined) {
+      const rider =
+        typeof opts.approve === 'string'
+          ? opts.approve
+          : await composeInEditor('Approving the gate: optionally write a rider — adjustments that ride into the next phase with your approval. Save empty to approve without one.');
+      if (rider.trim()) stageHumanInput(state, { kind: 'approval', text: rider.trim() });
+    }
     if (opts.answer !== undefined) stageHumanInput(state, { kind: 'answer', text: opts.answer });
 
     const pid = spawnDrive(state, eventType);

@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, join, relative, resolve } from 'node:path';
 import { execa } from 'execa';
 import { z } from 'zod';
@@ -113,6 +114,32 @@ export async function editFramingForRun(cwd: string): Promise<string> {
     throw new Error(`run not started: ${DEFAULT_FRAMING_FILE} is still the untouched template — fill it in (it's saved for next time)`);
   }
   return DEFAULT_FRAMING_FILE;
+}
+
+/**
+ * Open the user's editor on a throwaway file and return what they saved —
+ * the no-inline-text path for gate riders and rejection feedback (a shell
+ * flag is a hostile place to compose substantial prose). The instruction
+ * seed is a leading HTML comment, stripped on read, so what the user writes
+ * is used verbatim. The temp file is deleted afterwards: the text's only
+ * life is the staging handshake it feeds.
+ */
+export async function composeInEditor(instructions: string): Promise<string> {
+  const dir = mkdtempSync(join(tmpdir(), 'duet-compose-'));
+  const path = join(dir, 'message.md');
+  writeFileSync(path, `<!-- ${instructions}\n     Write below this line; save and close to send. This file is discarded after reading. -->\n\n`);
+  const { command, args } = resolveEditor();
+  console.log(`opening ${basename(command)} — write the text, save, and close`);
+  try {
+    await execa(command, [...args, path], { stdio: 'inherit' });
+    const content = readFileSync(path, 'utf8');
+    return content.replace(/^<!--[\s\S]*?-->\s*/, '').trim();
+  } catch (err) {
+    const detail = err instanceof Error ? err.message.split('\n')[0] : String(err);
+    throw new Error(`editor exited with an error (${detail}) — nothing was sent`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /** Named presets — pure aliases for gate lists, never a separate vocabulary. */

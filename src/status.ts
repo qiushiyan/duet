@@ -235,8 +235,9 @@ export function renderStatus(model: StatusModel): string {
       if (stop.packet.artifacts.length > 0) lines.push(`\nartifacts: ${stop.packet.artifacts.join(', ')}`);
     }
     lines.push(`\ndecide with:`);
-    lines.push(`  ${stop.commands.approve}`);
+    lines.push(`  ${stop.commands.approve}   (add "<rider>" to approve with adjustments)`);
     lines.push(`  ${stop.commands.reject}`);
+    lines.push(`  (a bare flag opens your editor — feedback and riders compose better there)`);
     if (stop.hint) lines.push(`\n${stop.hint}`);
     return lines.join('\n');
   }

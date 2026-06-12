@@ -42,6 +42,7 @@ duet status --json --wait                  # blocks until the next stop — the 
 duet logs [run-id]                         # orchestrator narration: replay + follow (Ctrl-C detaches)
 duet new --framing <file>                  # start a run from a framing file you drafted
 duet continue <run-id> --approve           # cross the current gate
+duet continue <run-id> --approve "<text>"  # approve WITH a rider: agreement plus their adjustments
 duet continue <run-id> --reject "<text>"   # send the artifact back; text reaches the run verbatim
 duet continue <run-id> --answer "<text>"   # answer the queued question, verbatim
 duet continue <run-id>                     # crash recovery: re-enter a phase that died mid-flight
@@ -50,7 +51,8 @@ duet steer "<note>" [run-id]               # mid-phase note to the orchestrator,
 
 Gotchas worth knowing before they bite:
 
-- Every command defaults to the latest run — pass the run id explicitly once more than one run exists.
+- Every command defaults to the latest run — pass the run id explicitly once more than one run exists, and always **before** any flag (an optional-value flag would swallow a trailing run id as its text).
+- Always pass text inline, quoted. A bare `--approve` or `--reject` opens an interactive `$EDITOR` — a flow for humans at a terminal that would leave your session hanging.
 - `duet steer` *refuses* at a gate, flag, or finished run, and the refusal names the right channel. That is the design, not an error to work around: gate decisions stay explicit, never smuggled in as notes.
 - `status`, `logs`, and `runs` are read-only and always safe. `continue` crosses gates, so it should prompt for permission every time (see Setup) — treat the prompt as a feature, not friction.
 - "Phase running for two hours" is normal, not stuck. A run is stuck only when `status` says so (a crash) or the human thinks so.
@@ -63,7 +65,7 @@ Gotchas worth knowing before they bite:
 | `stop.kind` | The run is… | What you do |
 |---|---|---|
 | `running` | mid-phase, orchestrator live | nothing is owed; relay any human guidance via `duet steer` |
-| `gate` | waiting on a decision | present `stop.packet.summary`, then `stop.commands.approve` / `.reject` on their word |
+| `gate` | waiting on a decision | present `stop.packet.summary`, then `stop.commands.approve` / `.reject` on their word — "approve, but tweak X" is one command: `duet continue <run-id> --approve "<their tweak, verbatim>"` |
 | `flag` | paused on a queued question | present `stop.question` + `stop.context` whole; `--answer` with their words |
 | `crashed` | a phase died mid-flight (infrastructure, not content) | tell the human; on their go-ahead run `stop.command` — it re-enters from the transcripts |
 | `done` | complete | report the summary — the PR link leads it |

@@ -25,9 +25,15 @@ import type { GatePhase, PhaseName } from './phases.ts';
 
 export type Voice = 'orchestrator' | 'implementer' | 'reviewer';
 
-/** Human input staged by the CLI for the next driver invocation to consume. */
+/**
+ * Human input staged by the CLI for the next driver invocation to consume.
+ * `answer` resolves a queued question; `feedback` rides a gate rejection
+ * back into the same phase; `approval` is a rider on a gate approval —
+ * agreement with the direction plus adjustments, carried into the next
+ * phase's entry prompt as gate feedback in approving form.
+ */
 export interface HumanMessage {
-  kind: 'answer' | 'feedback';
+  kind: 'answer' | 'feedback' | 'approval';
   text: string;
 }
 

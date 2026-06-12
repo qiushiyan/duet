@@ -18,6 +18,7 @@ import { createPhaseTools } from './tools.ts';
 import {
   ORCHESTRATOR_SYSTEM_PROMPT,
   answerResumePrompt,
+  approvalRiderBlock,
   docsPhaseEntryPrompt,
   feedbackResumePrompt,
   framePhaseEntryPrompt,
@@ -207,9 +208,10 @@ async function drivePhase(
 }
 
 /**
- * The turn's prompt: the phase entry or resume prompt, plus any steers that
- * missed their delivery window (the phase ended, or the run was paused, before
- * another tool result could carry them). Draining here mirrors
+ * The turn's prompt: the phase entry or resume prompt, plus the rider when
+ * the gate just crossed was approved with one, plus any steers that missed
+ * their delivery window (the phase ended, or the run was paused, before
+ * another tool result could carry them). Draining steers here mirrors
  * consumeHumanInput's consume-then-crash trade: a crash between this drain and
  * the turn reaching the model loses the carry — accepted, the voice log keeps
  * the evidence — where not draining would redeliver into every later prompt.
@@ -219,9 +221,13 @@ function buildPrompt(
   phase: PhaseName,
   pendingMessage: HumanMessage | undefined,
 ): string {
-  const base = basePrompt(state, phase, pendingMessage);
+  let prompt = basePrompt(state, phase, pendingMessage);
+  if (pendingMessage?.kind === 'approval') {
+    appendVoiceLog(state, 'orchestrator', '◀ approval rider (attached to the gate decision)', pendingMessage.text);
+    prompt = `${prompt}\n\n${approvalRiderBlock(pendingMessage.text)}`;
+  }
   const steers = listPendingSteers(state);
-  if (steers.length === 0) return base;
+  if (steers.length === 0) return prompt;
   markSteersDelivered(state, steers);
   for (const steer of steers) {
     appendVoiceLog(
@@ -231,7 +237,7 @@ function buildPrompt(
       steer.text,
     );
   }
-  return `${base}\n\n${renderSteerBlock(steers, 'carried')}`;
+  return `${prompt}\n\n${renderSteerBlock(steers, 'carried')}`;
 }
 
 function basePrompt(

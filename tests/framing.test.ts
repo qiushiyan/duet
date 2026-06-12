@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, test as plain, vi } from 'vitest';
-import { DEFAULT_FRAMING_FILE, parseFramingFile, parseGatesAt, resolveRunInputs } from '../src/framing.ts';
+import { DEFAULT_FRAMING_FILE, composeInEditor, parseFramingFile, parseGatesAt, resolveRunInputs } from '../src/framing.ts';
 import { test } from './helpers/fixtures.ts';
 
 describe('parseGatesAt', () => {
@@ -57,6 +57,32 @@ describe('parseFramingFile (the machine/prose boundary)', () => {
 
   plain('a non key:value line in the block is rejected', () => {
     expect(() => parseFramingFile('---\njust some words\n---\nbody')).toThrow(/is not "key: value"/);
+  });
+});
+
+describe('composeInEditor (the no-inline-text path for riders and feedback)', () => {
+  test('returns what the editor saved, instruction seed stripped, verbatim otherwise', async ({ projectDir }) => {
+    const editor = join(projectDir, 'editor.sh');
+    writeFileSync(editor, '#!/bin/sh\nprintf "approved — but cap it at 3\\n\\n# and keep this heading\\n" >> "$1"\n', {
+      mode: 0o755,
+    });
+    vi.stubEnv('VISUAL', '');
+    vi.stubEnv('EDITOR', editor);
+
+    // The user's own text is never mangled — markdown headings included.
+    expect(await composeInEditor('test instructions')).toBe('approved — but cap it at 3\n\n# and keep this heading');
+  });
+
+  test('an untouched (or emptied) file returns empty — the caller decides what empty means', async () => {
+    vi.stubEnv('VISUAL', '');
+    vi.stubEnv('EDITOR', 'true'); // exits 0, writes nothing
+    expect(await composeInEditor('test')).toBe('');
+  });
+
+  test('a failing editor throws without sending', async () => {
+    vi.stubEnv('VISUAL', '');
+    vi.stubEnv('EDITOR', 'false'); // exits 1
+    await expect(composeInEditor('test')).rejects.toThrow(/editor exited with an error.*nothing was sent/);
   });
 });
 

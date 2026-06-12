@@ -267,6 +267,18 @@ export function renderSteerBlock(steers: Steer[], mode: 'live' | 'carried'): str
   return `${blocks}\n${sentence}`;
 }
 
+/**
+ * The rider a human attached to a gate approval (`duet continue --approve
+ * "<rider>"`) — agreement with the direction plus adjustments, appended to
+ * the prompt that follows the crossing.
+ */
+export function approvalRiderBlock(rider: string): string {
+  return `<approval_rider>
+${rider}
+</approval_rider>
+The human's gate approval came with the rider above — agreement with the direction, plus adjustments. Treat it as gate feedback in approving form: fold it into this phase's work from the start, relay what bears on the workers into their prompts, and where it revises something previously settled, the rider wins. It outranks reviewer opinions.`;
+}
+
 export function answerResumePrompt(answer: string): string {
   return `The human answered your queued question: ${JSON.stringify(answer)}. Continue the phase from where you paused, taking their answer into account.`;
 }

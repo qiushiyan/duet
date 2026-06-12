@@ -10,6 +10,7 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates (`frame, spec, plan, impl, docs, pr` — or the preset `overnight` = frame,spec). The rest are pre-authorized and auto-cross with their packets recorded. `pr` is always attended. |
 | `duet new --spec <path>` | Start at the spec review loop from a draft spec (skips the FRAME phase). |
 | `duet continue <run-id> --approve` | Approve the current gate. |
+| `duet continue <run-id> --approve "<rider>"` | Approve with a rider: agreement with the direction plus adjustments, delivered into the next phase as gate feedback in approving form. The human's "yes, but…" in one command. |
 | `duet continue <run-id> --reject "<feedback>"` | Send the gated artifact back; the feedback reaches the orchestrator verbatim, as editor-in-chief input. |
 | `duet continue <run-id> --answer "<answer>"` | Answer the queued question; the run resumes with it. |
 | `duet continue <run-id>` | No flags: status if waiting, crash recovery if the phase died mid-flight. |

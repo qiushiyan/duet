@@ -137,6 +137,44 @@ describe('infrastructure failure', () => {
   });
 });
 
+describe('the approval rider (approve-with-adjustments rides the next prompt)', () => {
+  const advance = () =>
+    scriptedSession(async (ctx) => {
+      await callTool(ctx, 'advance_phase', { summary: 's', artifacts: [] });
+      return [success()];
+    });
+
+  test('a rider staged with the approval lands in the next phase entry prompt, framed as approving feedback', async ({
+    projectDir,
+    run,
+  }) => {
+    await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, advance().runTurn);
+    const staged = loadRunState(projectDir, run.runId);
+    staged.pendingMessage = { kind: 'approval', text: 'agreed — but cap questions at 3' };
+    saveRunState(staged);
+
+    const spec = advance();
+    await runPhase({ runId: run.runId, cwd: projectDir, phase: 'spec' }, spec.runTurn);
+
+    expect.soft(spec.prompts[0]).toContain('Draft the spec'); // the entry prompt, intact
+    expect.soft(spec.prompts[0]).toContain('<approval_rider>');
+    expect.soft(spec.prompts[0]).toContain('cap questions at 3');
+    expect.soft(spec.prompts[0]).toContain('gate feedback in approving form');
+  });
+
+  test('a rider on a crash-recovery re-approve rides the take-stock prompt', async ({ projectDir, run }) => {
+    await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, advance().runTurn);
+    const staged = loadRunState(projectDir, run.runId);
+    staged.pendingMessage = { kind: 'approval', text: 'rider after the crash' };
+    saveRunState(staged);
+
+    const recovery = advance();
+    await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, recovery.runTurn);
+    expect.soft(recovery.prompts[0]).toContain('Continue the phase');
+    expect.soft(recovery.prompts[0]).toContain('rider after the crash');
+  });
+});
+
 describe('steer carry-forward (steers that missed their phase ride the next prompt)', () => {
   const advanceScript = () =>
     scriptedSession(async (ctx) => {
