@@ -117,6 +117,77 @@ describe('send_prompt', () => {
   });
 });
 
+describe('parallel worker turns (cross-role concurrent, same-role serial)', () => {
+  /** A worker whose turns resolve only when the test says so. */
+  function slowWorker(name: 'claude' | 'codex') {
+    const worker = new FakeWorker(name);
+    const finishers: Array<(turn: { text: string; sessionId: string }) => void> = [];
+    worker.runTurn = (opts) => {
+      worker.calls.push(opts);
+      return new Promise((resolve) => finishers.push(resolve));
+    };
+    return { worker, finish: (i = 0) => finishers[i]!({ text: 'done', sessionId: `s${i}` }) };
+  }
+
+  test('turns to different roles genuinely overlap', async ({ run }) => {
+    const impl = slowWorker('claude');
+    const rev = slowWorker('codex');
+    const { call } = harness(run, { implementer: impl.worker, reviewer: rev.worker });
+
+    const implTurn = call('send_prompt', { role: 'implementer', tag: 'think-holistic', body: 'analyze' });
+    const revTurn = call('send_prompt', { role: 'reviewer', tag: 'think-holistic', body: 'analyze' });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Both workers received their prompt while neither turn has finished.
+    expect.soft(impl.worker.calls).toHaveLength(1);
+    expect.soft(rev.worker.calls).toHaveLength(1);
+
+    impl.finish();
+    rev.finish();
+    const [implResult, revResult] = await Promise.all([implTurn, revTurn]);
+    expect.soft(implResult.isError).toBeUndefined();
+    expect.soft(revResult.isError).toBeUndefined();
+  });
+
+  test('a second turn to the same role is refused while one is in flight, and legal after it returns', async ({
+    run,
+  }) => {
+    const impl = slowWorker('claude');
+    const { call } = harness(run, { implementer: impl.worker });
+
+    const first = call('send_prompt', { role: 'implementer', tag: 'custom', body: 'turn one' });
+    await new Promise((r) => setTimeout(r, 0));
+    const refused = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'turn two' });
+
+    expect.soft(refused.isError).toBe(true);
+    expect.soft(text(refused)).toContain('already in flight');
+    expect.soft(text(refused)).toContain('one persistent session');
+    expect.soft(impl.worker.calls).toHaveLength(1); // the second prompt never reached the worker
+
+    impl.finish();
+    await first;
+    const after = call('send_prompt', { role: 'implementer', tag: 'custom', body: 'turn two, again' });
+    await new Promise((r) => setTimeout(r, 0));
+    impl.finish(1);
+    expect((await after).isError).toBeUndefined();
+  });
+
+  test('send_prompt and list_snippets carry the concurrency annotation the CLI scheduler reads', ({ run }) => {
+    // readOnlyHint is the concurrency hint, not a purity claim — the claude
+    // CLI serializes MCP tools without it (see the note in tools.ts). Losing
+    // the annotation would silently re-serialize parallel worker turns.
+    const { tools } = createPhaseTools({
+      state: run,
+      phase: 'frame',
+      providers: { implementer: new FakeWorker('claude'), reviewer: new FakeWorker('codex') },
+      log: () => {},
+    });
+    for (const name of ['send_prompt', 'list_snippets']) {
+      expect.soft(tools.find((t) => t.name === name)?.annotations?.readOnlyHint, name).toBe(true);
+    }
+  });
+});
+
 describe('template economy (once per phase per worker)', () => {
   test('re-sending a base template gets one steering refusal, then the identical call passes', async ({ run }) => {
     const { call, reviewer } = harness(run);

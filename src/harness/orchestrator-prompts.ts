@@ -97,7 +97,7 @@ ${branchPolicyParagraph(state)}${attendancePosture(state, 'frame')}
 The shape of the phase:
 1. Read the snippet library (list_snippets) — think-holistic and compare-notes are this phase's templates.
 2. Onboard each worker in your first prompt to it: the framing says how (a project skill to invoke — include its /name in the worker's prompt and the CLI expands it — or files to read). Fold the onboarding, the working branch, and the problem statement from the framing into that first prompt.
-3. Send think-holistic to each worker independently — same problem, two unshared analyses.
+3. Send think-holistic to each worker independently — same problem, two unshared analyses. Issue both send_prompt calls in one message: turns to different workers run concurrently, and these two share no inputs, so there is nothing to wait for.
 4. Send the reviewer's analysis to the implementer with compare-notes: critique, synthesize, don't capitulate.
 5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
 

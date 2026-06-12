@@ -116,6 +116,12 @@ This is what makes the cooperative pause reliable without any mechanical enforce
 
 A house variant for soft constraints: **warn-once-then-allow**. When the agent attempts something usually-but-not-always wrong (duet's case: re-sending a full snippet template to a worker that already holds it), the first attempt returns a steering error naming the why and the alternatives; repeating the identical call passes. Judgment keeps the override; the harness makes the override deliberate and leaves both calls in the transcript. Prefer this over hard blocks whenever the rule has legitimate exceptions — a hard block is the dumb-router trap of approximating judgment with mechanism.
 
+### Concurrency is opt-in for MCP tools (CLI quirk)
+
+The claude CLI's tool scheduler batches and parallelizes only tools it considers concurrency-safe, and for MCP tools that test is `annotations.readOnlyHint ?? false` — a custom tool without the annotation executes strictly serially even when the model emits parallel `tool_use` blocks in one message. Verified against CLI 2.1.175 (undocumented internals — re-verify on CLI upgrades), and observed live before the fix: the frame phase's two `think-holistic` sends, emitted in one orchestrator turn, ran one whole minutes-long worker turn after the other (planlab run `20260612-1254-a575`).
+
+Duet's `send_prompt` therefore carries `readOnlyHint: true` as a deliberate **concurrency hint, not a purity claim** — the tool plainly has side effects, but in this closed surface the annotation's only consumer is the scheduler (`allowedTools` already pre-approves every tool, so no permission UX reads it). The general rule: when a tool's calls should overlap, the annotation is the knob; when overlap is genuinely unsafe, enforce that in the handler (duet: the same-role in-flight rail — one session is one conversation) rather than relying on the scheduler's serial default.
+
 ### Namespacing and evaluation
 
 Prefix-group related tools for clear boundaries (`asana_projects_search`-style); the prefix-vs-suffix choice measurably affects tool-use behavior, so don't bikeshed it without an eval. More broadly: tool design is iterative and evaluation-driven — prototype, run realistic scenarios, analyze failures, refine. Duet's analogue of an eval is the spike/Slice-1 runs plus the notes file (Q13's flag-precision review is exactly this loop).
