@@ -1,5 +1,5 @@
 import { describe, expect } from 'vitest';
-import { describeStop, renderStatus } from '../src/status.ts';
+import { describeStop, renderStatus, steerRefusal } from '../src/status.ts';
 import { test } from './helpers/fixtures.ts';
 
 describe('describeStop (the notification body)', () => {
@@ -21,6 +21,30 @@ describe('describeStop (the notification body)', () => {
   test('falls back to the raw state name', ({ run }) => {
     run.machineState = 'specFlagWait';
     expect(describeStop(run, false)).toBe('stopped at specFlagWait');
+  });
+});
+
+describe('steerRefusal (the steer channel gate)', () => {
+  test('a live or crashed phase accepts the steer', () => {
+    expect.soft(steerRefusal({ kind: 'running', pid: 4242, phase: 'impl' }, 'r1')).toBeUndefined();
+    expect.soft(steerRefusal({ kind: 'crashed', phase: 'impl' }, 'r1')).toBeUndefined();
+  });
+
+  test('a gate refuses toward the gate decision', () => {
+    const copy = steerRefusal({ kind: 'gate', phase: 'impl' }, 'r1');
+    expect.soft(copy).toContain('shipGate');
+    expect.soft(copy).toContain('duet continue r1 --approve');
+    expect.soft(copy).toContain('--reject');
+  });
+
+  test('a flag refuses toward the answer', () => {
+    const copy = steerRefusal({ kind: 'flag', phase: 'impl' }, 'r1');
+    expect.soft(copy).toContain('queued question');
+    expect.soft(copy).toContain('duet continue r1 --answer');
+  });
+
+  test('a finished run says so', () => {
+    expect(steerRefusal({ kind: 'done' }, 'r1')).toContain('complete');
   });
 });
 

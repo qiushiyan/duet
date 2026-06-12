@@ -9,11 +9,11 @@ import type { AnyMachineSnapshot } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
 import { loadRoleBindings } from './config.ts';
 import { DEFAULT_FRAMING_FILE, resolveRunInputs } from './framing.ts';
-import { aliveDriverPid, driveToQuiescence, spawnDrive } from './harness/lifecycle.ts';
+import { aliveDriverPid, driveToQuiescence, probeRunPosition, spawnDrive } from './harness/lifecycle.ts';
 import type { HumanEvent } from './harness/lifecycle.ts';
 import { duetMachine } from './harness/machine.ts';
 import { phaseOfGateState } from './phases.ts';
-import { renderStatus } from './status.ts';
+import { renderStatus, steerRefusal } from './status.ts';
 import { openTmuxView } from './tmux-view.ts';
 import {
   createRun,
@@ -24,6 +24,7 @@ import {
   loadRunState,
   runDirOf,
   stageHumanInput,
+  stageSteer,
 } from './run-store.ts';
 import type { RunState, Voice } from './run-store.ts';
 
@@ -245,6 +246,29 @@ const driveCommand = new Command('_drive')
     showStatus(stop.state, stop.snapshot);
   });
 program.addCommand(driveCommand, { hidden: true });
+
+program
+  .command('steer')
+  .description(
+    'Send a mid-phase note to the orchestrator — delivered on its next tool result, as your voice. Only legal while a phase is live (or down mid-phase); at a gate or flag, duet continue is the channel.',
+  )
+  .argument('<text>', 'the note, verbatim — it reaches the orchestrator unparaphrased')
+  .argument('[runId]', 'run id (defaults to the latest run in this project)')
+  .action((text: string, runId: string | undefined) => {
+    const cwd = process.cwd();
+    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
+    if (!state) fail('no runs found in this project');
+    const position = probeRunPosition(state);
+    if (position.kind !== 'running' && position.kind !== 'crashed') {
+      fail(steerRefusal(position, state.runId) ?? `nothing to steer at ${position.kind}`);
+    }
+    stageSteer(state, text, position.phase);
+    console.log(
+      position.kind === 'running'
+        ? `steer staged — delivered on the orchestrator's next tool result (usually within minutes; watch with: duet logs ${state.runId})`
+        : `steer staged — the ${position.phase} phase is down; the note rides the recovery prompt when the run re-enters (resume with: duet continue ${state.runId})`,
+    );
+  });
 
 program
   .command('view')

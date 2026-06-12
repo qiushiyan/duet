@@ -1,7 +1,11 @@
+import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect } from 'vitest';
+import { DEFAULT_BINDINGS } from '../src/config.ts';
 import type { DriverOutput } from '../src/harness/driver.ts';
-import { driveToQuiescence } from '../src/harness/lifecycle.ts';
-import { loadMachineSnapshot, loadRunState, saveRunState } from '../src/run-store.ts';
+import { driveToQuiescence, probeRunPosition } from '../src/harness/lifecycle.ts';
+import { createRun, loadMachineSnapshot, loadRunState, runDirOf, saveRunState } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
 import { scriptedMachine } from './helpers/scripted-machine.ts';
 
@@ -47,6 +51,84 @@ describe('attended stops', () => {
     const stop = await driveToQuiescence(run, undefined, { machine, notify });
     expect(stop.snapshot.value).toBe('frameFlagWait');
     expect(loadRunState(projectDir, run.runId).machineState).toBe('frameFlagWait');
+  });
+});
+
+describe('probeRunPosition', () => {
+  const quiet = async () => {};
+
+  test('a live driver pid means a phase is running, whatever the stale snapshot says', async ({
+    projectDir,
+    run,
+    onTestFinished,
+  }) => {
+    // Park the run at the direction gate, then plant a live foreign pid —
+    // the state a driver leaves mid-phase after crossing via --approve.
+    await driveToQuiescence(run, undefined, { machine: scriptedMachine([advanced]).machine, notify: quiet });
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
+    onTestFinished(() => {
+      child.kill();
+    });
+    const fresh = loadRunState(projectDir, run.runId);
+    writeFileSync(join(runDirOf(projectDir, run.runId), 'driver.pid'), `${child.pid}\n`);
+
+    expect(probeRunPosition(fresh)).toEqual({ kind: 'running', pid: child.pid, phase: 'frame' });
+
+    // With the next phase's entry prompt built, the running phase is that one.
+    fresh.phaseStarted.spec = true;
+    expect(probeRunPosition(fresh)).toEqual({ kind: 'running', pid: child.pid, phase: 'spec' });
+  });
+
+  test('no snapshot and no driver is a crash in the first phase, by entry mode', ({ projectDir, run }) => {
+    expect.soft(probeRunPosition(run)).toEqual({ kind: 'crashed', phase: 'frame' });
+
+    const specEntry = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, specPath: 'docs/spec.md' });
+    expect.soft(probeRunPosition(specEntry)).toEqual({ kind: 'crashed', phase: 'spec' });
+  });
+
+  test('a snapshot parked at a gate is the gate — unless the next phase already started (crashed past it)', async ({
+    projectDir,
+    run,
+  }) => {
+    await driveToQuiescence(run, undefined, { machine: scriptedMachine([advanced]).machine, notify: quiet });
+    const fresh = loadRunState(projectDir, run.runId);
+    expect(probeRunPosition(fresh)).toEqual({ kind: 'gate', phase: 'frame' });
+
+    fresh.phaseStarted.spec = true;
+    saveRunState(fresh);
+    expect(probeRunPosition(fresh)).toEqual({ kind: 'crashed', phase: 'spec' });
+  });
+
+  test('a flag-wait with its question is a flag; with the answer consumed it is a mid-phase crash', async ({
+    projectDir,
+    run,
+  }) => {
+    run.pendingQuestion = { question: 'which scope?' };
+    saveRunState(run);
+    await driveToQuiescence(run, undefined, { machine: scriptedMachine([{ outcome: 'flagged' }]).machine, notify: quiet });
+
+    const fresh = loadRunState(projectDir, run.runId);
+    expect(probeRunPosition(fresh)).toEqual({ kind: 'flag', phase: 'frame' });
+
+    delete fresh.pendingQuestion;
+    saveRunState(fresh);
+    expect(probeRunPosition(fresh)).toEqual({ kind: 'crashed', phase: 'frame' });
+  });
+
+  test('a finished run is done', async ({ projectDir, run }) => {
+    // Attend only the un-skippable Open-PR gate; everything else auto-crosses.
+    run.gatesAt = ['pr'];
+    saveRunState(run);
+    const { machine } = scriptedMachine([advanced, advanced, advanced, advanced, advanced, advanced, advanced]);
+    await driveToQuiescence(run, undefined, { machine, notify: quiet });
+    const atPrGate = await driveToQuiescence(
+      loadRunState(projectDir, run.runId),
+      { snapshot: loadMachineSnapshot(run), event: { type: 'human.approve' } },
+      { machine, notify: quiet },
+    );
+
+    expect.soft(atPrGate.snapshot.status).toBe('done');
+    expect.soft(probeRunPosition(loadRunState(projectDir, run.runId))).toEqual({ kind: 'done' });
   });
 });
 

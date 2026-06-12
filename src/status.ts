@@ -1,3 +1,4 @@
+import type { RunPosition } from './harness/lifecycle.ts';
 import { PHASES, gateOf, phaseOfGateState } from './phases.ts';
 import type { RunState } from './run-store.ts';
 
@@ -18,6 +19,33 @@ export function describeStop(state: RunState, done: boolean): string {
   const gatePhase = phaseOfGateState(machineState);
   if (gatePhase) return gateOf(gatePhase).ready;
   return `stopped at ${machineState}`;
+}
+
+/**
+ * Why `duet steer` is refused at this position, or undefined when steering
+ * is legal (a live or crashed phase). Quiescent stops have their own
+ * channel, and the copy names it — gates stay explicit.
+ */
+export function steerRefusal(position: RunPosition, runId: string): string | undefined {
+  switch (position.kind) {
+    case 'running':
+    case 'crashed':
+      return undefined;
+    case 'gate': {
+      const gate = gateOf(position.phase);
+      return (
+        `the run is waiting at the ${gate.state} — steering here is the gate decision itself: ` +
+        `duet continue ${runId} --approve, or duet continue ${runId} --reject "<feedback>" (your feedback reaches the orchestrator verbatim).`
+      );
+    }
+    case 'flag':
+      return (
+        `the run is paused on a queued question — the answer is the steering channel here: ` +
+        `duet continue ${runId} --answer "<your answer>".`
+      );
+    case 'done':
+      return `run ${runId} is complete — there is no phase to steer. A new run starts with duet new.`;
+  }
 }
 
 function fmtTokens(n: number): string {
