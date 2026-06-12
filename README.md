@@ -20,11 +20,13 @@ If duet ever starts to feel like it's *requiring* you to use it, the design has 
 
 ## What's here
 
-- `src/` — the implementation. `cli.ts` (the `duet` command: `new`, `continue`, `status`, `runs`, `view`, `logs`, `takeover`, and the hidden `_drive` the detached phase driver runs as); `harness/` (the XState statechart whose gates only human events can cross, and the orchestrator phase driver hosting the seven harness tools); `providers/` (the minimal worker interface with `claude` and `codex` implementations); `run-state.ts`, `config.ts`, `snippets.ts`, `framing-editor.ts`, `tmux-view.ts`, `notify.ts`; `spike/` (the Q11 substrate spike and the SDK-behavior repros it produced — kept as executable evidence).
+- `src/` — the implementation. `phases.ts` (the phase table the whole arc derives from); `cli.ts` (the `duet` command: `new`, `continue`, `status`, `runs`, `view`, `logs`, `takeover`, and the hidden `_drive` the detached phase driver runs as); `harness/` (the XState statechart whose gates only human events can cross, the seven orchestrator tools with their protocol rails, the SDK session driver, and the run lifecycle with gate pre-authorization); `providers/` (the worker seam with `claude` and `codex` adapters); `run-store.ts`, `framing.ts`, `status.ts`, `config.ts`, `snippets.ts`, `colorize.ts`, `tmux-view.ts`, `notify.ts`; `spike/` (the Q11 substrate spike and the SDK-behavior repros it produced — kept as executable evidence).
+- `tests/` — the Vitest behavior suite: statechart guarantees and tag coherence, the tool-surface rails, driver outcome mapping, gate pre-authorization, the persistence handshake, framing resolution, role bindings, status copy, and a guard on `snippets.toml`. Fixtures and the scripted statechart live in `tests/helpers/`.
 - `snippets.toml` — duet's snippet library, mirroring tabtype's schema (seeded from the user's live config plus `ceo-summary`). The orchestrator reads it via `list_snippets`; approved `propose_snippet_edit` diffs apply here; porting back to tabtype is a manual human step.
 - `docs/observed-pattern.md` — turn-by-turn breakdown of one real session, with timestamps and the snippet used at each turn.
 - `docs/workflow-model.md` — the abstracted state machine. Phases, snippet vocabulary, loop semantics, what's stable vs. what's variable.
 - `docs/automation-design.md` — the design: three layers, tool surface, triage rules, phases and gates, loop semantics, role–provider config, worker compaction, and the as-implemented CLI lifecycle.
+- `docs/engineering.md` — the codebase's mental model: module map, the four seams, the patterns that carry the design, XState usage, testing strategy, and condensed lessons for future engineers.
 - `docs/open-questions.md` — the design decisions and their evidence. Resolved questions stay in place with strike-through headings (the reasoning is the point); open ones (Q13 triage precision, Q16 worker schema, Q17 codex-as-orchestrator) list what would settle them.
 - `docs/prompting-and-tool-design.md` — the prompt-design and tool-design reference (distilled from Anthropic's published guidance), with duet's five binding conventions and house patterns. Consult when designing any agent prompt or tool.
 - `examples/` — verbatim copies of the source session files (Claude Code + Codex), the snippet config, and the two project skills (`/onboarding`, `/update-docs`) the workflow invokes — plus an orchestrator-aware variant of `/update-docs` proposed in `docs/open-questions.md` Q2. All kept here so the docs are self-contained even if the originals get rotated or deleted.
@@ -37,7 +39,7 @@ If duet ever starts to feel like it's *requiring* you to use it, the design has 
 
 **Not built yet:** codex-as-orchestrator (Q17) — deliberately parked until the configuration is wanted.
 
-**Underneath:** pattern analysis from one fully-annotated session corroborated by a 22-session corpus scan (`docs/observed-pattern.md`); the three-role design with its rationale and history (`docs/automation-design.md`); resolved and open design questions (`docs/open-questions.md` — Q1–Q12, Q14–Q15, Q18 resolved; Q13 triage precision, Q16 worker schema, and Q17 are open, the first two awaiting dogfooding evidence). Stack: Node 24 running TypeScript directly (no build step), XState v5, execa, zod, commander, `@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk` pinned to the local CLI version. Checks: `pnpm typecheck` and `node src/harness/machine.smoke.ts`.
+**Underneath:** pattern analysis from one fully-annotated session corroborated by a 22-session corpus scan (`docs/observed-pattern.md`); the three-role design with its rationale and history (`docs/automation-design.md`); the codebase's mental model and lessons (`docs/engineering.md`); resolved and open design questions (`docs/open-questions.md` — Q1–Q12, Q14–Q15, Q18 resolved; open: Q13 triage precision, Q16 worker schema, Q17 codex-as-orchestrator (parked), Q19 run-level budget, Q20 pre-authorization precision — awaiting more runs). Stack: Node 24 running TypeScript directly (no build step), XState v5, Vitest, execa, zod, commander, `@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk` pinned to the local CLI version. Checks: `pnpm typecheck` and `pnpm test`.
 
 ## Reading order
 
@@ -45,6 +47,7 @@ If duet ever starts to feel like it's *requiring* you to use it, the design has 
 2. `docs/workflow-model.md` — what the pattern *is*.
 3. `docs/automation-design.md` — what to do about it.
 4. `docs/open-questions.md` — what we still don't know.
+5. `docs/engineering.md` — how the code is shaped (read before changing it).
 
 ## Convention
 

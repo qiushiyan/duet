@@ -1,6 +1,6 @@
 # Prompting and tool design
 
-Reference for designing duet's agent prompts and tool surfaces, distilled 2026-06-11 from Anthropic's published guidance and first applied in the Q11 spike (`src/spike/q11.ts`). Consult this when writing or revising any orchestrator/worker prompt, tool definition, or tool result.
+Reference for designing duet's agent prompts and tool surfaces, distilled 2026-06-11 from Anthropic's published guidance and first applied in the Q11 spike (`src/spike/q11.ts`). Consult this when writing or revising any orchestrator/worker prompt, tool definition, or tool result — the surfaces it governs live in `src/harness/orchestrator-prompts.ts` (prompts) and `src/harness/tools.ts` (tool descriptions, results, errors).
 
 Sources (re-check when models change — guidance is versioned to model generations):
 
@@ -68,7 +68,7 @@ The through-line: **everything the agent sees through a tool — name, descripti
 
 ### Few thoughtful tools, not API wrappers
 
-More tools don't lead to better outcomes; ambiguous overlap between tools actively hurts. Build a few tools targeting whole workflows, consolidating multiple operations behind one call (`schedule_event` instead of `list_users` + `list_events` + `create_event`). Duet's six-tool orchestrator surface follows this — `send_prompt` hides spawn/resume/stream/persist behind one verb.
+More tools don't lead to better outcomes; ambiguous overlap between tools actively hurts. Build a few tools targeting whole workflows, consolidating multiple operations behind one call (`schedule_event` instead of `list_users` + `list_events` + `create_event`). Duet's seven-tool orchestrator surface follows this — `send_prompt` hides spawn/resume/stream/persist behind one verb.
 
 ### Descriptions are prompts: surface the implicit
 
