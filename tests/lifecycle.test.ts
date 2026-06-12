@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect } from 'vitest';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
 import type { DriverOutput } from '../src/harness/driver.ts';
-import { driveToQuiescence, probeRunPosition } from '../src/harness/lifecycle.ts';
+import { driveToQuiescence, probeRunPosition, waitForRunStop } from '../src/harness/lifecycle.ts';
 import { createRun, loadMachineSnapshot, loadRunState, runDirOf, saveRunState } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
 import { scriptedMachine } from './helpers/scripted-machine.ts';
@@ -160,6 +160,34 @@ describe('probeRunPosition', () => {
 
     expect.soft(atPrGate.snapshot.status).toBe('done');
     expect.soft(probeRunPosition(loadRunState(projectDir, run.runId))).toEqual({ kind: 'done' });
+  });
+});
+
+describe('waitForRunStop (the supervision primitive behind duet status --wait)', () => {
+  test('returns immediately when the run is already at a stop', async ({ projectDir, run }) => {
+    const position = await waitForRunStop(projectDir, run.runId, { intervalMs: 10 });
+    expect(position.kind).toBe('crashed'); // no snapshot, no driver — already stopped
+  });
+
+  test('blocks while a driver is alive and resolves at the stop', async ({ projectDir, run, onTestFinished }) => {
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
+    onTestFinished(() => {
+      child.kill();
+    });
+    writeFileSync(join(runDirOf(projectDir, run.runId), 'driver.pid'), `${child.pid}\n`);
+
+    let resolved = false;
+    const waiting = waitForRunStop(projectDir, run.runId, { intervalMs: 15 }).then((position) => {
+      resolved = true;
+      return position;
+    });
+
+    await new Promise((r) => setTimeout(r, 40)); // a few polls with the driver alive
+    expect(resolved).toBe(false);
+
+    child.kill(); // the "driver" dies → the run is at a stop
+    const position = await waiting;
+    expect(position.kind).not.toBe('running');
   });
 });
 

@@ -8,7 +8,7 @@ import { createActor } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
 import { loadRoleBindings } from './config.ts';
 import { DEFAULT_FRAMING_FILE, resolveRunInputs } from './framing.ts';
-import { aliveDriverPid, driveToQuiescence, probeRunPosition, spawnDrive } from './harness/lifecycle.ts';
+import { aliveDriverPid, driveToQuiescence, probeRunPosition, spawnDrive, waitForRunStop } from './harness/lifecycle.ts';
 import type { HumanEvent } from './harness/lifecycle.ts';
 import { duetMachine } from './harness/machine.ts';
 import { phaseOfGateState } from './phases.ts';
@@ -63,8 +63,31 @@ function fail(message: string): never {
 }
 program
   .name('duet')
-  .description('Semi-AFK orchestrator for the two-agent cross-review workflow.')
-  .version('0.1.0');
+  .description(
+    'Semi-AFK orchestrator for a two-agent AI engineering workflow: an LLM orchestrator routes an implementer and a reviewer through spec → plan → implementation → PR, pausing at human gates.',
+  )
+  .version('0.1.0')
+  .addHelpText(
+    'after',
+    `
+The shape of a run:
+  frame → DIRECTION gate → spec → COMMIT-SPEC gate → plan → PLAN gate (walk away)
+  → impl (AFK, often hours) → SHIP gate → docs → DOCS-PLAN gate → pr → OPEN-PR gate → done
+
+Each phase runs in a detached background driver; every command above returns
+immediately, and nothing runs between stops. A stop is a gate (decision), a
+queued question, a mid-phase crash, or completion — and every stop names its
+next command in duet status.
+
+Acting on a run:
+  at a gate           duet continue --approve | --reject "<feedback>"
+  at a question       duet continue --answer "<text>"
+  into a live phase   duet steer "<note>"     (delivered to the orchestrator mid-flight)
+  after a crash       duet continue           (re-enters from the transcripts)
+
+Watching:  duet status [--json] [--wait] · duet logs · duet view (tmux panes)
+Run state: .duet/runs/<id>/ — state.json is a hint; the JSONL transcripts are truth.`,
+  );
 
 program
   .command('new')
@@ -141,7 +164,7 @@ program
   .action(async (runId: string | undefined, opts: { approve?: boolean; reject?: string; answer?: string; tmux?: boolean }) => {
     const cwd = process.cwd();
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
-    if (!state) fail('no runs found in this project (start one with: duet new --spec <path>)');
+    if (!state) fail('no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
     if (opts.tmux) await openTmuxView(state);
 
     const chosen = [opts.approve, opts.reject, opts.answer].filter((v) => v !== undefined);
@@ -357,13 +380,19 @@ program.addCommand(colorizeCommand, { hidden: true });
 
 program
   .command('status')
-  .description('Show a run’s phase, queued flags, rounds, costs, and next command.')
+  .description('Show a run’s position, the gate packet or queued question, rounds, costs, and the next command.')
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
   .option('--json', 'machine-readable status: the StatusModel, with a discriminated "stop" naming the channel that acts there (the schema the concierge skill reads; additive-only)')
-  .action((runId: string | undefined, opts: { json?: boolean }) => {
+  .option('--wait', 'block until the run reaches its next stop — gate, question, crash, or done — then print; read-only and safe to interrupt. With --json this is the supervision primitive: run it in the background and report when it exits')
+  .action(async (runId: string | undefined, opts: { json?: boolean; wait?: boolean }) => {
     const cwd = process.cwd();
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
-    if (!state) fail('no runs found in this project');
+    if (!state) fail('no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
+    if (opts.wait) {
+      await waitForRunStop(cwd, state.runId);
+      showStatus(loadRunState(cwd, state.runId), opts.json ?? false);
+      return;
+    }
     showStatus(state, opts.json ?? false);
   });
 

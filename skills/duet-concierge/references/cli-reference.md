@@ -1,6 +1,6 @@
 # duet CLI reference (for the concierge)
 
-The verbs and flags the concierge uses, and the `status --json` schema it reads. Generated against the duet CLI this skill ships with; the schema's compatibility promise is additive-only — fields are never renamed or removed.
+The verbs and flags the concierge uses, and the `status --json` schema it reads. Written against the duet CLI this skill ships with; the schema's compatibility promise is additive-only — fields are never renamed or removed. The CLI is also self-documenting: `duet --help` prints the run model, and `duet <command> --help` the per-command detail.
 
 ## Commands
 
@@ -16,6 +16,7 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | `duet steer "<note>" [run-id]` | Stage a mid-phase note for the orchestrator — delivered on its next tool result (minutes, typically). Legal only while a phase is live or down mid-flight; at a gate or flag it refuses and names that stop's channel. |
 | `duet status [run-id]` | Human-readable status: phase, stop, packet or question, rounds, costs, next command. |
 | `duet status --json` | The machine-readable status model (schema below). The concierge's read surface. |
+| `duet status --json --wait` | Blocks until the run reaches its next stop, then prints the model and exits. Read-only and safe to interrupt — the supervision primitive: run it in the background and report when it exits. |
 | `duet runs` | List the project's runs, newest first. |
 | `duet logs [run-id]` | Stream the driver narration — replays from the start, then follows. Ctrl-C detaches; the run is unaffected. |
 | `duet view [run-id]` | Open a tmux viewer (one pane per voice). Terminal-side; not useful remotely. |
@@ -92,4 +93,35 @@ Top-level fields:
 
 ## The framing file (for run starts from dictation)
 
-A markdown file: an optional `---`-fenced frontmatter block holding only fixed machine-parsed values (`gates_at`, `spec`), then prose the orchestrator reads verbatim. The prose conventionally covers: the problem and its scope boundaries, onboarding (a skill to invoke or files to read), conventions (where specs and plans live, branch and commit style), verification commands, docs expectations, and planning style. Everything judgment-weighed belongs in the prose, never the frontmatter.
+A markdown file: an optional `---`-fenced frontmatter block holding only fixed machine-parsed values (`gates_at`, `spec`), then prose the orchestrator reads verbatim. Everything judgment-weighed belongs in the prose, never the frontmatter. Draft from this skeleton, filling what the human's dictation gives you and asking for what it doesn't — a thin framing produces hours of misdirected autonomous work:
+
+```markdown
+---
+# gates_at: frame, spec     — phases whose gates the human attends; the rest
+#                             auto-cross. Preset: overnight = frame,spec.
+# spec: path/to/draft.md    — enter at the spec review loop (skips FRAME).
+---
+
+# Problem
+<what to build or change, why, and the scope boundaries — what's explicitly out>
+
+# Onboarding
+<a skill each worker should invoke (e.g. /onboarding <topic>) or files to read first>
+
+# Conventions
+- Specs live at: <path convention>
+- Plans live at: <path or directory convention — required>
+- Branch: <"this branch is the run's branch", or a naming convention>
+- Commit style: <conventional commits / the project's norm>
+
+# Verification
+- Typecheck: <command>
+- Tests: <command>
+- Environment-only actions (migrations, deploys): flag the human — never attempt.
+
+# Docs
+<docs-update skill name if one exists, else where docs live>
+
+# Planning style
+<tdd-plan vs start-plan preference, or let the orchestrator judge>
+```

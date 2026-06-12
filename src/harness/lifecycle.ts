@@ -137,6 +137,26 @@ function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running
   return { kind: 'crashed', phase: entryPhase };
 }
 
+/**
+ * Block until the run reaches a stop — any position but `running` — polling
+ * the probe on fresh state each round. The wait side of `duet status --wait`:
+ * the one deterministic supervision cycle, owned by the CLI so watchers (the
+ * concierge skill, a shell loop, a human) never reinvent polling. Read-only;
+ * interrupting it cannot affect the run.
+ */
+export async function waitForRunStop(
+  cwd: string,
+  runId: string,
+  opts: { intervalMs?: number } = {},
+): Promise<RunPosition> {
+  const intervalMs = opts.intervalMs ?? 5_000;
+  for (;;) {
+    const position = probeRunPosition(loadRunState(cwd, runId));
+    if (position.kind !== 'running') return position;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
 export interface LifecycleDeps {
   /** Injectable for tests: a duetMachine with a scripted phaseDriver. */
   machine?: typeof duetMachine;

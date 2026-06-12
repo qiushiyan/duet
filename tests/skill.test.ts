@@ -66,6 +66,7 @@ describe('the duet-concierge skill coheres with the CLI', () => {
       const command = publicCommands.get(verbs[0]!);
       if (!command) continue;
       const longs = new Set(command.options.map((o) => o.long));
+      longs.add('--help'); // commander provides it on every command
       for (const [flag] of line.matchAll(/--[a-z][a-z-]*/g)) {
         expect.soft(longs.has(flag), `"${flag}" is not a flag of "duet ${verbs[0]}" in: ${line.trim()}`).toBe(true);
       }
