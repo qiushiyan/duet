@@ -31,12 +31,20 @@ export function getSnippet(key: string): Snippet | undefined {
   return loadSnippets().find((s) => s.key === key);
 }
 
-/** Render the library for the orchestrator: keys + bodies, XML-tagged per the prompting conventions. */
-export function renderSnippetLibrary(keys?: string[]): string {
-  const snippets = loadSnippets().filter((s) => !keys || keys.includes(s.key));
+/**
+ * Render the library for the orchestrator: keys + bodies, XML-tagged per the
+ * prompting conventions. `sentTo` maps snippet key → roles already sent that
+ * template this phase; those entries are annotated so the menu carries the
+ * once-per-phase state at selection time.
+ */
+export function renderSnippetLibrary(sentTo?: Record<string, string[]>): string {
   return [
     '<snippet_library>',
-    ...snippets.map((s) => `<snippet key="${s.key}">\n${s.expand}\n</snippet>`),
+    ...loadSnippets().map((s) => {
+      const sent = sentTo?.[s.key];
+      const attr = sent && sent.length > 0 ? ` already_sent_this_phase_to="${sent.join(', ')}"` : '';
+      return `<snippet key="${s.key}"${attr}>\n${s.expand}\n</snippet>`;
+    }),
     '</snippet_library>',
   ].join('\n');
 }

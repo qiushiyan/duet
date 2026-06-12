@@ -42,6 +42,12 @@ export interface RunState {
   phaseStarted: Partial<Record<PhaseName, true>>;
   /** Review rounds run per phase (backstop caps compare against this). */
   rounds: Partial<Record<PhaseName, number>>;
+  /**
+   * Base snippet tags sent per phase per worker. Drives the once-per-phase
+   * template discipline: a duplicate full-template send gets a warn-once
+   * steering refusal, and list_snippets annotates already-sent snippets.
+   */
+  sentSnippets?: Partial<Record<PhaseName, Partial<Record<'implementer' | 'reviewer', string[]>>>>;
   /** advance_phase outputs, shown at gates. */
   phaseSummaries: Partial<Record<PhaseName, { summary: string; artifacts: string[] }>>;
 

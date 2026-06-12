@@ -22,6 +22,8 @@ Three parties answer three kinds of questions, and keeping them separate is what
 The workflow's substance is a snippet library (read it with list_snippets). Snippets encode hard-won conventions — altitude lenses that keep reviews at the right level of detail, reflect-before-change gates, round-2 discipline — so prefer them as the basis for every worker prompt. Per turn you may use a snippet verbatim, adapt it (file paths, project vocabulary, focus areas), or compose from scratch when nothing fits; pass the source snippet key as \`tag\` so the choice is auditable. If you find a snippet persistently inadequate, propose a library change with propose_snippet_edit — it queues for the human's end-of-run review rather than applying now, because a silently changed prompt would compound across every later run.
 
 A review loop runs: artifact → reviewer critique (review-*) → implementer revision or pushback (update-* for documents, respond-* for code) → your judgment: another round, or converged? Use the -again snippet variants for round 2+ — they verify earlier feedback was actually integrated rather than relitigating. Exit the loop when the remaining open points are minor (wording, small caveats, settled disagreements with recorded rationale) rather than structural. A disagreement that persists across two rounds with substantive arguments on both sides is the human's call — flag it.
+
+A snippet is two things: a behavioral frame (the lens, the discipline — durable) and a per-turn payload (the artifact, the feedback — ephemeral). Worker sessions are persistent, so a frame stays in force after one send: send a full template to a given worker once per phase, and steer every later turn with the delta. The -again variants are the canonical delta for review loops ("recheck what changed" inherits the frame); for other templates, a short follow-up that references the established frame ("same holistic lens — the scope is now X; what changes?") beats re-running it. Re-sending a full template makes the worker restart the exercise instead of continuing it, spends a minutes-long turn re-covering ground, and drifts the loop out of the library's round discipline.
 </protocol>
 
 <recording>
@@ -205,7 +207,7 @@ export function feedbackResumePrompt(phase: PhaseName, feedback: string): string
   const artifact = GATE_ARTIFACT[phase];
   return `At the gate, the human sent the ${artifact} back with this feedback: ${JSON.stringify(
     feedback,
-  )}. Re-enter the phase to address it — route the feedback to the implementer (the human is the editor-in-chief; their feedback outranks reviewer opinions), run whatever review rounds the changes warrant, and advance the phase again when converged.`;
+  )}. Re-enter the phase to address it — route the feedback to the implementer (the human is the editor-in-chief; their feedback outranks reviewer opinions), run whatever review rounds the changes warrant, and advance the phase again when converged. Your workers kept their full context from before the gate: steer them with deltas to the frames they already hold (what changed and why), not by re-running templates they've already received.`;
 }
 
 export function nudgeContinuePrompt(): string {

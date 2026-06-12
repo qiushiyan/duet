@@ -6,7 +6,7 @@ import { DEFAULT_CLAUDE_MODEL } from '../config.ts';
 import { ClaudeWorker } from '../providers/claude.ts';
 import { CodexWorker } from '../providers/codex.ts';
 import type { WorkerProvider } from '../providers/types.ts';
-import { renderSnippetLibrary } from '../snippets.ts';
+import { getSnippet, renderSnippetLibrary } from '../snippets.ts';
 import {
   appendNote,
   appendVoiceLog,
@@ -136,6 +136,18 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
   let questionQueued = false;
   let stagedAnswer = pendingMessage?.kind === 'answer' ? pendingMessage.text : null;
 
+  // Once-per-phase template discipline (system prompt <protocol>): a base
+  // template re-sent to the same worker in the same phase gets one steering
+  // refusal; repeating the identical call passes — judgment can override,
+  // the harness just makes the choice deliberate.
+  const sentThisPhase = (role: 'implementer' | 'reviewer'): string[] => {
+    const phases = (state.sentSnippets ??= {});
+    const roles = (phases[phase] ??= {});
+    return (roles[role] ??= []);
+  };
+  const resendWarned = new Set<string>();
+  const isBaseTemplate = (tag: string): boolean => tag !== 'custom' && !tag.endsWith('-again');
+
   // Colored [tag] prefixes on plain stdout — the no-tmux sink of the same
   // lines the voice logs carry (the concurrently/turbo idiom). TTY-only so
   // piped output stays clean.
@@ -161,14 +173,22 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
   const tools = [
     tool(
       'list_snippets',
-      'Read the snippet library: every prompt template the workflow uses, by key. The snippets encode the protocol’s conventions (altitude lenses, round-2 discipline, compaction shapes) — read them before composing worker prompts.',
+      'Read the snippet library: every prompt template the workflow uses, by key. The snippets encode the protocol’s conventions (altitude lenses, round-2 discipline, compaction shapes) — read them before composing worker prompts. Snippets you have already sent this phase are annotated: those workers still hold the instructions, so later turns want the delta, not the template.',
       {},
-      async () => ({ content: [{ type: 'text' as const, text: renderSnippetLibrary() }] }),
+      async () => {
+        const sent: Record<string, string[]> = {};
+        for (const role of ['implementer', 'reviewer'] as const) {
+          for (const tag of state.sentSnippets?.[phase]?.[role] ?? []) {
+            (sent[tag] ??= []).push(role);
+          }
+        }
+        return { content: [{ type: 'text' as const, text: renderSnippetLibrary(sent) }] };
+      },
     ),
 
     tool(
       'send_prompt',
-      'Send a prompt to a worker agent and return its final response. Each role is one persistent session: a later call to the same role continues that worker’s conversation, so refer back to earlier turns instead of repeating context the worker has already seen. Worker turns are slow (often minutes) — prefer one well-composed prompt over several small ones. Sending the reviewer a prompt whose tag starts with "review" counts as a review round against the phase’s backstop cap. A claude-bound worker’s context can be deliberately compacted: a body that is literally "/compact " followed by your instructions (e.g. an adapted compact-for-* snippet) resets that session in place, keeping what the instructions name; codex-bound workers compact themselves automatically, so this applies only to claude.',
+      'Send a prompt to a worker agent and return its final response. Each role is one persistent session: a later call to the same role continues that worker’s conversation, so refer back to earlier turns instead of repeating context the worker has already seen — and the instructions you send persist the same way, so a full snippet template goes to a given worker once per phase, with later turns steered by deltas (-again variants, short frame-referencing follow-ups). Worker turns are slow (often minutes) — prefer one well-composed prompt over several small ones. Sending the reviewer a prompt whose tag starts with "review" counts as a review round against the phase’s backstop cap. A claude-bound worker’s context can be deliberately compacted: a body that is literally "/compact " followed by your instructions (e.g. an adapted compact-for-* snippet) resets that session in place, keeping what the instructions name; codex-bound workers compact themselves automatically, so this applies only to claude.',
       {
         role: z
           .enum(['implementer', 'reviewer'])
@@ -194,6 +214,27 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
           };
         }
 
+        if (isBaseTemplate(args.tag) && sentThisPhase(args.role).includes(args.tag)) {
+          const warnKey = `${args.role}:${args.tag}`;
+          if (!resendWarned.has(warnKey)) {
+            resendWarned.add(warnKey);
+            const again = `${args.tag}-again`;
+            const hasAgain = getSnippet(again) !== undefined;
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `You already sent ${args.tag} to the ${args.role} this phase, and that session still holds its instructions — a full re-send makes the worker restart the exercise instead of continuing it, and spends a minutes-long turn re-covering ground. Send the delta instead: ${
+                    hasAgain ? `the ${again} variant, or ` : ''
+                  }a short follow-up that references the established frame and states only what changed. If the full template is genuinely warranted (the human re-scoped the problem, or the prior turn was lost), repeat this exact call and it will go through.`,
+                },
+              ],
+              isError: true,
+            };
+          }
+          log(`[send_prompt] resend of ${args.tag} → ${args.role} allowed after steering (deliberate)`);
+        }
+
         const provider = providers[args.role];
         log(`[send_prompt] → ${args.role} (${provider.name})  tag=${args.tag}  body=${args.body.length} chars`);
         appendVoiceLog(state, args.role, `◀ prompt (tag=${args.tag}, from orchestrator)`, args.body);
@@ -207,6 +248,9 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
           });
           state.workerSessions[args.role] = turn.sessionId;
           if (isReviewRound) state.rounds[phase] = used + 1;
+          if (isBaseTemplate(args.tag) && !sentThisPhase(args.role).includes(args.tag)) {
+            sentThisPhase(args.role).push(args.tag);
+          }
           if (turn.costUsd) state.costs.claudeWorkersUsd += turn.costUsd;
           if (provider.name === 'codex' && turn.tokens) {
             state.costs.codexTokens.input += turn.tokens.input;

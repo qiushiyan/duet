@@ -211,6 +211,10 @@ Two-tier, settled 2026-06-11:
 
 Rationale: the user already evolves snippets mid-session by hand **(observed: planlab b7487993 08:10–08:28Z, revising `.tabtype.local.toml`)** — so evolution is a real workflow behavior, but a bad adaptation that persists silently would compound across every later run, the same early-correction-leverage logic the `review-midpoint` snippet encodes.
 
+### Template economy
+
+A snippet is a durable **behavioral frame** plus an ephemeral **per-turn payload**, and worker sessions are persistent — so a full template goes to a given worker **once per phase**, with every later turn steered by the delta (`-again` variants for review loops; short frame-referencing follow-ups otherwise). Re-sending a full template makes the worker restart the exercise instead of continuing it **(observed: the first planlab run re-sent `think-holistic` after gate feedback)**. Enforced at three altitudes, none of them a hard block: the principle with its motivation in the orchestrator's system prompt, per-phase send-history annotations on `list_snippets` (`already_sent_this_phase_to`), and a **warn-once-then-allow** gate on `send_prompt` — a duplicate base-template send gets one steering refusal naming the delta alternatives; repeating the identical call passes, so judgment can still override (a human re-scope at a gate is the legitimate case) but the choice is deliberate and auditable.
+
 ## Loop semantics
 
 Loop exit (another review round vs. converged) is **orchestrator judgment** — the thing the human currently does by reading the reviewer's response and feeling whether the remaining points are minor. Two deterministic backstops remain in the harness:

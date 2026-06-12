@@ -97,7 +97,9 @@ When a tool result changes what the agent should do next, the result text says s
 
 > The human is away, so your question has been queued and the run is pausing. End your turn with a one-line status — anything you do past this point happens without the answer you just asked for. The run resumes with the human's answer.
 
-This is what makes the cooperative pause (Q11) reliable without any mechanical enforcement. Backstop-cap hits and `advance_phase` acknowledgements should get the same treatment.
+This is what makes the cooperative pause (Q11) reliable without any mechanical enforcement. Backstop-cap hits and `advance_phase` acknowledgements get the same treatment.
+
+A house variant for soft constraints: **warn-once-then-allow**. When the agent attempts something usually-but-not-always wrong (duet's case: re-sending a full snippet template to a worker that already holds it), the first attempt returns a steering error naming the why and the alternatives; repeating the identical call passes. Judgment keeps the override; the harness makes the override deliberate and leaves both calls in the transcript. Prefer this over hard blocks whenever the rule has legitimate exceptions — a hard block is the dumb-router trap of approximating judgment with mechanism.
 
 ### Namespacing and evaluation
 
