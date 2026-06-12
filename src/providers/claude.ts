@@ -19,7 +19,46 @@ const resultEnvelope = z.looseObject({
   session_id: z.string(),
   total_cost_usd: z.number().optional(),
   usage: z.looseObject({ input_tokens: z.number().optional(), output_tokens: z.number().optional() }).optional(),
+  modelUsage: z
+    .record(z.string(), z.looseObject({ contextWindow: z.number().optional() }))
+    .optional(),
 });
+
+/** Per-request usage on an assistant message — the context-window arithmetic's input. */
+const assistantUsage = z.looseObject({
+  input_tokens: z.number().optional(),
+  cache_creation_input_tokens: z.number().optional(),
+  cache_read_input_tokens: z.number().optional(),
+  output_tokens: z.number().optional(),
+});
+
+/**
+ * Context fill from a claude session's message stream: the LAST assistant
+ * message's request usage (everything the request carried: fresh input,
+ * cache reads, cache writes, output) against the model's context window
+ * from the result's modelUsage. Either side missing → undefined, honestly.
+ */
+export function claudeContextUsage(
+  candidates: unknown[],
+  modelUsage: Record<string, { contextWindow?: number }> | undefined,
+): { usedTokens: number; windowTokens: number } | undefined {
+  let last: z.infer<typeof assistantUsage> | undefined;
+  for (const m of candidates) {
+    if (typeof m !== 'object' || m === null) continue;
+    const message = (m as { type?: unknown; message?: { usage?: unknown } });
+    if (message.type !== 'assistant' || !message.message?.usage) continue;
+    const parsed = assistantUsage.safeParse(message.message.usage);
+    if (parsed.success) last = parsed.data;
+  }
+  const windowTokens = Math.max(0, ...Object.values(modelUsage ?? {}).map((m) => m.contextWindow ?? 0));
+  if (!last || windowTokens === 0) return undefined;
+  const usedTokens =
+    (last.input_tokens ?? 0) +
+    (last.cache_read_input_tokens ?? 0) +
+    (last.cache_creation_input_tokens ?? 0) +
+    (last.output_tokens ?? 0);
+  return { usedTokens, windowTokens };
+}
 
 /**
  * Parse one `--output-format json` invocation's stdout into a WorkerTurn.
@@ -50,6 +89,7 @@ export function parseClaudeTurn(stdout: string, prompt: string): WorkerTurn {
     !envelope.result && prompt.trimStart().startsWith('/compact')
       ? '(session compacted — context was reset per the instructions; the conversation continues from the summary)'
       : (envelope.result ?? '');
+  const context = claudeContextUsage(candidates, envelope.modelUsage);
   return {
     text,
     sessionId: envelope.session_id,
@@ -57,6 +97,7 @@ export function parseClaudeTurn(stdout: string, prompt: string): WorkerTurn {
     ...(envelope.usage?.input_tokens !== undefined
       ? { tokens: { input: envelope.usage.input_tokens, output: envelope.usage.output_tokens ?? 0 } }
       : {}),
+    ...(context ? { context } : {}),
   };
 }
 

@@ -85,6 +85,24 @@ describe('send_prompt', () => {
     expect.soft(log).toContain('▶ response (session session-1)');
   });
 
+  test('a turn reporting context fill records the hint, the sidecar, and the voice-log suffix', async ({
+    projectDir,
+    run,
+  }) => {
+    const reviewer = new FakeWorker('codex', [{ context: { usedTokens: 62_228, windowTokens: 258_400 } }]);
+    const { call } = harness(run, { reviewer });
+    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+
+    const persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.contextUsage?.reviewer).toMatchObject({ usedTokens: 62_228, windowTokens: 258_400 });
+    expect
+      .soft(readFileSync(join(runDirOf(projectDir, run.runId), 'context', 'reviewer'), 'utf8'))
+      .toBe('24%\n');
+    expect
+      .soft(readFileSync(join(runDirOf(projectDir, run.runId), 'reviewer.log'), 'utf8'))
+      .toContain('▶ response (session session-1) · context 24%');
+  });
+
   test('a worker failure names the layer, prescribes retry-then-flag, and counts nothing', async ({ run }) => {
     const reviewer = new FakeWorker('codex', [new Error('spawn codex ENOENT')]);
     const { call } = harness(run, { reviewer });

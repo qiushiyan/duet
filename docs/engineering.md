@@ -23,8 +23,8 @@ Placement rule for any new rule: violating it would break the human's authority 
 | `src/harness/driver.ts` | One phase = one orchestrator SDK session; outcome mapping (advanced / flagged / stuck / crashed); steer carry-forward into prompts | SDK behind the injectable `RunOrchestratorTurn` seam |
 | `src/harness/lifecycle.ts` | The detached `_drive` process, pid guard, quiescence loop, `gates_at` auto-cross, and `probeRunPosition` (where a run is) | The only place machine actors run for real |
 | `src/harness/orchestrator-prompts.ts` | System prompt + phase entry/resume prompts + the steer block renderer | Governed by `prompting-and-tool-design.md` |
-| `src/run-store.ts` | `.duet/runs/<id>/` persistence: state hint, machine snapshot, voice logs, notes; the CLI↔driver input-staging handshake; the steer store (`steers/`, file-per-steer, rename-consume) | Atomic writes; `state.json` is a HINT — transcripts are truth |
-| `src/providers/` | The worker seam: contract (`types.ts`), claude + codex adapters, factory (`index.ts`) | Exactly two providers, by design |
+| `src/run-store.ts` | `.duet/runs/<id>/` persistence: state hint, machine snapshot, voice logs, notes; the CLI↔driver input-staging handshake; the steer store (`steers/`, file-per-steer, rename-consume); the context hint + its `context/<voice>` sidecars | Atomic writes; `state.json` is a HINT — transcripts are truth |
+| `src/providers/` | The worker seam: contract (`types.ts`), claude + codex adapters, factory (`index.ts`); per-provider context-window probes (claude in-band, codex rollout tail-read), fail-soft | Exactly two providers, by design |
 | `src/framing.ts` | The framing's whole journey: template, editor flow, frontmatter parse, flag-vs-frontmatter resolution | The machine/prose boundary rule lives here |
 | `src/status.ts` | RunState + position → the status model; two renderers (human text, `--json` verbatim), pure | No fs, no process table, no xstate; the JSON schema is additive-only, pinned by test |
 | `src/cli.ts` | Command wiring only | Behavior lives behind it; parses under `import.meta.main`, so the command table imports side-effect free |

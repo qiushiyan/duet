@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import type { Snapshot } from 'xstate';
 import type { RoleBindings } from './config.ts';
 import type { GatePhase, PhaseName } from './phases.ts';
+import type { ContextUsage } from './providers/types.ts';
 
 /**
  * Per-run working data under `.duet/runs/<run_id>/` in the target project —
@@ -92,6 +93,13 @@ export interface RunState {
     claudeWorkersUsd: number;
     codexTokens: { input: number; output: number };
   };
+  /**
+   * Context-window fill per voice, captured at turn boundaries (claude roles
+   * report it in-band; codex from its rollout tail). A hint like everything
+   * here — stale after manual takeover turns, refreshed on the next driven
+   * turn.
+   */
+  contextUsage?: Partial<Record<Voice, ContextUsage & { at: string }>>;
   snippetProposals: Array<{ snippetKey: string; proposedBody: string; rationale: string; at: string }>;
   lastActivity?: string;
 }
@@ -294,6 +302,24 @@ export function markSteersDelivered(state: RunState, steers: Steer[]): void {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
   }
+}
+
+/** Whole percent of the context window in use (capped at 100). */
+export function contextPercent(usage: ContextUsage): number {
+  return usage.windowTokens > 0 ? Math.min(100, Math.round((usage.usedTokens / usage.windowTokens) * 100)) : 0;
+}
+
+/**
+ * Record a voice's context-window fill: mutates the state (the caller owns
+ * the save, as with every handler-side mutation) and refreshes the plain-text
+ * sidecar `context/<voice>` ("41%") that the tmux pane titles re-read at
+ * their refresh interval — a `cat` per interval, no JSON parsing at view time.
+ */
+export function recordContextUsage(state: RunState, voice: Voice, usage: ContextUsage): void {
+  (state.contextUsage ??= {})[voice] = { ...usage, at: new Date().toISOString() };
+  const dir = join(runDirOf(state.cwd, state.runId), 'context');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, voice), `${contextPercent(usage)}%\n`);
 }
 
 /**

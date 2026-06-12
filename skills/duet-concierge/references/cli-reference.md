@@ -40,6 +40,7 @@ Top-level fields:
 | `autoApprovals` | Gates auto-crossed under pre-authorization: `{ gate, at, headline }` — surface these as "while you were away". |
 | `rounds` | Review rounds per phase against their backstop caps: `{ phase, used, cap }`. |
 | `costs` | `{ orchestratorUsd, claudeWorkersUsd, codexTokens: { input, output } }`. |
+| `context` | Context-window fill per voice, captured at turn boundaries: `{ role, usedTokens, windowTokens, percent, at }`. Surface high percentages when the human asks how the run is doing — a worker near its window is worth mentioning. |
 | `pendingSteers` | Staged steers not yet delivered: `{ stagedAt, stagedDuring?, text }`. |
 | `snippetProposals` | Queued snippet-library edits awaiting the human's end-of-run review: `{ snippetKey, rationale, at }`. |
 | `lastActivity` | The orchestrator's most recent recorded action. |

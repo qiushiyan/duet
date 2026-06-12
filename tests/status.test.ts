@@ -110,6 +110,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     expect(Object.keys(model).sort()).toEqual([
       'autoApprovals',
       'branch',
+      'context',
       'costs',
       'createdAt',
       'gatesAt',
@@ -121,6 +122,19 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
       'snippetProposals',
       'specPath',
       'stop',
+    ]);
+  });
+
+  test('context fill per voice carries the computed percent', ({ run }) => {
+    run.contextUsage = {
+      orchestrator: { usedTokens: 83_000, windowTokens: 200_000, at: 't1' },
+      reviewer: { usedTokens: 62_228, windowTokens: 258_400, at: 't2' },
+    };
+    const model = buildStatusModel(run, { kind: 'running', pid: 1, phase: 'impl' }, []);
+
+    expect.soft(model.context).toEqual([
+      { role: 'orchestrator', usedTokens: 83_000, windowTokens: 200_000, percent: 42, at: 't1' },
+      { role: 'reviewer', usedTokens: 62_228, windowTokens: 258_400, percent: 24, at: 't2' },
     ]);
   });
 
@@ -212,6 +226,19 @@ describe('renderStatus', () => {
     expect.soft(out).toContain('plan 0/4');
     expect.soft(out).toContain('impl 0/6');
     expect.soft(out).not.toContain('docs 0');
+  });
+
+  test('context fill renders as plain percentages per voice', ({ run }) => {
+    run.machineState = 'implFlagWait';
+    run.contextUsage = {
+      orchestrator: { usedTokens: 83_000, windowTokens: 200_000, at: 't1' },
+      implementer: { usedTokens: 134_000, windowTokens: 200_000, at: 't2' },
+    };
+    const out = render(run, { kind: 'running', pid: 1, phase: 'impl' });
+    expect.soft(out).toContain('context:  orchestrator 42% (83k/200k) · implementer 67% (134k/200k)');
+
+    delete run.contextUsage;
+    expect.soft(render(run, { kind: 'running', pid: 1, phase: 'impl' })).not.toContain('context:');
   });
 
   test('staged steers awaiting delivery are listed with their text', ({ run }) => {

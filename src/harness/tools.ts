@@ -9,9 +9,11 @@ import { getSnippet, renderSnippetLibrary } from '../snippets.ts';
 import {
   appendNote,
   appendVoiceLog,
+  contextPercent,
   gateAttended,
   listPendingSteers,
   markSteersDelivered,
+  recordContextUsage,
   saveRunState,
 } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
@@ -192,10 +194,12 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             state.costs.codexTokens.input += turn.tokens.input;
             state.costs.codexTokens.output += turn.tokens.output;
           }
+          if (turn.context) recordContextUsage(state, args.role, turn.context);
           state.lastActivity = `send_prompt → ${args.role} (${args.tag})`;
           saveRunState(state);
-          appendVoiceLog(state, args.role, `▶ response (session ${turn.sessionId})`, turn.text);
-          log(`[send_prompt] ← ${args.role} responded (${turn.text.length} chars)`);
+          const ctx = turn.context ? ` · context ${contextPercent(turn.context)}%` : '';
+          appendVoiceLog(state, args.role, `▶ response (session ${turn.sessionId})${ctx}`, turn.text);
+          log(`[send_prompt] ← ${args.role} responded (${turn.text.length} chars${ctx})`);
           return { content: [{ type: 'text' as const, text: turn.text }] };
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);

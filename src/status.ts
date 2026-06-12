@@ -1,7 +1,8 @@
 import type { RunPosition } from './harness/lifecycle.ts';
 import { PHASES, gateOf, phaseOfGateState } from './phases.ts';
 import type { GatePhase, PhaseName } from './phases.ts';
-import type { RunState, Steer } from './run-store.ts';
+import { contextPercent } from './run-store.ts';
+import type { RunState, Steer, Voice } from './run-store.ts';
 
 /**
  * Status — one derivation, two renderers. `buildStatusModel` joins the run
@@ -95,6 +96,8 @@ export interface StatusModel {
   autoApprovals: Array<{ gate: string; at: string; headline: string }>;
   rounds: Array<{ phase: PhaseName; used: number; cap: number }>;
   costs: RunState['costs'];
+  /** Context-window fill per voice, captured at turn boundaries (a hint; stale after manual takeover). */
+  context: Array<{ role: Voice; usedTokens: number; windowTokens: number; percent: number; at: string }>;
   /** Staged steers not yet delivered to the orchestrator. */
   pendingSteers: Array<{ stagedAt: string; stagedDuring?: PhaseName; text: string }>;
   /** Queued library edits (rationale only — full bodies stay in state.json). */
@@ -116,6 +119,10 @@ export function buildStatusModel(state: RunState, position: RunPosition, pending
       (p) => ({ phase: p.name, used: state.rounds[p.name] ?? 0, cap: p.roundCap }),
     ),
     costs: state.costs,
+    context: (['orchestrator', 'implementer', 'reviewer'] as const).flatMap((role) => {
+      const usage = state.contextUsage?.[role];
+      return usage ? [{ role, ...usage, percent: contextPercent(usage) }] : [];
+    }),
     pendingSteers: pendingSteers.map(({ stagedAt, stagedDuring, text }) => ({
       stagedAt,
       ...(stagedDuring ? { stagedDuring } : {}),
@@ -200,6 +207,11 @@ export function renderStatus(model: StatusModel): string {
   lines.push(
     `cost:     orchestrator $${model.costs.orchestratorUsd.toFixed(2)}, claude workers $${model.costs.claudeWorkersUsd.toFixed(2)}, codex ${fmtTokens(model.costs.codexTokens.input)} in / ${fmtTokens(model.costs.codexTokens.output)} out tokens`,
   );
+  if (model.context.length > 0) {
+    lines.push(
+      `context:  ${model.context.map((c) => `${c.role} ${c.percent}% (${fmtTokens(c.usedTokens)}/${fmtTokens(c.windowTokens)})`).join(' · ')}`,
+    );
+  }
   if (model.snippetProposals.length > 0) {
     lines.push(`proposals: ${model.snippetProposals.length} snippet edit(s) queued (details in state.json)`);
   }

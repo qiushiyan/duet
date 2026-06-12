@@ -42,6 +42,40 @@ const callTool = async (
   await tool.handler(args as never, {});
 };
 
+describe('orchestrator context capture', () => {
+  test('the last assistant usage against modelUsage’s window lands in the run state', async ({
+    projectDir,
+    run,
+  }) => {
+    const withUsage = {
+      type: 'assistant',
+      message: {
+        usage: { input_tokens: 50_000, cache_read_input_tokens: 30_000, cache_creation_input_tokens: 1_000, output_tokens: 2_000 },
+        content: [],
+      },
+    } as unknown as SDKMessage;
+    const { runTurn } = scriptedSession(async (ctx) => {
+      await callTool(ctx, 'advance_phase', { summary: 's', artifacts: [] });
+      return [
+        withUsage,
+        {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'orc-session',
+          total_cost_usd: 0.1,
+          modelUsage: { 'claude-opus-4-8': { contextWindow: 200_000 } },
+        } as unknown as SDKMessage,
+      ];
+    });
+
+    await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    expect(loadRunState(projectDir, run.runId).contextUsage?.orchestrator).toMatchObject({
+      usedTokens: 83_000,
+      windowTokens: 200_000,
+    });
+  });
+});
+
 describe('outcome mapping', () => {
   test('advanced when the orchestrator advances the phase', async ({ projectDir, run }) => {
     const { runTurn } = scriptedSession(async (ctx) => {

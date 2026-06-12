@@ -65,10 +65,18 @@ async function layoutPanes(state: RunState, orchestratorPane: string): Promise<v
   await tmux('select-pane', '-t', implementer, '-T', `${ROLE_GLYPH.implementer} implementer`);
   // Color each border title by role, keyed on the title's leading glyph —
   // tmux has no per-pane border-style, but the border format can branch.
+  // The context suffix is a #(cat) of the role's plain-text sidecar
+  // (.duet/runs/<id>/context/<voice>, e.g. "41%"), written by the harness at
+  // each turn boundary and re-read by tmux at its status refresh interval —
+  // a cat per interval, nothing parsed at view time. Missing file = no
+  // reading yet = empty.
+  const ctxFor = (voice: Voice) => `#(cat ${shq(join(runDirOf(state.cwd, state.runId), 'context', voice))} 2>/dev/null)`;
   const fmt =
     ` #{?#{m:${ROLE_GLYPH.orchestrator}*,#{pane_title}},#[fg=${ROLE_TMUX_COLOR.orchestrator}],` +
     `#{?#{m:${ROLE_GLYPH.implementer}*,#{pane_title}},#[fg=${ROLE_TMUX_COLOR.implementer}],` +
-    `#[fg=${ROLE_TMUX_COLOR.reviewer}]}}#{pane_title}#[default] `;
+    `#[fg=${ROLE_TMUX_COLOR.reviewer}]}}#{pane_title}#[default] ` +
+    `#{?#{m:${ROLE_GLYPH.orchestrator}*,#{pane_title}},${ctxFor('orchestrator')},` +
+    `#{?#{m:${ROLE_GLYPH.implementer}*,#{pane_title}},${ctxFor('implementer')},${ctxFor('reviewer')}}} `;
   await tmux('set-option', '-w', '-t', orchestratorPane, 'pane-border-format', fmt);
 }
 

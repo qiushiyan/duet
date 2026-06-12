@@ -11,6 +11,7 @@ import {
   listPendingSteers,
   loadRunState,
   markSteersDelivered,
+  recordContextUsage,
   saveRunState,
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
@@ -177,8 +178,13 @@ async function drivePhase(
   return { outcome: result };
 
   async function driveTurn(turnPrompt: string, turnOptions: Options): Promise<'advanced' | 'flagged' | 'continue'> {
+    // The last request's usage IS the current context fill (fresh input +
+    // cache reads + cache writes + output — the claude statusline formula);
+    // the result message's modelUsage supplies the window.
+    let lastUsage: { input_tokens?: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null; output_tokens?: number } | undefined;
     for await (const message of runTurn({ prompt: turnPrompt, options: turnOptions, tools })) {
       if (message.type === 'assistant') {
+        if (message.message.usage) lastUsage = message.message.usage;
         for (const block of message.message.content) {
           if (typeof block === 'object' && block !== null && 'type' in block && block.type === 'text') {
             const text = (block as { text: string }).text;
@@ -189,6 +195,17 @@ async function drivePhase(
       } else if (message.type === 'result') {
         state.orchestratorSessionId = message.session_id;
         state.costs.orchestratorUsd += message.total_cost_usd;
+        const windowTokens = Math.max(0, ...Object.values(message.modelUsage ?? {}).map((m) => m.contextWindow ?? 0));
+        if (lastUsage && windowTokens > 0) {
+          recordContextUsage(state, 'orchestrator', {
+            usedTokens:
+              (lastUsage.input_tokens ?? 0) +
+              (lastUsage.cache_read_input_tokens ?? 0) +
+              (lastUsage.cache_creation_input_tokens ?? 0) +
+              (lastUsage.output_tokens ?? 0),
+            windowTokens,
+          });
+        }
         saveRunState(state);
         if (message.subtype !== 'success') {
           // Budget/turn caps and execution errors become flags, not crashes —

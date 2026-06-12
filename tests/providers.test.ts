@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { parseClaudeTurn } from '../src/providers/claude.ts';
+import { parseRolloutContext } from '../src/providers/codex.ts';
 import { createWorkers } from '../src/providers/index.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
 
@@ -48,6 +49,54 @@ describe('parseClaudeTurn (the CLI output boundary)', () => {
 
     // The same empty result on a normal prompt stays empty — no invented text.
     expect(parseClaudeTurn(stdout, 'normal prompt').text).toBe('');
+  });
+});
+
+describe('context-window probes (per-provider math, one shape)', () => {
+  test('claude: last assistant request usage against modelUsage’s context window', () => {
+    const result = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: 'done',
+      session_id: 'sess-1',
+      modelUsage: { 'claude-fable-5': { contextWindow: 200_000, costUSD: 1 } },
+    };
+    const stdout = JSON.stringify([
+      { type: 'assistant', message: { usage: { input_tokens: 10_000, cache_read_input_tokens: 5_000, output_tokens: 100 } } },
+      { type: 'assistant', message: { usage: { input_tokens: 60_000, cache_read_input_tokens: 20_000, cache_creation_input_tokens: 2_000, output_tokens: 500 } } },
+      result,
+    ]);
+
+    // The LAST request is what fills the window; earlier ones are history.
+    expect(parseClaudeTurn(stdout, 'p').context).toEqual({ usedTokens: 82_500, windowTokens: 200_000 });
+  });
+
+  test('claude: no assistant usage or no window means no reading, not a guess', () => {
+    const result = { type: 'result', subtype: 'success', is_error: false, result: 'x', session_id: 's' };
+    expect.soft(parseClaudeTurn(JSON.stringify([result]), 'p').context).toBeUndefined();
+    const noWindow = JSON.stringify([
+      { type: 'assistant', message: { usage: { input_tokens: 1 } } },
+      result,
+    ]);
+    expect.soft(parseClaudeTurn(noWindow, 'p').context).toBeUndefined();
+  });
+
+  test('codex: the rollout’s last token_count event wins', () => {
+    const tail = [
+      JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { total_tokens: 30_000 }, model_context_window: 258_400 } } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { total_tokens: 62_228 }, model_context_window: 258_400 } } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message' } }),
+    ].join('\n');
+
+    expect(parseRolloutContext(tail)).toEqual({ usedTokens: 62_228, windowTokens: 258_400 });
+  });
+
+  test('codex: a cut first line, null info, or no token_count yields nothing', () => {
+    expect.soft(parseRolloutContext('{"type":"event_msg","payl')).toBeUndefined();
+    expect.soft(parseRolloutContext(JSON.stringify({ payload: { type: 'token_count', info: null } }))).toBeUndefined();
+    expect.soft(parseRolloutContext('')).toBeUndefined();
   });
 });
 
