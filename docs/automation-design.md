@@ -246,6 +246,8 @@ CLI surface (implemented in `src/cli.ts` across the full arc):
 
 The framing input is a single markdown file sent verbatim, structure by convention not contract. The framing is also the orchestrator's project briefing — it is the only place project knowledge enters the system.
 
+**Ending a run.** There is nothing to terminate: between quiescent stops no duet process exists, so abandoning a run is simply never calling `duet continue` again — the run dir stays as an inert record (keep `notes.md`; it's the dogfooding evidence), and a later `duet new` supersedes it as the default run. Abandonment is also reversible: `continue` and `takeover` work at any later time. The one live-process case is aborting **mid-phase**: kill the detached driver (`kill $(cat .duet/runs/<id>/driver.pid)`; an in-flight worker turn finishes harmlessly into its own transcript), after which takeover or crash-recovery `continue` both apply.
+
 State persistence: the run dir `.duet/runs/<run_id>/` holds `state.json` (the human-readable hint: state value, session ids, queued flags, rounds, costs, proposals), `machine.json` (the statechart snapshot, written **only at quiescent states** — gates, flag-waits, done), one append-only log per voice, `driver.log` + `driver.pid` (the detached phase driver's stdout and liveness), and `notes.md`. All three JSONL transcripts are the source of truth.
 
 ### Visualization: tmux is a viewer, never the runtime
