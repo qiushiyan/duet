@@ -240,6 +240,7 @@ CLI surface (implemented in `src/cli.ts` across the full arc):
 | `duet continue [run_id] [--approve \| --reject "…" \| --answer "…"] [--tmux]` | Resumes past the current gate or answers a queued `ask_human` flag; defaults to the latest run. Returns immediately (detached driver); refused while the run's phase is still driving. With no flags: status if running, crash recovery if not. `--tmux` opens or reuses the run's viewer. |
 | `duet view [run_id]` | Opens (or reuses) the tmux viewer for a run and prints the raw log paths. |
 | `duet logs [run_id]` | Streams the driver narration inline (replay + follow of `driver.log`) — the foreground view `new` used to hold. Ctrl-C detaches; the run is unaffected. |
+| `duet takeover <role> [run_id]` | Hands a role's session to the human: opens the provider's interactive CLI (`claude --resume <id>` / `codex resume <id>`) on that role's session. Refused while the phase driver is alive (a manual turn would race the orchestrator); at a gate or flag it's the augmentation principle as a command — manual turns land in the same transcript duet later continues from. |
 | `duet status [run_id]` | Current state, queued flags, phase summaries, round counts vs. caps, costs, queued snippet proposals, next command. |
 | `duet runs` | Lists known runs in the project. |
 

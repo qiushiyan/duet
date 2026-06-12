@@ -384,6 +384,37 @@ program
   });
 
 program
+  .command('takeover')
+  .description('Hand a role’s session to you: opens the provider’s interactive CLI resumed on that session. Duet stays out until you return; your turns land in the same transcript the orchestrator continues from.')
+  .argument('<role>', 'orchestrator | implementer | reviewer')
+  .argument('[runId]', 'run id (defaults to the latest run in this project)')
+  .action(async (role: string, runId: string | undefined) => {
+    if (role !== 'orchestrator' && role !== 'implementer' && role !== 'reviewer') {
+      fail(`unknown role "${role}" — use orchestrator, implementer, or reviewer`);
+    }
+    const cwd = process.cwd();
+    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
+    if (!state) fail('no runs found in this project');
+
+    const runningPid = aliveDriverPid(state);
+    if (runningPid !== undefined) {
+      fail(
+        `the phase is still running (pid ${runningPid}) — taking over a session mid-phase would race the orchestrator on it. Wait for the next gate or flag (or kill the driver if you mean to take over for good).`,
+      );
+    }
+
+    const sessionId = role === 'orchestrator' ? state.orchestratorSessionId : state.workerSessions[role];
+    if (!sessionId) fail(`the ${role} has no session yet in run ${state.runId}`);
+
+    const provider = role === 'orchestrator' ? state.bindings.orchestrator.provider : state.bindings[role].provider;
+    const cmd = provider === 'claude' ? ['claude', '--resume', sessionId] : ['codex', 'resume', sessionId];
+    console.log(`handing over the ${role} session (${sessionId})`);
+    console.log(`  ${cmd.join(' ')}`);
+    console.log(`your turns append to the run's transcript; pick duet back up afterwards with duet continue.\n`);
+    await execa(cmd[0]!, cmd.slice(1), { cwd: state.cwd, stdio: 'inherit', reject: false });
+  });
+
+program
   .command('logs')
   .description('Stream the run’s driver narration inline — replays from the start, then follows. Ctrl-C detaches; the run is unaffected.')
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
