@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What
 
-`duet` — personal semi-AFK orchestrator for one developer's two-agent workflow: a read-only LLM **orchestrator** routes a snippet protocol between an **implementer** and a **reviewer**, inside a code-enforced statechart whose human gates agents cannot cross. Repo = design docs (authoritative for *what* to build) + implementation at root (pnpm + TS, no build step).
+`duet` — personal semi-AFK orchestrator for one developer's two-agent workflow: a read-only LLM **orchestrator** routes a snippet protocol between an **implementer** and a **reviewer**, inside a code-enforced statechart whose human gates agents cannot cross. Repo = design docs (authoritative for *what* to build) + implementation at root (pnpm + TS, no build step in dev).
 
 Product goals — the bar every change is measured against:
 
@@ -17,7 +17,8 @@ Status: full arc implemented (`new` → FRAME → SPEC → PLAN → AFK IMPL →
 
 ## Commands
 
-- `pnpm typecheck` — checker-only tsc. No build: Node 24 runs `.ts` directly. Erasable syntax only (no enum/namespace/param-properties); explicit `.ts` import extensions.
+- `pnpm typecheck` — checker-only tsc. No build in dev: Node 24 runs `.ts` directly. Erasable syntax only (no enum/namespace/param-properties); explicit `.ts` import extensions.
+- `pnpm build` — publish-only tsdown bundle (`dist/cli.mjs`; `prepack` chains typecheck → tests → build, and `publishConfig.bin` swaps the published bin to it). Dev and the global `duet` link (`pnpm add -g .`) always run `src/cli.ts`; npm-installed copies can't (Node refuses `.ts` in `node_modules`). Details: `docs/engineering.md` §Build & publish.
 - `pnpm test` — the Vitest behavior suite (`tests/`, standalone; fixtures in `tests/helpers/`).
 - `node src/cli.ts` — the CLI: `new [--spec][--framing][--gates-at <phases|overnight>][--tmux]` (bare = $EDITOR on template `.duet/framing-draft.md`) / `continue [--approve|--reject "…"|--answer "…"]` / `status` / `runs` / `view` / `logs` / `takeover <role>`. Commands return immediately; phases run in a detached `_drive` child (stdout → `.duet/runs/<id>/driver.log`, pid-guarded); with pre-authorized gates the driver lives through the whole stretch to the next attended stop.
 

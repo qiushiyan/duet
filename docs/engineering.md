@@ -76,6 +76,14 @@ Standalone `tests/`, not co-located: the test surface is the public interface, a
 - Deliberately untested: view glue (its designed failure mode is already "degrade to a one-line note") and the thin codex SDK wrapper.
 - `tests/snippets.test.ts` guards the hand-edited `snippets.toml` and cross-checks every snippet key the orchestrator prompts name — a broken library fails a five-second test, not a $90 run.
 
+## Build & publish
+
+Dev has no build step: Node 24 runs `.ts` directly, and the global `duet` command (`pnpm add -g .`) is a symlink whose bin points at `src/cli.ts` — every edit is live. Publishing is the one place this cannot hold: Node refuses type stripping for files inside `node_modules` (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`), so an npm-installed copy must ship JavaScript.
+
+The split lives in `package.json`: `bin` → `src/cli.ts` for dev; `publishConfig.bin` → `dist/cli.mjs`, rewritten by pnpm only in the published tarball. `pnpm build` (tsdown, config in `tsdown.config.ts`) bundles `src/` into `dist/cli.mjs` with dependencies external and publint validating the result; `prepack` chains typecheck → tests → build, so a tarball can't be cut from a broken tree. `dist/` is gitignored and never used in dev.
+
+Two facts the setup depends on: `snippets.toml` is listed in `files` because `src/snippets.ts` resolves it package-relative at runtime (`src/` and `dist/` both sit one level below the root, so the `import.meta.url + '..'` resolution survives bundling), and the `_drive` respawn uses `process.argv[1]`, so it is agnostic to which entry was invoked. `private: true` stays as the guard against accidental publish; removing it (plus adding `license`/`repository`, and checking the npm name) is the deliberate remaining step when publishing becomes real.
+
 ## Condensed lessons
 
 1. **Don't approximate judgment with mechanism.** Every pre-pivot compensation (schema fields, disagreement string-matching, caps as exits) existed because code lacked judgment. When tempted to parse LLM output for meaning, hand the judgment to the orchestrator; keep code for structure.

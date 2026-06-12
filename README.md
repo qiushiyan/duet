@@ -4,7 +4,7 @@ Research notes toward a semi-AFK orchestrator for the **two-agent cross-review w
 
 The design (as of the 2026-06-11 pivot) has **three roles**: a read-only, intelligent LLM **orchestrator** that drives the snippet protocol — choosing prompts, routing each worker's output to the other, judging loop exits, and flagging anything that needs the human — plus the **implementer** and **reviewer** agents it commands. The orchestrator runs inside a deterministic phase-and-gate skeleton enforced in code: three phases (attended PLANNING → AFK IMPLEMENTATION → attended FINAL REVIEW) whose human gates cannot be crossed by any agent. Roles are decoupled from model providers — each role binds to the `claude` or `codex` provider via a minimal config file (default: orchestrator on claude/Opus 4.8, implementer on claude/Fable 5, reviewer on codex).
 
-The repository holds both halves: the research docs that captured the manual pattern precisely enough to build against (with evidence sitting next to the analysis, so conclusions stay re-derivable), and — since 2026-06-11 — the implementation itself at the repo root (`src/`, pnpm + TypeScript, no build step).
+The repository holds both halves: the research docs that captured the manual pattern precisely enough to build against (with evidence sitting next to the analysis, so conclusions stay re-derivable), and — since 2026-06-11 — the implementation itself at the repo root (`src/`, pnpm + TypeScript, no build step in dev).
 
 ## What duet is — and isn't
 
@@ -40,7 +40,7 @@ If duet ever starts to feel like it's *requiring* you to use it, the design has 
 
 **Not built yet:** codex-as-orchestrator (Q17) — deliberately parked until the configuration is wanted.
 
-**Underneath:** pattern analysis from one fully-annotated session corroborated by a 22-session corpus scan (`docs/observed-pattern.md`); the three-role design with its rationale and history (`docs/automation-design.md`); the codebase's mental model and lessons (`docs/engineering.md`); resolved and open design questions (`docs/open-questions.md` — open: Q13 triage precision, Q16 worker schema, Q17 codex-as-orchestrator (parked), Q19 run-level budget, Q20 pre-authorization precision; the rest are compressed dated verdicts). Stack: Node 24 running TypeScript directly (no build step), XState v5, Vitest, execa, zod, commander, `@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk` pinned to the local CLI version. Checks: `pnpm typecheck` and `pnpm test`.
+**Underneath:** pattern analysis from one fully-annotated session corroborated by a 22-session corpus scan (`docs/observed-pattern.md`); the three-role design with its rationale and history (`docs/automation-design.md`); the codebase's mental model and lessons (`docs/engineering.md`); resolved and open design questions (`docs/open-questions.md` — open: Q13 triage precision, Q16 worker schema, Q17 codex-as-orchestrator (parked), Q19 run-level budget, Q20 pre-authorization precision; the rest are compressed dated verdicts). Stack: Node 24 running TypeScript directly (no build step in dev; tsdown bundles a publish-only `dist/`), XState v5, Vitest, execa, zod, commander, `@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk` pinned to the local CLI version. Checks: `pnpm typecheck` and `pnpm test`.
 
 ## Reading order
 

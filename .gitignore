@@ -8,6 +8,9 @@ references/*
 # duet run state (per-repo working data, never committed)
 .duet/
 
+# publish-only bundle output (`pnpm build`); dev runs src/ directly
+dist/
+
 # logs & OS noise
 *.log
 .DS_Store

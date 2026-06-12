@@ -4,11 +4,25 @@
   "private": true,
   "description": "Semi-AFK orchestrator for the two-agent cross-review workflow: a read-only LLM orchestrator routes a snippet protocol between an implementer and a reviewer, inside a code-enforced phase-and-gate skeleton.",
   "type": "module",
+  "bin": {
+    "duet": "src/cli.ts"
+  },
+  "publishConfig": {
+    "bin": {
+      "duet": "dist/cli.mjs"
+    }
+  },
+  "files": [
+    "dist",
+    "snippets.toml"
+  ],
   "scripts": {
     "duet": "node src/cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build": "tsdown",
+    "prepack": "pnpm typecheck && pnpm test && pnpm build"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.170",
@@ -22,6 +36,8 @@
   },
   "devDependencies": {
     "@types/node": "^25.9.2",
+    "publint": "^0.3.21",
+    "tsdown": "^0.22.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
   },
