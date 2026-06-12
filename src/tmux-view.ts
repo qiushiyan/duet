@@ -1,8 +1,8 @@
 import { join, resolve } from 'node:path';
 import { execa } from 'execa';
 import { ROLE_GLYPH, ROLE_TMUX_COLOR } from './colorize.ts';
-import { runDirOf } from './run-state.ts';
-import type { RunState, Voice } from './run-state.ts';
+import { runDirOf } from './run-store.ts';
+import type { RunState, Voice } from './run-store.ts';
 
 /**
  * The --tmux viewer (docs/automation-design.md §"Visualization: tmux is a

@@ -1,7 +1,8 @@
 import { fromPromise, setup } from 'xstate';
 import { runPhase } from './driver.ts';
 import type { DriverInput, DriverOutput } from './driver.ts';
-import type { PhaseName } from '../run-state.ts';
+import { PHASES } from '../phases.ts';
+import type { PhaseName } from '../phases.ts';
 
 /**
  * The harness statechart — Layer 1 of the three-layer architecture
@@ -11,14 +12,11 @@ import type { PhaseName } from '../run-state.ts';
  * no channel to send machine events, so gate-skipping is unrepresentable,
  * not merely forbidden.
  *
- * Q15 guardrail: snapshots are persisted only in `quiescent`-tagged states
- * (no live actors), so a restored snapshot never has to blind-restart an
- * in-flight invoke. The machine's context is the run id + cwd + entry mode —
- * all operational state lives on disk in the run dir, owned by the driver.
- *
- * The full arc (each loop also has a flag-wait sibling, elided here;
- * `route` is a transient entry choice — spec-entry runs skip the frame
- * phase):
+ * The states are built from the phase table (src/phases.ts) — the arc is a
+ * linear chain, so each phase contributes `<name>Loop` + `<name>FlagWait` +
+ * its gate state; a gate's approve targets the next phase's loop, its reject
+ * re-enters the loop it gates. `open` has no gate and advances straight to
+ * done. The full arc:
  *
  * ```
  * route ─(no spec)─▶ frameLoop ──▶ directionGate ─approve─▶ specLoop ──▶ commitSpecGate
@@ -32,8 +30,10 @@ import type { PhaseName } from '../run-state.ts';
  *                                          done ◀── openLoop ◀─────┘
  * ```
  *
- * Every gate's reject re-enters the loop it gates; `openLoop` (push +
- * `gh pr create`) runs after the last gate and advances straight to done.
+ * Q15 guardrail: snapshots are persisted only in `quiescent`-tagged states
+ * (no live actors), so a restored snapshot never has to blind-restart an
+ * in-flight invoke. The machine's context is the run id + cwd + entry mode —
+ * all operational state lives on disk in the run dir, owned by the driver.
  */
 
 export interface MachineInput {
@@ -92,6 +92,28 @@ function gateState(targets: { approve: string; reject: string }): object {
   };
 }
 
+function buildStates(): Record<string, object> {
+  const states: Record<string, object> = {
+    // Transient entry choice — never persisted (not quiescent-tagged), the
+    // machine moves through it immediately.
+    route: {
+      always: [{ guard: 'hasSpec', target: 'specLoop' }, { target: 'frameLoop' }],
+    },
+  };
+  PHASES.forEach((spec, i) => {
+    const loop = `${spec.name}Loop`;
+    const flagWait = `${spec.name}FlagWait`;
+    const next = PHASES[i + 1];
+    states[loop] = phaseState(spec.name, { advanced: spec.gate?.state ?? 'done', flagWait });
+    states[flagWait] = flagWaitState(loop);
+    if (spec.gate) {
+      states[spec.gate.state] = gateState({ approve: next ? `${next.name}Loop` : 'done', reject: loop });
+    }
+  });
+  states['done'] = { type: 'final', tags: ['quiescent'] };
+  return states;
+}
+
 export const duetMachine = setup({
   types: {} as {
     context: MachineInput;
@@ -109,37 +131,5 @@ export const duetMachine = setup({
   id: 'duet',
   context: ({ input }) => input,
   initial: 'route',
-  states: {
-    // Transient entry choice — never persisted (not quiescent-tagged), the
-    // machine moves through it immediately.
-    route: {
-      always: [{ guard: 'hasSpec', target: 'specLoop' }, { target: 'frameLoop' }],
-    },
-    frameLoop: phaseState('frame', { advanced: 'directionGate', flagWait: 'frameFlagWait' }),
-    frameFlagWait: flagWaitState('frameLoop'),
-    directionGate: gateState({ approve: 'specLoop', reject: 'frameLoop' }),
-    specLoop: phaseState('spec', { advanced: 'commitSpecGate', flagWait: 'specFlagWait' }),
-    specFlagWait: flagWaitState('specLoop'),
-    commitSpecGate: gateState({ approve: 'planLoop', reject: 'specLoop' }),
-    planLoop: phaseState('plan', { advanced: 'planApprovalGate', flagWait: 'planFlagWait' }),
-    planFlagWait: flagWaitState('planLoop'),
-    planApprovalGate: gateState({ approve: 'implLoop', reject: 'planLoop' }),
-    implLoop: phaseState('impl', { advanced: 'shipGate', flagWait: 'implFlagWait' }),
-    implFlagWait: flagWaitState('implLoop'),
-    shipGate: gateState({ approve: 'docsLoop', reject: 'implLoop' }),
-    docsLoop: phaseState('docs', { advanced: 'docsPlanGate', flagWait: 'docsFlagWait' }),
-    docsFlagWait: flagWaitState('docsLoop'),
-    docsPlanGate: gateState({ approve: 'prLoop', reject: 'docsLoop' }),
-    prLoop: phaseState('pr', { advanced: 'openPrGate', flagWait: 'prFlagWait' }),
-    prFlagWait: flagWaitState('prLoop'),
-    openPrGate: gateState({ approve: 'openLoop', reject: 'prLoop' }),
-    // Runs after the last gate (approval authorized the mechanics): push the
-    // branch, gh pr create, report the URL — then the run is done.
-    openLoop: phaseState('open', { advanced: 'done', flagWait: 'openFlagWait' }),
-    openFlagWait: flagWaitState('openLoop'),
-    done: {
-      type: 'final',
-      tags: ['quiescent'],
-    },
-  },
+  states: buildStates(),
 });

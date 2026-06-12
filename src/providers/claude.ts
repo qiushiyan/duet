@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { z } from 'zod';
 import type { RunTurnOptions, WorkerProvider, WorkerTurn } from './types.ts';
 
 /**
@@ -9,6 +10,56 @@ import type { RunTurnOptions, WorkerProvider, WorkerTurn } from './types.ts';
  * The claude provider is configured per-model — choosing the Anthropic model
  * per role is a knob the user actually turns.
  */
+
+const resultEnvelope = z.looseObject({
+  type: z.literal('result'),
+  subtype: z.string(),
+  is_error: z.boolean(),
+  result: z.string().optional(),
+  session_id: z.string(),
+  total_cost_usd: z.number().optional(),
+  usage: z.looseObject({ input_tokens: z.number().optional(), output_tokens: z.number().optional() }).optional(),
+});
+
+/**
+ * Parse one `--output-format json` invocation's stdout into a WorkerTurn.
+ * Current CLI versions emit an array of all session messages (older versions
+ * emitted the result object alone); the envelope is the element with
+ * type === 'result'. Exported as the provider's testable parsing seam.
+ */
+export function parseClaudeTurn(stdout: string, prompt: string): WorkerTurn {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error(`claude worker stdout was not JSON (${stdout.length} bytes) — did the CLI version change its output format?`);
+  }
+  const candidates = Array.isArray(parsed) ? parsed : [parsed];
+  const raw = candidates.find((m) => typeof m === 'object' && m !== null && (m as { type?: unknown }).type === 'result');
+  if (!raw) {
+    throw new Error(`claude worker output contained no result message (${stdout.length} bytes)`);
+  }
+  const envelope = resultEnvelope.parse(raw);
+  if (envelope.is_error || envelope.subtype !== 'success') {
+    throw new Error(`claude worker turn failed (${envelope.subtype}): ${envelope.result ?? ''}`);
+  }
+  // A /compact turn succeeds with an empty result (the CLI emits only a
+  // compact_boundary event) — name what happened so the orchestrator isn't
+  // handed a blank response.
+  const text =
+    !envelope.result && prompt.trimStart().startsWith('/compact')
+      ? '(session compacted — context was reset per the instructions; the conversation continues from the summary)'
+      : (envelope.result ?? '');
+  return {
+    text,
+    sessionId: envelope.session_id,
+    ...(envelope.total_cost_usd !== undefined ? { costUsd: envelope.total_cost_usd } : {}),
+    ...(envelope.usage?.input_tokens !== undefined
+      ? { tokens: { input: envelope.usage.input_tokens, output: envelope.usage.output_tokens ?? 0 } }
+      : {}),
+  };
+}
+
 export class ClaudeWorker implements WorkerProvider {
   readonly name = 'claude' as const;
 
@@ -52,44 +103,6 @@ export class ClaudeWorker implements WorkerProvider {
       forceKillAfterDelay: 10_000,
     });
 
-    // `--output-format json` emits an array of all session messages on
-    // current CLI versions (older versions emitted the result object alone);
-    // the result envelope is the element with type === 'result'.
-    const parsed: unknown = JSON.parse(stdout);
-    const envelope = (Array.isArray(parsed)
-      ? parsed.find((m: { type?: string }) => m.type === 'result')
-      : parsed) as
-      | {
-          type: string;
-          subtype: string;
-          is_error: boolean;
-          result?: string;
-          session_id: string;
-          total_cost_usd?: number;
-          usage?: { input_tokens?: number; output_tokens?: number };
-        }
-      | undefined;
-    if (!envelope) {
-      throw new Error(`claude worker output contained no result message (${stdout.length} bytes)`);
-    }
-    if (envelope.is_error || envelope.subtype !== 'success') {
-      throw new Error(`claude worker turn failed (${envelope.subtype}): ${envelope.result ?? ''}`);
-    }
-    // A /compact turn succeeds with an empty result (the CLI emits only a
-    // compact_boundary event) — name what happened so the orchestrator isn't
-    // handed a blank response.
-    const text =
-      !envelope.result && opts.prompt.trimStart().startsWith('/compact')
-        ? '(session compacted — context was reset per the instructions; the conversation continues from the summary)'
-        : (envelope.result ?? '');
-    return {
-      text,
-      sessionId: envelope.session_id,
-      costUsd: envelope.total_cost_usd,
-      tokens:
-        envelope.usage?.input_tokens !== undefined
-          ? { input: envelope.usage.input_tokens, output: envelope.usage.output_tokens ?? 0 }
-          : undefined,
-    };
+    return parseClaudeTurn(stdout, opts.prompt);
   }
 }

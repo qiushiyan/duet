@@ -1,20 +1,19 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
-import { closeSync, existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join, resolve, relative } from 'node:path';
+import { unlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { Command } from 'commander';
 import { execa } from 'execa';
-import { createActor, waitFor } from 'xstate';
+import { createActor } from 'xstate';
 import type { AnyMachineSnapshot } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
 import { loadRoleBindings } from './config.ts';
+import { DEFAULT_FRAMING_FILE, resolveRunInputs } from './framing.ts';
+import { aliveDriverPid, driveToQuiescence, spawnDrive } from './harness/lifecycle.ts';
+import type { HumanEvent } from './harness/lifecycle.ts';
 import { duetMachine } from './harness/machine.ts';
-import { ROUND_CAPS } from './harness/driver.ts';
-import { DEFAULT_FRAMING_FILE, editFramingForRun } from './framing-editor.ts';
-import { parseFramingFile, parseGatesAt } from './framing-frontmatter.ts';
-import type { FramingFrontmatter } from './framing-frontmatter.ts';
-import { notify } from './notify.ts';
+import { phaseOfGateState } from './phases.ts';
+import { renderStatus } from './status.ts';
 import { openTmuxView } from './tmux-view.ts';
 import {
   createRun,
@@ -24,54 +23,26 @@ import {
   loadMachineSnapshot,
   loadRunState,
   runDirOf,
-  saveMachineSnapshot,
-  saveRunState,
-} from './run-state.ts';
-import type { GatePhase, RunState, Voice } from './run-state.ts';
+  stageHumanInput,
+} from './run-store.ts';
+import type { RunState, Voice } from './run-store.ts';
 
 /**
- * duet — one-shot CLI, alive through a phase (docs/automation-design.md
- * §"Not a daemon — but alive through a phase"). `new` and gate-crossing
- * `continue` invocations return immediately: the phase is driven by a
- * detached per-phase child (`_drive`) that runs the statechart to the next
- * quiescent state (a gate, a queued flag, or done), persists, notifies, and
- * exits. Nothing runs between quiescent stops — still no resident daemon —
- * but the invoking terminal stays free for follow-up duet commands.
+ * duet — the command surface. Parsing and validation live here; everything
+ * with behavior lives behind it: the run store (src/run-store.ts), the
+ * process lifecycle (src/harness/lifecycle.ts), status rendering
+ * (src/status.ts), and the viewer (src/tmux-view.ts). Commands return
+ * immediately — phases run in the detached `_drive` child.
  */
 
-const QUIESCENCE_TIMEOUT_MS = 6 * 60 * 60_000;
-
-/**
- * Spawn the detached phase driver and return its pid. Its stdout/stderr go
- * to `.duet/runs/<id>/driver.log` (crash evidence lives there); the pid file
- * is how later invocations refuse to start a second concurrent driver.
- */
-function spawnDrive(state: RunState, eventType?: 'approve' | 'reject' | 'answer'): number {
-  const runDir = runDirOf(state.cwd, state.runId);
-  const out = openSync(join(runDir, 'driver.log'), 'a');
-  const child = spawn(
-    process.execPath,
-    [process.argv[1]!, '_drive', state.runId, ...(eventType ? [eventType] : [])],
-    { cwd: state.cwd, detached: true, stdio: ['ignore', out, out] },
+function showStatus(state: RunState, snapshot?: AnyMachineSnapshot): void {
+  const pid = aliveDriverPid(state);
+  console.log(
+    renderStatus(state, {
+      ...(snapshot?.status === 'done' ? { done: true } : {}),
+      ...(pid !== undefined && pid !== process.pid ? { livePid: pid } : {}),
+    }),
   );
-  closeSync(out);
-  writeFileSync(join(runDir, 'driver.pid'), `${child.pid}\n`);
-  child.unref();
-  return child.pid!;
-}
-
-/** The driver pid when one is alive for this run, else undefined. */
-function aliveDriverPid(state: RunState): number | undefined {
-  const path = join(runDirOf(state.cwd, state.runId), 'driver.pid');
-  if (!existsSync(path)) return undefined;
-  const pid = Number.parseInt(readFileSync(path, 'utf8'), 10);
-  if (!Number.isFinite(pid)) return undefined;
-  try {
-    process.kill(pid, 0);
-    return pid;
-  } catch {
-    return undefined; // stale pid — the driver exited (or crashed)
-  }
 }
 
 function printWatchHints(state: RunState, pid: number, phaseLabel: string): void {
@@ -82,180 +53,12 @@ function printWatchHints(state: RunState, pid: number, phaseLabel: string): void
   console.log(`you'll get a notification at the next gate or queued question`);
 }
 
-async function driveToQuiescence(
-  state: RunState,
-  options?: { snapshot?: unknown; event?: { type: 'human.approve' | 'human.reject' | 'human.answer' } },
-): Promise<AnyMachineSnapshot> {
-  const actor = createActor(duetMachine, {
-    input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
-    ...(options?.snapshot ? { snapshot: options.snapshot as never } : {}),
-  });
-  actor.start();
-  if (options?.event) actor.send(options.event);
-
-  // Gates whose phase isn't in gates_at were pre-authorized at run start:
-  // record the crossing, notify, and approve on the human's standing
-  // authority — the driver stays alive through the whole pre-authorized
-  // stretch and exits at the next attended stop. The statechart is
-  // untouched: gates still transition only on human.* events; what the
-  // pre-authorization changes is when the human's approval is uttered.
-  for (;;) {
-    const snapshot = await waitFor(
-      actor,
-      (s) => s.hasTag('quiescent') || s.status === 'done',
-      { timeout: QUIESCENCE_TIMEOUT_MS },
-    );
-
-    saveMachineSnapshot(state, actor.getPersistedSnapshot());
-    const fresh = loadRunState(state.cwd, state.runId);
-    fresh.machineState = typeof snapshot.value === 'string' ? snapshot.value : JSON.stringify(snapshot.value);
-
-    const gatePhase =
-      snapshot.status !== 'done' ? (GATE_PHASE as Record<string, GatePhase>)[fresh.machineState] : undefined;
-    if (gatePhase && !gateAttended(fresh, gatePhase)) {
-      // Dedupe on crash-recovery re-entry at the same gate.
-      if (fresh.autoApprovals?.at(-1)?.gate !== fresh.machineState) {
-        (fresh.autoApprovals ??= []).push({ gate: fresh.machineState, at: new Date().toISOString() });
-      }
-      saveRunState(fresh);
-      console.log(`[gate] ${fresh.machineState} auto-approved — pre-authorized at run start (packet recorded)`);
-      await notify(`duet ${fresh.runId}`, `${fresh.machineState} auto-approved (pre-authorized) — run continues`);
-      actor.send({ type: 'human.approve' });
-      continue;
-    }
-
-    saveRunState(fresh);
-    actor.stop();
-    printStatus(fresh, snapshot);
-    await notify(`duet ${fresh.runId}`, describeStop(fresh, snapshot));
-    return snapshot;
-  }
-}
-
-function describeStop(state: RunState, snapshot: AnyMachineSnapshot): string {
-  if (snapshot.status === 'done') return 'run complete — the PR is open';
-  const machineState = state.machineState ?? '';
-  if (state.pendingQuestion && machineState.includes('FlagWait')) {
-    return `question queued: ${state.pendingQuestion.question}`;
-  }
-  if (machineState === 'directionGate') return 'Direction gate — synthesized direction ready';
-  if (machineState === 'commitSpecGate') return 'Commit-spec gate — spec ready for review';
-  if (machineState === 'planApprovalGate') return 'Plan-approval gate — plan ready for review';
-  if (machineState === 'shipGate') return 'Ship gate — implementation packet ready';
-  if (machineState === 'docsPlanGate') return 'Docs-plan gate — proposal ready';
-  if (machineState === 'openPrGate') return 'Open-PR gate — PR description ready';
-  return `stopped at ${machineState}`;
-}
-
-const GATE_PHASE = {
-  directionGate: 'frame',
-  commitSpecGate: 'spec',
-  planApprovalGate: 'plan',
-  shipGate: 'impl',
-  docsPlanGate: 'docs',
-  openPrGate: 'pr',
-} as const;
-
-const GATE_HEADING: Record<keyof typeof GATE_PHASE, string> = {
-  directionGate: 'DIRECTION gate — the synthesized direction',
-  commitSpecGate: "SPEC gate — the orchestrator's summary",
-  planApprovalGate: "PLAN gate — the orchestrator's summary",
-  shipGate: 'SHIP gate — the orchestrator’s packet (CEO summary first)',
-  docsPlanGate: 'DOCS-PLAN gate — the proposal',
-  openPrGate: 'OPEN-PR gate — the PR description',
-};
-
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
-  return String(n);
-}
-
-function printStatus(state: RunState, snapshot?: AnyMachineSnapshot): void {
-  const machineState = state.machineState ?? '(not started)';
-  console.log(`\n━━━ duet run ${state.runId} ━━━`);
-  console.log(`state:    ${machineState}`);
-  const livePid = aliveDriverPid(state);
-  if (livePid !== undefined && livePid !== process.pid) {
-    console.log(`phase:    running in the background (pid ${livePid})`);
-  }
-  console.log(`spec:     ${state.specPath ?? '(not yet drafted — framing-only entry)'}`);
-  if (state.branch) console.log(`branch:   ${state.branch}`);
-  if (state.gatesAt) console.log(`gates:    attending ${state.gatesAt.join(', ')} — other gates pre-authorized`);
-  if (state.lastActivity) console.log(`last:     ${state.lastActivity}`);
-  const roundOrder: Array<'frame' | 'spec' | 'plan' | 'impl' | 'docs' | 'pr'> = ['frame', 'spec', 'plan', 'impl', 'docs', 'pr'];
-  const rounds = roundOrder
-    .filter((p) => (state.rounds[p] ?? 0) > 0 || p === 'spec' || p === 'plan' || p === 'impl')
-    .map((p) => `${p} ${state.rounds[p] ?? 0}/${ROUND_CAPS[p]}`)
-    .join(', ');
-  console.log(`rounds:   ${rounds}`);
-  console.log(
-    `cost:     orchestrator $${state.costs.orchestratorUsd.toFixed(2)}, claude workers $${state.costs.claudeWorkersUsd.toFixed(2)}, codex ${fmtTokens(state.costs.codexTokens.input)} in / ${fmtTokens(state.costs.codexTokens.output)} out tokens`,
-  );
-  if (state.snippetProposals.length > 0) {
-    console.log(`proposals: ${state.snippetProposals.length} snippet edit(s) queued (details in state.json)`);
-  }
-
-  if (state.autoApprovals && state.autoApprovals.length > 0) {
-    console.log(`\nwhile you were away — gates auto-approved (pre-authorized):`);
-    for (const a of state.autoApprovals) {
-      const phase = (GATE_PHASE as Record<string, GatePhase>)[a.gate];
-      const headline = phase
-        ? (state.phaseSummaries[phase]?.summary.split('\n').find((l) => l.trim()) ?? '').slice(0, 96)
-        : '';
-      console.log(`  ✓ ${a.gate}  ${a.at.slice(0, 16).replace('T', ' ')}  ${headline}`);
-    }
-    console.log(`  full packets: duet logs ${state.runId}`);
-  }
-
-  if (state.pendingQuestion && machineState.includes('FlagWait')) {
-    console.log(`\nQUEUED QUESTION for you:`);
-    console.log(`  ${state.pendingQuestion.question}`);
-    if (state.pendingQuestion.context) console.log(`  context: ${state.pendingQuestion.context}`);
-    console.log(`\nanswer with:  duet continue ${state.runId} --answer "<your answer>"`);
-    return;
-  }
-
-  if (machineState in GATE_PHASE) {
-    const gate = machineState as keyof typeof GATE_PHASE;
-    const summary = state.phaseSummaries[GATE_PHASE[gate]];
-    console.log(`\n━━━ ${GATE_HEADING[gate]} ━━━`);
-    if (summary) {
-      console.log(summary.summary);
-      if (summary.artifacts.length > 0) console.log(`\nartifacts: ${summary.artifacts.join(', ')}`);
-    }
-    console.log(`\ndecide with:`);
-    console.log(`  duet continue ${state.runId} --approve`);
-    console.log(`  duet continue ${state.runId} --reject "<feedback>"`);
-    if (gate === 'shipGate') {
-      console.log(`\n(verify in your environment before deciding — migrations, smoke tests; approving enters FINAL REVIEW: docs → PR description → Open-PR gate)`);
-    }
-    if (gate === 'openPrGate') {
-      console.log(`\n(approving opens the PR: the implementer pushes the branch and runs gh pr create)`);
-    }
-    return;
-  }
-
-  if (snapshot?.status === 'done' || machineState === 'done') {
-    console.log(`\nrun complete — the PR is open.`);
-    const open = state.phaseSummaries.open;
-    if (open) console.log(open.summary);
-    if (state.snippetProposals.length > 0) {
-      console.log(`\n━━━ queued snippet proposals (your end-of-run editorial review) ━━━`);
-      for (const p of state.snippetProposals) {
-        console.log(`\n• ${p.snippetKey} — ${p.rationale}`);
-      }
-      console.log(`\nfull bodies in .duet/runs/${state.runId}/state.json; apply the ones you accept to snippets.toml.`);
-    }
-    console.log(`\ntranscripts: .duet/runs/${state.runId}/*.log (and the providers' standard session locations)`);
-  }
-}
-
 const program = new Command();
 
+/** Exit with an error message (commander's error() is typed never). */
+// A function declaration so TS narrows after calls (never-returning arrows don't).
 function fail(message: string): never {
-  program.error(message);
-  throw new Error(message); // unreachable — program.error exits
+  return program.error(message);
 }
 program
   .name('duet')
@@ -277,47 +80,21 @@ program
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
   .action(async (opts: { spec?: string; framing?: string; gatesAt?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean }) => {
     const cwd = process.cwd();
-    let framingFile = opts.framing;
-    if (!opts.spec && !framingFile) {
-      try {
-        framingFile = await editFramingForRun(cwd);
-      } catch (err) {
-        fail(err instanceof Error ? err.message : String(err));
-      }
-    }
 
-    // The framing's frontmatter is the machine/prose boundary: parsed here,
-    // deterministically, and stripped — the orchestrator sees only the prose
+    // The framing's frontmatter is the machine/prose boundary: parsed
+    // deterministically and stripped — the orchestrator sees only the prose
     // body plus the posture instructions the harness renders from the values.
-    let framingRaw: string | undefined;
-    let framing: string | undefined;
-    let meta: FramingFrontmatter = {};
-    if (framingFile) {
-      framingRaw = readFileSync(resolve(cwd, framingFile), 'utf8');
-      try {
-        const parsed = parseFramingFile(framingRaw);
-        meta = parsed.meta;
-        framing = parsed.body;
-      } catch (err) {
-        fail(`${framingFile}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-
-    let gatesAt: GatePhase[] | undefined;
+    let inputs;
     try {
-      gatesAt = opts.gatesAt ? parseGatesAt(opts.gatesAt) : meta.gatesAt; // flag wins over frontmatter
+      inputs = await resolveRunInputs(cwd, {
+        ...(opts.spec ? { spec: opts.spec } : {}),
+        ...(opts.framing ? { framing: opts.framing } : {}),
+        ...(opts.gatesAt ? { gatesAt: opts.gatesAt } : {}),
+      });
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
     }
 
-    let specPath: string | undefined;
-    const specInput = opts.spec ?? meta.spec; // flag wins over frontmatter
-    if (specInput) {
-      specPath = relative(cwd, resolve(cwd, specInput));
-      if (!existsSync(resolve(cwd, specPath))) {
-        fail(`spec file not found: ${specInput}`);
-      }
-    }
     const bindings = loadRoleBindings({
       ...(opts.orchestrator ? { orchestrator: opts.orchestrator } : {}),
       ...(opts.impl ? { implementer: opts.impl } : {}),
@@ -331,13 +108,11 @@ program
       // Not a git repo (or detached weirdness) — the orchestrator will surface it.
     }
 
+    const { framingFile, ...runInputs } = inputs;
     const state = createRun({
       cwd,
-      ...(specPath ? { specPath } : {}),
-      ...(framing ? { framing } : {}),
-      ...(framingRaw ? { framingRaw } : {}),
+      ...runInputs,
       ...(branch ? { branch } : {}),
-      ...(gatesAt ? { gatesAt } : {}),
       bindings,
     });
     // The editor draft is archived into the run dir by createRun; the
@@ -348,10 +123,10 @@ program
     console.log(
       `roles: orchestrator=${bindings.orchestrator.provider}:${bindings.orchestrator.model ?? ''} implementer=${bindings.implementer.provider}${bindings.implementer.model ? ':' + bindings.implementer.model : ''} reviewer=${bindings.reviewer.provider}${bindings.reviewer.model ? ':' + bindings.reviewer.model : ''}`,
     );
-    if (gatesAt) console.log(`gates: attending ${gatesAt.join(', ')} — other gates pre-authorized (auto-cross, packets recorded)`);
+    if (state.gatesAt) console.log(`gates: attending ${state.gatesAt.join(', ')} — other gates pre-authorized (auto-cross, packets recorded)`);
     console.log('');
     const pid = spawnDrive(state);
-    printWatchHints(state, pid, specPath ? 'SPEC review loop' : 'FRAME phase');
+    printWatchHints(state, pid, state.specPath ? 'SPEC review loop' : 'FRAME phase');
   });
 
 program
@@ -380,7 +155,7 @@ program
           `the phase is still running (pid ${runningPid}) — there's no gate or flag to act on yet; watch with: duet view ${state.runId}`,
         );
       }
-      printStatus(state);
+      showStatus(state);
       console.log(`\nphase running in the background (pid ${runningPid}) — live logs: duet view ${state.runId}`);
       return;
     }
@@ -404,15 +179,14 @@ program
 
     const probe = createActor(duetMachine, {
       input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
-      snapshot: snapshot as never,
+      snapshot,
     });
-    const restored = probe.getSnapshot() as AnyMachineSnapshot;
+    const restored = probe.getSnapshot();
 
     // A snapshot parked at a pre-authorized gate means the driver died after
     // reaching it but before the next attended stop — re-enter; the driver
     // crosses it again on the standing authorization.
-    const restoredGatePhase =
-      typeof restored.value === 'string' ? (GATE_PHASE as Record<string, GatePhase>)[restored.value] : undefined;
+    const restoredGatePhase = typeof restored.value === 'string' ? phaseOfGateState(restored.value) : undefined;
     if (chosen.length === 0 && restoredGatePhase && !gateAttended(state, restoredGatePhase) && restored.status !== 'done') {
       console.log(
         `run ${state.runId}: stopped at the pre-authorized ${String(restored.value)} — re-entering (it auto-crosses)`,
@@ -422,14 +196,18 @@ program
       return;
     }
 
-    let event: { type: 'human.approve' | 'human.reject' | 'human.answer' };
-    if (opts.approve) event = { type: 'human.approve' };
-    else if (opts.reject !== undefined) event = { type: 'human.reject' };
-    else if (opts.answer !== undefined) event = { type: 'human.answer' };
-    else {
-      printStatus(state);
+    const eventType = opts.approve
+      ? ('approve' as const)
+      : opts.reject !== undefined
+        ? ('reject' as const)
+        : opts.answer !== undefined
+          ? ('answer' as const)
+          : undefined;
+    if (!eventType) {
+      showStatus(state);
       return;
     }
+    const event: HumanEvent = { type: `human.${eventType}` };
 
     // Validate the event against the restored state before committing side
     // effects, so a wrong flag gets a friendly error instead of a no-op.
@@ -441,11 +219,9 @@ program
       );
     }
 
-    if (opts.reject !== undefined) state.pendingMessage = { kind: 'feedback', text: opts.reject };
-    if (opts.answer !== undefined) state.pendingMessage = { kind: 'answer', text: opts.answer };
-    saveRunState(state);
+    if (opts.reject !== undefined) stageHumanInput(state, { kind: 'feedback', text: opts.reject });
+    if (opts.answer !== undefined) stageHumanInput(state, { kind: 'answer', text: opts.answer });
 
-    const eventType = event.type.split('.')[1] as 'approve' | 'reject' | 'answer';
     const pid = spawnDrive(state, eventType);
     printWatchHints(state, pid, `phase (after --${eventType})`);
   });
@@ -458,14 +234,15 @@ const driveCommand = new Command('_drive')
   .action(async (runId: string, eventType?: string) => {
     const state = loadRunState(process.cwd(), runId);
     const snapshot = loadMachineSnapshot(state);
-    const event =
+    const event: HumanEvent | undefined =
       eventType === 'approve' || eventType === 'reject' || eventType === 'answer'
-        ? ({ type: `human.${eventType}` } as { type: 'human.approve' | 'human.reject' | 'human.answer' })
+        ? { type: `human.${eventType}` }
         : undefined;
-    await driveToQuiescence(state, {
+    const stop = await driveToQuiescence(state, {
       ...(snapshot ? { snapshot } : {}),
       ...(event ? { event } : {}),
     });
+    showStatus(stop.state, stop.snapshot);
   });
 program.addCommand(driveCommand, { hidden: true });
 
@@ -555,7 +332,7 @@ program
     const cwd = process.cwd();
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
     if (!state) fail('no runs found in this project');
-    printStatus(state);
+    showStatus(state);
   });
 
 program

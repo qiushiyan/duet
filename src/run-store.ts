@@ -1,22 +1,35 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import type { Snapshot } from 'xstate';
 import type { RoleBindings } from './config.ts';
+import type { GatePhase, PhaseName } from './phases.ts';
 
 /**
- * Per-run working data under `.duet/runs/<run_id>/` in the target project.
+ * Per-run working data under `.duet/runs/<run_id>/` in the target project —
+ * the one module that reads and writes it.
  *
  * The state file is a fast-access HINT — the source of truth is the three
  * JSONL transcripts in the providers' standard locations (augmentation
  * principle). Everything here must stay human-readable and survivable: the
  * user can stop duet mid-run, continue manually with `claude --resume` /
  * `codex exec resume`, and come back (or never).
+ *
+ * Concurrency model: at most one process writes at a time (the CLI stages
+ * input, then hands off to the detached driver — the pid guard enforces the
+ * handoff), but several RunState copies can be alive in one process. The
+ * discipline: re-`loadRunState` after any point where another component may
+ * have written (the lifecycle loop does this at each quiescence), and treat
+ * a loaded copy as stale once you hand control away.
  */
 
-export type PhaseName = 'frame' | 'spec' | 'plan' | 'impl' | 'docs' | 'pr' | 'open';
-/** Phases that end at a human gate (`open` advances straight to done). */
-export type GatePhase = Exclude<PhaseName, 'open'>;
 export type Voice = 'orchestrator' | 'implementer' | 'reviewer';
+
+/** Human input staged by the CLI for the next driver invocation to consume. */
+export interface HumanMessage {
+  kind: 'answer' | 'feedback';
+  text: string;
+}
 
 export interface RunState {
   runId: string;
@@ -65,8 +78,8 @@ export interface RunState {
 
   /** A queued ask_human flag awaiting `duet continue --answer`. */
   pendingQuestion?: { question: string; context?: string };
-  /** Human input written by the CLI for the next driver invocation to consume. */
-  pendingMessage?: { kind: 'answer' | 'feedback'; text: string };
+  /** Staged human input — written via stageHumanInput, read via consumeHumanInput. */
+  pendingMessage?: HumanMessage;
 
   costs: {
     orchestratorUsd: number;
@@ -111,6 +124,17 @@ export function runDirOf(cwd: string, runId: string): string {
 
 const STATE_FILE = 'state.json';
 const SNAPSHOT_FILE = 'machine.json';
+
+/**
+ * Write-temp-then-rename so a crash mid-write never corrupts the previous
+ * version — state.json and machine.json are exactly what crash recovery
+ * reads, so they must never be half-written.
+ */
+function atomicWrite(path: string, content: string): void {
+  const tmp = `${path}.tmp`;
+  writeFileSync(tmp, content);
+  renameSync(tmp, path);
+}
 
 export function createRun(opts: {
   cwd: string;
@@ -163,17 +187,45 @@ export function loadRunState(cwd: string, runId: string): RunState {
 export function saveRunState(state: RunState): void {
   const dir = runDirOf(state.cwd, state.runId);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, STATE_FILE), JSON.stringify(state, null, 2) + '\n');
+  atomicWrite(join(dir, STATE_FILE), JSON.stringify(state, null, 2) + '\n');
 }
 
-export function saveMachineSnapshot(state: RunState, snapshot: unknown): void {
-  writeFileSync(join(runDirOf(state.cwd, state.runId), SNAPSHOT_FILE), JSON.stringify(snapshot, null, 2) + '\n');
+/**
+ * Stage human input (a gate rejection's feedback, or an answer to a queued
+ * question) for the next driver invocation. One half of the CLI→driver
+ * handshake; consumeHumanInput is the other.
+ */
+export function stageHumanInput(state: RunState, message: HumanMessage): void {
+  state.pendingMessage = message;
+  saveRunState(state);
 }
 
-export function loadMachineSnapshot(state: RunState): unknown | undefined {
+/**
+ * Consume the staged human input, if any. An answer also clears the pending
+ * question it answers. Persists immediately so a crash can't replay the
+ * input into a second invocation.
+ */
+export function consumeHumanInput(state: RunState): HumanMessage | undefined {
+  const message = state.pendingMessage;
+  delete state.pendingMessage;
+  if (message?.kind === 'answer') delete state.pendingQuestion;
+  saveRunState(state);
+  return message;
+}
+
+/**
+ * The statechart snapshot (xstate's persisted form), written only at
+ * quiescent states. Typed as Snapshot<unknown> at this boundary so hydration
+ * sites can pass it straight to createActor without casts.
+ */
+export function saveMachineSnapshot(state: RunState, snapshot: Snapshot<unknown>): void {
+  atomicWrite(join(runDirOf(state.cwd, state.runId), SNAPSHOT_FILE), JSON.stringify(snapshot, null, 2) + '\n');
+}
+
+export function loadMachineSnapshot(state: RunState): Snapshot<unknown> | undefined {
   const path = join(runDirOf(state.cwd, state.runId), SNAPSHOT_FILE);
   if (!existsSync(path)) return undefined;
-  return JSON.parse(readFileSync(path, 'utf8'));
+  return JSON.parse(readFileSync(path, 'utf8')) as Snapshot<unknown>;
 }
 
 /**

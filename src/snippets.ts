@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'smol-toml';
+import { z } from 'zod';
 
 /**
  * Duet's snippet library — `snippets.toml` at the repo root, seeded from the
@@ -17,12 +18,23 @@ export interface Snippet {
 
 const SNIPPETS_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'snippets.toml');
 
+// The file is hand-edited (snippet proposals apply here) — validate so a
+// typo fails with the path and the problem, not a crash downstream.
+const librarySchema = z.object({
+  snippets: z.array(z.object({ key: z.string(), expand: z.string() }).loose()),
+});
+
 let cache: Snippet[] | undefined;
 
 export function loadSnippets(): Snippet[] {
   if (!cache) {
-    const parsed = parse(readFileSync(SNIPPETS_PATH, 'utf8')) as unknown as { snippets: Snippet[] };
-    cache = parsed.snippets;
+    const parsed = librarySchema.safeParse(parse(readFileSync(SNIPPETS_PATH, 'utf8')));
+    if (!parsed.success) {
+      throw new Error(
+        `${SNIPPETS_PATH} is not a valid snippet library (${parsed.error.issues[0]?.message ?? 'unknown issue'}) — each [[snippets]] entry needs a string "key" and a string "expand".`,
+      );
+    }
+    cache = parsed.data.snippets;
   }
   return cache;
 }

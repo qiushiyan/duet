@@ -1,5 +1,5 @@
 import pc from 'picocolors';
-import type { Voice } from './run-state.ts';
+import type { Voice } from './run-store.ts';
 
 /**
  * View-time colorizing for the run logs. The log files themselves stay plain
@@ -40,7 +40,8 @@ const VOICE_HEADER = /^(\[\d{4}-\d{2}-\d{2}T[^\]]+\])\s?(.*)$/;
 export function colorizeVoiceLine(voice: Voice, line: string): string {
   const match = VOICE_HEADER.exec(line);
   if (!match) return line;
-  const [, stamp, header] = match as unknown as [string, string, string];
+  const stamp = match[1] ?? '';
+  const header = match[2] ?? '';
   const paint = header.startsWith('✗')
     ? pc.red
     : header.startsWith('⏳')
@@ -49,7 +50,7 @@ export function colorizeVoiceLine(voice: Voice, line: string): string {
   return `${pc.dim(stamp)} ${paint(header)}`;
 }
 
-/** Driver-narration `[tag]` prefixes, mirroring the driver's own stdout colors. */
+/** Driver-narration `[tag]` prefixes — the one palette every view applies. */
 const DRIVER_TAG_PAINT: Record<string, (s: string) => string> = {
   '[orchestrator]': pc.cyan,
   '[send_prompt]': pc.green,
@@ -58,6 +59,7 @@ const DRIVER_TAG_PAINT: Record<string, (s: string) => string> = {
   '[create_branch]': pc.yellow,
   '[propose_snippet_edit]': pc.yellow,
   '[gate]': pc.magenta,
+  '[driver]': pc.red, // infrastructure failures (the runPhase crash backstop)
 };
 
 /** Colorize one line of driver narration (`duet logs`): known `[tag]` prefixes only. */

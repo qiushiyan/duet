@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { gateAttended } from '../run-state.ts';
-import type { GatePhase, PhaseName, RunState } from '../run-state.ts';
+import { PHASE } from '../phases.ts';
+import type { GatePhase, PhaseName } from '../phases.ts';
+import { gateAttended } from '../run-store.ts';
+import type { RunState } from '../run-store.ts';
 
 /**
  * Orchestrator prompts, written to the conventions in
@@ -227,7 +229,7 @@ Throughout: flag product or direction questions with ask_human; tactical questio
 </task>`;
 }
 
-export function openPhaseEntryPrompt(state: RunState): string {
+export function openPhaseEntryPrompt(): string {
   return `<task>
 The human approved opening the PR — that approval covers the mechanics, so run them:
 
@@ -242,18 +244,8 @@ export function answerResumePrompt(answer: string): string {
   return `The human answered your queued question: ${JSON.stringify(answer)}. Continue the phase from where you paused, taking their answer into account.`;
 }
 
-const GATE_ARTIFACT: Record<PhaseName, string> = {
-  frame: 'direction analysis',
-  spec: 'spec',
-  plan: 'plan',
-  impl: 'implementation',
-  docs: 'docs plan',
-  pr: 'PR description',
-  open: 'PR opening', // unreachable — the open phase has no gate to reject from
-};
-
 export function feedbackResumePrompt(phase: PhaseName, feedback: string): string {
-  const artifact = GATE_ARTIFACT[phase];
+  const artifact = PHASE[phase].artifactLabel;
   return `At the gate, the human sent the ${artifact} back with this feedback: ${JSON.stringify(
     feedback,
   )}. Re-enter the phase to address it — route the feedback to the implementer (the human is the editor-in-chief; their feedback outranks reviewer opinions), run whatever review rounds the changes warrant, and advance the phase again when converged. Your workers kept their full context from before the gate: steer them with deltas to the frames they already hold (what changed and why), not by re-running templates they've already received.`;

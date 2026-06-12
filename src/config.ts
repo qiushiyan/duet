@@ -73,11 +73,14 @@ export function parseRoleOverride(role: Role, spec: string): RoleBinding {
   return parseBinding(role, model === undefined ? { provider } : { provider, model });
 }
 
-export function loadRoleBindings(overrides?: Partial<Record<Role, string>>): RoleBindings {
+export function loadRoleBindings(
+  overrides?: Partial<Record<Role, string>>,
+  configPath: string = CONFIG_PATH,
+): RoleBindings {
   const bindings: RoleBindings = { ...DEFAULT_BINDINGS };
 
-  if (existsSync(CONFIG_PATH)) {
-    const config = parse(readFileSync(CONFIG_PATH, 'utf8'));
+  if (existsSync(configPath)) {
+    const config = parse(readFileSync(configPath, 'utf8'));
     const roles = (config as Record<string, unknown>)['roles'];
     if (typeof roles === 'object' && roles !== null) {
       for (const role of ['orchestrator', 'implementer', 'reviewer'] as const) {

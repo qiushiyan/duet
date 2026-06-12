@@ -5,6 +5,9 @@
  * exist — `claude` and `codex`. A third provider means forking the code.
  */
 
+/** The two worker roles the orchestrator routes between. */
+export type WorkerRole = 'implementer' | 'reviewer';
+
 /** One completed worker turn. */
 export interface WorkerTurn {
   /** The worker's final message text. */
