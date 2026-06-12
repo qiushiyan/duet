@@ -29,6 +29,18 @@ export function describeStop(state: RunState, done: boolean): string {
 }
 
 /**
+ * The acting command at each stop, built in one place so the refusal copy,
+ * the stop model, and the human renderer can never drift apart — these exact
+ * strings are also what the concierge skill's reference documents.
+ */
+const continueCommand = {
+  approve: (runId: string) => `duet continue ${runId} --approve`,
+  reject: (runId: string) => `duet continue ${runId} --reject "<feedback>"`,
+  answer: (runId: string) => `duet continue ${runId} --answer "<your answer>"`,
+  resume: (runId: string) => `duet continue ${runId}`,
+};
+
+/**
  * Why `duet steer` is refused at this position, or undefined when steering
  * is legal (a live or crashed phase). Quiescent stops have their own
  * channel, and the copy names it — gates stay explicit.
@@ -42,13 +54,13 @@ export function steerRefusal(position: RunPosition, runId: string): string | und
       const gate = gateOf(position.phase);
       return (
         `the run is waiting at the ${gate.state} — steering here is the gate decision itself: ` +
-        `duet continue ${runId} --approve, or duet continue ${runId} --reject "<feedback>" (your feedback reaches the orchestrator verbatim).`
+        `${continueCommand.approve(runId)}, or ${continueCommand.reject(runId)} (your feedback reaches the orchestrator verbatim).`
       );
     }
     case 'flag':
       return (
         `the run is paused on a queued question — the answer is the steering channel here: ` +
-        `duet continue ${runId} --answer "<your answer>".`
+        `${continueCommand.answer(runId)}.`
       );
     case 'done':
       return `run ${runId} is complete — there is no phase to steer. A new run starts with duet new.`;
@@ -129,8 +141,8 @@ function stopModel(state: RunState, position: RunPosition): StopModel {
         ...(gate.hint ? { hint: gate.hint } : {}),
         ...(packet ? { packet } : {}),
         commands: {
-          approve: `duet continue ${state.runId} --approve`,
-          reject: `duet continue ${state.runId} --reject "<feedback>"`,
+          approve: continueCommand.approve(state.runId),
+          reject: continueCommand.reject(state.runId),
         },
       };
     }
@@ -139,10 +151,10 @@ function stopModel(state: RunState, position: RunPosition): StopModel {
         kind: 'flag',
         question: state.pendingQuestion?.question ?? '(question missing — check the orchestrator log)',
         ...(state.pendingQuestion?.context ? { context: state.pendingQuestion.context } : {}),
-        command: `duet continue ${state.runId} --answer "<your answer>"`,
+        command: continueCommand.answer(state.runId),
       };
     case 'crashed':
-      return { kind: 'crashed', phase: position.phase, command: `duet continue ${state.runId}` };
+      return { kind: 'crashed', phase: position.phase, command: continueCommand.resume(state.runId) };
     case 'done':
       return {
         kind: 'done',
@@ -161,6 +173,11 @@ function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
   return String(n);
+}
+
+/** ISO timestamp → the short human form the status lists use. */
+function fmtStamp(iso: string): string {
+  return iso.slice(0, 16).replace('T', ' ');
 }
 
 /**
@@ -190,14 +207,14 @@ export function renderStatus(model: StatusModel): string {
   if (model.pendingSteers.length > 0) {
     lines.push(`\nstaged steers awaiting delivery:`);
     for (const s of model.pendingSteers) {
-      lines.push(`  • ${s.stagedAt.slice(0, 16).replace('T', ' ')}  ${s.text}`);
+      lines.push(`  • ${fmtStamp(s.stagedAt)}  ${s.text}`);
     }
   }
 
   if (model.autoApprovals.length > 0) {
     lines.push(`\nwhile you were away — gates auto-approved (pre-authorized):`);
     for (const a of model.autoApprovals) {
-      lines.push(`  ✓ ${a.gate}  ${a.at.slice(0, 16).replace('T', ' ')}  ${a.headline}`);
+      lines.push(`  ✓ ${a.gate}  ${fmtStamp(a.at)}  ${a.headline}`);
     }
     lines.push(`  full packets: duet logs ${model.runId}`);
   }

@@ -16,7 +16,7 @@ import {
 } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
 import { describeStop } from '../status.ts';
-import { duetMachine } from './machine.ts';
+import { duetMachine, flagWaitStateOf } from './machine.ts';
 
 /**
  * The run lifecycle — how phases actually execute (docs/automation-design.md
@@ -71,12 +71,18 @@ export function aliveDriverPid(state: RunState): number | undefined {
  * states, so mid-phase it still shows the previous stop. The probe joins it
  * with driver liveness and the run-state evidence the driver writes
  * continuously (`phaseStarted`, `pendingQuestion`).
+ *
+ * A crashed position carries how `duet continue` resumes it: the snapshot is
+ * parked at the stop whose crossing died, so recovery re-utters that
+ * crossing — `approve` for a gate the human already approved, `answer` for a
+ * flag whose answer was already consumed; absent means there is no snapshot
+ * and the machine restarts from its entry point.
  */
 export type RunPosition =
   | { kind: 'running'; pid: number; phase: PhaseName }
   | { kind: 'gate'; phase: GatePhase }
   | { kind: 'flag'; phase: PhaseName }
-  | { kind: 'crashed'; phase: PhaseName }
+  | { kind: 'crashed'; phase: PhaseName; resumeEvent?: 'approve' | 'answer' }
   | { kind: 'done' };
 
 export function probeRunPosition(state: RunState): RunPosition {
@@ -92,10 +98,12 @@ export function probeRunPosition(state: RunState): RunPosition {
 
 /** The position assuming no live driver — also the running phase's identity. */
 function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running' }> {
+  // The phase a snapshot-less machine starts in (spec-entry runs skip frame).
+  const entryPhase: PhaseName = state.specPath ? 'spec' : 'frame';
   const snapshot = loadMachineSnapshot(state);
   if (!snapshot) {
     // The driver died (or was killed) before the first quiescent stop.
-    return { kind: 'crashed', phase: state.specPath ? 'spec' : 'frame' };
+    return { kind: 'crashed', phase: entryPhase };
   }
   const restored = createActor(duetMachine, {
     input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
@@ -105,10 +113,10 @@ function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running
   const value = typeof restored.value === 'string' ? restored.value : JSON.stringify(restored.value);
 
   if (restored.hasTag('flag-wait')) {
-    const phase = PHASES.find((p) => `${p.name}FlagWait` === value)?.name ?? 'frame';
+    const phase = PHASES.find((p) => flagWaitStateOf(p.name) === value)?.name ?? entryPhase;
     // A flag-wait stop always has its queued question; a missing one means
     // the answer was consumed and the driver died mid-phase.
-    return state.pendingQuestion ? { kind: 'flag', phase } : { kind: 'crashed', phase };
+    return state.pendingQuestion ? { kind: 'flag', phase } : { kind: 'crashed', phase, resumeEvent: 'answer' };
   }
 
   const gatePhase = phaseOfGateState(value);
@@ -118,13 +126,15 @@ function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running
     // indistinguishable from waiting at the gate; the human re-decides there,
     // which recovers either way.)
     const next = PHASES[PHASES.findIndex((p) => p.name === gatePhase) + 1];
-    if (next && state.phaseStarted[next.name]) return { kind: 'crashed', phase: next.name };
+    if (next && state.phaseStarted[next.name]) {
+      return { kind: 'crashed', phase: next.name, resumeEvent: 'approve' };
+    }
     return { kind: 'gate', phase: gatePhase };
   }
 
   // Unreachable for snapshots we persist (quiescent states only) — treat a
   // foreign snapshot as a mid-phase crash so the run stays actionable.
-  return { kind: 'crashed', phase: state.specPath ? 'spec' : 'frame' };
+  return { kind: 'crashed', phase: entryPhase };
 }
 
 export interface LifecycleDeps {

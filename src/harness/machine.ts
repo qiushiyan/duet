@@ -43,6 +43,16 @@ export interface MachineInput {
   hasSpec: boolean;
 }
 
+/**
+ * The machine-state name of a phase's flag-wait. The one place the naming
+ * convention lives — the position probe (harness/lifecycle.ts) resolves
+ * state values back to phases through it. (Gate state names are domain
+ * names, owned by the phase table.)
+ */
+export function flagWaitStateOf(phase: PhaseName): string {
+  return `${phase}FlagWait`;
+}
+
 function phaseState(
   phase: PhaseName,
   targets: { advanced: string; flagWait: string },
@@ -102,7 +112,7 @@ function buildStates(): Record<string, object> {
   };
   PHASES.forEach((spec, i) => {
     const loop = `${spec.name}Loop`;
-    const flagWait = `${spec.name}FlagWait`;
+    const flagWait = flagWaitStateOf(spec.name);
     const next = PHASES[i + 1];
     states[loop] = phaseState(spec.name, { advanced: spec.gate?.state ?? 'done', flagWait });
     states[flagWait] = flagWaitState(loop);

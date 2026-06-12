@@ -86,7 +86,7 @@ describe('probeRunPosition', () => {
     expect.soft(probeRunPosition(specEntry)).toEqual({ kind: 'crashed', phase: 'spec' });
   });
 
-  test('a snapshot parked at a gate is the gate — unless the next phase already started (crashed past it)', async ({
+  test('a snapshot parked at a gate is the gate — unless the next phase already started (crashed past it, resumed by re-uttering the approve)', async ({
     projectDir,
     run,
   }) => {
@@ -96,10 +96,10 @@ describe('probeRunPosition', () => {
 
     fresh.phaseStarted.spec = true;
     saveRunState(fresh);
-    expect(probeRunPosition(fresh)).toEqual({ kind: 'crashed', phase: 'spec' });
+    expect(probeRunPosition(fresh)).toEqual({ kind: 'crashed', phase: 'spec', resumeEvent: 'approve' });
   });
 
-  test('a flag-wait with its question is a flag; with the answer consumed it is a mid-phase crash', async ({
+  test('a flag-wait with its question is a flag; with the answer consumed it is a mid-phase crash resumed by re-uttering the answer', async ({
     projectDir,
     run,
   }) => {
@@ -112,7 +112,38 @@ describe('probeRunPosition', () => {
 
     delete fresh.pendingQuestion;
     saveRunState(fresh);
-    expect(probeRunPosition(fresh)).toEqual({ kind: 'crashed', phase: 'frame' });
+    expect(probeRunPosition(fresh)).toEqual({ kind: 'crashed', phase: 'frame', resumeEvent: 'answer' });
+  });
+
+  test('a crashed-past-a-gate run resumes through the statechart on the re-uttered approve', async ({
+    projectDir,
+    run,
+  }) => {
+    // Reach the direction gate, approve it, then "crash" before spec's stop:
+    // the snapshot stays at the gate while phaseStarted.spec is set.
+    const first = scriptedMachine([advanced]);
+    await driveToQuiescence(run, undefined, { machine: first.machine, notify: quiet });
+    const crashed = loadRunState(projectDir, run.runId);
+    crashed.phaseStarted.spec = true;
+    saveRunState(crashed);
+
+    // What bare `duet continue` does at a crashed position: re-utter the event.
+    const position = probeRunPosition(crashed);
+    expect(position.kind).toBe('crashed');
+    const second = scriptedMachine([advanced]);
+    const resumed = await driveToQuiescence(
+      crashed,
+      {
+        snapshot: loadMachineSnapshot(crashed),
+        ...(position.kind === 'crashed' && position.resumeEvent
+          ? { event: { type: `human.${position.resumeEvent}` as const } }
+          : {}),
+      },
+      { machine: second.machine, notify: quiet },
+    );
+
+    expect.soft(second.calls).toEqual(['spec']); // the crashed phase re-ran
+    expect.soft(resumed.snapshot.value).toBe('commitSpecGate');
   });
 
   test('a finished run is done', async ({ projectDir, run }) => {

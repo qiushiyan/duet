@@ -161,21 +161,28 @@ program
       return;
     }
 
-    const snapshot = loadMachineSnapshot(state);
-
-    if (!snapshot) {
-      // No quiescent snapshot and no live driver — the run crashed mid-phase
-      // (or was killed). Re-enter; the driver re-derives position from the
-      // run state + transcripts (which is where truth always lived).
-      if (chosen.length > 0) {
-        fail(
-          'this run has no gate to act on (it stopped mid-phase) — rerun without flags to let it pick up from the transcripts',
-        );
-      }
-      console.log(`run ${state.runId}: no quiescent snapshot — re-entering the current phase from the transcripts`);
-      const pid = spawnDrive(state);
+    // A crashed-mid-phase run (no live driver, the snapshot — if any — parked
+    // at the stop whose crossing died): bare continue re-enters from the
+    // transcripts, re-uttering the crossing the run state already evidences
+    // (probe docs: harness/lifecycle.ts). This is the command `duet status`
+    // names at a crashed stop, so it must actually recover.
+    const position = probeRunPosition(state);
+    if (position.kind === 'crashed' && chosen.length === 0) {
+      console.log(
+        `run ${state.runId}: the ${position.phase} phase stopped mid-flight — re-entering from the transcripts`,
+      );
+      const pid = spawnDrive(state, position.resumeEvent);
       printWatchHints(state, pid, 'recovered phase');
       return;
+    }
+
+    const snapshot = loadMachineSnapshot(state);
+    if (!snapshot) {
+      // Crashed before the first quiescent stop AND a decision flag was
+      // passed — there is nothing restored to validate a gate decision against.
+      fail(
+        'this run has no gate to act on (it stopped mid-phase) — rerun without flags to let it pick up from the transcripts',
+      );
     }
 
     const probe = createActor(duetMachine, {
