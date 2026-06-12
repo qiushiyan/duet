@@ -16,9 +16,11 @@ Duet drives the same `claude` and `codex` CLIs the user already uses, with the s
 
 A run can be paused indefinitely. The state file at `.duet/runs/<run_id>/state.json` is a fast-access hint; the source of truth is the JSONL transcripts of all **three** sessions (implementer, reviewer, orchestrator). The user can stop at any gate, switch to manual `claude --resume <id>` / `codex exec resume <id>`, add turns by hand, and either resume duet later or never. On resume, the harness re-reads JSONL tails; the orchestrator re-derives position from the transcripts, not from cached offsets.
 
-### Personal tool, not OSS
+### Personal tool first, publish-ready
 
 Built for one developer's use across their own projects. The CLI is project-agnostic: no project conventions hardcoded, no skill registry, no `.duetrc`, no codebase introspection. Project-specific knowledge — which skills exist, where specs go, branch conventions, model choices — flows in through the user's framing turn at `duet new`. When the framing references something that doesn't exist, the orchestrator flags it to the human rather than inventing fallbacks.
+
+Publishing (npm / public repo) is a kept-open option, not a goal (2026-06-12): the design constraints above don't soften for hypothetical users, but shipped artifacts — the `skills/` folder, the README — are written for any user and never reference the author's personal setup. No community roadmap.
 
 ### Not a daemon — but alive through a phase
 

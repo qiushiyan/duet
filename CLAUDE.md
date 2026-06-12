@@ -11,7 +11,7 @@ Product goals — the bar every change is measured against:
 - **Augment, never lock in.** Same CLIs, same snippets, standard transcripts and normal branches; manual takeover and resume must always work; the state file is a hint, never an obstacle.
 - **The human owns substance.** The orchestrator does triage, never opinions; product/direction/environment questions always reach the human; gates are structural (statechart), not prompt-enforced.
 - **Semi-AFK.** Walk away at plan approval; return to a ship packet or a well-formed queued question. Nothing runs between quiescent stops — no daemon.
-- **Personal tool, not OSS.** Project knowledge enters only via the framing turn; the only config is role→provider bindings; exactly two providers.
+- **Personal tool first, publish-ready.** Project knowledge enters only via the framing turn; the only config is role→provider bindings; exactly two providers. Shipped artifacts (`skills/`, README) are written for any user; no roadmap-by-request.
 
 Status: full arc implemented (`new` → FRAME → SPEC → PLAN → AFK IMPL → Ship gate → DOCS → PR → opened PR). FRAME→Ship live-verified (a scratch run + the first real planlab run, ~$93 claude-side); docs/pr/open phases uncrossed; gate pre-authorization awaits its first overnight run (Q20). Codex-as-orchestrator deliberately unbuilt (Q17).
 
