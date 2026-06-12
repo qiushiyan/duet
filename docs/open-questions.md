@@ -1,313 +1,62 @@
 # Open questions
 
-Things to validate before implementing the MVP orchestrator. Each question records what we currently believe, what evidence supports it, and what new evidence would change the answer. Answering these is cheaper than building against assumptions and rebuilding later.
+Design decisions and their evidence. **Open** questions carry their full reasoning — what we believe, what supports it, what would change the answer. **Resolved** questions (struck-through headings) are compressed to their dated verdict plus a pointer to where the substance now lives; the full deliberations and the original analyses are in this file's git history. Q numbers are stable — docs and source comments cite them; never renumber.
 
-> **2026-06-11 pivot.** The design changed structurally: the orchestrator is now an intelligent, read-only LLM agent inside a code-enforced phase-and-gate skeleton, not a dumb state-machine router (see `docs/automation-design.md` §"Design history"). This **reverses Q10**, **amends Q7 and Q8**, and raises **Q11–Q16** below. Q1, Q2, Q9's empirical findings (CLI resume, skill drivability, schema enforcement) remain valid as facts about the CLIs; how much the design still leans on them is per-question.
+Numbering note: Q1–Q10 predate the 2026-06-11 pivot to an intelligent orchestrator (`docs/automation-design.md` §"Design history" — the pivot reversed Q10 and amended Q7/Q8); Q11–Q17 are the pivot's questions; Q18+ came from running the thing.
 
-## ~~Q1. Does `claude -p` (and `codex exec`) resume the same session, or spawn a new one?~~
+## ~~Q1. Does `claude -p` (and `codex exec`) resume the same session?~~
 
-**Answered (2026-05-26).** Yes — both CLIs persist transcripts by default and append on resume. Verified via `--help` against installed versions on this machine.
-
-- **Claude Code:** `claude -p --resume <uuid> "prompt"` resumes by id; `claude -p --continue "prompt"` resumes the most recent in the cwd; `claude --session-id <uuid>` lets the orchestrator pre-allocate the id. Transcripts at `~/.claude/projects/<slug>/<uuid>.jsonl`. Opt-out: `--no-session-persistence`.
-- **Codex:** `codex exec resume <SESSION_ID> "prompt"` (resume is a subcommand of `exec`, not a flag). Rollouts at `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl`. Opt-out: `--ephemeral`.
-
-**Bonus findings that change the design (favorably):**
-
-- **Structured output is the primary read path, not JSONL grepping.** Codex `--output-last-message <FILE>` writes the final assistant message atomically; Claude `--output-format json` returns a `{result, session_id, ...}` envelope. The JSONL is kept as audit trail. The "JSONL flush race" worry from the original Q1 is moot — these are synchronous on subprocess exit.
-- **JSON Schema enforcement is available on both CLIs.** Claude `--json-schema '<schema>'` and Codex `--output-schema <FILE>` validate the agent's final response. This is the better mechanism for Q9 (structural markers) than free-text tag grepping — see Q9 for the rewritten plan.
-- **Cost ceiling per invocation.** Claude `--max-budget-usd <N>` — a safety rail worth turning on in MVP runs.
-- **Real-time streaming.** `--output-format stream-json` (Claude) / `--json` (Codex) emit events on stdout for live progress display.
-
-The original analysis is preserved below as the record of what we considered.
-
----
-
-**Why it matters.** The whole router design rests on reading JSONL transcripts and feeding the *other* agent. If non-interactive invocations create a fresh session each time, the JSONL fragments are disjoint and the agent loses prior context — which the workflow assumes carries forward (the spec context informs the plan, the plan informs the implementation, etc.).
-
-**Current belief.** Unknown. The example session was entirely interactive. The CC `--continue` and `--resume` flags exist; need to check whether `--print` (`-p`) honors them and whether the appended turns go into the existing JSONL or a new one. Codex has `codex exec` and `codex resume`; same question.
-
-**What would change the answer.** A 5-minute test: run `claude --resume <id> -p "hello"` against a known session, then check whether the JSONL file grew or a new file appeared.
-
-**Fallback if it doesn't work.** Build an explicit-context-recap turn into each phase: prepend a short summary of prior phases to each prompt. More tokens, but agent-agnostic.
+**Yes (2026-05-26, verified against the installed CLIs).** Both persist transcripts and append on resume: `claude -p --resume <uuid>` (transcripts in `~/.claude/projects/<slug>/`), `codex exec resume <id>` (rollouts in `~/.codex/sessions/`). Bonus findings that shaped the design: structured output at the CLI boundary (`--output-format json` / `--output-last-message`), JSON Schema enforcement on both CLIs, and per-invocation budget caps (`--max-budget-usd`). The mechanics live in `src/providers/`.
 
 ## ~~Q2. Does `/update-docs` (and `/onboarding`) work non-interactively?~~
 
-**Answered (2026-05-26).** Mixed, with a clean resolution. Verified by reading the actual skill files (copies preserved at `examples/skills/onboarding/SKILL.md` and `examples/skills/update-docs/SKILL.md`).
+**Yes, with one structural note (2026-05-26).** `/onboarding` is drivable headless when given a concrete topic. `/update-docs` has a real human gate at its propose-plan step — mapped to duet's Docs-plan gate rather than worked around. A skill variant that resumes past the gate on a marker token is proposed at `examples/skills/update-docs/SKILL.orchestrator.md` (verbatim original kept beside it); the pr-phase entry prompt lets the framing name such a token. Live verification waits on the first docs-phase crossing.
 
-- **`/onboarding` — drivable headless.** No `AskUserQuestion` calls. The skill has one *conditional* clarifying question that only triggers when `$ARGUMENTS` is empty or ambiguous; the orchestrator avoids it by passing a concrete topic (which is part of the framing turn collected at `duet new`). Ship as-is.
+## ~~Q3. Is the snippet protocol stable across feature types?~~
 
-- **`/update-docs` — has a structural human gate at Step 4 ("Propose Plan"), not an `AskUserQuestion` call.** The observed `/update-docs`-invoked-three-times friction was the human accidentally re-running the skill from Step 1 instead of resuming past the gate. The fix is structural, not behavioral: the skill's internal gate maps to a phase boundary in the orchestrator's state machine.
-
-**Recommended approach.** Treat the skill gate as another orchestrator gate. To make the skill cleanly resumable past Step 4, add an "orchestrator resume" path that skips Step 4 when invoked with a marker token. A proposed modification lives at `examples/skills/update-docs/SKILL.orchestrator.md`; the verbatim original is preserved at `examples/skills/update-docs/SKILL.md` for falsifiable comparison. The modification is a single conditional in Step 4 that recognizes the token `ORCHESTRATOR_RESUME_FROM_PROPOSAL`. Interactive behavior is unchanged.
-
-**Implication for the orchestrator design.** Skills with built-in human gates are orchestrator-friendly, not orchestrator-hostile. The state machine should accept skill gates as a category of phase boundary. Other skills the workflow uses (`/onboarding` at the start; the TDD skill *read* by the agent inside `tdd-implementation`, not invoked via slash command) need no orchestrator handling.
-
-**What still needs empirical verification (deferred to first MVP run).** That `claude -p --resume <id> "ORCHESTRATOR_RESUME_FROM_PROPOSAL — proceed to Step 5."` actually reaches the modified Step 4 logic and skips correctly. The risk is low (the conditional is plain text in the skill, agents follow conditionals reliably), but worth confirming in the spike. *Partially verified 2026-06-11: custom slash-command expansion on a resumed `-p` session works (live probe — a `.claude/commands` command invoked as the second turn of a resumed session expanded and executed correctly); the remaining unknown is only the skill-specific conditional, not the mechanics.*
-
-The original analysis is preserved below as the record of what we considered.
-
----
-
-**Why it matters.** The example session shows `/update-docs` invoked three times in three minutes (`observed-pattern.md` turn 14). Most plausible explanation: the skill paused to ask a question and the human re-invoked. If skills are interactive by default, the orchestrator either needs to pre-answer their questions or run them in interactive mode at the gates.
-
-**Current belief.** Likely interactive. The CC slash-command/skill model includes `AskUserQuestion`-style prompts.
-
-**What would change the answer.** Inspect the `update-docs` and `onboarding` skill definitions in `~/.claude/skills/`. If they don't use `AskUserQuestion`, they should be drivable headless. If they do, list which questions they ask so the orchestrator can pre-answer.
-
-## ~~Q3. Is the seven-snippet protocol stable across feature types?~~
-
-**Answered (2026-05-26).** Deferred to post-Slice-1 with a concrete sampling plan when revisited.
-
-**Why defer:** Slice 1 itself produces a new data point (the orchestrator's first managed run). Mining past sessions doesn't block any design decision Slice 1 needs, and we don't want to over-fit the slice to evidence we haven't seen.
-
-**Sampling plan when ready:**
-- Source: `~/.claude/projects/-Users-qiushi-dev-itell-apps-platform/*.jsonl`
-- Filter: sessions that use 2+ workflow snippets from `examples/tabtype-snippets.json`
-- Variety target: include at least one each of bugfix, feature, refactor, spike (if available)
-- Output: a phase-presence matrix appended to `docs/observed-pattern.md`
-
-**Slice 1 assumption:** the full SPEC-review protocol applies. If a smaller task type wouldn't naturally invoke SPEC, the user just doesn't call `duet new --spec` on it — no design accommodation needed.
-
-The original analysis is preserved below as the record of what we considered.
-
----
-
-**Why it matters.** The example session is one feature: a permissions/role refactor with both backend and UI surface area. Different feature shapes might compress or skip phases:
-
-- A typo / one-line bugfix probably doesn't need a spec or plan phase.
-- A pure refactor probably skips the FRAME / SYNTHESIZE step (the problem is already understood).
-- A spike / research task might never reach IMPLEMENT.
-
-**Current belief.** The full protocol is the *upper bound*. Smaller tasks shed phases from the front. But we have one data point.
-
-**What would change the answer.** Sample 3–5 more sessions of varying sizes from `~/.claude/projects/-Users-qiushi-dev-itell-apps-platform/`. Look for which snippets are used vs. skipped. Build a phase-presence matrix.
+**Deferred (2026-05-26), still unsampled.** Working assumption: the full protocol is the upper bound and smaller tasks shed phases from the front (a spec-entry run skips FRAME; a task that wouldn't want a spec just doesn't get a duet run). If runs of varied shape surface protocol friction, sample the session corpus for a phase-presence matrix then.
 
 ## ~~Q4. What does "convergence" look like in the reviewer's output?~~
 
-**Answered (2026-05-26).** Stays post-MVP, gated on Q10. The MVP loop-exit rule is the fixed iteration cap (`docs/automation-design.md` §"Loop-exit rule") — no severity parsing. Revisit only if running Slice 1+ surfaces a specific pain that severity-driven exits would fix.
-
-If the answer eventually turns out to be "yes, severity helps," the upgrade path is clean: add an optional `severity_summary` field to `schemas/agent-response.json` (e.g., `{critical: number, moderate: number, minor: number, nit: number}`). The schema's OpenAI-strict-compliance rules require it to be in `required` with a nullable union, but that's a small edit. No new infrastructure.
-
-The original analysis is preserved below as the record of what we considered.
-
----
-
-**Why it matters.** The severity-threshold loop-exit rule (`docs/automation-design.md` §"Loop semantics") only works if reviewer responses reliably use `critical / moderate / minor / nit` labels and the orchestrator can parse them.
-
-**Current belief.** The `review-implementation` snippet explicitly asks for severity ratings. The `review-spec` and `update-spec` snippets do not — they ask for "agree/disagree + structural alternative". So the parsing rule is per-phase.
-
-**What would change the answer.** Read all reviewer responses in `examples/codex-session.jsonl` and confirm (a) impl reviews use the severity vocabulary consistently, (b) spec reviews use a different but parseable structure. If parsing is unreliable, fall back to "show the human the raw review + a count of paragraphs" and let them call it.
+**Superseded by the pivot.** Loop exit is orchestrator judgment, not severity-label parsing; backstop caps are runaway protection, not the exit mechanism (`docs/automation-design.md` §"Loop semantics").
 
 ## ~~Q5. How does the user behave when the two agents disagree?~~
 
-**Answered (2026-05-26).** Subsumed by mechanisms already in place; no Slice 1 work needed.
+**Superseded.** A disagreement that persists across rounds with substantive arguments on both sides is flagged via `ask_human`; how the human resolves it is theirs — duet doesn't predict it.
 
-The `disagree` field in `schemas/agent-response.json` surfaces disagreements deterministically. The orchestrator halts at the disagreement gate when a `point` string persists across two consecutive rounds in the same phase (`docs/automation-design.md` §"Structured response schema"). The human resolves however they want — the orchestrator has no business predicting that.
+## ~~Q6. Is the implementer/reviewer role binding ever swapped?~~
 
-The Q3 sampling will incidentally reveal divergence patterns (how often impl rejects reviewer points, what kinds), which informs future features (Q10 territory), not Slice 1.
+**Generalized into role–provider decoupling (2026-06-11).** Any role binds to any capable provider via `~/.config/duet/config.toml` plus per-run flags (`docs/automation-design.md` §"Roles are decoupled from providers").
 
-The original analysis is preserved below as the record of what we considered.
+## ~~Q7. Daemon or one-shot CLI?~~
 
----
+**One-shot, alive through a phase (2026-05-26; lifetime amended 2026-06-11 from per-gate to per-phase).** Detached per-phase driver, exits at quiescent stops, no resident daemon (`docs/automation-design.md` §"Not a daemon — but alive through a phase"; `src/harness/lifecycle.ts`).
 
-**Why it matters.** In the example session the two agents *converged* — implementer mostly accepted reviewer's critiques. A divergent session (implementer pushes back hard, reviewer doubles down) needs different handling: more human intervention, or a third-party tiebreaker, or just "ship anyway with disagreement noted".
+## ~~Q8. What's the smallest vertical slice worth implementing first?~~
 
-**Current belief.** Untested. The `update-spec` / `update-plan` / `review-reflect` snippets explicitly invite pushback ("don't agree just to agree", "explain from first principles why the original is correct"). So divergence is *allowed*; we don't know how it's *resolved* in practice.
+**Superseded by Q14** — the pivot changed what needed validating.
 
-**What would change the answer.** Same as Q3 — sample more sessions and look for cases where the implementer rejected ≥1 reviewer point on first principles. See whether the human acted as tiebreaker or just deferred to one side.
+## ~~Q9. Will agents reliably honor structural markers?~~
 
-## ~~Q6. Is the implementer / reviewer role binding ever swapped?~~
+**Superseded twice:** free-text tags → CLI-level JSON Schema enforcement (verified on both CLIs, 2026-05-26) → demoted entirely when the orchestrator became the reader (Q16). Still-relevant residue: any future worker schema must stay OpenAI-strict-compliant — every property in `required`, optionals as nullable unions.
 
-> **Generalized 2026-06-11:** the impl/reviewer swap this question established is now subsumed by full role–provider decoupling across all three roles, configured via the role-bindings file (`[roles.<role>] provider/model`) with per-run CLI overrides. The claude provider takes a per-role Anthropic model ID; the codex provider deliberately takes none (the user's `~/.codex/config.toml` governs). Default binding unchanged in spirit: orchestrator + implementer on claude/Opus, reviewer on codex. See `docs/automation-design.md` §"Roles are decoupled from providers"; the orchestrator role's claude-only v1 status is Q17.
+## ~~Q10. Where does the dumb router actually fall short?~~
 
-**Answered (2026-05-26).** Configurable per task type, with `{impl: claude, reviewer: codex}` as the universal MVP default. The user's lived experience: "basically always Claude=impl, Codex=reviewer" today — but the cost of supporting the swap is one config field and zero branching code, so it's worth designing in.
-
-**MVP shape:**
-- CLI flags: `duet new <input> [--impl <claude|codex>] [--reviewer <claude|codex>]`
-- Universal default: `{impl: claude, reviewer: codex}`. Matches the observed session and matches the verified token-cost profile (Codex at default reasoning effort is ~15x the per-turn token cost of Claude Haiku; assigning it to the rarer reviewer role is the cheaper allocation).
-- Same-vendor configs (both Claude or both Codex) work mechanically — the schema + resume primitives are identical across roles — but are not actively documented per `docs/automation-design.md`'s "wire it for {claude-code, codex} first" non-goal.
-- Other agents (AMP, etc.) are out of scope for MVP. The orchestrator state's `{implementer, reviewer}` struct is extensible when that day comes — `cli` is a per-agent field.
-
-**Task-type-based defaults — deferred.** The user wants the orchestrator to eventually pick role binding per task type, but we don't yet have evidence about which task types want which binding. Q3 (protocol stability across feature types) is the natural place to gather that evidence — once 3–5 more sessions are sampled, we can see if any patterns emerge.
-
-The original analysis is preserved below as the record of what we considered.
-
----
-
-**Why it matters.** The workflow-model claims the role binding is symmetric (`docs/workflow-model.md` §"Symmetry"). If in practice the user always uses CC as implementer and CX as reviewer, hardcoding that asymmetry simplifies the MVP. If they swap based on the task, the orchestrator needs first-class agent role config.
-
-**Current belief.** User says they sometimes swap. Not exercised in this session. Worth keeping the design symmetric anyway because the cost is small.
-
-**What would change the answer.** Ask the user; or scan their codex session directory for sessions where Codex received `tdd-implementation` snippets.
-
-## ~~Q7. Does the human want the orchestrator to be a long-running daemon or a one-shot CLI?~~
-
-> **Amended 2026-06-11:** still one-shot, still no daemon — but the process lifetime is now **per-phase, not per-gate**. An intelligent orchestrator holds its session open across the many routed turns inside a phase (an AFK implementation phase may run 1–3 hours); gates and queued `ask_human` flags remain process exits. See `docs/automation-design.md` §"Not a daemon — but alive through a phase".
-
-**Answered (2026-05-26).** One-shot CLI. The orchestrator is a batch process: human-initiated via `duet new <issue-or-text>`, terminates after the human approves the Open PR gate. Within "one-shot," the process lifetime is **per-gate, not per-run** — each `duet new` / `duet continue` invocation drives the state machine to the next gate, persists state to disk, and exits. The human resumes by re-invoking. Nothing holds a terminal between gates, which is what makes the semi-AFK shape work. See `docs/automation-design.md` §"Invocation and lifecycle" for the CLI surface and non-goals.
-
-The original analysis is preserved below as the record of what we considered.
-
----
-
-**Why it matters.** Affects UX, error handling, and resumability.
-
-- **Daemon-style**: `duet start`; emits progress; pauses at gates; resumes on `duet approve <gate-id>`. Better for true semi-AFK use because the human can step away and return to a still-running process.
-- **One-shot**: `duet run --until <gate>`; runs to the next gate, then exits. Re-invoke to continue. Simpler to build; loses no state because everything is in JSONL + a small state file.
-
-**Current belief.** One-shot is simpler and probably sufficient. Most "AFK" tasks are bounded by the next gate anyway.
-
-**What would change the answer.** Try a one-shot prototype first. If the user finds themselves re-invoking it in a tight loop, escalate to daemon.
-
-## ~~Q8. What's the smallest "vertical slice" of the workflow worth implementing first?~~
-
-> **Amended 2026-06-11:** the slice *choice* (SPEC review loop first) stands, but its scope is superseded — Slice 1 now validates the orchestrator agent's tool surface and gate interception, not dumb routing. Re-scoped as **Q14**.
-
-**Answered (2026-05-26).** Slice 1 is the **SPEC review-loop spike**, scoped tightly.
-
-**CLI:**
-```
-duet new --spec <draft-path> [--impl claude] [--reviewer codex] [--rounds N]
-duet continue <run_id> [--approve | --reject "..." | --answer "..."]
-duet status <run_id>
-```
-
-**Workflow:**
-1. Read draft spec from `<draft-path>` (user wrote it by hand or with CC interactively — *not* automated in this slice).
-2. Create `run_id`, write state to `.duet/runs/<run_id>.json`.
-3. Spawn reviewer (Codex) with the `review-spec` snippet wrapping the spec + the schema at `schemas/agent-response.json`.
-4. Read structured output; if `needs_human` is non-null, exit at the exception gate.
-5. Spawn implementer (Claude) with the `update-spec` snippet wrapping the reviewer's `response_text` + the schema.
-6. Track new `disagree` entries; if a `point` string recurs from the prior round, exit at the disagreement gate.
-7. If `iteration < cap` and no exception, loop to step 3 with the implementer's revised spec.
-8. On cap hit, exit at the "Commit spec" phase boundary; print the resume command.
-9. `duet continue <run_id> --approve` writes the final spec back to `<draft-path>` (overwriting the draft) and marks the run complete. No git operation in this slice.
-
-**Validation surface:** per-gate process model, JSON Schema enforcement on both CLIs, cross-CLI routing, loop cap, state file persistence, `needs_human` halt, `disagree` persistence detection.
-
-**Deferred for later slices:** ONBOARD skill, FRAME parallel dispatch, initial spec drafting from a framing turn, `/compact`, PLAN loop, IMPLEMENT (the risky tool-use-vs-schema slice), IMPL review loop, UPDATE_DOCS skill with internal gate, PR opening.
-
-**Effort estimate:** ~3–5 days of focused work — mostly subprocess management, state I/O, CLI parsing, schema bundling, and snippet loading from `examples/tabtype-snippets.json`. The agent interactions are already proven (Q1/Q9).
-
-**Future slices** (sketched, not committed; refine as Slice 1 ships):
-- Slice 2 — PLAN loop. Same routing mechanics, different snippets.
-- Slice 3 — IMPLEMENT phase. Tests tool-use under schema constraint. Highest-risk single slice.
-- Slice 4 — IMPL review loop. Reuses Slice 1/2 code.
-- Slice 5 — ONBOARD, FRAME, `/compact`. End-to-end except PR.
-- Slice 6 — UPDATE_DOCS, PR opening. End-to-end.
-
-The original analysis is preserved below as the record of what we considered.
-
----
-
-**Why it matters.** Building the full state machine in one go is over-committing on an unvalidated design.
-
-**Current belief.** The most leveraged slice is **automated routing for one review loop** — pick the SPEC loop, since it ran 2 iterations in the example. Concretely: human writes the spec by hand (or via CC), then `duet review-spec --rounds 2` runs the cross-review until either rounds exhaust or human approves.
-
-If that single phase feels right, layer on PLAN, then IMPL, then the surrounding phases.
-
-**What would change the answer.** Realizing during the spike that the JSONL-ingest or CLI-resume primitives don't behave as expected. In which case Q1 / Q2 dominate this question.
-
-## ~~Q9. Will agents reliably honor structural markers (`<NEEDS-HUMAN>`, `<DISAGREE>`)?~~
-
-**Answered (2026-05-26).** Replaced by a stronger mechanism: **CLI-level JSON Schema enforcement**, not free-text tag grepping. Verified empirically against both CLIs.
-
-**The upgrade.** Both `claude --json-schema '<schema>'` and `codex exec --output-schema <FILE>` validate the agent's final response against a JSON Schema at the CLI boundary — invalid output fails the invocation before reaching the orchestrator. Instead of asking agents to emit `<NEEDS-HUMAN>` / `<DISAGREE>` text tags, the schema requires `needs_human` and `disagree` fields directly. The canonical schema is in `schemas/agent-response.json`.
-
-**Empirical verification (2026-05-26).**
-- Claude Haiku (`claude -p --json-schema "$(cat schema.json)" --output-format json "..."`): valid structured output; `response_text` prose quality matches non-schema output. Cost ~$0.05/turn at Haiku, mostly cache-creation; subsequent turns much cheaper.
-- Codex gpt-5.5 (`codex exec --output-schema schema.json "..."`): valid structured output after the schema was made OpenAI-strict-compliant (every property in `required`, optionals via `anyOf null`). Token usage ~12k for one turn at high reasoning effort — meaningful cost factor for budgeting.
-
-**The strict-compliance gotcha.** OpenAI rejects schemas where `properties` keys are absent from `required`. The schema in `schemas/agent-response.json` is written to OpenAI's stricter rules; Anthropic accepts it as a superset. Future schema edits must keep strict compliance to remain dual-target.
-
-**How each CLI surfaces the output.**
-- Claude invokes an internal `StructuredOutput` tool with the schema fields; the prose is also emitted as a normal assistant text message. The CLI's `--output-format json` envelope exposes `structured_output` as a top-level field. Both forms in the JSONL — human-readable transcripts stay debuggable.
-- Codex writes the structured JSON as the final response on stdout (and to `--output-last-message <FILE>`).
-
-**Composition with `examples/skills/update-docs/SKILL.orchestrator.md`.** The resume marker (`ORCHESTRATOR_RESUME_FROM_PROPOSAL`) tells the skill *where to start within its workflow*. The schema tells the orchestrator *whether the turn ended in a gate*. They compose cleanly; both stay.
-
-The original analysis is preserved below as the record of what we considered.
-
----
-
-**Why it matters.** The MVP detects in-phase exceptions via tags emitted by the agents, not by interpreting their prose (`docs/automation-design.md` §"Structural markers"). If agents paraphrase the tags, omit them when they should appear, or emit them when they shouldn't, the orchestrator either misses signals (silently shipping disagreement) or halts spuriously (defeating AFK).
-
-**Current belief.** Tags should be more reliable than asking for `critical / moderate / minor / nit` severity labels because they're binary (present / absent), not semantic. Modern coding agents follow concrete, exemplified structural-output instructions reasonably well. But this is an assumption, not yet evidence.
-
-**What would change the answer.** A 1-hour spike. Add the marker instructions to `update-spec` and `review-reflect`. Run them on contrived prompts that should trigger each tag (a "you need a product decision" scenario, a "the reviewer is wrong about X" scenario) plus controls that shouldn't. Aim for 5–10 trials per agent (CC + Codex). Measure false-negative and false-positive rates. If FN > 10% on either agent, fall back to one of: (a) sharper instructions ("emit the tag as the literal first line; nothing before it"), (b) human review at every loop round (less AFK), (c) accept the FN risk and surface raw transcripts to the human at each phase boundary.
-
-## ~~Q10. Where does the dumb router actually fall short in practice, and which gaps justify an LLM judgment call?~~
-
-> **Reversed 2026-06-11.** The question assumed the dumb router ships first and LLM judgment gets added per documented pain point. The pivot answered it the other way and earlier than planned: the planlab corpus scan (22 sessions — see `docs/observed-pattern.md` §"Corpus scan: planlab") supplied the evidence three runs of Slice 1 were meant to gather. The router-vs-judgment gaps it predicted (pre-gate digests, stuck detection, conflict framing) are all subsumed by the orchestrator role. The **notes-file convention survives** — `.duet/runs/<run_id>/notes.md`, written by both the human and the orchestrator's `write_note` tool. Rationale and costs of the reversal: `docs/automation-design.md` §"Design history".
-
-**Answered (2026-05-26).** Answered by running Slice 1, not by speculation. To make the eventual answer extractable, adopt this convention starting with the first Slice 1 run:
-
-**Notes file per run.** A `.duet/runs/<run_id>.notes.md` file the user writes to during/after each run, capturing friction observations:
-- Where did the orchestrator route something the user would have flagged?
-- Where did `response_text` content under-deliver (sparse summary, missing detail)?
-- Did `needs_human` false-trigger or fail to trigger when it should have?
-- Did `disagree` persistence detection feel right, too aggressive, or too lax?
-
-After ~3 real Slice 1 runs, review notes; each recurring pain point becomes a candidate for a narrow LLM call (function, not agent). Speculating about candidates now is wasted motion.
-
-The original analysis is preserved below as the record of what we considered.
-
----
-
-**Why it matters.** The MVP intentionally defers an LLM-as-judge orchestrator. The right time to add narrow LLM calls is when running the dumb router reveals a specific pain — sparse implementer summaries, ambiguous reviewer reactions, disagreements the tag mechanism didn't catch, stalled loops. Speculating before running the MVP risks building intelligence where it isn't needed.
-
-**Current belief.** Plausible candidates after MVP runs:
-- **Pre-gate digest.** At phase boundaries, a short LLM-generated "here's what changed, here are open points" beats dumping raw transcripts.
-- **Stuck detection.** Long time-in-phase + no new commits → "implementer might be stuck."
-- **Conflict framing.** When `<DISAGREE>` blocks accumulate, an LLM-generated "here's what they actually disagree about" beats dumping both transcripts.
-
-But these are guesses. The discipline is: run MVP first, watch where the human reaches for help the router didn't provide, then add one narrow LLM call per documented pain point — function, not agent.
-
-**What would change the answer.** Three real MVP runs on `itell/apps/platform` features of varying shape. For each run, note: where did the human want more than the router provided? Where did the router route something that should have been flagged? Each pain point becomes a candidate; only ones that recur across runs justify a permanent LLM call.
+**Reversed by the 2026-06-11 pivot** — the 22-session corpus scan answered it earlier and more structurally than the planned three dogfood runs (`docs/automation-design.md` §"Design history"). What survives: the per-run `notes.md` convention, written by both the human and the orchestrator's `write_note` — it is how Q13/Q19/Q20 get their evidence.
 
 ## ~~Q11. What substrate runs the orchestrator?~~
 
-> **Scope note (2026-06-11):** with role–provider decoupling, this question is about the **claude provider's** implementation of the orchestrator role — the default and only orchestrator-capable provider in v1. The codex provider's path to the same contract is Q17.
+**The Claude Agent SDK, with the cooperative pause (2026-06-11, by the spike at `src/spike/q11.ts`).** The load-bearing findings:
 
-**Answered (2026-06-11, by the spike at `src/spike/q11.ts`).** The Claude Agent SDK (0.3.170) is the substrate, **with one design correction**: the pause is cooperative, not mechanical. Spike results, all live-verified end to end (orchestrator routed `review-spec` → codex and `update-spec` → claude through the Provider interface, queued an `ask_human`, exited, resumed, answered, reported):
+- Read-only by tool surface works: `tools: []` + SDK-MCP custom tools; `strictMcpConfig` required (the user's claude.ai connectors and plugins leak into the surface without it).
+- **Both mechanical pause options corrupt session resume** — PreToolUse `defer` loses the SDK MCP server on resume; `canUseTool` deny+interrupt crashes the resumed session. Executable repros: `src/spike/repro-*.ts`. The working pattern is cooperative: the `ask_human` handler persists the question and instructs the orchestrator to end its turn; the process exits at quiescence; `--resume` delivers the answer.
+- Session resume preserves context fully, and the transcript lands in `~/.claude/projects/` — manually resumable, so augmentation holds.
+- Operational: SDK-MCP calls outliving 60s (every `send_prompt`) need `CLAUDE_CODE_STREAM_CLOSE_TIMEOUT` raised; `alwaysLoad: true` keeps tools present when a resumed session's first prompt is built.
+- Economics: from 2026-06-15, Agent SDK / `claude -p` usage draws from a separate subscription credit pool at standard API rates — per-invocation `maxBudgetUsd` is a day-one rail, costs tracked per run.
 
-- **Read-only by tool surface works.** `tools: []` hides all built-ins; the two custom tools (`send_prompt`, `ask_human`) via `tool()` + `createSdkMcpServer()` + `allowedTools` work as documented. Caveat for Slice 1: the user's own config still leaks into the surface — claude.ai connector MCP servers, plugins, and LSP appeared alongside the orchestrator tools. Harden with `settingSources` / `strictMcpConfig` when building the real harness.
-- **The pause mechanism: both "mechanical" options corrupt resume; the cooperative pause works.** Verified by three minimal repros kept at `src/spike/repro-*.ts`:
-  - `repro-resume-mcp.ts` — plain resume after a normally ended turn **keeps SDK MCP tools working** (tool re-invoked successfully on the resumed session).
-  - `repro-defer-resume.ts` — PreToolUse `permissionDecision: 'defer'` pauses cleanly (`terminal_reason: 'tool_deferred'`, `deferred_tool_use` populated on the result) **but the resumed session loses the SDK MCP server entirely** — every orchestrator tool call fails with "No such tool available". `alwaysLoad: true` does not help. The deferred call is also *not* re-prompted on resume.
-  - `repro-deny-resume.ts` — `canUseTool` `{behavior: 'deny', interrupt: true}` ends the run as `error_during_execution`/`aborted_streaming`, and resuming that session crashes the SDK with an `ede_diagnostic` error.
-  - **The working pattern:** the `ask_human` *handler itself* queues the question, persists state, and returns "human is AFK — end your turn now"; the orchestrator ends its turn normally; the process exits; `--resume` later delivers the answer in the resume prompt. The pause is enforced by the harness side effect (question persisted at the moment of the call), not by the permission system; the orchestrator obeyed the end-turn instruction cleanly in the spike.
-- **Session resume preserves context fully** (same session id, the resumed orchestrator continued mid-protocol without re-orientation), and the transcript lands in `~/.claude/projects/` — manually resumable, per the augmentation principle. One quirk: the resumed query immediately re-emits the prior run's result message (zero-cost replay) before the new turn's messages.
-- **Operational gotchas:** SDK MCP tool calls that outlive 60s (every `send_prompt` does — worker turns take minutes) need `CLAUDE_CODE_STREAM_CLOSE_TIMEOUT` raised in `env`. `alwaysLoad: true` on the MCP server keeps the tools out of tool-search deferral. Current CLI `--output-format json` returns an **array of messages**, not a bare result object — the worker parser must select `type === 'result'`.
-- **Cost (one full spike run, opus-4-8 orchestrator + opus-4-8 implementer):** orchestrator $0.27 (incl. the resume turn at $0.04), implementer $0.80 for one `update-spec` turn, reviewer ~100k input / ~2k output codex tokens. Extrapolated, a full multi-phase run plausibly lands in the $5–15 claude-side range — within the post-2026-06-15 monthly pools, but `maxBudgetUsd` (already wired, $10/invocation in the spike) stays day-one.
-- **Free Q13 evidence:** when the implementer worker turn errored twice (a spike bug, later fixed), the orchestrator retried once, explicitly refused to fabricate the worker's output or review the spec itself, and queued a well-formed `ask_human` with full context. Triage instructions held under failure.
+## ~~Q12. Where does duet's snippet library live?~~
 
-The original analysis is preserved below as the record of what we considered.
-
----
-
-**Why it matters.** The orchestrator is now an LLM agent that must be read-only (by tool surface), hold a session across a multi-hour phase, pause-and-resume at `ask_human` flags with the process exiting in between, and leave an inspectable transcript per the augmentation principle.
-
-**Current belief.** The **Claude Agent SDK** fits all four requirements (verified against official docs 2026-06-11): tool allowlisting gives read-only by construction (`tools: []` hides all built-ins; custom tools via `tool()` + `createSdkMcpServer()`, auto-approved with `allowedTools: ["mcp__orchestrator__*"]`); sessions persist to JSONL on disk in the standard `~/.claude/projects/` location, so the orchestrator's session stays manually resumable with `claude --resume` (the augmentation argument); and the `canUseTool` callback lets the harness intercept `ask_human`, persist state, exit cleanly, and resume the session later — on resume the pending tool call is re-prompted and answered then (note: the TS SDK has no literal "defer" decision; the pattern is intercept → persist → deny/exit → resume → answer, and its exact round-trip semantics are the first thing the spike verifies). The alternative substrates — `claude -p` with MCP-exposed tools, a hand-rolled API loop, or harness frameworks like pi (`references/pi-mono/`) — either complicate the pause-and-resume mechanics or forfeit the free transcript, and none escapes the subscription credit metering below. SDK source vendored for API study at `references/claude-agent-sdk-typescript/` (proprietary — dependency, not copy source; see `references/README.md`).
-
-**Economics (verified 2026-06-11 against the official support article).** From **2026-06-15**, Agent SDK *and* `claude -p` usage on subscription plans draws from a separate monthly credit pool — Pro $20 / Max 5x $100 / Max 20x $200 — consumed at standard API rates, no rollover, no automatic overflow. Interactive sessions are unaffected. Every duet run (orchestrator + claude worker) is metered this way regardless of framework choice; raw-API alternatives would forfeit the included credit entirely. Consequences: `maxBudgetUsd` per invocation from day one, `total_cost_usd` tracked per run as a gate-time soft signal, and "what does one full run cost" is an explicit spike measurement.
-
-**Operational facts to verify at spike time:**
-- Agent SDK / `claude -p` usage moves to a separate subscription credit pool on **2026-06-15** — confirm the cost model before committing.
-- The `defer` → exit → resume → answer round-trip mechanics, end to end.
-- Phone-reachable gates exist as a later layer (Claude Code Remote Control + PushNotification, v2.1.110+); the MVP queue-and-`duet continue --answer` path needs none of it.
-
-**What would change the answer.** The credit change making SDK-based orchestration uneconomical for multi-hour phases, or `defer`/resume proving unreliable in the spike.
-
-## ~~Q12. Where does duet's snippet library live, and how do edits flow back to tabtype?~~
-
-**Answered (2026-06-11, with Slice 1).** As believed: duet owns `snippets.toml` at the repo root, mirroring tabtype's schema, seeded from the user's **live** tabtype config (33 snippets) plus the documented `ceo-summary`. `list_snippets` reads it (`src/snippets.ts`); approved `propose_snippet_edit` diffs apply to this copy; porting back to tabtype stays a manual human step — no automatic sync. Re-seed by rerunning the conversion against `~/.config/tabtype/config.toml` if the libraries drift apart in the wrong direction.
-
-**Why it matters.** The orchestrator needs `list_snippets()` to see the library and `propose_snippet_edit` to evolve it — so the library must be machine-readable files duet owns, while the human's manual workflow keeps using the tabtype config. Two copies of the same protocol now exist. This also covers the `ceo-summary` snippet, which is documented in `docs/workflow-model.md` ahead of existing in tabtype at all.
-
-**Current belief.** Duet keeps its own snippet files (likely one file per snippet or a single TOML mirroring tabtype's schema), seeded from the tabtype config. Approved `propose_snippet_edit` diffs apply to duet's copy; porting them back to tabtype stays a manual human step (the user is editor-in-chief of their daily-driver prompts). No automatic sync — augmentation, not lock-in.
-
-**What would change the answer.** The copies drifting enough in practice to cause confusion — which would argue for tabtype's config becoming the single source duet reads directly.
+**Duet owns `snippets.toml` at the repo root (2026-06-11),** mirroring tabtype's schema, seeded from the live tabtype config plus `ceo-summary`. Approved `propose_snippet_edit` diffs apply here; porting back to tabtype is a manual human step — no automatic sync. Guarded by `tests/snippets.test.ts`; re-seed from `~/.config/tabtype/config.toml` if the copies drift the wrong way.
 
 ## Q13. Will the triage rules over-flag or under-flag?
 
@@ -315,71 +64,44 @@ The original analysis is preserved below as the record of what we considered.
 
 **Current belief.** Modern models follow concrete triage instructions with examples well, and the failure mode is asymmetric by design — when in doubt the instructions say flag, because a spurious flag costs minutes while an absorbed product decision costs trust. Expect over-flagging first; tighten wording from observed false positives.
 
-**What would change the answer.** Slice 1+ runs. Every flag and every bounce gets reviewed afterward via the notes file: should this have been flagged? Should that have been? Recurring misses become instruction edits or, if instructions can't fix it, a harness-level rule.
+**What would change the answer.** More runs. Every flag and every bounce gets reviewed afterward via the notes file: should this have been flagged? Should that have been? Recurring misses become instruction edits or, if instructions can't fix it, a harness-level rule.
 
-> **First real evidence (2026-06-11, planlab `20260611-1542-aeca`):** triage held through a full framing-to-ship arc — product calls were held for gates (group labels, tab placement surfaced in the ship packet, not as mid-loop interrupts), environment limits were reported honestly (eslint-can't-run, no-browser-smoke), and no spurious flags interrupted the AFK phase. The run's misbehavior was elsewhere (template re-sending — fixed as the template-economy rails). Verdict still open pending more runs; review the run's `notes.md` before tuning.
+> **First real evidence (2026-06-11, planlab `20260611-1542-aeca`):** triage held through a full framing-to-ship arc — product calls were held for gates (group labels, tab placement surfaced in the ship packet, not as mid-loop interrupts), environment limits were reported honestly (eslint-can't-run, no-browser-smoke), and no spurious flags interrupted the AFK phase. The run's misbehavior was elsewhere (template re-sending — fixed as the template-economy rails). Verdict still open pending more runs; review each run's `notes.md` before tuning.
 
 ## ~~Q14. What is the new Slice 1?~~
 
-**Answered (2026-06-11, shipped).** Built larger than scoped — the Q11 spike de-risked the substrate, so Slice 1 became the **complete attended PLANNING phase** ("Slice 1++"): `duet new --spec <draft> [--framing <file>]` runs SPEC loop → Commit-spec gate → PLAN loop → Plan-approval gate, with `duet continue --approve/--reject/--answer`, `duet status`, `duet runs`. The harness is the XState statechart (`src/harness/machine.ts`, gates and flag-waits actor-less + quiescent-tagged; the gate-events-are-structural-no-ops assertions began as `machine.smoke.ts`, now `tests/machine.test.ts`); the driver (`src/harness/driver.ts`) hosts the orchestrator tools (six at the time; now seven, extracted to `src/harness/tools.ts`) with the cooperative pause.
+**The complete attended PLANNING phase, shipped 2026-06-11** ("Slice 1++" — the Q11 spike de-risked the substrate, so the slice grew past its scoping). Verified by a live end-to-end run on a scratch repo (`20260611-1048-4ec2`): SPEC loop 2 rounds (the reviewer read the real `.duet/runs/` layout duet had just written and caught the draft spec's fictional data model), gate, PLAN loop 2 rounds (orchestrator chose `start-plan` over `tdd-plan` from the framing, caught the implementer dropping a commit confirmation, ran a tight `-again` round), gate, done. Three product questions correctly **held for the gate** instead of interrupting mid-loop. Cost: $1.45 orchestrator + $2.42 claude workers + ~1.2M codex input tokens.
 
-Verified by a live end-to-end run on a scratch repo (run `20260611-1048-4ec2`): SPEC loop 2 rounds (the reviewer read the *real* `.duet/runs/` layout duet had just written, found the draft spec's data model fictional, and the loop rewrote it against reality), gate, PLAN loop 2 rounds (orchestrator chose `start-plan` over `tdd-plan` from the framing, caught the implementer silently dropping a commit confirmation, ran a tight `-again` round), gate, done. Both `-again` variants used correctly; judgment exit well under the backstop caps; three product questions correctly **held for the gate** instead of interrupting mid-loop; two `write_note` friction observations of exactly the kind Q13 needs. Cost: $1.45 orchestrator + $2.42 claude workers + ~1.2M codex input tokens.
+> **Second verification (2026-06-11, the first real-feature run).** planlab `20260611-1542-aeca` drove framing-only entry through the Ship gate on a real feature-plus-refactor: FRAME (onboard, think-holistic ×2, compare-notes) → Direction gate, where the human **inverted the scope** as gate feedback and the orchestrator re-analyzed under it → SPEC (2 rounds) → PLAN (2 rounds) → AFK IMPL with a midpoint checkpoint (two course corrections folded into the remaining slices), 3 review rounds to reviewer sign-off, a deliberate descope decision surfaced honestly, and a full ship packet led by the CEO summary. Cost of the arc: ~$8 orchestrator + ~$85 claude workers + ~82M codex input tokens. The frame/spec/plan/impl machinery is live-verified on real work; docs/pr/open await their first crossing. Operational findings folded back the same day: template economy rails, the detached phase driver, `duet logs`/`takeover`, and "silent worker turns read as hangs" (heartbeats now; a streaming sink remains the eventual fix).
 
-Known simplifications, deliberate: no `compact-for-plan` between phases (worker context is manageable at planning scale; compaction lands with the AFK phase), no `--framing`-entry front half (onboard/frame/synthesize), serial runs not enforced. Next slice: the AFK IMPLEMENTATION phase on this machinery.
+## ~~Q15. XState or a hand-rolled transition table?~~
 
-> **Second verification (2026-06-11, the first real-feature run).** planlab `20260611-1542-aeca` drove framing-only entry through the Ship gate on a real feature-plus-refactor: FRAME (onboard, think-holistic ×2, compare-notes) → Direction gate, where the human **inverted the scope** as gate feedback and the orchestrator re-analyzed under it → SPEC (2 rounds) → PLAN (2 rounds) → AFK IMPL with a midpoint checkpoint (two course corrections folded into the remaining slices), 3 review rounds to reviewer sign-off, a deliberate descope decision surfaced honestly, and a full ship packet led by the CEO summary. Cost of the arc: ~$8 orchestrator + ~$85 claude workers + ~82M codex input tokens. The frame/spec/plan/impl machinery is live-verified on real work; docs/pr/open await their first crossing. Operational findings folded back the same day: template economy (full snippets once per phase — system-prompt principle + warn-once-then-allow rail), the detached phase driver (`duet new`/`continue` return immediately), `duet logs`/`takeover`, and "silent worker turns read as hangs" (worker output is non-streaming; a future streaming sink is the fix).
-
-The original analysis is preserved below as the record of what we considered.
-
----
-
-**Why it matters.** The old Slice 1 (Q8) validated dumb routing: subprocess management, schema enforcement, string-match exception detection. The pivot's risky surface is different: the orchestrator's tool loop, per-turn prompt adaptation quality, gate interception, and `defer`-based pause/resume.
-
-**Current belief.** Same entry point, new substance: **the orchestrator-driven SPEC review loop.** `duet new --spec <draft-path>` starts an orchestrator session whose tools are wired for two workers; it runs `review-spec` / `update-spec` rounds with judgment-based loop exit, flags via `ask_human` when warranted, and lands on the Commit-spec gate. Validates, in one slice: the harness statechart with one phase + one gate, all six orchestrator tools, per-turn adaptation logging, judgment loop-exit against the backstop cap, and the queued-flag round-trip. Deliberately excluded: PLANNING's front half (onboard/frame/synthesize), IMPLEMENTATION, FINAL REVIEW, notifications, snippet-edit proposals (the tool can exist and queue; the end-of-run gate UI can be `duet status` output).
-
-**What would change the answer.** The spike revealing the orchestrator substrate (Q11) is the actual risk — in which case shrink further to a single-tool spike: orchestrator + `send_prompt` + one worker, no loop.
-
-## Q15. XState or a hand-rolled transition table for the harness statechart?
-
-> **Decided 2026-06-11: XState** (v5, added as a dependency at project init — the user's call at implementation kickoff). The caveats below remain the implementation guardrails: persist snapshots **only at gate states** (in-flight invoked actors restart blind on restore — the JSONL transcripts are the real resume state), keep the human-readable `.duet/runs/<run_id>/state.json` hint file alongside the machine snapshot, and treat `@statelyai/agent` as read-only inspiration (dormant, and architecturally inverse to this design).
->
-> **Implemented with Slice 1** (`src/harness/machine.ts`): phases invoke a promise-actor phase driver; gates *and* in-phase flag-waits are actor-less states tagged `quiescent`; snapshots persist only there, so no in-flight invoke is ever restored. The hard guarantee is asserted offline (gate events at the wrong state are structural no-ops; persist/restore round-trips) — originally `machine.smoke.ts`, now `tests/machine.test.ts`, which also pins the quiescent tag set exactly.
-
-**Why it matters.** The skeleton's one hard guarantee — gates transition only on human events; agent events at a gate are no-ops — must be structural, not conventional.
-
-**Current belief.** The *semantics* are settled (XState v5's model is the reference: phases as states invoking a long-running actor, gates as actor-less states, persistence only at quiescent gate states). The *library* is genuinely optional for ~3 phases and ~7 gates: a ~100-line transition table (`{state, event} → {nextState, guard?}`, unhandled events logged as no-ops) gives the same guarantee with a human-readable JSON state file, which fits the state-file-is-a-hint principle better than XState's logic-version-coupled snapshots. Verified caveats if XState is chosen anyway: in-flight invoked actors restart blind on snapshot restore (the real resume state is the JSONL transcripts regardless), and `@statelyai/agent` is dormant and architecturally inverse to this design (LLM picks machine events; we want the machine constraining the LLM) — inspiration only. Decide at implementation time; leaning hand-rolled.
-
-**What would change the answer.** Phases gaining genuinely concurrent regions, loop nesting deepening past two levels, or wanting the Stately visualizer as living documentation.
+**XState v5 (2026-06-11).** Gates and flag-waits are actor-less `quiescent`-tagged states; snapshots persist only there, so no in-flight invoke is ever restored; states are built from the phase table (`src/phases.ts`); `tests/machine.test.ts` pins the guarantees and the exact quiescent tag set. Usage discipline: `docs/engineering.md` §"XState usage".
 
 ## Q16. Does the worker structured-output schema survive, and in what form?
 
 **Why it matters.** `schemas/agent-response.json` was the dumb router's protocol contract — `needs_human` and `disagree` were how judgment-free code detected exceptions. The orchestrator reads prose, so the schema is no longer load-bearing. But a minimal envelope might still make routing mechanically cleaner than scraping final messages.
 
-**Current belief.** Demote, don't delete. Try Slice 1 both ways: workers schema-free (orchestrator reads the raw final message) vs. a minimal `{response_text}` envelope. Drop `needs_human`/`disagree` from the worker schema either way — exception detection is the orchestrator's job now. Schema edits, if any survive, must preserve OpenAI-strict compliance.
+**Current belief.** Demote, don't delete. Workers currently run schema-free and the orchestrator reads their final messages — and the verified runs (Q14) routed fine on prose. A minimal `{response_text}` envelope earns its way back only if routing breaks on chatty final messages. Any surviving schema must preserve OpenAI-strict compliance (Q9 residue). Schema-on-resume is verified working on the pinned codex CLI (openai/codex#23123, live-tested) — availability no longer constrains the decision.
 
-> **Resolved 2026-06-11:** the upstream `codex exec resume` + `--output-schema` concern (openai/codex#14343) is fixed — closed as duplicate of #22998, fixed by PR #23123 (merged 2026-05-18), and **live-verified on the locally installed codex-cli 0.133.0** with a two-turn schema-enforced resume smoke test (context preserved, schema enforced on the resumed turn, same `thread_id` re-emitted). Schema-on-resume is available if Q16 decides to keep an envelope; it no longer constrains the decision. Codex SDK source + docs: `references/codex/`.
-
-**What would change the answer.** Slice 1 showing the orchestrator reliably extracts what it needs from prose (drop the schema), or showing routing breaks on chatty final messages (keep the envelope).
+**What would change the answer.** Dogfooding evidence either way: the orchestrator reliably extracting what it needs from prose (delete the schema and `schemas/agent-response.json` with it), or routing failures traceable to unstructured worker output (introduce the minimal envelope).
 
 ## Q17. How does the codex provider serve the orchestrator role?
 
 **Why it matters.** Role–provider decoupling (2026-06-11) makes orchestrator-on-codex a legal configuration, but the orchestrator's capability contract — custom harness tools, read-only enforcement, pause/resume at a tool call — is only implemented by the claude provider in v1. This question records the designed path so the decoupling isn't an empty promise.
 
-**Current belief.** The bridge is a **local MCP server**: the harness exposes `send_prompt` / `ask_human` / `advance_phase` / `propose_snippet_edit` / `write_note` as MCP tools, and the codex orchestrator session is launched with that server in its MCP config (`-c`-injected per invocation, not written into the user's `~/.codex/config.toml`) plus `-s read-only`. Two things are unverified and gate the feature:
+**Current belief.** The bridge is a **local MCP server**: the harness exposes the orchestrator tools as MCP tools, and the codex orchestrator session is launched with that server `-c`-injected per invocation (never written into the user's `~/.codex/config.toml`) plus `-s read-only`. Two things are unverified and gate the feature:
 
-1. **Pause/resume at a tool call.** The claude provider pauses via `canUseTool` interception and re-prompts the pending call on resume. Codex has no equivalent callback — the MCP tool handler would have to block, return a sentinel, or fail the turn, and what `codex exec resume` does with a turn that ended mid-tool-call is unknown. This is the hard part.
+1. **Pause/resume at a tool call.** Codex has no `canUseTool`-style callback — the MCP tool handler would have to block, return a sentinel, or fail the turn, and what `codex exec resume` does with a turn that ended mid-tool-call is unknown. This is the hard part (the claude answer — the cooperative pause — may transfer, but is unproven there).
 2. **Tool-call faithfulness under codex's MCP client** — schema adherence, parallel-call behavior, retry semantics.
 
 **What would change the answer.** Actually wanting the configuration (the user today runs orchestrator-on-claude). Until then this is deliberately unbuilt — the provider interface allows it; nobody pays for it. If/when wanted: a half-day spike mirroring Q11's, against the same harness tools.
 
 ## ~~Q18. How does worker context get compacted mid-run?~~
 
-**Answered (2026-06-11, by live probes and source reading — settled before the AFK phase was built on it).** Per provider, asymmetrically:
+**Per provider, asymmetrically (2026-06-11, by live probes and source reading).** claude workers: a prompt whose body is literally `/compact <instructions>` compacts the session natively in place (same id, instructions honored; the provider substitutes a synthetic confirmation for the compaction turn's empty result — `src/providers/claude.ts`). codex workers: built-in auto-compaction at ~90% of the context window, shared by every frontend — never send codex a compaction command, never touch `~/.codex/config.toml` (its context-window overrides are the one known way to break exec-mode auto-compaction). This is also why the plan must be a file in the repo: post-compaction turns re-anchor on the plan file and committed spec.
 
-- **claude workers: deliberate compaction via a literal `/compact` prompt.** Sending `/compact <instructions>` as the prompt to `claude -p --resume <id>` triggers native compaction headlessly — live-verified on the installed CLI, **including via stdin** (the exact path `src/providers/claude.ts` uses): the CLI emits a `compact_boundary` system event, the session id is unchanged, and a held fact survived compaction per the instructions while filler was dropped (~$0.02/compaction at Haiku). A compaction turn returns an *empty* result envelope; the provider substitutes a synthetic "(session compacted …)" text so the orchestrator isn't handed a blank response. The orchestrator times compaction (impl-phase entry prompt) and sends the adapted `compact-for-review` body after the `/compact` token, mirroring the manual workflow exactly.
-- **codex workers: native auto-compaction only — never send a compaction command.** `/compact` is TUI-only; in `codex exec` it lands as a literal user message (verified in the rollout transcript). But auto-compaction lives in `codex-rs/core`'s session turn loop (pre-sampling check + tool-call loop boundaries), shared by every frontend including `exec` and the SDK, with a default threshold of **90% of the model's context window** (`codex-rs/protocol/src/openai_models.rs`, pinned 0.133.0 source at `references/codex/`). The known failure (openai/codex#16033) only reproduces when `model_context_window` / `model_auto_compact_token_limit` are explicitly overridden in `~/.codex/config.toml`; the user's config has neither, and duet never writes that file (augmentation principle).
-
-**Residual:** deliberate compaction for a codex-bound *implementer* would need the session-rotation pattern (old session writes the summary, new session seeded with it) — same status as Q17: designed-but-unbuilt until someone actually runs that binding. And the codex auto-compaction evidence is source + issue-thread, not a live 230k-token run; if a reviewer ever crashes at the context ceiling, check those two config keys first.
+**Residual:** deliberate compaction for a codex-bound *implementer* would need the session-rotation pattern (old session writes the summary, new session seeded with it) — unbuilt, same status as Q17. And the codex evidence is source + issue-thread, not a live 230k-token run; if a reviewer ever crashes at the context ceiling, check the two config keys above first.
 
 ## Q19. Does duet need a run-level budget model?
 
@@ -397,16 +119,6 @@ The original analysis is preserved below as the record of what we considered.
 
 **What would change the answer.** Overnight runs reviewed each morning: how often did an encoded recommendation get reversed, and at what rework cost? Did the escape hatch fire — or fail to fire when it should have? Recurring morning reversals at one particular gate argue for attending that gate by default; a wasted overnight arc argues for tightening the throwaway test.
 
-## Suggested order of attack
+## What remains
 
-Q1–Q10 resolved 2026-05-26 (Q7/Q8/Q10 carry 2026-06-11 amendment/reversal notes). The pivot's questions:
-
-1. **Q11 (orchestrator substrate)** — a half-day spike: Agent SDK, read-only tool surface, one `send_prompt`, one `ask_human` with `defer` → exit → resume. Everything else depends on this.
-2. **Q14 (new Slice 1)** — the orchestrator-driven SPEC loop, once Q11's spike passes.
-3. **Q15 (statechart implementation)** — decided while building Slice 1's harness.
-4. **Q16 (worker schema)** — tested empirically inside Slice 1.
-5. **Q12 (snippet library home)** — settled when wiring `list_snippets()`; the convention can start simple (one TOML seeded from tabtype).
-6. **Q13 (triage precision)** — answered by running Slice 1+ and reviewing flags via the notes file, same discipline Q10 originally prescribed.
-7. **Q17 (codex-as-orchestrator)** — deferred until the configuration is actually wanted; the role-bindings design keeps the door open at zero cost.
-
-When runs start producing notes, further questions land here — Q19 and Q20 are the first two, both born from the 2026-06-12 reflection on the first real run.
+Q13 (triage precision), Q16 (worker schema), Q19 (run-level budget), and Q20 (pre-authorization) all await evidence from more runs — review each run's `notes.md` against them. Q17 (codex-as-orchestrator) waits for someone to actually want the configuration. New questions land here when runs produce them.

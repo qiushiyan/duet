@@ -35,7 +35,7 @@ Invariants that bite if forgotten (full reasoning: `docs/engineering.md`, `docs/
 - `README.md` — orientation + verified-vs-not status.
 - `docs/automation-design.md` — THE design: roles, layers, phases/gates, triage rules, branch policy, lifecycle, what-not-to-build.
 - `docs/engineering.md` — the codebase's mental model: module map, seams, patterns, XState usage, testing strategy, condensed lessons. **Read before moving code.**
-- `docs/open-questions.md` — why each decision is what it is; strike-through = resolved, history intentional. Open: Q13 (triage precision), Q16 (worker schema), Q19 (run-level budget), Q20 (pre-auth precision) — all await more runs.
+- `docs/open-questions.md` — why each decision is what it is; strike-through = resolved, compressed to verdict + pointer (full deliberations in git history; Q numbers are stable — never renumber). Open: Q13 (triage precision), Q16 (worker schema), Q19 (run-level budget), Q20 (pre-auth precision) — all await more runs.
 - `docs/prompting-and-tool-design.md` — **consult whenever touching any agent prompt, tool description, tool result, or error message**; carries the 5 binding conventions + house patterns.
 - `docs/workflow-model.md` / `docs/observed-pattern.md` — the abstracted protocol / the evidence sessions.
 - `snippets.toml` — the orchestrator's snippet library (tabtype schema; guarded by `tests/snippets.test.ts`; porting edits back to tabtype is manual, Q12).
