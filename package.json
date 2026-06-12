@@ -13,6 +13,7 @@
     "@openai/codex-sdk": "^0.133.0",
     "commander": "^15.0.0",
     "execa": "^9.6.1",
+    "picocolors": "^1.1.1",
     "smol-toml": "^1.6.1",
     "xstate": "^5.32.0",
     "zod": "^4.4.3"

@@ -1,21 +1,35 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { execa } from 'execa';
+import { ensureDuetDir } from './run-state.ts';
 
 /**
  * The bare `duet new` entry: no --spec, no --framing — open the user's
- * editor on a template framing file in the project, and start the run from
- * whatever they save. The file stays in the repo afterwards (it's the run's
- * input artifact, inspectable like everything else duet touches).
+ * editor on a draft framing file under .duet/, and start the run from
+ * whatever they save. On run creation the draft is archived into the run
+ * dir as framing.md (duet runtime artifacts live under .duet, never at the
+ * repo root); an aborted edit leaves the draft in place for next time.
  */
 
-export const DEFAULT_FRAMING_FILE = 'duet-framing.md';
+export const DEFAULT_FRAMING_FILE = join('.duet', 'framing-draft.md');
 
-export const FRAMING_TEMPLATE = `# Problem
+export const FRAMING_TEMPLATE = `---
+# Machine-parsed options (fixed values the harness acts on; judgment-weighed
+# detail belongs in the prose below). Uncomment to use.
+# gates_at: frame, spec   — phases whose gates you attend; the rest are
+#                           pre-authorized and auto-cross with packets
+#                           recorded. Preset: overnight = frame,spec.
+#                           pr is always attended. Default: every gate.
+# spec: path/to/draft.md  — enter at the spec review loop (skips FRAME).
+---
+
+# Problem
 <what to build or change, why, and the scope boundaries — what's explicitly out>
 
 # Onboarding
 <skill to invoke (e.g. /onboarding <topic>) or files each worker should read first>
+<park any assets the framing references (screenshots, mocks) under .duet/ —
+ paths like ~/Desktop rot out from under old runs>
 
 # Conventions
 - Specs live at: <e.g. docs/specs/YYYY-MM-DD-<slug>.md>
@@ -56,6 +70,7 @@ function resolveEditor(): { command: string; args: string[] } {
  * template means "don't start the run".
  */
 export async function editFramingForRun(cwd: string): Promise<string> {
+  ensureDuetDir(cwd);
   const path = join(cwd, DEFAULT_FRAMING_FILE);
   if (!existsSync(path)) writeFileSync(path, FRAMING_TEMPLATE);
 

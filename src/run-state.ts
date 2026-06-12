@@ -14,6 +14,8 @@ import type { RoleBindings } from './config.ts';
  */
 
 export type PhaseName = 'frame' | 'spec' | 'plan' | 'impl' | 'docs' | 'pr' | 'open';
+/** Phases that end at a human gate (`open` advances straight to done). */
+export type GatePhase = Exclude<PhaseName, 'open'>;
 export type Voice = 'orchestrator' | 'implementer' | 'reviewer';
 
 export interface RunState {
@@ -32,6 +34,16 @@ export interface RunState {
   /** The run's working branch (captured at creation; updated by create_branch). */
   branch?: string;
   bindings: RoleBindings;
+  /**
+   * Phases whose gates the human attends (gates_at — docs/automation-design.md
+   * §"Gate pre-authorization"). Absent = every gate attended (the default and
+   * the pre-feature behavior). Gates of phases not listed are pre-authorized:
+   * the harness records the packet, notifies, and auto-approves. `pr` is
+   * always present — the Open-PR gate cannot be pre-authorized.
+   */
+  gatesAt?: GatePhase[];
+  /** Gates auto-crossed under pre-authorization, for the morning review. */
+  autoApprovals?: Array<{ gate: string; at: string }>;
 
   /** Mirror of the machine's state value, for humans and `duet status`. */
   machineState?: string;
@@ -65,6 +77,30 @@ export interface RunState {
   lastActivity?: string;
 }
 
+/**
+ * Whether a phase's exit gate is attended by the human (vs pre-authorized at
+ * run start). Absent gatesAt means every gate is attended; the Open-PR gate
+ * is attended unconditionally.
+ */
+export function gateAttended(state: RunState, phase: GatePhase): boolean {
+  if (phase === 'pr') return true;
+  return state.gatesAt === undefined || state.gatesAt.includes(phase);
+}
+
+/**
+ * Create `.duet/` with a self-ignoring `.gitignore` (`*`) so duet's runtime
+ * artifacts never show up in the project's git status. The user's own
+ * .gitignore is never touched (augmentation principle); committing a run
+ * record deliberately stays possible with `git add -f`.
+ */
+export function ensureDuetDir(cwd: string): string {
+  const dir = join(cwd, '.duet');
+  mkdirSync(dir, { recursive: true });
+  const ignore = join(dir, '.gitignore');
+  if (!existsSync(ignore)) writeFileSync(ignore, '*\n');
+  return dir;
+}
+
 export function runsRoot(cwd: string): string {
   return join(cwd, '.duet', 'runs');
 }
@@ -79,9 +115,13 @@ const SNAPSHOT_FILE = 'machine.json';
 export function createRun(opts: {
   cwd: string;
   specPath?: string;
+  /** The framing body the orchestrator sees (frontmatter already stripped). */
   framing?: string;
+  /** The verbatim file the human wrote, for the run-dir archive. */
+  framingRaw?: string;
   branch?: string;
   bindings: RoleBindings;
+  gatesAt?: GatePhase[];
 }): RunState {
   const now = new Date();
   const stamp = now.toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
@@ -94,6 +134,7 @@ export function createRun(opts: {
     ...(opts.framing ? { framing: opts.framing } : {}),
     ...(opts.branch ? { branch: opts.branch } : {}),
     bindings: opts.bindings,
+    ...(opts.gatesAt ? { gatesAt: opts.gatesAt } : {}),
     workerSessions: {},
     phaseStarted: {},
     rounds: {},
@@ -101,9 +142,14 @@ export function createRun(opts: {
     costs: { orchestratorUsd: 0, claudeWorkersUsd: 0, codexTokens: { input: 0, output: 0 } },
     snippetProposals: [],
   };
+  ensureDuetDir(opts.cwd);
   const dir = runDirOf(opts.cwd, runId);
   mkdirSync(dir, { recursive: true });
   saveRunState(state);
+  // The run dir is self-contained: the framing is archived next to the logs
+  // (state.json also embeds it, but the file is the human-readable artifact).
+  const archive = opts.framingRaw ?? opts.framing;
+  if (archive) writeFileSync(join(dir, 'framing.md'), archive);
   appendNote(state, 'human', `run created (${opts.specPath ? `spec: ${opts.specPath}` : 'framing-only entry'})`);
   return state;
 }

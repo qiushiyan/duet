@@ -381,6 +381,22 @@ The original analysis is preserved below as the record of what we considered.
 
 **Residual:** deliberate compaction for a codex-bound *implementer* would need the session-rotation pattern (old session writes the summary, new session seeded with it) — same status as Q17: designed-but-unbuilt until someone actually runs that binding. And the codex auto-compaction evidence is source + issue-thread, not a live 230k-token run; if a reviewer ever crashes at the context ceiling, check those two config keys first.
 
+## Q19. Does duet need a run-level budget model?
+
+**Why it matters.** Worker budget caps are per invocation (`WORKER_MAX_BUDGET_USD` in `src/harness/driver.ts`, passed as `--max-budget-usd` on each `claude -p` call) — a fresh turn carries a fresh ceiling, and nothing enforces or communicates a total for the run beyond the additive `costs` display. The first real run (planlab `20260611-1542-aeca`) showed the rail leaking into product scope: the implementer descoped slice 5's modal extractions citing "~$7 of budget left" mid-turn (implementer.log:1623) and explicitly offered a fresh-turn alternative that wasn't taken; the orchestrator collapsed a `respond-review` analysis gate "given your session budget"; and the CEO summary rationalized the descope to the human as a thinning-budget tradeoff. A scope decision the human owns was shaped by an infrastructure parameter nobody in the system understood.
+
+**Current belief.** The 2026-06-12 fix is transparency, not a model: `send_prompt`'s description and the impl entry prompt now state that budget is per-turn and that a worker running low means splitting the work across turns, never shrinking scope. That may be enough — the slice-5 descope also had a legitimate risk argument (browser-unverifiable modal work), so the rail wasn't the sole driver. If runs after the fix still show budget-shaped scope decisions, the next step is an explicit run-level budget the orchestrator can reason about; `budget_usd` is pre-approved as a framing-frontmatter key under the boundary rule (fixed value, harness-enforced).
+
+**What would change the answer.** Notes-file evidence from post-fix runs: any further scope decision that cites budget, or a run blowing materially past what the human would have authorized in advance.
+
+## Q20. Does gate pre-authorization hold up — do encoded recommendations survive the morning review?
+
+**Why it matters.** `gates_at` (2026-06-12, `docs/automation-design.md` §"Gate pre-authorization") trades steering for sleep: pre-authorized gates auto-cross with packets recorded, and product calls that would have waited for a live gate are encoded as recommendations that win by default overnight. The feature's safety rests on the gate packets being auditable after the fact and on the throwaway-test escape hatch (`ask_human` when proceeding unanswered would make most downstream work throwaway) firing when it should. The first run's Direction gate is the counter-evidence on file: the human inverted Goal 2's scope there for the price of one re-analysis turn — auto-crossed, that inversion would have surfaced a full arc later, at ~$90 of wrong-subject work.
+
+**Current belief.** The right default for runs the human consciously judges low-ambiguity — the per-run choice is the point, and the recorded packets plus the status while-you-were-away section give the morning review enough to catch drift. Reject-at-the-next-attended-gate plus run abandonment cover the deep-error case without re-open-an-earlier-phase machinery.
+
+**What would change the answer.** Overnight runs reviewed each morning: how often did an encoded recommendation get reversed, and at what rework cost? Did the escape hatch fire — or fail to fire when it should have? Recurring morning reversals at one particular gate argue for attending that gate by default; a wasted overnight arc argues for tightening the throwaway test.
+
 ## Suggested order of attack
 
 Q1–Q10 resolved 2026-05-26 (Q7/Q8/Q10 carry 2026-06-11 amendment/reversal notes). The pivot's questions:
@@ -393,4 +409,4 @@ Q1–Q10 resolved 2026-05-26 (Q7/Q8/Q10 carry 2026-06-11 amendment/reversal note
 6. **Q13 (triage precision)** — answered by running Slice 1+ and reviewing flags via the notes file, same discipline Q10 originally prescribed.
 7. **Q17 (codex-as-orchestrator)** — deferred until the configuration is actually wanted; the role-bindings design keeps the door open at zero cost.
 
-When runs start producing notes, further questions (Q19+) land here.
+When runs start producing notes, further questions land here — Q19 and Q20 are the first two, both born from the 2026-06-12 reflection on the first real run.

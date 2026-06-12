@@ -1,5 +1,6 @@
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { execa } from 'execa';
+import { ROLE_GLYPH, ROLE_TMUX_COLOR } from './colorize.ts';
 import { runDirOf } from './run-state.ts';
 import type { RunState, Voice } from './run-state.ts';
 
@@ -21,9 +22,18 @@ async function tmux(...args: string[]): Promise<string> {
   return stdout.trim();
 }
 
+function shq(s: string): string {
+  return `'${s.replaceAll("'", String.raw`'\''`)}'`;
+}
+
+/**
+ * tail the (plain-text) voice log through the view-time colorizer — the log
+ * files stay clean artifacts; color exists only in the pane.
+ */
 function tailCommand(state: RunState, voice: Voice): string {
   const path = join(runDirOf(state.cwd, state.runId), `${voice}.log`);
-  return `tail -n +1 -F '${path.replaceAll("'", String.raw`'\''`)}'`;
+  const cli = resolve(process.argv[1] ?? 'src/cli.ts');
+  return `tail -n +1 -F ${shq(path)} | ${shq(process.execPath)} ${shq(cli)} _colorize ${voice}`;
 }
 
 /**
@@ -50,9 +60,16 @@ async function layoutPanes(state: RunState, orchestratorPane: string): Promise<v
   const implementer = await tmux('split-window', '-d', '-h', '-l', '50%', '-t', orchestratorPane, '-P', '-F', '#{pane_id}', tailCommand(state, 'implementer'));
   const reviewer = await tmux('split-window', '-d', '-v', '-l', '40%', '-t', orchestratorPane, '-P', '-F', '#{pane_id}', tailCommand(state, 'reviewer'));
   await tmux('set-option', '-w', '-t', orchestratorPane, 'pane-border-status', 'top');
-  await tmux('select-pane', '-t', orchestratorPane, '-T', 'orchestrator');
-  await tmux('select-pane', '-t', reviewer, '-T', 'reviewer');
-  await tmux('select-pane', '-t', implementer, '-T', 'implementer');
+  await tmux('select-pane', '-t', orchestratorPane, '-T', `${ROLE_GLYPH.orchestrator} orchestrator`);
+  await tmux('select-pane', '-t', reviewer, '-T', `${ROLE_GLYPH.reviewer} reviewer`);
+  await tmux('select-pane', '-t', implementer, '-T', `${ROLE_GLYPH.implementer} implementer`);
+  // Color each border title by role, keyed on the title's leading glyph —
+  // tmux has no per-pane border-style, but the border format can branch.
+  const fmt =
+    ` #{?#{m:${ROLE_GLYPH.orchestrator}*,#{pane_title}},#[fg=${ROLE_TMUX_COLOR.orchestrator}],` +
+    `#{?#{m:${ROLE_GLYPH.implementer}*,#{pane_title}},#[fg=${ROLE_TMUX_COLOR.implementer}],` +
+    `#[fg=${ROLE_TMUX_COLOR.reviewer}]}}#{pane_title}#[default] `;
+  await tmux('set-option', '-w', '-t', orchestratorPane, 'pane-border-format', fmt);
 }
 
 export async function openTmuxView(state: RunState): Promise<void> {

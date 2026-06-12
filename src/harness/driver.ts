@@ -1,6 +1,7 @@
 import { createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { execa } from 'execa';
+import pc from 'picocolors';
 import { z } from 'zod';
 import { DEFAULT_CLAUDE_MODEL } from '../config.ts';
 import { ClaudeWorker } from '../providers/claude.ts';
@@ -10,6 +11,7 @@ import { getSnippet, renderSnippetLibrary } from '../snippets.ts';
 import {
   appendNote,
   appendVoiceLog,
+  gateAttended,
   loadRunState,
   saveRunState,
 } from '../run-state.ts';
@@ -149,23 +151,22 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
   const isBaseTemplate = (tag: string): boolean => tag !== 'custom' && !tag.endsWith('-again');
 
   // Colored [tag] prefixes on plain stdout — the no-tmux sink of the same
-  // lines the voice logs carry (the concurrently/turbo idiom). TTY-only so
-  // piped output stays clean.
-  const TAG_COLORS: Record<string, string> = {
-    '[orchestrator]': '\x1b[36m', // cyan
-    '[send_prompt]': '\x1b[32m', // green
-    '[ask_human]': '\x1b[33m', // yellow
-    '[advance_phase]': '\x1b[33m',
-    '[create_branch]': '\x1b[33m',
-    '[propose_snippet_edit]': '\x1b[33m',
+  // lines the voice logs carry (the concurrently/turbo idiom). picocolors
+  // auto-disables on non-TTY stdout, so the detached driver's log file stays
+  // plain; `duet logs` re-applies the same palette at view time.
+  const TAG_PAINT: Record<string, (s: string) => string> = {
+    '[orchestrator]': pc.cyan,
+    '[send_prompt]': pc.green,
+    '[ask_human]': pc.yellow,
+    '[advance_phase]': pc.yellow,
+    '[create_branch]': pc.yellow,
+    '[propose_snippet_edit]': pc.yellow,
   };
   const log = (line: string) => {
-    if (process.stdout.isTTY) {
-      const tag = Object.keys(TAG_COLORS).find((t) => line.startsWith(t));
-      if (tag) {
-        console.log(`${TAG_COLORS[tag]}${tag}\x1b[0m${line.slice(tag.length)}`);
-        return;
-      }
+    const tag = Object.keys(TAG_PAINT).find((t) => line.startsWith(t));
+    if (tag) {
+      console.log(`${TAG_PAINT[tag]!(tag)}${line.slice(tag.length)}`);
+      return;
     }
     console.log(line);
   };
@@ -188,7 +189,7 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
 
     tool(
       'send_prompt',
-      'Send a prompt to a worker agent and return its final response. Each role is one persistent session: a later call to the same role continues that worker’s conversation, so refer back to earlier turns instead of repeating context the worker has already seen — and the instructions you send persist the same way, so a full snippet template goes to a given worker once per phase, with later turns steered by deltas (-again variants, short frame-referencing follow-ups). Worker turns are slow (often minutes) — prefer one well-composed prompt over several small ones. Sending the reviewer a prompt whose tag starts with "review" counts as a review round against the phase’s backstop cap. A claude-bound worker’s context can be deliberately compacted: a body that is literally "/compact " followed by your instructions (e.g. an adapted compact-for-* snippet) resets that session in place, keeping what the instructions name; codex-bound workers compact themselves automatically, so this applies only to claude.',
+      'Send a prompt to a worker agent and return its final response. Each role is one persistent session: a later call to the same role continues that worker’s conversation, so refer back to earlier turns instead of repeating context the worker has already seen — and the instructions you send persist the same way, so a full snippet template goes to a given worker once per phase, with later turns steered by deltas (-again variants, short frame-referencing follow-ups). Worker turns are slow (often minutes) — prefer one well-composed prompt over several small ones. Worker budget is per-turn: each call carries a fresh cost ceiling, so a worker reporting low budget mid-turn means the remaining work continues in another turn — never let the budget rail shrink the scope; descoping is a product decision that needs work-content reasons. Sending the reviewer a prompt whose tag starts with "review" counts as a review round against the phase’s backstop cap. A claude-bound worker’s context can be deliberately compacted: a body that is literally "/compact " followed by your instructions (e.g. an adapted compact-for-* snippet) resets that session in place, keeping what the instructions name; codex-bound workers compact themselves automatically, so this applies only to claude.',
       {
         role: z
           .enum(['implementer', 'reviewer'])
@@ -239,6 +240,15 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
         log(`[send_prompt] → ${args.role} (${provider.name})  tag=${args.tag}  body=${args.body.length} chars`);
         appendVoiceLog(state, args.role, `◀ prompt (tag=${args.tag}, from orchestrator)`, args.body);
 
+        // Worker turns are non-streaming and can run 30+ minutes; heartbeat
+        // lines keep the voice log (and its tmux pane) visibly alive.
+        const startedAt = Date.now();
+        const heartbeat = setInterval(() => {
+          const mins = Math.round((Date.now() - startedAt) / 60_000);
+          log(`[send_prompt] ⏳ ${args.role} turn running — ${mins}m elapsed (tag=${args.tag})`);
+          appendVoiceLog(state, args.role, `⏳ turn running — ${mins}m elapsed (tag=${args.tag})`);
+        }, 5 * 60_000);
+
         try {
           const turn = await provider.runTurn({
             prompt: args.body,
@@ -274,6 +284,8 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
             ],
             isError: true,
           };
+        } finally {
+          clearInterval(heartbeat);
         }
       },
     ),
@@ -365,7 +377,11 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
           .describe(
             'The gate packet the human decides from: what the reviewer flagged, what changed, rejections with rationale, open points. For the implementation phase, lead with the CEO summary verbatim, then review history, deviations from the plan, and test state.',
           ),
-        artifacts: z.array(z.string()).describe('Paths or descriptions of the phase’s outputs (e.g. the spec file).'),
+        artifacts: z
+          .array(z.string())
+          .describe(
+            'Repo paths of the phase’s outputs (e.g. the spec file), one per entry. Where no file exists, a short one-line label — the summary carries the prose, not this list.',
+          ),
         spec_path: z
           .string()
           .optional()
@@ -391,13 +407,17 @@ export async function runPhase({ runId, cwd, phase }: DriverInput): Promise<Driv
         advanceRequested = true;
         log(`[advance_phase] ${phase} phase complete (${roundsRun} review rounds)`);
         appendVoiceLog(state, 'orchestrator', `advance_phase (${phase})`, args.summary);
+        // Convention 5 (docs/prompting-and-tool-design.md): the result must
+        // say what actually happens next — a live gate decision, an
+        // auto-crossed pre-authorized gate, or (open phase) run completion.
+        const next =
+          phase === 'open'
+            ? 'the run is complete. End your turn with a one-line status.'
+            : gateAttended(state, phase)
+              ? 'the run moves to the human gate. End your turn with a one-line status; the gate decision arrives as your next message.'
+              : 'this phase’s gate was pre-authorized by the human at run start, so your packet is saved for their later review and the run continues immediately. End your turn with a one-line status; the next phase’s instructions arrive as your next message.';
         return {
-          content: [
-            {
-              type: 'text' as const,
-              text: 'Phase advance recorded — the run moves to the human gate. End your turn with a one-line status; the gate decision arrives as your next message.',
-            },
-          ],
+          content: [{ type: 'text' as const, text: `Phase advance recorded — ${next}` }],
         };
       },
     ),

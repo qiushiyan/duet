@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { PhaseName, RunState } from '../run-state.ts';
+import { gateAttended } from '../run-state.ts';
+import type { GatePhase, PhaseName, RunState } from '../run-state.ts';
 
 /**
  * Orchestrator prompts, written to the conventions in
@@ -33,6 +34,29 @@ Call write_note when you notice friction worth remembering — a snippet that di
 When a phase's exit criteria are met, call advance_phase with an honest summary — it always lands on a human gate, so the summary is what the human decides from.`;
 
 /**
+ * The attendance posture for the current phase's exit gate, rendered
+ * deterministically from the parsed gates_at — never inferred from framing
+ * prose (the frontmatter is stripped before the orchestrator sees the
+ * framing). Empty for attended gates: the entry prompts already describe
+ * live gates, so only the pre-authorized case needs saying.
+ */
+function attendancePosture(state: RunState, phase: GatePhase): string {
+  if (gateAttended(state, phase)) return '';
+  return `
+This phase's exit gate is pre-authorized: the human granted approval at run start, so advance_phase records your packet for their later review and the run continues immediately — no live gate decision arrives, and the human is away from the terminal. Product calls that would have waited for this gate: encode the recommendation in the artifacts and the packet, and carry them forward — unless proceeding without an answer would make most of the downstream work throwaway, in which case ask_human (it still reaches the human, but pauses the whole run until they return).
+`;
+}
+
+/**
+ * How the previous phase's gate was crossed — the entry prompts open by
+ * naming the approval, and "the human approved X" must not be claimed when
+ * the gate was pre-authorized and auto-crossed.
+ */
+function approvalClause(state: RunState, gatePhase: GatePhase, attended: string, preAuthorized: string): string {
+  return gateAttended(state, gatePhase) ? attended : preAuthorized;
+}
+
+/**
  * The branch-policy paragraph for the run's first phase entry. Empty once a
  * worker has been prompted — by then the branch is fixed and create_branch
  * is structurally unavailable.
@@ -60,8 +84,8 @@ export function framePhaseEntryPrompt(state: RunState, roundCap: number): string
   return `${documentsBlock(state)}
 
 <task>
-No spec exists yet — run the FRAME phase: both workers build an independent understanding of the problem, then the implementer synthesizes, and the human checks the direction at the Direction gate.
-${branchPolicyParagraph(state)}
+No spec exists yet — run the FRAME phase: both workers build an independent understanding of the problem, then the implementer synthesizes, and the direction lands on the Direction gate.
+${branchPolicyParagraph(state)}${attendancePosture(state, 'frame')}
 The shape of the phase:
 1. Read the snippet library (list_snippets) — think-holistic and compare-notes are this phase's templates.
 2. Onboard each worker in your first prompt to it: the framing says how (a project skill to invoke — include its /name in the worker's prompt and the CLI expands it — or files to read). Fold the onboarding, the working branch, and the problem statement from the framing into that first prompt.
@@ -79,7 +103,7 @@ export function specPhaseEntryPrompt(state: RunState, roundCap: number): string 
 
 <task>
 Run the SPEC review loop on the draft spec above, then advance to the commit-spec gate.
-${branchPolicyParagraph(state)}
+${branchPolicyParagraph(state)}${attendancePosture(state, 'spec')}
 The shape of the loop:
 1. Read the snippet library (list_snippets) — the review-spec / update-spec snippets (and their -again variants for later rounds) are the templates for this loop.
 2. Send the reviewer a review-spec prompt wrapping the current spec. The reviewer runs read-only in the repo, so it can also read ${state.specPath} and related code directly — point it at the path as well as quoting the content.
@@ -93,8 +117,13 @@ Throughout: flag product or direction questions with ask_human as they arise; ta
 
 function specDraftEntryPrompt(state: RunState, roundCap: number): string {
   return `<task>
-The human approved the direction at the Direction gate. Draft the spec, then run its review loop to the commit-spec gate.
-
+${approvalClause(
+    state,
+    'frame',
+    'The human approved the direction at the Direction gate.',
+    'The Direction gate was pre-authorized at run start and auto-crossed — the synthesized direction stands approved as recorded in its packet.',
+  )} Draft the spec, then run its review loop to the commit-spec gate.
+${attendancePosture(state, 'spec')}
 The shape of the phase:
 1. Decide where the spec file lives — the framing names the project's spec location. If it doesn't, ask_human for one before drafting.
 2. Send the implementer a write-spec prompt carrying the approved direction; it writes the spec file and reports the path and content.
@@ -117,14 +146,19 @@ ${readFileSync(join(state.cwd, state.specPath), 'utf8')}
 `
     : '';
   return `${documents}<task>
-The human approved the spec at the commit-spec gate. Run the PLAN phase:
-
+${approvalClause(
+    state,
+    'spec',
+    'The human approved the spec at the commit-spec gate.',
+    'The commit-spec gate was pre-authorized at run start and auto-crossed — the spec stands approved as converged.',
+  )} Run the PLAN phase:
+${attendancePosture(state, 'plan')}
 1. Have the implementer commit the approved spec file (${specRef}) with a conventional message, as its own commit.
 2. Decide where the plan file lives: the framing names the project's plan location (path or directory convention). The plan must be a file in the repo — implementation may compact the implementer's context, and the plan file is what later turns re-anchor on. If the framing doesn't name a plan location, ask_human for one before drafting.
 3. Send the implementer a planning prompt — base it on the tdd-plan snippet when the work is test-shaped, start-plan otherwise (read the framing and spec to judge which; if genuinely unclear, that's a process call you may make). The implementer writes the plan to the file and reports it.
 4. Run the plan review loop: review-plan to the reviewer (point it at the plan file's path as well as the content), update-plan to the implementer, -again variants for later rounds. Plans are reviewable at a finer altitude than specs — test cases, fixtures, and line-level references are fair game; only full code bodies are deferred.
 5. The backstop cap for this phase is ${roundCap} review rounds; converge well before it.
-6. When converged, call advance_phase with a summary, listing the plan file among the artifacts. The human walks away after approving this gate, so the summary should give them confidence the plan is workable end to end.
+6. When converged, call advance_phase with a summary, listing the plan file among the artifacts. Implementation runs AFK after this gate, so the summary should give the human confidence the plan is workable end to end.
 
 Throughout: flag product or direction questions with ask_human; tactical questions bounce to the worker.
 </task>`;
@@ -137,12 +171,17 @@ export function implPhaseEntryPrompt(state: RunState, roundCap: number): string 
       : `The implementer runs on codex, which manages its own context — it compacts automatically as it fills, so compaction needs nothing from you. Your lever is anchoring instead: before the handoff (or whenever the implementer seems to have lost the thread), a reread-context turn pointing at the plan file and the spec re-grounds it on the artifacts.`;
 
   return `<task>
-The human approved the plan and walked away — this is the AFK IMPLEMENTATION phase. You drive it end to end; ask_human still works but now queues the question and pauses the whole run until the human returns, so a flag is a real stop, not a quick check-in. Make each one self-contained, and let everything that can wait for the Ship gate wait.
-
+${approvalClause(
+    state,
+    'plan',
+    'The human approved the plan and walked away —',
+    'The plan-approval gate was pre-authorized at run start and auto-crossed; the human is away —',
+  )} this is the AFK IMPLEMENTATION phase. You drive it end to end; ask_human still works but now queues the question and pauses the whole run until the human returns, so a flag is a real stop, not a quick check-in. Make each one self-contained, and let everything that can wait for the Ship gate wait.
+${attendancePosture(state, 'impl')}
 The arc:
 
 1. Have the implementer commit the approved plan file with a conventional message, as its own commit.
-2. Drive the implementer through the plan's slices: one commit per slice, tests with the slice per the plan's verification story. Batch at your judgment — worker turns are slow, so a single turn may cover a few small slices, but ask for a report each turn (what landed, test state, commits) so you can steer.
+2. Drive the implementer through the plan's slices: one commit per slice, tests with the slice per the plan's verification story. Batch at your judgment — worker turns are slow, so a single turn may cover a few small slices, but ask for a report each turn (what landed, test state, commits) so you can steer. Worker budget is per-turn — each prompt you send carries a fresh ceiling — so an implementer reporting low budget mid-turn means continuing in another turn, never shrinking the scope: descoping is a product decision that needs work-content reasons and an honest line in the Ship packet. Have the implementer keep ephemeral verification harnesses (throwaway tsconfigs, scratch scripts) under .duet/scratch/ or delete them before handoff, so they don't ride the worktree as untracked strays.
 3. For large implementations (roughly 10+ slices), run the midpoint checkpoint at your judgment: midpoint-status from the implementer, review-midpoint to the reviewer, respond-midpoint back. The reviewer weights foundational problems highest — they compound across every remaining slice — and treats unreached slices as intentionally undone, not missing.
 4. ${compactionStep}
 5. When all slices are in: implementation-handoff from the implementer, then the review loop — review-implementation to the reviewer, respond-review to the implementer, -again variants for later rounds, fix commits as they're accepted. The backstop cap for this phase is ${roundCap} review rounds; converge well before it.
@@ -154,8 +193,13 @@ Throughout: flag product, direction, and environment questions with ask_human (t
 
 export function docsPhaseEntryPrompt(state: RunState, roundCap: number): string {
   return `<task>
-The human approved the Ship gate — the implementation is verified and shipping. Run the DOCS phase to its proposal:
-
+${approvalClause(
+    state,
+    'impl',
+    'The human approved the Ship gate — the implementation is verified and shipping.',
+    'The Ship gate was pre-authorized at run start and auto-crossed — the implementation packet is recorded for the human, and their environment verification (smoke tests, migrations) is still pending; the docs you produce describe work that has not yet had a human eye.',
+  )} Run the DOCS phase to its proposal:
+${attendancePosture(state, 'docs')}
 1. The framing names how this project updates its docs (often a project skill — include its /name in the implementer's prompt and the CLI expands it — otherwise conventions to follow). If the framing names nothing, have the implementer survey the repo's docs and derive the impact from what shipped.
 2. Drive the implementer to the docs-update proposal: which documents change and how. The proposal is this phase's whole product — when a skill has an internal approval step, run it exactly up to that step; applying changes happens after the human approves.
 3. A review round is available when the proposal warrants one (backstop cap ${roundCap}); most docs plans go straight to the gate.
@@ -167,7 +211,12 @@ Throughout: flag product or direction questions with ask_human; tactical questio
 
 export function prPhaseEntryPrompt(state: RunState, roundCap: number): string {
   return `<task>
-The human approved the docs plan (their adjustments, if any, arrived as gate feedback). Finish the run's artifacts:
+${approvalClause(
+    state,
+    'docs',
+    "The human approved the docs plan (their adjustments, if any, arrived as gate feedback).",
+    'The Docs-plan gate was pre-authorized at run start and auto-crossed — apply the proposal as recorded.',
+  )} Finish the run's artifacts:
 
 1. Have the implementer apply the approved docs plan and commit the doc changes. If a skill was paused at its internal approval step, resume it past that step — when the framing says the skill recognizes a resume token, send it; otherwise tell the implementer the plan is approved and to proceed with applying it.
 2. Send the implementer the pr-description snippet — the PR body for a technical colleague who won't read the diff.

@@ -1,19 +1,24 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { closeSync, existsSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve, relative } from 'node:path';
+import { createInterface } from 'node:readline';
 import { Command } from 'commander';
 import { execa } from 'execa';
 import { createActor, waitFor } from 'xstate';
 import type { AnyMachineSnapshot } from 'xstate';
+import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
 import { loadRoleBindings } from './config.ts';
 import { duetMachine } from './harness/machine.ts';
 import { ROUND_CAPS } from './harness/driver.ts';
-import { editFramingForRun } from './framing-editor.ts';
+import { DEFAULT_FRAMING_FILE, editFramingForRun } from './framing-editor.ts';
+import { parseFramingFile, parseGatesAt } from './framing-frontmatter.ts';
+import type { FramingFrontmatter } from './framing-frontmatter.ts';
 import { notify } from './notify.ts';
 import { openTmuxView } from './tmux-view.ts';
 import {
   createRun,
+  gateAttended,
   latestRun,
   listRuns,
   loadMachineSnapshot,
@@ -22,7 +27,7 @@ import {
   saveMachineSnapshot,
   saveRunState,
 } from './run-state.ts';
-import type { RunState } from './run-state.ts';
+import type { GatePhase, RunState, Voice } from './run-state.ts';
 
 /**
  * duet — one-shot CLI, alive through a phase (docs/automation-design.md
@@ -88,20 +93,43 @@ async function driveToQuiescence(
   actor.start();
   if (options?.event) actor.send(options.event);
 
-  const snapshot = await waitFor(
-    actor,
-    (s) => s.hasTag('quiescent') || s.status === 'done',
-    { timeout: QUIESCENCE_TIMEOUT_MS },
-  );
+  // Gates whose phase isn't in gates_at were pre-authorized at run start:
+  // record the crossing, notify, and approve on the human's standing
+  // authority — the driver stays alive through the whole pre-authorized
+  // stretch and exits at the next attended stop. The statechart is
+  // untouched: gates still transition only on human.* events; what the
+  // pre-authorization changes is when the human's approval is uttered.
+  for (;;) {
+    const snapshot = await waitFor(
+      actor,
+      (s) => s.hasTag('quiescent') || s.status === 'done',
+      { timeout: QUIESCENCE_TIMEOUT_MS },
+    );
 
-  saveMachineSnapshot(state, actor.getPersistedSnapshot());
-  const fresh = loadRunState(state.cwd, state.runId);
-  fresh.machineState = typeof snapshot.value === 'string' ? snapshot.value : JSON.stringify(snapshot.value);
-  saveRunState(fresh);
-  actor.stop();
-  printStatus(fresh, snapshot);
-  await notify(`duet ${fresh.runId}`, describeStop(fresh, snapshot));
-  return snapshot;
+    saveMachineSnapshot(state, actor.getPersistedSnapshot());
+    const fresh = loadRunState(state.cwd, state.runId);
+    fresh.machineState = typeof snapshot.value === 'string' ? snapshot.value : JSON.stringify(snapshot.value);
+
+    const gatePhase =
+      snapshot.status !== 'done' ? (GATE_PHASE as Record<string, GatePhase>)[fresh.machineState] : undefined;
+    if (gatePhase && !gateAttended(fresh, gatePhase)) {
+      // Dedupe on crash-recovery re-entry at the same gate.
+      if (fresh.autoApprovals?.at(-1)?.gate !== fresh.machineState) {
+        (fresh.autoApprovals ??= []).push({ gate: fresh.machineState, at: new Date().toISOString() });
+      }
+      saveRunState(fresh);
+      console.log(`[gate] ${fresh.machineState} auto-approved — pre-authorized at run start (packet recorded)`);
+      await notify(`duet ${fresh.runId}`, `${fresh.machineState} auto-approved (pre-authorized) — run continues`);
+      actor.send({ type: 'human.approve' });
+      continue;
+    }
+
+    saveRunState(fresh);
+    actor.stop();
+    printStatus(fresh, snapshot);
+    await notify(`duet ${fresh.runId}`, describeStop(fresh, snapshot));
+    return snapshot;
+  }
 }
 
 function describeStop(state: RunState, snapshot: AnyMachineSnapshot): string {
@@ -137,6 +165,12 @@ const GATE_HEADING: Record<keyof typeof GATE_PHASE, string> = {
   openPrGate: 'OPEN-PR gate — the PR description',
 };
 
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+  return String(n);
+}
+
 function printStatus(state: RunState, snapshot?: AnyMachineSnapshot): void {
   const machineState = state.machineState ?? '(not started)';
   console.log(`\n━━━ duet run ${state.runId} ━━━`);
@@ -147,6 +181,7 @@ function printStatus(state: RunState, snapshot?: AnyMachineSnapshot): void {
   }
   console.log(`spec:     ${state.specPath ?? '(not yet drafted — framing-only entry)'}`);
   if (state.branch) console.log(`branch:   ${state.branch}`);
+  if (state.gatesAt) console.log(`gates:    attending ${state.gatesAt.join(', ')} — other gates pre-authorized`);
   if (state.lastActivity) console.log(`last:     ${state.lastActivity}`);
   const roundOrder: Array<'frame' | 'spec' | 'plan' | 'impl' | 'docs' | 'pr'> = ['frame', 'spec', 'plan', 'impl', 'docs', 'pr'];
   const rounds = roundOrder
@@ -155,10 +190,22 @@ function printStatus(state: RunState, snapshot?: AnyMachineSnapshot): void {
     .join(', ');
   console.log(`rounds:   ${rounds}`);
   console.log(
-    `cost:     orchestrator $${state.costs.orchestratorUsd.toFixed(2)}, claude workers $${state.costs.claudeWorkersUsd.toFixed(2)}, codex ${state.costs.codexTokens.input}/${state.costs.codexTokens.output} tokens`,
+    `cost:     orchestrator $${state.costs.orchestratorUsd.toFixed(2)}, claude workers $${state.costs.claudeWorkersUsd.toFixed(2)}, codex ${fmtTokens(state.costs.codexTokens.input)} in / ${fmtTokens(state.costs.codexTokens.output)} out tokens`,
   );
   if (state.snippetProposals.length > 0) {
     console.log(`proposals: ${state.snippetProposals.length} snippet edit(s) queued (details in state.json)`);
+  }
+
+  if (state.autoApprovals && state.autoApprovals.length > 0) {
+    console.log(`\nwhile you were away — gates auto-approved (pre-authorized):`);
+    for (const a of state.autoApprovals) {
+      const phase = (GATE_PHASE as Record<string, GatePhase>)[a.gate];
+      const headline = phase
+        ? (state.phaseSummaries[phase]?.summary.split('\n').find((l) => l.trim()) ?? '').slice(0, 96)
+        : '';
+      console.log(`  ✓ ${a.gate}  ${a.at.slice(0, 16).replace('T', ' ')}  ${headline}`);
+    }
+    console.log(`  full packets: duet logs ${state.runId}`);
   }
 
   if (state.pendingQuestion && machineState.includes('FlagWait')) {
@@ -220,11 +267,15 @@ program
   .description('Start a run: [FRAME →] SPEC → PLAN (walk away) → AFK IMPLEMENTATION → DOCS → PR → opened PR.')
   .option('--spec <path>', 'path to a draft spec file; omit to start from the framing alone (the FRAME phase drafts it)')
   .option('--framing <file>', 'project briefing file — the only place project knowledge enters; omit both flags to write it in your editor')
+  .option(
+    '--gates-at <phases>',
+    'phases whose gates you attend (from: frame, spec, plan, impl, docs, pr — or the preset "overnight" = frame,spec); the rest are pre-authorized and auto-cross with their packets recorded; pr is always attended; default: every gate',
+  )
   .option('--orchestrator <provider[:model]>', 'role binding override (claude[:model] only in v1)')
   .option('--impl <provider[:model]>', 'implementer binding override')
   .option('--reviewer <provider[:model]>', 'reviewer binding override')
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
-  .action(async (opts: { spec?: string; framing?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean }) => {
+  .action(async (opts: { spec?: string; framing?: string; gatesAt?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean }) => {
     const cwd = process.cwd();
     let framingFile = opts.framing;
     if (!opts.spec && !framingFile) {
@@ -234,11 +285,37 @@ program
         fail(err instanceof Error ? err.message : String(err));
       }
     }
+
+    // The framing's frontmatter is the machine/prose boundary: parsed here,
+    // deterministically, and stripped — the orchestrator sees only the prose
+    // body plus the posture instructions the harness renders from the values.
+    let framingRaw: string | undefined;
+    let framing: string | undefined;
+    let meta: FramingFrontmatter = {};
+    if (framingFile) {
+      framingRaw = readFileSync(resolve(cwd, framingFile), 'utf8');
+      try {
+        const parsed = parseFramingFile(framingRaw);
+        meta = parsed.meta;
+        framing = parsed.body;
+      } catch (err) {
+        fail(`${framingFile}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    let gatesAt: GatePhase[] | undefined;
+    try {
+      gatesAt = opts.gatesAt ? parseGatesAt(opts.gatesAt) : meta.gatesAt; // flag wins over frontmatter
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+    }
+
     let specPath: string | undefined;
-    if (opts.spec) {
-      specPath = relative(cwd, resolve(cwd, opts.spec));
+    const specInput = opts.spec ?? meta.spec; // flag wins over frontmatter
+    if (specInput) {
+      specPath = relative(cwd, resolve(cwd, specInput));
       if (!existsSync(resolve(cwd, specPath))) {
-        fail(`spec file not found: ${opts.spec}`);
+        fail(`spec file not found: ${specInput}`);
       }
     }
     const bindings = loadRoleBindings({
@@ -246,7 +323,6 @@ program
       ...(opts.impl ? { implementer: opts.impl } : {}),
       ...(opts.reviewer ? { reviewer: opts.reviewer } : {}),
     });
-    const framing = framingFile ? readFileSync(resolve(cwd, framingFile), 'utf8') : undefined;
 
     let branch: string | undefined;
     try {
@@ -259,14 +335,21 @@ program
       cwd,
       ...(specPath ? { specPath } : {}),
       ...(framing ? { framing } : {}),
+      ...(framingRaw ? { framingRaw } : {}),
       ...(branch ? { branch } : {}),
+      ...(gatesAt ? { gatesAt } : {}),
       bindings,
     });
+    // The editor draft is archived into the run dir by createRun; the
+    // staging file is consumed so the next bare `duet new` starts fresh.
+    if (framingFile === DEFAULT_FRAMING_FILE) unlinkSync(join(cwd, DEFAULT_FRAMING_FILE));
     console.log(`run ${state.runId} created`);
     if (opts.tmux) await openTmuxView(state);
     console.log(
-      `roles: orchestrator=${bindings.orchestrator.provider}:${bindings.orchestrator.model ?? ''} implementer=${bindings.implementer.provider}${bindings.implementer.model ? ':' + bindings.implementer.model : ''} reviewer=${bindings.reviewer.provider}${bindings.reviewer.model ? ':' + bindings.reviewer.model : ''}\n`,
+      `roles: orchestrator=${bindings.orchestrator.provider}:${bindings.orchestrator.model ?? ''} implementer=${bindings.implementer.provider}${bindings.implementer.model ? ':' + bindings.implementer.model : ''} reviewer=${bindings.reviewer.provider}${bindings.reviewer.model ? ':' + bindings.reviewer.model : ''}`,
     );
+    if (gatesAt) console.log(`gates: attending ${gatesAt.join(', ')} — other gates pre-authorized (auto-cross, packets recorded)`);
+    console.log('');
     const pid = spawnDrive(state);
     printWatchHints(state, pid, specPath ? 'SPEC review loop' : 'FRAME phase');
   });
@@ -319,6 +402,26 @@ program
       return;
     }
 
+    const probe = createActor(duetMachine, {
+      input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
+      snapshot: snapshot as never,
+    });
+    const restored = probe.getSnapshot() as AnyMachineSnapshot;
+
+    // A snapshot parked at a pre-authorized gate means the driver died after
+    // reaching it but before the next attended stop — re-enter; the driver
+    // crosses it again on the standing authorization.
+    const restoredGatePhase =
+      typeof restored.value === 'string' ? (GATE_PHASE as Record<string, GatePhase>)[restored.value] : undefined;
+    if (chosen.length === 0 && restoredGatePhase && !gateAttended(state, restoredGatePhase) && restored.status !== 'done') {
+      console.log(
+        `run ${state.runId}: stopped at the pre-authorized ${String(restored.value)} — re-entering (it auto-crosses)`,
+      );
+      const pid = spawnDrive(state);
+      printWatchHints(state, pid, 'recovered phase');
+      return;
+    }
+
     let event: { type: 'human.approve' | 'human.reject' | 'human.answer' };
     if (opts.approve) event = { type: 'human.approve' };
     else if (opts.reject !== undefined) event = { type: 'human.reject' };
@@ -330,11 +433,6 @@ program
 
     // Validate the event against the restored state before committing side
     // effects, so a wrong flag gets a friendly error instead of a no-op.
-    const probe = createActor(duetMachine, {
-      input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
-      snapshot: snapshot as never,
-    });
-    const restored = probe.getSnapshot() as AnyMachineSnapshot;
     if (restored.status === 'done') fail(`run ${state.runId} is complete — nothing to continue`);
     if (!restored.can(event)) {
       fail(
@@ -425,9 +523,29 @@ program
     const path = join(runDirOf(state.cwd, state.runId), 'driver.log');
     console.log(`following ${path} — Ctrl-C detaches (the run keeps going)\n`);
     // tail -F waits for the file if the driver hasn't written yet; SIGINT
-    // here kills only the tail, never the detached driver.
-    await execa('tail', ['-n', '+1', '-F', path], { stdio: 'inherit', reject: false });
+    // here kills only the tail, never the detached driver. The file is plain
+    // text — the [tag] palette is applied at view time.
+    const tail = execa('tail', ['-n', '+1', '-F', path], { stdio: ['ignore', 'pipe', 'inherit'], reject: false });
+    const lines = createInterface({ input: tail.stdout! });
+    lines.on('line', (line) => console.log(colorizeDriverLine(line)));
+    await tail;
   });
+
+// Internal: the view-time colorizer the tmux panes (and anything else
+// tailing a voice log) pipe through. The log files stay plain text; color
+// exists only in the live view. Unknown voices pass lines through untouched.
+const colorizeCommand = new Command('_colorize')
+  .argument('<voice>', 'orchestrator | implementer | reviewer')
+  .action(async (voice: string) => {
+    const known = voice === 'orchestrator' || voice === 'implementer' || voice === 'reviewer';
+    process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EPIPE') process.exit(0); // pane closed mid-stream
+    });
+    for await (const line of createInterface({ input: process.stdin })) {
+      console.log(known ? colorizeVoiceLine(voice as Voice, line) : line);
+    }
+  });
+program.addCommand(colorizeCommand, { hidden: true });
 
 program
   .command('status')

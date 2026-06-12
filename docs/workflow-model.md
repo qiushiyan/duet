@@ -46,6 +46,8 @@ FINAL REVIEW (attended)
 
 Observed round counts: spec 2, plan 1, impl review 1 in the original example session; the user's general description says impl review runs 2–3. Under the pivot these inform the orchestrator's judgment and the sizing of the harness's runaway backstops (see `docs/automation-design.md` §"Loop semantics"), not a fixed exit rule.
 
+Gates may be **pre-authorized per run** (`gates_at`, 2026-06-12 — `docs/automation-design.md` §"Gate pre-authorization"): the harness auto-crosses them on the human's standing approval, packet recorded and notification fired, and the orchestrator carries the would-be gate questions forward as encoded recommendations (with an `ask_human` escape hatch for calls that would make downstream work throwaway). The Open-PR gate is never pre-authorizable. The orchestrator's posture instructions are rendered deterministically from the parsed value, never inferred from framing prose.
+
 ## The snippet vocabulary
 
 The protocol substance is the snippets — they encode the altitude lenses, the reflect-before-change gates, and the compaction discipline. The orchestrator selects them by tag via `send_prompt(role, tag, body)` and may adapt the body per turn (logged); persistent library edits are human-gated proposals. Core vocabulary, from `examples/tabtype-snippets.json` and the user's tabtype `WORKFLOW.md`:
