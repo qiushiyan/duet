@@ -173,10 +173,26 @@ Throughout: flag product or direction questions with ask_human; tactical questio
 }
 
 export function implPhaseEntryPrompt(state: RunState, roundCap: number): string {
-  const compactionStep =
-    state.bindings.implementer.provider === 'claude'
-      ? `Compaction is yours to time: when the implementer's context has grown heavy with build-process detail (typically after the last slice, before the handoff — earlier if a long implementation is degrading), send the implementer a prompt whose body is literally "/compact " followed by your adapted compact-for-review instructions. The session compacts natively in place and the turn returns a confirmation; follow with a reread-context turn pointing at the plan file and the spec so the implementer re-anchors on the artifacts rather than the dropped journey.`
-      : `The implementer runs on codex, which manages its own context — it compacts automatically as it fills, so compaction needs nothing from you. Your lever is anchoring instead: before the handoff (or whenever the implementer seems to have lost the thread), a reread-context turn pointing at the plan file and the spec re-grounds it on the artifacts.`;
+  const claudeImplementer = state.bindings.implementer.provider === 'claude';
+
+  // First compaction — the plan→implementation boundary. The implementer
+  // carried the whole planning arc (spec exploration, spec + plan review
+  // rounds) in one session; that journey is now settled in two committed
+  // files, so reset the window before the long slice phase. Deliberately
+  // placed here and not at spec→plan: planning and spec exploration share one
+  // substrate (understanding the code to design against it), so cutting
+  // between them only forces a reread; the plan file is what carries the
+  // design across this seam, and the slices reread code fresh anyway.
+  const resetForImplStep = claudeImplementer
+    ? `This is the run's first compaction, and it lands here by design: planning deliberately kept the implementer's full spec-exploration context — that is why the plan came out written against code freshly in mind — and the committed plan now carries that design forward, so the plan→implementation boundary, not the spec→plan one, is where the reset pays for itself. By now the implementer holds the whole planning arc (spec exploration, both review loops) in one session; send it a prompt whose body is literally "/compact " followed by your adapted compact-for-impl instructions, then a reread-context turn pointing at the committed spec and plan plus the code the first slice touches. It enters the slices anchored on the artifacts rather than the path that produced them — with headroom before the slice work grows the context again.`
+    : `Re-anchor the implementer on the artifacts before the first slice. It runs on codex, which compacts itself as it fills (so no /compact from you), but a reread-context turn pointing at the committed spec and plan plus the code the first slice touches re-grounds it on the settled design before the build work begins — the same plan→implementation reset, minus the explicit compaction.`;
+
+  // Second compaction — the build→review boundary. Deferred to its existing
+  // "before the handoff" placement (a run-steer wanted it after the handoff,
+  // before respond-review; that adjustment is a separate pass).
+  const reviewCompactionStep = claudeImplementer
+    ? `A second compaction is yours to time: when the implementer's context has grown heavy with build-process detail (typically after the last slice, before the handoff — earlier if a long implementation is degrading), run the same /compact + reread-context mechanic as step 2, now with your adapted compact-for-review instructions — this one drops the build journey while the load-bearing model and test state carry into review.`
+    : `Codex still manages its own context here, so the second compaction needs nothing from you. Your lever is anchoring: before the handoff (or whenever the implementer seems to have lost the thread), a reread-context turn pointing at the plan file and the spec re-grounds it on the artifacts.`;
 
   return `<task>
 ${approvalClause(
@@ -189,11 +205,12 @@ ${attendancePosture(state, 'impl')}
 The arc:
 
 1. Have the implementer commit the approved plan file with a conventional message, as its own commit.
-2. Drive the implementer through the plan's slices: one commit per slice, tests with the slice per the plan's verification story. Batch at your judgment — worker turns are slow, so a single turn may cover a few small slices, but ask for a report each turn (what landed, test state, commits) so you can steer. Worker budget is per-turn — each prompt you send carries a fresh ceiling — so an implementer reporting low budget mid-turn means continuing in another turn, never shrinking the scope: descoping is a product decision that needs work-content reasons and an honest line in the Ship packet. Have the implementer keep ephemeral verification harnesses (throwaway tsconfigs, scratch scripts) under .duet/scratch/ or delete them before handoff, so they don't ride the worktree as untracked strays.
-3. For large implementations (roughly 10+ slices), run the midpoint checkpoint at your judgment: midpoint-status from the implementer, review-midpoint to the reviewer, respond-midpoint back. The reviewer weights foundational problems highest — they compound across every remaining slice — and treats unreached slices as intentionally undone, not missing.
-4. ${compactionStep}
-5. When all slices are in: implementation-handoff from the implementer, then the review loop — review-implementation to the reviewer, respond-review to the implementer, -again variants for later rounds, fix commits as they're accepted. The backstop cap for this phase is ${roundCap} review rounds; converge well before it.
-6. Last act, after the loop converges: send the implementer ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review history (rounds run, points raised, resolved, disputed), deviations from the plan, and the test state. The human returns from hours away and decides to ship from this packet alone — make it carry everything.
+2. Before the first slice: ${resetForImplStep}
+3. Drive the implementer through the plan's slices: one commit per slice, tests with the slice per the plan's verification story. Batch at your judgment — worker turns are slow, so a single turn may cover a few small slices, but ask for a report each turn (what landed, test state, commits) so you can steer. Worker budget is per-turn — each prompt you send carries a fresh ceiling — so an implementer reporting low budget mid-turn means continuing in another turn, never shrinking the scope: descoping is a product decision that needs work-content reasons and an honest line in the Ship packet. Have the implementer keep ephemeral verification harnesses (throwaway tsconfigs, scratch scripts) under .duet/scratch/ or delete them before handoff, so they don't ride the worktree as untracked strays.
+4. For large implementations (roughly 10+ slices), run the midpoint checkpoint at your judgment: midpoint-status from the implementer, review-midpoint to the reviewer, respond-midpoint back. The reviewer weights foundational problems highest — they compound across every remaining slice — and treats unreached slices as intentionally undone, not missing.
+5. ${reviewCompactionStep}
+6. When all slices are in: implementation-handoff from the implementer, then the review loop — review-implementation to the reviewer, respond-review to the implementer, -again variants for later rounds, fix commits as they're accepted. The backstop cap for this phase is ${roundCap} review rounds; converge well before it.
+7. Last act, after the loop converges: send the implementer ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review history (rounds run, points raised, resolved, disputed), deviations from the plan, and the test state. The human returns from hours away and decides to ship from this packet alone — make it carry everything.
 
 Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
 </task>`;

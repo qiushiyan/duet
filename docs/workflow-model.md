@@ -22,11 +22,11 @@ PLANNING (attended — orchestrator drives, human acts at gates and flags)
     ── Direction gate ──
   SPEC ⇄ review/update rounds          loop exit: orchestrator judgment
     ── Commit-spec gate ──
-  COMPACT            compact-for-plan, then re-anchor read
-  PLAN ⇄ review/update rounds          loop exit: orchestrator judgment
+  PLAN ⇄ review/update rounds          planning keeps full spec-exploration context
     ── Plan-approval gate ──            ← human walks away
 
 IMPLEMENTATION (AFK — flags queue, process exits on them)
+  COMPACT            compact-for-impl, then re-anchor read (plan→impl boundary)
   IMPLEMENT          vertical slices, one commit per slice
   (MIDPOINT)         orchestrator judgment for large implementations:
                      midpoint-status → review-midpoint → respond-midpoint
@@ -59,7 +59,7 @@ The protocol substance is the snippets — they encode the altitude lenses, the 
 | `write-spec` | → implementer | SPEC | Draft the spec, opening with a leader-facing summary (what/approach/scope/deferred); defer line-level detail, test design, doc plans. |
 | `review-spec` / `review-spec-again` | implementer → reviewer | SPEC rounds | Critique at spec altitude / verify round-1 feedback was integrated. |
 | `update-spec` / `update-spec-again` | reviewer → implementer | SPEC rounds | Assess validity, revise or push back / apply round-2 inline, converge. |
-| `compact-for-plan` | → implementer | COMPACT | Context reset shaped for planning: keep spec + rationale, drop the journey. |
+| `compact-for-impl` | → implementer | COMPACT (plan→impl) | Context reset for the slice phase: keep the committed spec + plan, drop the planning journey. (`compact-for-plan` is the manual after-spec variant, kept in the library; duet compacts after the plan instead — `docs/automation-design.md` §"Worker compaction".) |
 | `tdd-plan` (or `start-plan`) | → implementer | PLAN | Vertical slices, test cases, fixtures; stop short of code bodies. |
 | `review-plan` / `update-plan` (+ `-again`) | ⇄ | PLAN rounds | Plan-altitude critique and revision. |
 | `midpoint-status` / `review-midpoint` / `respond-midpoint` | ⇄ | MIDPOINT | Status snapshot → review weighting compounding issues → triage, no code yet. |

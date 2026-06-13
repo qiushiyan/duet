@@ -161,6 +161,22 @@ expand = '''
 '''
 
 [[snippets]]
+key = "compact-for-impl"
+expand = '''
+/compact Transitioning from planning to implementation. The spec and the plan are both settled and committed as files — compact for a **focused implementation window**: keep what the slices build on, drop the journey that produced the plan.
+
+**Preserve:**
+- The committed spec and plan as the source of truth — the problem, the settled approach, the slice breakdown, and each slice's test cases and decisions.
+- The load-bearing architectural direction: module/function names, the composition shape, the coupling decision, and the invariants the slices must hold.
+- *Why* the plan is shaped this way — the decisions a slice has to honor — but not the alternatives that lost.
+
+**Drop or summarize:**
+- The spec-exploration journey: brainstormed approaches, cross-agent synthesis, tradeoff debates.
+- The spec and plan review rounds — their conclusions already live in the committed files.
+- Code reads and exploration that fed the spec and plan — you reread the touched files fresh before implementing each slice, so the reading process itself isn't needed.
+'''
+
+[[snippets]]
 key = "reread-context"
 expand = '''
 Reread the files this change touches and rebuild your mental model from the actual code, not memory — trace the real data/control flow, note existing constraints, and find the seams the work will build on. **No code yet.**'''

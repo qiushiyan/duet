@@ -24,7 +24,7 @@ Status: full arc implemented (`new` → FRAME → SPEC → PLAN → AFK IMPL →
 
 ## Map
 
-- `src/phases.ts` — **the phase table**: arc order + every per-phase fact (gate names/copy, round caps, budgets, timeouts). The statechart and all consumers derive from it.
+- `src/phases.ts` — **the phase table**: arc order + every per-phase fact (gate names/copy, round caps, budgets, timeouts, snippet sets). The statechart and all consumers derive from it.
 - `src/harness/` — `machine.ts` (statechart: gates cross only on `human.*` events), `tools.ts` (the 7 orchestrator tools + protocol rails; every phase-continuing result also delivers pending steers), `driver.ts` (SDK session per phase, outcome mapping, steer carry-forward into prompts), `lifecycle.ts` (detached driver + `gates_at` auto-cross + `probeRunPosition` — where a run is: running/gate/flag/crashed/done, derived from driver liveness + parked snapshot + state evidence, never the snapshot alone), `orchestrator-prompts.ts`.
 - `src/providers/` — the worker seam: contract, claude + codex adapters, factory. `src/run-store.ts` — run-dir persistence (atomic), the CLI↔driver input-staging handshake, and the steer store (file-per-steer, rename-consume). `src/framing.ts` — template, editor flow, frontmatter boundary. `src/status.ts` — the status model + its two renderers (human text, `status --json` verbatim; schema additive-only). `src/cli.ts` — wiring only; parses under `import.meta.main`, so the command table is importable. View glue: `colorize.ts`, `tmux-view.ts`, `notify.ts`.
 - `skills/duet-concierge/` — the shipped concierge skill (a Claude Code session as duet's remote layer); every verb/flag it names is pinned to the CLI by `tests/skill.test.ts`.

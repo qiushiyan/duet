@@ -17,7 +17,7 @@ Placement rule for any new rule: violating it would break the human's authority 
 
 | Module | Owns | Note |
 |---|---|---|
-| `src/phases.ts` | The arc as data: phase order, gate state names + human copy, round caps, budgets, timeouts, review-loop posture | The single source. Machine states derive from it; every consumer looks up |
+| `src/phases.ts` | The arc as data: phase order, gate state names + human copy, round caps, budgets, timeouts, review-loop posture, per-phase snippet sets | The single source. Machine states derive from it; every consumer looks up |
 | `src/harness/machine.ts` | The statechart skeleton | Each phase = loop + flag-wait + gate, built from the table |
 | `src/harness/tools.ts` | The orchestrator's seven tools, every protocol rail, and steer delivery (pending steers ride every phase-continuing result) | The deepest module: 7-handler interface, all enforcement inside |
 | `src/harness/driver.ts` | One phase = one orchestrator SDK session; outcome mapping (advanced / flagged / stuck / crashed); steer carry-forward into prompts | SDK behind the injectable `RunOrchestratorTurn` seam |

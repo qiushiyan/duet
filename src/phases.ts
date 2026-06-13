@@ -23,6 +23,16 @@ export type GatePhase = Exclude<PhaseName, 'open'>;
 export interface PhaseSpec {
   name: PhaseName;
   /**
+   * The snippet keys this phase's work draws on, in the order the orchestrator
+   * typically reaches for them. The phase-aware `list_snippets` shows these in
+   * full while indexing other phases by key — cross-cutting helpers live in
+   * `ANYTIME_SNIPPETS`, deliberately-archived snippets in `UNLISTED_SNIPPETS`,
+   * and the completeness test (`tests/snippets.test.ts`) asserts every library
+   * snippet lands in exactly one of those buckets, so none goes silently
+   * invisible in the default view.
+   */
+  snippets: readonly string[];
+  /**
    * The gate this phase exits through: its machine state name and the
    * human-facing copy `duet status` renders. `null` for `open`, the one
    * phase that runs after the last gate and advances straight to done.
@@ -60,6 +70,7 @@ export interface PhaseSpec {
 export const PHASES: readonly PhaseSpec[] = [
   {
     name: 'frame',
+    snippets: ['think-holistic', 'compare-notes'],
     gate: {
       state: 'directionGate',
       heading: 'DIRECTION gate — the synthesized direction',
@@ -75,6 +86,7 @@ export const PHASES: readonly PhaseSpec[] = [
   },
   {
     name: 'spec',
+    snippets: ['write-spec', 'review-spec', 'update-spec', 'review-spec-again', 'update-spec-again'],
     gate: {
       state: 'commitSpecGate',
       heading: "SPEC gate — the orchestrator's summary",
@@ -90,6 +102,15 @@ export const PHASES: readonly PhaseSpec[] = [
   },
   {
     name: 'plan',
+    snippets: [
+      'tdd-plan',
+      'tdd-plan-strict',
+      'start-plan',
+      'review-plan',
+      'update-plan',
+      'review-plan-again',
+      'update-plan-again',
+    ],
     gate: {
       state: 'planApprovalGate',
       heading: "PLAN gate — the orchestrator's summary",
@@ -105,6 +126,19 @@ export const PHASES: readonly PhaseSpec[] = [
   },
   {
     name: 'impl',
+    snippets: [
+      'compact-for-impl',
+      'midpoint-status',
+      'review-midpoint',
+      'respond-midpoint',
+      'compact-for-review',
+      'implementation-handoff',
+      'review-implementation',
+      'respond-review',
+      'review-implementation-again',
+      'respond-review-again',
+      'ceo-summary',
+    ],
     gate: {
       state: 'shipGate',
       heading: 'SHIP gate — the orchestrator’s packet (CEO summary first)',
@@ -120,6 +154,7 @@ export const PHASES: readonly PhaseSpec[] = [
   },
   {
     name: 'docs',
+    snippets: ['compact-for-cleanup'],
     gate: {
       state: 'docsPlanGate',
       heading: 'DOCS-PLAN gate — the proposal',
@@ -135,6 +170,7 @@ export const PHASES: readonly PhaseSpec[] = [
   },
   {
     name: 'pr',
+    snippets: ['pr-description'],
     gate: {
       state: 'openPrGate',
       heading: 'OPEN-PR gate — the PR description',
@@ -150,6 +186,7 @@ export const PHASES: readonly PhaseSpec[] = [
   },
   {
     name: 'open',
+    snippets: [], // push + gh pr create — mechanics, no library template
     gate: null, // runs after the last gate; advances straight to done
     artifactLabel: 'PR opening',
     reviewLoop: false,
@@ -181,3 +218,29 @@ export function gateOf(phase: GatePhase): NonNullable<PhaseSpec['gate']> {
   if (!gate) throw new Error(`phase ${phase} has no gate — the phase table and GatePhase type disagree`);
   return gate;
 }
+
+/**
+ * Snippets usable in any phase — cross-cutting helpers the phase-aware
+ * `list_snippets` always shows in full alongside the current phase's
+ * templates, so the genuinely reusable tools are never behind `all=true`.
+ */
+export const ANYTIME_SNIPPETS: readonly string[] = [
+  'reread-context',
+  'commits-summary',
+  'find-similar-bugs',
+  'list-assumptions',
+  'trace-execution',
+  'smart-adapt-skills',
+  'technical-difficulty',
+];
+
+/**
+ * Snippets kept in the library but deliberately not surfaced by default —
+ * reachable only via `list_snippets({all:true})`. `compact-for-plan` is the
+ * manual after-spec compaction duet replaced with the after-plan
+ * `compact-for-impl` (docs/automation-design.md §"Worker compaction"); it
+ * stays available for a judgment-timed early cut when a long spec phase bloats
+ * context, but is not a default template (surfacing it in the plan phase would
+ * invite the very pre-plan compaction the design moved away from).
+ */
+export const UNLISTED_SNIPPETS: readonly string[] = ['compact-for-plan'];

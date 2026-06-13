@@ -98,6 +98,8 @@ Duet examples of load-bearing implicit facts moved into descriptions:
 
 Prefer semantic, human-legible fields over low-level identifiers (`name`/`file_type`, not `uuid`/`mime_type`) — semantic content informs the agent's next action; opaque IDs don't. Be token-efficient: pagination, filtering, truncation with sensible defaults; encourage efficient agent strategies outright ("make several targeted searches rather than one broad one"). No universal response format — pick XML/JSON/Markdown per task and evaluate.
 
+**Progressive disclosure (the house instance).** `list_snippets` shows the current phase's templates and the anytime helpers in full and indexes the rest by key — in the spec phase, say, the spec templates come back whole while later phases read as `plan: tdd-plan, …`; `all: true` fetches any body on demand. It is "load on demand, keep identifiers for the rest" ([context-engineering](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)) applied to a tool *result*, so the system-prompt cache prefix stays frozen. The cost it buys down is focus, not tokens — the orchestrator is a few % of run spend; a phase-scoped menu is just a sharper one.
+
 ### Errors prescribe the recovery path
 
 An error result is a steering opportunity, not a stack trace. Name the failure layer, say what it implies, and prescribe the next action — so the agent doesn't improvise recovery. Duet's `send_prompt` failure message is the house pattern:
@@ -115,6 +117,8 @@ When a tool result changes what the agent should do next, the result text says s
 This is what makes the cooperative pause reliable without any mechanical enforcement. Backstop-cap hits and `advance_phase` acknowledgements get the same treatment.
 
 A house variant for soft constraints: **warn-once-then-allow**. When the agent attempts something usually-but-not-always wrong (duet's case: re-sending a full snippet template to a worker that already holds it), the first attempt returns a steering error naming the why and the alternatives; repeating the identical call passes. Judgment keeps the override; the harness makes the override deliberate and leaves both calls in the transcript. Prefer this over hard blocks whenever the rule has legitimate exceptions — a hard block is the dumb-router trap of approximating judgment with mechanism.
+
+A second variant — **reactive state-triggered nudges** — fires on a state threshold, not periodically (Claude Code's `<system-reminder>`s work this way). duet's instance: a `send_prompt` result one review round short of the cap appends a one-time reminder that the cap is protection, not a target. Discipline: fire once at the threshold, on the existing result surface (system prompt untouched), and give the *reason* the threshold matters, not just the count.
 
 ### Concurrency is opt-in for MCP tools (CLI quirk)
 

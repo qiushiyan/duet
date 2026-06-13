@@ -102,7 +102,7 @@ A read-only agent whose system prompt is the workflow protocol operationalized �
 
 | Tool | What it does |
 |---|---|
-| `list_snippets()` | Read the built-in snippet library (keys + bodies). |
+| `list_snippets(all?)` | Read the snippet library, **phase-focused by default**: this phase's templates and the anytime helpers in full, other phases indexed by key, annotated with what's already been sent this phase. `all: true` returns every body — the cross-phase escape hatch. |
 | `send_prompt(role, tag, body)` | Send a prompt to the implementer or reviewer and return the worker's response. `tag` names the source snippet (`"custom"` when composed from scratch); `body` is the final text. Every call logs the tag and the body, so adaptation drift is auditable. Independent turns to different roles run concurrently when issued as parallel calls (the frame phase's two analyses); a second turn to the same role while one is in flight is refused — one session is one conversation. |
 | `ask_human(question, context?)` | Flag something for the human. Always the cooperative pause: the handler persists the question, the run exits at quiescence, and the human answers via `duet continue --answer` — in attended phases they're at the terminal and answer in minutes; during AFK the question waits. |
 | `advance_phase(summary, artifacts, spec_path?)` | Declare the phase complete. Legal only when the phase's exit criteria are plausible; lands on the phase's human gate (the `open` sub-phase, which runs after the last gate, advances straight to done). `spec_path` reports where the spec file landed when the phase produced it (framing-only entry). |
@@ -129,12 +129,12 @@ Unchanged in shape from the 2026-05-26 design: resumed CLI sessions, transcripts
 
 ### Worker compaction
 
-The compaction points in the workflow (`compact-for-plan`, `compact-for-review`) are implementer-side moves, and the mechanics are per-provider:
+Two implementer-side `/compact` moves, each at a phase boundary:
 
-- **claude** — the orchestrator sends the implementer a prompt whose body is literally `/compact ` followed by the adapted compaction snippet; the session compacts natively in place (same session id, `compact_boundary` event, instructions honored — live-verified headlessly, including via the stdin path the provider uses). The provider substitutes a synthetic confirmation for the compaction turn's empty result. A `reread-context` turn pointing at the plan file and spec re-anchors the implementer afterward.
-- **codex** — auto-compaction only, built into the core session engine every frontend shares (default threshold: 90% of the model's context window). Duet never sends codex a compaction command and never touches `~/.codex/config.toml` (whose `model_context_window` / `model_auto_compact_token_limit` overrides are the one known way to break exec-mode auto-compaction).
+- **Plan→implementation (`compact-for-impl`)** — the impl phase's first act, after the plan commits. Deliberately *not* at spec→plan: exploration and planning share one substrate (reading the code to design against it), so a cut there only forces a reread before a line-cited plan — whereas the committed plan file already carries the design across the plan→impl seam, and the slices reread fresh anyway. (`compact-for-plan`, the manual after-spec variant, stays in the library for a judgment-timed early cut when a long spec phase bloats context — not the default; context-fill telemetry is the signal.)
+- **Build→review (`compact-for-review`)** — before the review cycle, orchestrator-timed: drop the build journey, keep the mental model, decisions, and test state.
 
-This is also why **the plan must be a file in the repo** (path named by the framing; the orchestrator flags the human if the framing is silent): compaction drops the implementer's journey, and the plan file plus the committed spec are what post-compaction turns re-anchor on.
+Per provider: **claude** compacts in place — a `/compact …` prompt body (same session, instructions honored; the provider substitutes a synthetic confirmation for the empty turn) — then `reread-context` re-anchors it. **codex** auto-compacts near its window ceiling, so it is never commanded and `~/.codex/config.toml` is never touched (its context-window overrides are the one way to break exec-mode auto-compaction); it gets the `reread-context` re-anchor alone. Either way **the plan must be a repo file**: compaction drops the journey, so the committed plan + spec are the re-anchor.
 
 ## Question triage
 
@@ -156,10 +156,10 @@ PLANNING (attended)
     ── GATE: Direction ──
   spec draft → review/update rounds
     ── GATE: Commit spec ──
-  compact-for-plan → plan draft → review/update rounds
+  plan draft → review/update rounds   (planning keeps full spec-exploration context)
     ── GATE: Plan approval ──            ← human walks away here
 IMPLEMENTATION (AFK)
-  slices (midpoint checkpoint at orchestrator's judgment)
+  commit plan → compact-for-impl + reread → slices (midpoint checkpoint at orchestrator's judgment)
   → compact-for-review (judgment) → implementation-handoff
   → review/respond rounds → fixes → re-review
   → ceo-summary (implementer drafts; last act of the phase)

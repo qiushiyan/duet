@@ -3,6 +3,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'smol-toml';
 import { z } from 'zod';
+import { ANYTIME_SNIPPETS, PHASES } from './phases.ts';
+import type { PhaseName } from './phases.ts';
 
 /**
  * Duet's snippet library — `snippets.toml` at the repo root, seeded from the
@@ -39,24 +41,96 @@ export function loadSnippets(): Snippet[] {
   return cache;
 }
 
+let byKey: Map<string, Snippet> | undefined;
+function index(): Map<string, Snippet> {
+  if (!byKey) byKey = new Map(loadSnippets().map((s) => [s.key, s]));
+  return byKey;
+}
+
 export function getSnippet(key: string): Snippet | undefined {
-  return loadSnippets().find((s) => s.key === key);
+  return index().get(key);
+}
+
+export interface SnippetRenderOpts {
+  /**
+   * The current phase — renders the phase-grouped view: this phase's templates
+   * and the anytime helpers in full, other phases indexed by key. Omitted (or
+   * `all`) renders the flat full library.
+   */
+  phase?: PhaseName;
+  /** snippet key → roles already sent that template this phase; annotated in the view. */
+  sentTo?: Record<string, string[]>;
+  /** Render every snippet's full body, ungrouped — the escape hatch for a cross-phase template. */
+  all?: boolean;
 }
 
 /**
- * Render the library for the orchestrator: keys + bodies, XML-tagged per the
- * prompting conventions. `sentTo` maps snippet key → roles already sent that
- * template this phase; those entries are annotated so the menu carries the
- * once-per-phase state at selection time.
+ * Render the library for the orchestrator, XML-tagged per the prompting
+ * conventions. The default (a phase given, `all` off) is progressive
+ * disclosure: the current phase's templates and the always-available helpers
+ * in full, the other phases listed by key only — the snippets actually reached
+ * for now, without the rest as noise (docs/prompting-and-tool-design.md
+ * §"Just-in-time / progressive disclosure"). `all` (or no phase) renders every
+ * body. `sentTo` annotates templates already sent this phase so later turns
+ * want the delta, not the template.
  */
-export function renderSnippetLibrary(sentTo?: Record<string, string[]>): string {
+export function renderSnippetLibrary(opts: SnippetRenderOpts = {}): string {
+  if (opts.all || !opts.phase) return renderFlat(opts.sentTo, opts.all);
+  return renderForPhase(opts.phase, opts.sentTo);
+}
+
+function snippetBlock(s: Snippet, sentTo?: Record<string, string[]>): string {
+  const sent = sentTo?.[s.key];
+  const attr = sent && sent.length > 0 ? ` already_sent_this_phase_to="${sent.join(', ')}"` : '';
+  return `<snippet key="${s.key}"${attr}>\n${s.expand}\n</snippet>`;
+}
+
+function renderFlat(sentTo?: Record<string, string[]>, all?: boolean): string {
   return [
-    '<snippet_library>',
-    ...loadSnippets().map((s) => {
-      const sent = sentTo?.[s.key];
-      const attr = sent && sent.length > 0 ? ` already_sent_this_phase_to="${sent.join(', ')}"` : '';
-      return `<snippet key="${s.key}"${attr}>\n${s.expand}\n</snippet>`;
-    }),
+    all ? '<snippet_library all="true">' : '<snippet_library>',
+    ...loadSnippets().map((s) => snippetBlock(s, sentTo)),
     '</snippet_library>',
   ].join('\n');
+}
+
+function fullBodies(keys: readonly string[], sentTo?: Record<string, string[]>): string[] {
+  return keys.map((k) => getSnippet(k)).filter((s): s is Snippet => s !== undefined).map((s) => snippetBlock(s, sentTo));
+}
+
+function renderForPhase(phase: PhaseName, sentTo?: Record<string, string[]>): string {
+  const i = PHASES.findIndex((p) => p.name === phase);
+  const current = PHASES[i]!;
+  const lines: string[] = [
+    `<snippet_library phase="${phase}">`,
+    'Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in arc order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).',
+    `<phase_templates phase="${phase}">`,
+    ...(current.snippets.length > 0
+      ? fullBodies(current.snippets, sentTo)
+      : ['(No library templates — this phase is skill- and mechanics-driven; compose from scratch or reach for a helper.)']),
+    '</phase_templates>',
+    '<anytime_helpers>',
+    ...fullBodies(ANYTIME_SNIPPETS, sentTo),
+    '</anytime_helpers>',
+  ];
+
+  const next = PHASES.slice(i + 1).filter((p) => p.snippets.length > 0);
+  if (next.length > 0) {
+    lines.push(
+      '<coming_next note="the nominal arc — gate rejects loop back and pre-authorized gates skip the stop; orientation for forward-looking work, not a cue to reach ahead">',
+      ...next.map((p) => `<phase name="${p.name}">${p.snippets.join(', ')}</phase>`),
+      '</coming_next>',
+    );
+  }
+
+  const done = PHASES.slice(0, i).filter((p) => p.snippets.length > 0);
+  if (done.length > 0) {
+    lines.push(
+      '<already_done>',
+      ...done.map((p) => `<phase name="${p.name}">${p.snippets.join(', ')}</phase>`),
+      '</already_done>',
+    );
+  }
+
+  lines.push('</snippet_library>');
+  return lines.join('\n');
 }
