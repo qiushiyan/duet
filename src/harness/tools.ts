@@ -82,16 +82,21 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   const tools: Array<SdkMcpToolDefinition<any>> = [
     tool(
       'list_snippets',
-      'Read the snippet library: every prompt template the workflow uses, by key. The snippets encode the protocol’s conventions (altitude lenses, round-2 discipline, compaction shapes) — read them before composing worker prompts. Snippets you have already sent this phase are annotated: those workers still hold the instructions, so later turns want the delta, not the template.',
-      {},
-      async () => {
+      'Read the snippet library — the prompt templates the workflow uses, which encode its conventions (altitude lenses, round-2 discipline, compaction shapes); read them before composing worker prompts. By default the result is focused on the current phase: this phase’s templates and the always-available helpers in full, plus a by-key index of the other phases’ templates in arc order — the snippets you actually reach for now, without the rest as noise. Pass all=true for every snippet’s full body, which you want when you genuinely need a template from another phase. Snippets you have already sent this phase are annotated: those workers still hold the instructions, so later turns want the delta, not the template.',
+      {
+        all: z
+          .boolean()
+          .optional()
+          .describe('Set true to get every snippet’s full body, ungrouped — for when you need a template outside the current phase. Default (false) shows the phase-focused view.'),
+      },
+      async (args) => {
         const sent: Record<string, string[]> = {};
         for (const role of ['implementer', 'reviewer'] as const) {
           for (const tag of state.sentSnippets?.[phase]?.[role] ?? []) {
             (sent[tag] ??= []).push(role);
           }
         }
-        return { content: [{ type: 'text' as const, text: renderSnippetLibrary(sent) }] };
+        return { content: [{ type: 'text' as const, text: renderSnippetLibrary({ phase, sentTo: sent, all: args.all }) }] };
       },
       { annotations: { readOnlyHint: true } }, // genuinely read-only; also batches with parallel sends
     ),
@@ -200,7 +205,19 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           const ctx = turn.context ? ` · context ${contextPercent(turn.context)}%` : '';
           appendVoiceLog(state, args.role, `▶ response (session ${turn.sessionId})${ctx}`, turn.text);
           log(`[send_prompt] ← ${args.role} responded (${turn.text.length} chars${ctx})`);
-          return { content: [{ type: 'text' as const, text: turn.text }] };
+          const content: Array<{ type: 'text'; text: string }> = [{ type: 'text' as const, text: turn.text }];
+          // Reactive state-triggered nudge (docs/prompting-and-tool-design.md
+          // §"Results nudge the next step"): when this review round leaves
+          // exactly one before the backstop cap, say so once — the cap is
+          // runaway protection, not a target, so the reminder steers toward
+          // converging or flagging rather than spending the last round idly.
+          if (isReviewRound && (state.rounds[phase] ?? 0) === cap - 1) {
+            content.push({
+              type: 'text' as const,
+              text: `(${state.rounds[phase]} of ${cap} review rounds used — one remains before this phase’s backstop cap. The cap is runaway protection, not a target: if the loop has converged, advance_phase now; if a substantive disagreement is still open, that is the human’s call via ask_human. Spend the last round only on a genuinely open structural point.)`,
+            });
+          }
+          return { content };
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
           log(`[send_prompt] ✗ ${args.role} turn failed: ${detail}`);

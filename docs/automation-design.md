@@ -102,7 +102,7 @@ A read-only agent whose system prompt is the workflow protocol operationalized �
 
 | Tool | What it does |
 |---|---|
-| `list_snippets()` | Read the built-in snippet library (keys + bodies). |
+| `list_snippets(all?)` | Read the snippet library, **phase-focused by default** (progressive disclosure): the current phase's templates and the always-available helpers in full, the other phases indexed by key in arc order, with `already_sent_this_phase_to` annotations. `all: true` returns every body, ungrouped — the escape hatch for a cross-phase template. The phase→snippet mapping is a `snippets` field on each phase row in `src/phases.ts` (`ANYTIME_SNIPPETS` for cross-cutting helpers, `UNLISTED_SNIPPETS` for archived ones like `compact-for-plan`), and a completeness test asserts every library snippet lands in exactly one bucket. |
 | `send_prompt(role, tag, body)` | Send a prompt to the implementer or reviewer and return the worker's response. `tag` names the source snippet (`"custom"` when composed from scratch); `body` is the final text. Every call logs the tag and the body, so adaptation drift is auditable. Independent turns to different roles run concurrently when issued as parallel calls (the frame phase's two analyses); a second turn to the same role while one is in flight is refused — one session is one conversation. |
 | `ask_human(question, context?)` | Flag something for the human. Always the cooperative pause: the handler persists the question, the run exits at quiescence, and the human answers via `duet continue --answer` — in attended phases they're at the terminal and answer in minutes; during AFK the question waits. |
 | `advance_phase(summary, artifacts, spec_path?)` | Declare the phase complete. Legal only when the phase's exit criteria are plausible; lands on the phase's human gate (the `open` sub-phase, which runs after the last gate, advances straight to done). `spec_path` reports where the spec file landed when the phase produced it (framing-only entry). |
@@ -129,10 +129,15 @@ Unchanged in shape from the 2026-05-26 design: resumed CLI sessions, transcripts
 
 ### Worker compaction
 
-The compaction points in the workflow (`compact-for-plan`, `compact-for-review`) are implementer-side moves, and the mechanics are per-provider:
+Two compaction points are wired into the orchestration, both implementer-side moves at a phase boundary:
+
+- **First — the plan→implementation boundary (`compact-for-impl`).** At the top of the AFK impl phase, after the plan is committed and before the first slice, the implementer's window is reset for the long phase ahead. It is **deliberately not** placed at the spec→plan boundary (where `compact-for-plan` historically sat in the manual workflow): spec exploration and planning share one substrate — understanding the existing code to design against it — so cutting between them only forces an expensive reread before the plan can be written with line-cited detail. Planning keeps its full context (sharper, cheaper plans); the **plan file is what carries the design across the plan→impl seam**, and the slices reread code fresh regardless, so the one compaction + reread land exactly where they are already owed. (`compact-for-plan` survives in the library for a judgment-timed earlier cut when a long spec phase bloats context before the plan — the context-fill telemetry is the signal — but it is not the default.)
+- **Second — the build→review boundary (`compact-for-review`).** Before the review cycle (currently placed before the handoff; orchestrator-timed), the build-process journey is dropped while the load-bearing model, decisions, and test state are kept.
+
+The mechanics are per-provider:
 
 - **claude** — the orchestrator sends the implementer a prompt whose body is literally `/compact ` followed by the adapted compaction snippet; the session compacts natively in place (same session id, `compact_boundary` event, instructions honored — live-verified headlessly, including via the stdin path the provider uses). The provider substitutes a synthetic confirmation for the compaction turn's empty result. A `reread-context` turn pointing at the plan file and spec re-anchors the implementer afterward.
-- **codex** — auto-compaction only, built into the core session engine every frontend shares (default threshold: 90% of the model's context window). Duet never sends codex a compaction command and never touches `~/.codex/config.toml` (whose `model_context_window` / `model_auto_compact_token_limit` overrides are the one known way to break exec-mode auto-compaction).
+- **codex** — auto-compaction only, built into the core session engine every frontend shares (default threshold: 90% of the model's context window). Duet never sends codex a compaction command and never touches `~/.codex/config.toml` (whose `model_context_window` / `model_auto_compact_token_limit` overrides are the one known way to break exec-mode auto-compaction). At the plan→impl boundary the codex implementer gets the `reread-context` re-anchor without a `/compact`.
 
 This is also why **the plan must be a file in the repo** (path named by the framing; the orchestrator flags the human if the framing is silent): compaction drops the implementer's journey, and the plan file plus the committed spec are what post-compaction turns re-anchor on.
 
@@ -156,10 +161,10 @@ PLANNING (attended)
     ── GATE: Direction ──
   spec draft → review/update rounds
     ── GATE: Commit spec ──
-  compact-for-plan → plan draft → review/update rounds
+  plan draft → review/update rounds   (planning keeps full spec-exploration context)
     ── GATE: Plan approval ──            ← human walks away here
 IMPLEMENTATION (AFK)
-  slices (midpoint checkpoint at orchestrator's judgment)
+  commit plan → compact-for-impl + reread → slices (midpoint checkpoint at orchestrator's judgment)
   → compact-for-review (judgment) → implementation-handoff
   → review/respond rounds → fixes → re-review
   → ceo-summary (implementer drafts; last act of the phase)
