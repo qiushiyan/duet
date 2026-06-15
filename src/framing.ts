@@ -144,6 +144,23 @@ export async function composeInEditor(instructions: string): Promise<string> {
   }
 }
 
+/**
+ * Resolve a piece of human input that may arrive inline or via the editor —
+ * the one path shared by every command that takes the human's words
+ * (`continue --approve/--reject/--answer`, `steer`). An inline string (a
+ * `--flag "text"` value or a positional argument) is returned verbatim; a
+ * bare flag (commander hands back `true`) or an omitted optional argument
+ * (`undefined`) opens the editor on a throwaway file seeded with
+ * `instructions` (see `composeInEditor`). Callers decide what an empty
+ * result means — approve treats it as "no rider", the rest abort.
+ */
+export async function resolveHumanText(
+  inline: string | boolean | undefined,
+  instructions: string,
+): Promise<string> {
+  return typeof inline === 'string' ? inline : composeInEditor(instructions);
+}
+
 /** Named presets — pure aliases for gate lists, never a separate vocabulary. */
 const GATES_AT_PRESETS: Record<string, GatePhase[]> = {
   /** Attend nothing after the spec — the full sleep posture. */

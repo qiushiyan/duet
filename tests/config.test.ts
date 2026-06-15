@@ -21,7 +21,7 @@ describe('role bindings', () => {
       `[roles.implementer]\nprovider = "claude"\n\n[roles.reviewer]\nprovider = "claude"\nmodel = "claude-opus-4-6"`,
     );
     const bindings = loadRoleBindings(undefined, path);
-    expect.soft(bindings.implementer).toEqual({ provider: 'claude', model: 'claude-fable-5' });
+    expect.soft(bindings.implementer).toEqual({ provider: 'claude', model: 'claude-opus-4-8' });
     expect.soft(bindings.reviewer).toEqual({ provider: 'claude', model: 'claude-opus-4-6' });
     expect.soft(bindings.orchestrator).toEqual(DEFAULT_BINDINGS.orchestrator);
   });
@@ -52,7 +52,7 @@ describe('role bindings', () => {
 
 describe('parseRoleOverride', () => {
   test('parses provider and optional model, defaulting claude models per role', () => {
-    expect.soft(parseRoleOverride('implementer', 'claude')).toEqual({ provider: 'claude', model: 'claude-fable-5' });
+    expect.soft(parseRoleOverride('implementer', 'claude')).toEqual({ provider: 'claude', model: 'claude-opus-4-8' });
     expect.soft(parseRoleOverride('implementer', 'claude:claude-opus-4-6')).toEqual({
       provider: 'claude',
       model: 'claude-opus-4-6',

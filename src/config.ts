@@ -23,19 +23,20 @@ export interface RoleBinding {
 export type RoleBindings = Record<Role, RoleBinding>;
 
 /**
- * Per-role claude-model defaults (the user's call, 2026-06-11): the
- * implementer rides the most capable model — it writes the specs, plans,
- * and code — while the orchestrator's process judgments sit well within
- * Opus. Fable 5 prices at ~2× Opus and its tokenizer counts ~30% more
- * tokens, so the spend concentrates where the artifacts are made.
+ * Per-role claude-model defaults: Opus 4.8 across the board (updated
+ * 2026-06-15 from the earlier Fable-5 implementer default). A more capable
+ * or costlier model — e.g. Fable 5, which prices at ~2× Opus — can be bound
+ * to any single role per run via the config file or a `--<role>` flag when
+ * an artifact-heavy feature warrants it; the shipped default keeps every
+ * claude role on Opus 4.8.
  */
 export const DEFAULT_CLAUDE_MODEL: Record<Role, string> = {
   orchestrator: 'claude-opus-4-8',
-  implementer: 'claude-fable-5',
+  implementer: 'claude-opus-4-8',
   reviewer: 'claude-opus-4-8',
 };
 
-/** Shipped default: matches the user's manual setup and the observed sessions. */
+/** Shipped default when no config file is present (claude roles on Opus 4.8, reviewer on codex). */
 export const DEFAULT_BINDINGS: RoleBindings = {
   orchestrator: { provider: 'claude', model: DEFAULT_CLAUDE_MODEL.orchestrator },
   implementer: { provider: 'claude', model: DEFAULT_CLAUDE_MODEL.implementer },

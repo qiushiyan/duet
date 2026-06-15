@@ -13,7 +13,7 @@ Three roles, each bound to a provider (`claude` or `codex`):
 | Role | Does | Default |
 |---|---|---|
 | **Orchestrator** | Routes the protocol — never writes code, only triages and decides who answers what | `claude` (Opus) |
-| **Implementer** | Writes specs, plans, code, the PR | `claude` (Fable) |
+| **Implementer** | Writes specs, plans, code, the PR | `claude` (Opus) |
 | **Reviewer** | Critiques each artifact, read-only | `codex` |
 
 A run moves through a fixed arc. Each `→` is a phase the agents work through; each **GATE** is a stop where the run waits for you:
@@ -68,7 +68,7 @@ model = "claude-opus-4-8"   # any Anthropic model id
 
 [roles.implementer]
 provider = "claude"
-model = "claude-fable-5"
+model = "claude-opus-4-8"
 
 [roles.reviewer]
 provider = "codex"          # no model key — your ~/.codex/config.toml governs

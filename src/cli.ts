@@ -7,7 +7,7 @@ import { execa } from 'execa';
 import { createActor } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
 import { loadRoleBindings } from './config.ts';
-import { DEFAULT_FRAMING_FILE, composeInEditor, resolveRunInputs } from './framing.ts';
+import { DEFAULT_FRAMING_FILE, resolveHumanText, resolveRunInputs } from './framing.ts';
 import { aliveDriverPid, driveToQuiescence, probeRunPosition, spawnDrive, waitForRunStop } from './harness/lifecycle.ts';
 import type { HumanEvent } from './harness/lifecycle.ts';
 import { duetMachine } from './harness/machine.ts';
@@ -165,9 +165,12 @@ program
     '--reject [feedback]',
     'send the artifact back; the feedback reaches the orchestrator verbatim. Bare --reject opens $EDITOR to compose it (an empty result aborts the rejection)',
   )
-  .option('--answer <text>', 'answer the queued question')
+  .option(
+    '--answer [text]',
+    'answer the queued question; the text reaches the orchestrator verbatim. Bare --answer opens $EDITOR to compose it (an empty result aborts)',
+  )
   .option('--tmux', 'open (or reuse) the tmux viewer for this run')
-  .action(async (runId: string | undefined, opts: { approve?: boolean | string; reject?: boolean | string; answer?: string; tmux?: boolean }) => {
+  .action(async (runId: string | undefined, opts: { approve?: boolean | string; reject?: boolean | string; answer?: boolean | string; tmux?: boolean }) => {
     const cwd = process.cwd();
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
     if (!state) fail('no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
@@ -259,7 +262,7 @@ program
 
     // An optional-value flag swallows the next token, so a run id typed after
     // the flag would silently become the text. Catch the certain mistake.
-    for (const value of [opts.approve, opts.reject]) {
+    for (const value of [opts.approve, opts.reject, opts.answer]) {
       if (typeof value === 'string' && listRuns(cwd).some((r) => r.runId === value)) {
         fail(
           `"${value}" is a run id, but it was parsed as the flag's text — put the run id before the flag (duet continue ${value} --approve), or quote the text if you really meant it.`,
@@ -270,23 +273,32 @@ program
     // A bare flag means "compose in the editor" — a shell flag is a hostile
     // place for substantial feedback (the text is discarded after staging).
     if (opts.reject !== undefined) {
-      const feedback =
-        typeof opts.reject === 'string'
-          ? opts.reject
-          : await composeInEditor('Rejecting the gate: write the feedback that sends the artifact back. It reaches the orchestrator verbatim, as editor-in-chief input.');
+      const feedback = await resolveHumanText(
+        opts.reject,
+        'Rejecting the gate: write the feedback that sends the artifact back. It reaches the orchestrator verbatim, as editor-in-chief input.',
+      );
       if (!feedback.trim()) {
         fail('rejection aborted — no feedback written. A reject sends the artifact back, and the orchestrator routes the rework from your why.');
       }
       stageHumanInput(state, { kind: 'feedback', text: feedback });
     }
     if (opts.approve !== undefined) {
-      const rider =
-        typeof opts.approve === 'string'
-          ? opts.approve
-          : await composeInEditor('Approving the gate: optionally write a rider — adjustments that ride into the next phase with your approval. Save empty to approve without one.');
+      const rider = await resolveHumanText(
+        opts.approve,
+        'Approving the gate: optionally write a rider — adjustments that ride into the next phase with your approval. Save empty to approve without one.',
+      );
       if (rider.trim()) stageHumanInput(state, { kind: 'approval', text: rider.trim() });
     }
-    if (opts.answer !== undefined) stageHumanInput(state, { kind: 'answer', text: opts.answer });
+    if (opts.answer !== undefined) {
+      const answer = await resolveHumanText(
+        opts.answer,
+        'Answering the queued question: write your answer. It reaches the orchestrator verbatim.',
+      );
+      if (!answer.trim()) {
+        fail('answer aborted — nothing written. The queued question is still waiting; answer it with duet continue --answer "<text>".');
+      }
+      stageHumanInput(state, { kind: 'answer', text: answer });
+    }
 
     const pid = spawnDrive(state, eventType);
     printWatchHints(state, pid, `phase (after --${eventType})`);
@@ -317,9 +329,9 @@ program
   .description(
     'Send a mid-phase note to the orchestrator — delivered on its next tool result, as your voice. Only legal while a phase is live (or down mid-phase); at a gate or flag, duet continue is the channel.',
   )
-  .argument('<text>', 'the note, verbatim — it reaches the orchestrator unparaphrased')
+  .argument('[text]', 'the note, verbatim — it reaches the orchestrator unparaphrased; omit it to compose the note in $EDITOR')
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
-  .action((text: string, runId: string | undefined) => {
+  .action(async (text: string | undefined, runId: string | undefined) => {
     const cwd = process.cwd();
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
     if (!state) fail('no runs found in this project');
@@ -327,7 +339,14 @@ program
     if (position.kind !== 'running' && position.kind !== 'crashed') {
       fail(steerRefusal(position, state.runId) ?? `nothing to steer at ${position.kind}`);
     }
-    stageSteer(state, text, position.phase);
+    const note = await resolveHumanText(
+      text,
+      'Steering the live phase: write the note for the orchestrator. It reaches it verbatim, as your editor-in-chief voice, on the next tool result.',
+    );
+    if (!note.trim()) {
+      fail('steer aborted — nothing written. A steer is your voice mid-phase; send one with duet steer "<note>".');
+    }
+    stageSteer(state, note, position.phase);
     console.log(
       position.kind === 'running'
         ? `steer staged — delivered on the orchestrator's next tool result (usually within minutes; watch with: duet logs ${state.runId})`
