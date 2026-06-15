@@ -1,56 +1,131 @@
 # duet
 
-Research notes toward a semi-AFK orchestrator for the **two-agent cross-review workflow**: one agent implements, the other reviews, and a human acts as router and editor-in-chief.
+**A semi-AFK orchestrator for a two-agent AI coding workflow — one agent implements, another reviews, and an LLM routes between them while you stay the editor-in-chief.**
 
-The design (as of the 2026-06-11 pivot) has **three roles**: a read-only, intelligent LLM **orchestrator** that drives the snippet protocol — choosing prompts, routing each worker's output to the other, judging loop exits, and flagging anything that needs the human — plus the **implementer** and **reviewer** agents it commands. The orchestrator runs inside a deterministic phase-and-gate skeleton enforced in code: three phases (attended PLANNING → AFK IMPLEMENTATION → attended FINAL REVIEW) whose human gates cannot be crossed by any agent. Roles are decoupled from model providers — each role binds to the `claude` or `codex` provider via a minimal config file (default: orchestrator on claude/Opus 4.8, implementer on claude/Fable 5, reviewer on codex).
+If you already run two coding agents in parallel — one writing specs/plans/code, one critiquing them — and you spend your day copy-pasting between them and nudging each one along, that's the workflow duet automates. A read-only **orchestrator** drives the hand-offs (picks the right prompt, routes each agent's output to the other, decides when a review loop has converged) and pauses at **human gates** that no agent can cross. You approve the direction, walk away at plan approval, and come back to a finished pull request — or a well-formed question waiting for you.
 
-The repository holds both halves: the research docs that captured the manual pattern precisely enough to build against (with evidence sitting next to the analysis, so conclusions stay re-derivable), and — since 2026-06-11 — the implementation itself at the repo root (`src/`, pnpm + TypeScript, no build step in dev).
+It's a personal tool, built for one developer's workflow across their own projects. It's published in case the shape is useful to you, not as a polished product.
 
-## What duet is — and isn't
+## How it works
 
-A personal augmentation tool for one developer's workflow, used across that developer's own projects. Not a general-purpose orchestration framework, not a product for thousands of users. The CLI itself is project-agnostic — it doesn't ship with skills, doesn't bundle conventions, doesn't introspect codebases. The user supplies project-specific knowledge (which skills to invoke, where artifacts go, what context to seed) in the framing turn for each run. The design assumes things — that the user knows their projects, that `claude` and `codex` are configured, that they bring the right context. The opposite of robust; the right amount of assuming.
+Three roles, each bound to a provider (`claude` or `codex`):
 
-Three principles shape every other choice:
+| Role | Does | Default |
+|---|---|---|
+| **Orchestrator** | Routes the protocol — never writes code, only triages and decides who answers what | `claude` (Opus) |
+| **Implementer** | Writes specs, plans, code, the PR | `claude` (Fable) |
+| **Reviewer** | Critiques each artifact, read-only | `codex` |
 
-- **Augment, don't replace.** Duet drives the same `claude` and `codex` CLIs you already use, with the same snippets, against the same codebase. Every artifact it produces — JSONL transcripts, branches, commits — is also producible by the manual workflow. There is no "duet mode" you get locked into.
-- **Stop anytime.** A run can be paused indefinitely. The state file is a fast-access hint; the JSONL transcripts are the real source of truth. You can stop calling `duet continue`, switch to manual `claude --resume <id>` / `codex exec resume <id>`, add turns by hand, and either pick duet back up later or never — all without coordination.
-- **Not a desktop app, not a daemon.** A small one-shot CLI you invoke per gate. No GUI, no background process. Use it today, not tomorrow, pick it up the day after.
+A run moves through a fixed arc. Each `→` is a phase the agents work through; each **GATE** is a stop where the run waits for you:
 
-If duet ever starts to feel like it's *requiring* you to use it, the design has failed. It should feel like a clipboard shortcut, not a wrapper around your tools.
+```
+frame → DIRECTION → spec → COMMIT-SPEC → plan → PLAN (walk away)
+  → implementation (AFK, often hours) → SHIP → docs → DOCS-PLAN → pr → OPEN-PR → done
+```
 
-## What's here
+The gates are enforced in code (an XState statechart) — they aren't a prompt the orchestrator could be talked out of. Between stops a detached background process drives the phase; nothing runs while a run is parked, and you get a desktop notification at every stop.
 
-- `src/` — the implementation. `phases.ts` (the phase table the whole arc derives from); `cli.ts` (the `duet` command: `new`, `continue`, `steer`, `status`, `runs`, `view`, `logs`, `takeover`, and the hidden `_drive` the detached phase driver runs as); `harness/` (the XState statechart whose gates only human events can cross, the seven orchestrator tools with their protocol rails and steer delivery, the SDK session driver, the run lifecycle with gate pre-authorization, and the run-position probe); `providers/` (the worker seam with `claude` and `codex` adapters); `run-store.ts`, `framing.ts`, `status.ts`, `config.ts`, `snippets.ts`, `colorize.ts`, `tmux-view.ts`, `notify.ts`; `spike/` (the orchestrator-substrate spike and the SDK-behavior repros it produced — kept as executable evidence).
-- `skills/duet-concierge/` — the shipped Claude Code skill that makes a CC session duet's remote layer: it reads `duet status --json`, translates the human's words verbatim into the right channel (mid-phase steer, gate decision, flag answer), and reports every stop as a turn-ending message so the mobile push fires. Gate verbs are never pre-approved; the recommended `ask` rule on `duet continue` makes a gate crossing take the human twice, phone included.
-- `tests/` — the Vitest behavior suite: statechart guarantees and tag coherence, the tool-surface rails and steer delivery, driver outcome mapping and steer carry-forward, gate pre-authorization, the run-position probe, the persistence and steer handshakes, framing resolution, role bindings, the status model and copy, and guards on `snippets.toml` and the shipped skill. Fixtures and the scripted statechart live in `tests/helpers/`.
-- `snippets.toml` — duet's snippet library, mirroring tabtype's schema (seeded from the user's live config plus `ceo-summary`). The orchestrator reads it via `list_snippets`; approved `propose_snippet_edit` diffs apply here; porting back to tabtype is a manual human step.
-- `docs/observed-pattern.md` — turn-by-turn breakdown of one real session, with timestamps and the snippet used at each turn.
-- `docs/workflow-model.md` — the abstracted state machine. Phases, snippet vocabulary, loop semantics, what's stable vs. what's variable.
-- `docs/automation-design.md` — the design: three layers, tool surface, triage rules, phases and gates, loop semantics, role–provider config, worker compaction, and the as-implemented CLI lifecycle.
-- `docs/engineering.md` — the codebase's mental model: module map, the four seams, the patterns that carry the design, XState usage, testing strategy, and condensed lessons for future engineers.
-- `docs/open-questions.md` — the design decisions and their evidence. Open questions carry full reasoning and what would settle them; resolved ones are compressed to dated verdicts with stable Q numbers (full deliberations live in git history).
-- `docs/prompting-and-tool-design.md` — the prompt-design and tool-design reference (distilled from Anthropic's published guidance), with duet's five binding conventions and house patterns. Consult when designing any agent prompt or tool.
-- `docs/future-directions.md` — the product-direction ledger: the active next step (Claude Code as the interaction layer), shelved directions with revisit triggers, and declined candidates with reasons.
-- `examples/` — verbatim copies of the source session files (Claude Code + Codex), the snippet config, and the two project skills (`/onboarding`, `/update-docs`) the workflow invokes — plus an orchestrator-aware variant of `/update-docs` that can resume past its internal approval gate on a marker token. All kept here so the docs are self-contained even if the originals get rotated or deleted.
-- `schemas/agent-response.json` — the JSON Schema from the pre-pivot design, empirically verified against both CLIs on 2026-05-26. **Demoted by the 2026-06-11 pivot** — no longer the protocol contract; whether a minimal envelope survives is `docs/open-questions.md` Q16.
-- `references/` — shallow clones of external repos studied for the MVP design (sandcastle, claude-squad, the Claude Agent SDK, the Codex SDK, pi). Read-only study material, not dependencies. `references/README.md` records what each is for and — since licenses range from MIT to AGPL to proprietary — what may be copied versus only read.
+## What it is — and isn't
+
+Four ideas shape every design choice:
+
+- **Augment, don't replace.** duet drives the same `claude` and `codex` CLIs you already use, with the same prompts, against the same repo. Every artifact it produces — transcripts, branches, commits — is something you could have made by hand. There's no "duet mode" you get locked into.
+- **You own the substance.** The orchestrator does triage, never opinions. Product, direction, and environment questions always reach you; it only decides *who* should answer. The gates are structural, not a promise in a prompt.
+- **Stop anytime.** A run can be paused indefinitely. The state file is a hint; the agents' transcripts are the truth. Drop out to drive `claude --resume` / `codex resume` by hand, add turns, and pick duet back up later — or never.
+- **Not a daemon, not an app.** A small CLI you invoke per gate. No GUI, no background service, no webhooks. Use it today, walk away, pick it up the day after.
+
+**It is not** a general orchestration framework, not multi-user, and not provider-agnostic — exactly two providers exist by design. It ships with no project conventions: which skills to run, where specs go, what context to seed all come from a **framing turn** you write at the start of each run.
 
 ## Status
 
-**Working today — the full arc.** In a project repo, `duet new` starts an orchestrator-driven run — bare invocation opens your editor on a template draft at `.duet/framing-draft.md` (archived into the run dir on creation); `--framing <briefing>` supplies it directly; `--spec <draft>` skips the framing front half; gates can be pre-authorized per run (`--gates-at frame,spec`, the `overnight` and `skip-plan` presets, or the framing file's frontmatter — pre-authorized gates auto-cross with their packets recorded and show up in a status "while you were away" section; the Open-PR gate never auto-crosses); `duet continue [--approve ["rider"] | --reject ["…"] | --answer "…"]` crosses gates and answers queued flags — an approval may carry a rider (agreement plus adjustments), and a bare `--approve`/`--reject` opens your editor to compose the text — FRAME → Direction gate → SPEC → Commit-spec gate → PLAN → Plan-approval gate (the walk-away point) → AFK IMPLEMENTATION (one branch, compaction at the plan→impl boundary, slices, midpoint checkpoint at orchestrator judgment, compaction before review, handoff, review rounds, CEO summary) → Ship gate → docs proposal → Docs-plan gate → PR description → Open-PR gate → push + `gh pr create`, ending with the PR URL; `duet steer "<note>"` sends your voice into a live phase mid-flight (delivered verbatim on the orchestrator's next tool result, carried into the next prompt when the phase ends first; at a quiescent stop it refuses toward that stop's own channel); `duet status` / `duet runs` inspect — `status --json` emits the machine-readable status model, whose discriminated `stop` names the run's position (running / gate / flag / crashed / done) and the command that acts there, and `status --wait` blocks until the next stop lands (the supervision primitive); `duet logs` streams the driver narration inline, and `duet view` (or `--tmux`) opens a live viewer (one pane per voice, tailing the run logs). Commands return immediately — each phase runs in a detached driver process — and every quiescent stop pings a macOS notification. `duet takeover <role>` hands a role's session to you in the provider's own CLI (the augmentation principle as a command). Run state lives under `.duet/runs/<id>/` (state hint, machine snapshot, one log per voice, driver log + pid, notes file). FRAME through the Ship gate is live-verified — a scratch planning run (~$4 claude-side) and a first real feature driven framing-to-ship-packet (~$93 claude-side + ~82M codex input tokens; both run records in `docs/open-questions.md`); the docs/pr/open phases await their first crossing; gate pre-authorization and the view-time log styling await their first overnight run; and the concierge package — `duet steer`, `status --json`, `skills/duet-concierge/` — awaits its first live remote session.
+Early and experimental. The full arc is implemented; the framing-through-ship path has been driven end-to-end on real features. The later phases (docs, PR) and overnight gate pre-authorization are built but not yet battle-tested. Expect rough edges. See [`docs/open-questions.md`](docs/open-questions.md) for what's verified versus still open.
 
-**Not built yet:** codex-as-orchestrator (Q17) — deliberately parked until the configuration is wanted.
+## Requirements
 
-**Underneath:** pattern analysis from one fully-annotated session corroborated by a 22-session corpus scan (`docs/observed-pattern.md`); the three-role design with its rationale and history (`docs/automation-design.md`); the codebase's mental model and lessons (`docs/engineering.md`); resolved and open design questions (`docs/open-questions.md` — open: Q13 triage precision, Q16 worker schema, Q17 codex-as-orchestrator (parked), Q19 run-level budget, Q20 pre-authorization precision; the rest are compressed dated verdicts). Stack: Node 24 running TypeScript directly (no build step in dev; tsdown bundles a publish-only `dist/`), XState v5, Vitest, execa, zod, commander, `@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk` pinned to the local CLI version. Checks: `pnpm typecheck` and `pnpm test`.
+- **Node 24+** (duet runs TypeScript directly — no build step in dev)
+- **pnpm**
+- The **`claude`** and **`codex`** CLIs installed and authenticated — duet drives your existing setup
 
-## Reading order
+## Install
 
-1. `docs/observed-pattern.md` — what actually happened.
-2. `docs/workflow-model.md` — what the pattern *is*.
-3. `docs/automation-design.md` — what to do about it.
-4. `docs/open-questions.md` — what we still don't know.
-5. `docs/engineering.md` — how the code is shaped (read before changing it).
+Not on npm yet; install from source:
 
-## Convention
+```bash
+git clone https://github.com/qiushiyan/duet
+cd duet
+pnpm install
+pnpm add -g .   # links the global `duet` command
+```
 
-When a doc claim is supported by the evidence files, it cites a line/turn (e.g. "turn 4 in `examples/claude-code-session.jsonl`"). When a claim comes from the user's general description of their workflow rather than from this specific session, it is labeled **(general)** vs. **(observed)**. The split matters: the orchestrator must serve both.
+## Configure
+
+duet ships sensible defaults, so config is optional. To change which provider/model backs each role, create `~/.config/duet/config.toml`:
+
+```toml
+[roles.orchestrator]
+provider = "claude"
+model = "claude-opus-4-8"   # any Anthropic model id
+
+[roles.implementer]
+provider = "claude"
+model = "claude-fable-5"
+
+[roles.reviewer]
+provider = "codex"          # no model key — your ~/.codex/config.toml governs
+```
+
+That's the only config duet has — role-to-provider bindings, nothing else. Project knowledge never lives here; it goes in the framing turn.
+
+## Use
+
+Start a run from inside your project repo:
+
+```bash
+duet new                       # opens your editor on a framing draft (the issue, context, scope)
+duet new --spec spec.md        # start from a spec you already wrote
+duet new --gates-at overnight  # pre-authorize later gates: approve the spec, then walk away
+```
+
+The framing you write is duet's only briefing — the issue text, product context, which skills to invoke, where artifacts go. Save it and the run kicks off in the background.
+
+From there you mostly watch and decide:
+
+```bash
+duet status                    # where the run is, and the exact command to act next
+duet status --json --wait      # block until the next stop, then print (good for scripting/supervision)
+
+duet continue --approve        # cross the current gate (optionally: --approve "a rider with tweaks")
+duet continue --reject "..."   # send the artifact back; your words reach the orchestrator verbatim
+duet continue --answer "..."   # answer a queued question
+
+duet steer "..."               # nudge the orchestrator mid-phase, without pausing the run
+duet takeover reviewer         # drop into the raw CLI session yourself; pick duet back up after
+```
+
+And to follow along live:
+
+```bash
+duet logs                      # stream the orchestrator's narration inline
+duet view                      # tmux panes, one per voice (or pass --tmux to new/continue)
+duet runs                      # list runs in this project
+```
+
+A typical session: `duet new`, approve the direction, refine the spec and plan over a round or two of review, approve the plan — then walk away. Implementation runs AFK for an hour or more. You come back to a Ship-gate packet (a CEO-style summary on top), verify it in your environment, approve through docs and the PR description, and duet opens the pull request.
+
+Run state lives under `.duet/runs/<id>/` (self-ignored from git). `state.json` is a convenience hint; the three agent transcripts are the source of truth.
+
+## Going deeper
+
+The `docs/` folder is the real design record. Suggested reading order:
+
+1. [`docs/observed-pattern.md`](docs/observed-pattern.md) — the manual workflow this automates, from a real session
+2. [`docs/workflow-model.md`](docs/workflow-model.md) — that pattern abstracted into phases and vocabulary
+3. [`docs/automation-design.md`](docs/automation-design.md) — the design: roles, layers, gates, policies
+4. [`docs/open-questions.md`](docs/open-questions.md) — what's decided, what's still open, and the evidence
+5. [`docs/engineering.md`](docs/engineering.md) — how the code is shaped (read before changing it)
+
+`skills/duet-concierge/` is a Claude Code skill that lets you drive a run from your phone — duet's "remote control" without duet building any remote infrastructure of its own.
+
+## License
+
+[MIT](LICENSE)

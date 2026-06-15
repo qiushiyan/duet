@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "description": "Semi-AFK orchestrator for the two-agent cross-review workflow: a read-only LLM orchestrator routes a snippet protocol between an implementer and a reviewer, inside a code-enforced phase-and-gate skeleton.",
+  "license": "MIT",
+  "author": "qiushiyan <qiushi.yann@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qiushiyan/duet.git"
+  },
   "type": "module",
   "bin": {
     "duet": "src/cli.ts"

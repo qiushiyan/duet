@@ -87,7 +87,7 @@ Dev has no build step: Node 24 runs `.ts` directly, and the global `duet` comman
 
 The split lives in `package.json`: `bin` → `src/cli.ts` for dev; `publishConfig.bin` → `dist/cli.mjs`, rewritten by pnpm only in the published tarball. `pnpm build` (tsdown, config in `tsdown.config.ts`) bundles `src/` into `dist/cli.mjs` with dependencies external and publint validating the result; `prepack` chains typecheck → tests → build, so a tarball can't be cut from a broken tree. `dist/` is gitignored and never used in dev.
 
-Two facts the setup depends on: `snippets.toml` is listed in `files` because `src/snippets.ts` resolves it package-relative at runtime (`src/` and `dist/` both sit one level below the root, so the `import.meta.url + '..'` resolution survives bundling), and the `_drive` respawn uses `process.argv[1]`, so it is agnostic to which entry was invoked. `private: true` stays as the guard against accidental publish; removing it (plus adding `license`/`repository`, and checking the npm name) is the deliberate remaining step when publishing becomes real.
+Two facts the setup depends on: `snippets.toml` is listed in `files` because `src/snippets.ts` resolves it package-relative at runtime (`src/` and `dist/` both sit one level below the root, so the `import.meta.url + '..'` resolution survives bundling), and the `_drive` respawn uses `process.argv[1]`, so it is agnostic to which entry was invoked. `private: true` stays as the guard against accidental publish; the `license` (MIT), `author`, and `repository` fields are now set, so removing `private` and checking the npm name is the deliberate remaining step when publishing becomes real.
 
 ## Condensed lessons
 
