@@ -95,7 +95,7 @@ Top-level fields:
 
 ## The framing file (for run starts from dictation)
 
-A markdown file: an optional `---`-fenced frontmatter block holding only fixed machine-parsed values (`gates_at`, `spec`), then prose the orchestrator reads verbatim. Everything judgment-weighed belongs in the prose, never the frontmatter. Draft from this skeleton, filling what the human's dictation gives you and asking for what it doesn't — a thin framing produces hours of misdirected autonomous work:
+A markdown file: an optional `---`-fenced frontmatter block holding only fixed machine-parsed values (`gates_at`, `spec`), then prose that, at the first phase, each worker reads independently as its own briefing. Everything judgment-weighed belongs in the prose, never the frontmatter. Write that prose as the briefing it is: speak to the reader as "you" and pair each action with the knowledge behind it ("read X to understand Y, then build Z; verify with W"), so whoever opens the file reads it as onboarding written for them. Draft from this skeleton, filling what the human's dictation gives you and asking for what it doesn't — a thin framing produces hours of misdirected autonomous work:
 
 ```markdown
 ---
@@ -110,7 +110,9 @@ A markdown file: an optional `---`-fenced frontmatter block holding only fixed m
 <what to build or change, why, and the scope boundaries — what's explicitly out>
 
 # Onboarding
-<a skill each worker should invoke (e.g. /onboarding <topic>) or files to read first>
+<what to read first to get oriented, and what each source gives you — e.g.
+ "Read CLAUDE.md for the architecture, then the design docs it points to";
+ name an onboarding skill to invoke if the project has one>
 
 # Conventions
 - Specs live at: <path convention>
@@ -124,7 +126,8 @@ A markdown file: an optional `---`-fenced frontmatter block holding only fixed m
 - Environment-only actions (migrations, deploys): flag the human — never attempt.
 
 # Docs
-<docs-update skill name if one exists, else where docs live>
+<for the docs phase, which runs after the implementation: a docs-update skill if
+ one exists, else where docs live and what a change like this should update>
 
 # Planning style
 <tdd-plan vs start-plan preference, or let the orchestrator judge>

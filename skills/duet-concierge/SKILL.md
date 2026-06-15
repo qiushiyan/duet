@@ -74,7 +74,7 @@ Gate and flag stops carry the exact command string to run, so translation is mec
 
 ## Starting a run from dictation
 
-When the human describes new work, you draft the **framing file** — the one document that carries project knowledge into a run (the problem and its scope boundaries, how workers onboard, where specs and plans live, verification commands). The skeleton and field meanings are in [references/cli-reference.md](references/cli-reference.md). Write it from their dictation, save it under `.duet/`, and show it to them **verbatim** — it steers hours of autonomous work, so they sign off on the exact text. Then:
+When the human describes new work, you draft the **framing file** — the one document that carries project knowledge into a run (the problem and its scope boundaries, what to read to get oriented, where specs and plans live, verification commands). At the first phase it goes to each worker independently, who reads it alone as their own briefing and forms their own view — so write it to that single reader: speak to "you" and pair each action with the reason behind it ("read X to understand Y, then build Z"), the way good onboarding does. The skeleton and field meanings are in [references/cli-reference.md](references/cli-reference.md). Write it from their dictation, save it under `.duet/`, and show it to them **verbatim** — it steers hours of autonomous work, so they sign off on the exact text. Then:
 
 ```
 duet new --framing .duet/<name>.md
