@@ -84,11 +84,12 @@ Start a run from inside your project repo:
 
 ```bash
 duet new                       # opens your editor on a framing draft (the issue, context, scope)
+duet new --template bug        # seed that draft from .duet/templates/bug.md, then fill in the problem
 duet new --spec spec.md        # start from a spec you already wrote
 duet new --gates-at overnight  # pre-authorize later gates: approve the spec, then walk away
 ```
 
-The framing you write is duet's only briefing — the issue text, product context, which skills to invoke, where artifacts go. Save it and the run kicks off in the background.
+The framing you write is duet's only briefing — the issue text, product context, which skills to invoke, where artifacts go. Save it and the run kicks off in the background. When most of that briefing repeats across runs, save it once as a template in `.duet/templates/` and seed the draft with `--template <name>` (bare `duet new` picks up `.duet/templates/default.md` if present) — a template is just pre-baked framing, so you still review and edit it before the run starts.
 
 From there you mostly watch and decide:
 
