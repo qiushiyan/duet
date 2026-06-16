@@ -52,7 +52,7 @@ Numbering note: Q1–Q10 predate the 2026-06-11 pivot to an intelligent orchestr
 - **Both mechanical pause options corrupt session resume** — PreToolUse `defer` loses the SDK MCP server on resume; `canUseTool` deny+interrupt crashes the resumed session. Executable repros: `src/spike/repro-*.ts`. The working pattern is cooperative: the `ask_human` handler persists the question and instructs the orchestrator to end its turn; the process exits at quiescence; `--resume` delivers the answer.
 - Session resume preserves context fully, and the transcript lands in `~/.claude/projects/` — manually resumable, so augmentation holds.
 - Operational: SDK-MCP calls outliving 60s (every `send_prompt`) need `CLAUDE_CODE_STREAM_CLOSE_TIMEOUT` raised; `alwaysLoad: true` keeps tools present when a resumed session's first prompt is built.
-- Economics: from 2026-06-15, Agent SDK / `claude -p` usage draws from a separate subscription credit pool at standard API rates — per-invocation `maxBudgetUsd` is a day-one rail, costs tracked per run.
+- Economics: from 2026-06-15, Agent SDK / `claude -p` usage draws from a separate subscription credit pool at standard API rates — per-invocation `maxBudgetUsd` is a day-one rail, costs tracked per run. The opt-in interactive transport for the implementer (`docs/interactive-transport.md`) drives the interactive TUI to bill the *flat* quota instead — built as a spike.
 
 ## ~~Q12. Where does duet's snippet library live?~~
 
