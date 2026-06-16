@@ -178,6 +178,23 @@ describe('resolveRunInputs --template (seeding the editor draft)', () => {
     expect.soft(inputs.framing).toContain('the specifics');
   });
 
+  test('a stale built-in draft is still caught as untouched after a default.md appears', async ({ projectDir }) => {
+    // A prior bare run left an untouched built-in-seeded draft on disk (the
+    // abort path preserves it)...
+    mkdirSync(join(projectDir, '.duet'), { recursive: true });
+    writeFileSync(join(projectDir, DEFAULT_FRAMING_FILE), FRAMING_TEMPLATE);
+    // ...then the project gained a default.md — a different seed — before the
+    // next run. The bare path reuses the stale draft without reseeding, so the
+    // guard must still recognize the built-in template it holds.
+    const dir = join(projectDir, '.duet', 'templates');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'default.md'), '# Problem\nDEFAULT SKELETON\n');
+    vi.stubEnv('VISUAL', '');
+    vi.stubEnv('EDITOR', 'true'); // reuses the stale draft, no edit
+
+    await expect(resolveRunInputs(projectDir, {})).rejects.toThrow(/still the untouched template/);
+  });
+
   test('a missing --template surfaces the not-found error', async ({ projectDir }) => {
     vi.stubEnv('VISUAL', '');
     vi.stubEnv('EDITOR', 'true');

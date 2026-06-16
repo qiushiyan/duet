@@ -186,9 +186,14 @@ export async function editFramingForRun(cwd: string, templateName?: string): Pro
   if (!content.trim()) {
     throw new Error(`run not started: ${DEFAULT_FRAMING_FILE} is empty`);
   }
-  // Untouched = identical to whatever we seeded (built-in, default.md, or the
-  // named template) — the guard tracks the seed, not just the built-in constant.
-  if (content.trim() === seed.trim()) {
+  // Untouched = identical to a seed this draft could have been created from:
+  // the seed we'd write now (built-in, default.md, or the named template) OR
+  // the built-in template. The bare path reuses an existing draft without
+  // reseeding, so across runs an on-disk draft can predate the current seed
+  // (e.g. a default.md added since it was last written); folding in the
+  // built-in keeps an unfilled draft from silently launching a run.
+  const trimmed = content.trim();
+  if (trimmed === seed.trim() || trimmed === FRAMING_TEMPLATE.trim()) {
     throw new Error(`run not started: ${DEFAULT_FRAMING_FILE} is still the untouched template — fill it in (it's saved for next time)`);
   }
   return DEFAULT_FRAMING_FILE;
