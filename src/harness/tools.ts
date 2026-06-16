@@ -195,6 +195,15 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             sentThisPhase(args.role).push(args.tag);
           }
           if (turn.costUsd) state.costs.claudeWorkersUsd += turn.costUsd;
+          // A claude turn that reported no cost (the interactive transport, by
+          // P5) means the claudeWorkersUsd total is partial — mark it so the
+          // status never presents the known sum as the complete total. The
+          // claim is about cost completeness, not transport: total_cost_usd is
+          // optional in the envelope, so anything needing "interactive"
+          // specifically reads the binding's transport, never a missing cost.
+          if (provider.name === 'claude' && turn.costUsd === undefined) {
+            state.costs.claudeWorkersCostPartial = true;
+          }
           if (provider.name === 'codex' && turn.tokens) {
             state.costs.codexTokens.input += turn.tokens.input;
             state.costs.codexTokens.output += turn.tokens.output;

@@ -228,6 +228,16 @@ describe('renderStatus', () => {
     expect.soft(out).not.toContain('docs 0');
   });
 
+  test('the cost line marks claude-worker cost unavailable only when the total is partial', ({ run }) => {
+    run.machineState = 'implFlagWait';
+    expect.soft(render(run, { kind: 'running', pid: 1, phase: 'impl' })).not.toContain('cost unavailable');
+
+    run.costs.claudeWorkersCostPartial = true;
+    expect
+      .soft(render(run, { kind: 'running', pid: 1, phase: 'impl' }))
+      .toContain('claude workers $0.00 known (+ interactive turns: cost unavailable)');
+  });
+
   test('context fill renders as plain percentages per voice', ({ run }) => {
     run.machineState = 'implFlagWait';
     run.contextUsage = {
