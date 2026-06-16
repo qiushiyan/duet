@@ -11,6 +11,8 @@
  * lands HERE plus the matching predicate in src/providers/interactive-claude.ts.
  */
 
+import { turnMarker } from '../../src/providers/interactive-claude.ts';
+
 export interface TranscriptRecord {
   type: string;
   subtype?: string;
@@ -24,11 +26,6 @@ export interface TranscriptRecord {
     stop_reason?: string | null;
     usage?: Record<string, number>;
   };
-}
-
-/** The per-turn correlation marker the injection appends to the prompt body (Slice 4 reuses this). */
-export function turnMarker(nonce: string): string {
-  return `[duet-turn:${nonce}]`;
 }
 
 /** Our injected user prompt, carrying the per-turn nonce the parser matches on. */

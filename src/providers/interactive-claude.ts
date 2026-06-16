@@ -1,5 +1,11 @@
+import { randomBytes } from 'node:crypto';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { COMPACT_CONFIRMATION, claudeContextUsage } from './claude.ts';
-import type { WorkerTurn } from './types.ts';
+import { TmuxPane } from './pane.ts';
+import type { PaneController, PaneFactory } from './pane.ts';
+import type { RunTurnOptions, WorkerProvider, WorkerTurn } from './types.ts';
 
 /**
  * Interactive claude transport — the pure transcript parser.
@@ -139,4 +145,180 @@ export function parseInteractiveTurn(tail: string, opts: { nonce: string }): Wor
     }
   }
   return undefined;
+}
+
+// === injection ===
+
+/** The per-turn correlation marker the injection appends to the prompt body. */
+export function turnMarker(nonce: string): string {
+  return `[duet-turn:${nonce}]`;
+}
+
+/** The prompt body actually submitted: the prompt plus the per-turn nonce the locator matches on. */
+function injectionBody(prompt: string, nonce: string): string {
+  return `${prompt}\n\n${turnMarker(nonce)}`;
+}
+
+// === transcript location (correlation, not newest-file) ===
+
+/**
+ * Finds and reads this turn's transcript among the project slug's session files.
+ * The slug is SHARED — the orchestrator SDK session writes there concurrently —
+ * so "newest file" is ambiguous (unlike codex, which knows its id and keys the
+ * scan on the `-<id>.jsonl` suffix). Instead: snapshot the candidate files
+ * before launch, then select the new/modified file whose content carries the
+ * per-turn nonce. A nonce that matches more than one file is a should-not-happen
+ * the locator refuses to guess through; reading the whole file (not a fixed
+ * tail) keeps the turn-open user record in scope even for a long single turn.
+ */
+class TranscriptStore {
+  private readonly root: string;
+  private baseline = new Map<string, number>();
+
+  constructor(root: string) {
+    this.root = root;
+  }
+
+  /** Record the pre-launch state so the located file is the one this turn writes. */
+  snapshot(): void {
+    this.baseline = this.scan();
+  }
+
+  /**
+   * The path of the candidate (new- or modified-since-snapshot) session file
+   * carrying `nonce`, or undefined if none yet. Throws — never guesses — when
+   * more than one candidate carries it.
+   */
+  locate(nonce: string): string | undefined {
+    const candidates: string[] = [];
+    for (const [path, mtime] of this.scan()) {
+      const before = this.baseline.get(path);
+      if (before === undefined || mtime > before) candidates.push(path);
+    }
+    const matches = candidates.filter((p) => this.read(p).includes(nonce));
+    if (matches.length > 1) {
+      throw new Error(
+        `interactive claude: the turn nonce matched ${matches.length} session transcripts — refusing to guess which is this turn's`,
+      );
+    }
+    return matches[0];
+  }
+
+  read(path: string): string {
+    try {
+      return readFileSync(path, 'utf8');
+    } catch {
+      return '';
+    }
+  }
+
+  private scan(): Map<string, number> {
+    const found = new Map<string, number>();
+    if (!existsSync(this.root)) return found;
+    let entries: string[];
+    try {
+      entries = readdirSync(this.root, { recursive: true }).map(String);
+    } catch {
+      return found;
+    }
+    for (const rel of entries) {
+      if (!rel.endsWith('.jsonl')) continue;
+      const path = join(this.root, rel);
+      try {
+        const st = statSync(path);
+        if (st.isFile()) found.set(path, st.mtimeMs);
+      } catch {
+        // Vanished between readdir and stat — skip, like the codex tail-read.
+      }
+    }
+    return found;
+  }
+}
+
+// === the worker ===
+
+const POLL_INTERVAL_MS = 500;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Poll the pane until it is ready for input, or throw at the per-turn deadline. */
+async function waitUntilReady(pane: PaneController, deadline: number): Promise<void> {
+  while (Date.now() < deadline) {
+    if (await pane.pollReady()) return;
+    await sleep(POLL_INTERVAL_MS);
+  }
+  throw new Error('interactive claude: the session was not ready for input before the per-turn timeout');
+}
+
+/** Watch the transcript until this turn closes, or throw at the per-turn deadline. */
+async function watchForTurn(store: TranscriptStore, nonce: string, deadline: number): Promise<WorkerTurn> {
+  let located: string | undefined;
+  while (Date.now() < deadline) {
+    if (!located) located = store.locate(nonce); // throws on an ambiguous match
+    if (located) {
+      const turn = parseInteractiveTurn(store.read(located), { nonce });
+      if (turn) return turn;
+    }
+    await sleep(POLL_INTERVAL_MS);
+  }
+  throw new Error(
+    located
+      ? 'interactive claude: the turn did not complete in the transcript before the per-turn timeout'
+      : 'interactive claude: could not correlate the turn transcript — no session file carried the turn nonce before the timeout',
+  );
+}
+
+/**
+ * The interactive claude worker: drives one turn through the interactive `claude`
+ * TUI so it bills the flat subscription quota — launch → readiness-poll →
+ * submit(prompt + nonce) → watch the transcript + parse → teardown, the whole
+ * turn bounded by one per-turn deadline (`PHASE[phase].workerTurnTimeoutMs`,
+ * threaded as `timeoutMs`). Implements WorkerProvider with `name = 'claude'`:
+ * the orchestrator sees the same contract as the headless transport.
+ *
+ * Teardown is a CONTRACT, not a side effect (the no-daemon claim depends on it):
+ * `pane.kill()` runs in a `finally`, so it fires on success, throw, and timeout
+ * alike — a timed-out turn never leaves a lingering interactive pane. A stall or
+ * a tmux error becomes a thrown `runTurn` error, which the `send_prompt` rail
+ * converts to retry-once-then-ask_human (src/harness/tools.ts) — the one failure
+ * that rail can't catch is a silent hang, which the deadline forecloses.
+ *
+ * `transcriptRoot` and `newPane` are injectable so tests drive it over a FakePane
+ * and a tmpdir; they default to `~/.claude/projects` and a real TmuxPane.
+ */
+export class InteractiveClaudeWorker implements WorkerProvider {
+  readonly name = 'claude' as const;
+  private readonly model: string;
+  private readonly timeoutMs: number;
+  private readonly transcriptRoot: string;
+  private readonly newPane: PaneFactory;
+
+  constructor(config: { model: string; timeoutMs: number; transcriptRoot?: string; newPane?: PaneFactory }) {
+    this.model = config.model;
+    this.timeoutMs = config.timeoutMs;
+    this.transcriptRoot = config.transcriptRoot ?? join(homedir(), '.claude', 'projects');
+    this.newPane = config.newPane ?? ((c) => new TmuxPane(c));
+  }
+
+  async runTurn(opts: RunTurnOptions): Promise<WorkerTurn> {
+    const nonce = randomBytes(8).toString('hex');
+    const store = new TranscriptStore(this.transcriptRoot);
+    store.snapshot();
+    const pane = this.newPane({
+      model: this.model,
+      ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
+    });
+    const deadline = Date.now() + this.timeoutMs;
+    try {
+      await pane.open();
+      await waitUntilReady(pane, deadline);
+      await pane.submitPrompt(injectionBody(opts.prompt, nonce));
+      return await watchForTurn(store, nonce, deadline);
+    } finally {
+      await pane.kill().catch(() => {});
+    }
+  }
 }
