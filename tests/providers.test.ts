@@ -316,6 +316,24 @@ describe('InteractiveClaudeWorker (driving over FakePane + a tmpdir, no live aut
       await assertion;
       rmSync(dir, { recursive: true, force: true });
     }));
+
+  test('refuses a read-only turn before spawning anything (implementer-only transport)', async () => {
+    let paneBuilt = false;
+    const worker = new InteractiveClaudeWorker({
+      model: 'claude-opus-4-8',
+      timeoutMs: 60_000,
+      transcriptRoot: '/nonexistent',
+      newPane: (config) => {
+        paneBuilt = true;
+        return new FakePane(config);
+      },
+    });
+
+    await expect(worker.runTurn({ prompt: 'review this', readOnly: true, cwd: '/x' })).rejects.toThrow(
+      /cannot run a read-only turn/,
+    );
+    expect(paneBuilt).toBe(false);
+  });
 });
 
 describe('context-window probes (per-provider math, one shape)', () => {

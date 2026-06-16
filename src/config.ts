@@ -110,6 +110,15 @@ function parseBinding(role: Role, raw: unknown): RoleBinding {
         `config: [roles.${role}].transport must be "headless" or "interactive", got ${JSON.stringify(transport)}`,
       );
     }
+    // The interactive transport always drives a read-write/bypass session, so in
+    // the spike it serves the implementer only — a read-only interactive reviewer
+    // is a production item (spec §"Path to production"). Reject it loudly here so
+    // a misconfiguration can never silently grant a read-only role write access.
+    if (transport === 'interactive' && role !== 'implementer') {
+      throw new Error(
+        `config: [roles.${role}].transport = "interactive" — the interactive transport is implementer-only in the spike (it runs read-write/bypass; a read-only interactive reviewer is a production item). Only [roles.implementer] may set it.`,
+      );
+    }
   }
   // Claude bindings always carry a transport (default headless, alongside the
   // model default); codex bindings never do.

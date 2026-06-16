@@ -303,6 +303,17 @@ export class InteractiveClaudeWorker implements WorkerProvider {
   }
 
   async runTurn(opts: RunTurnOptions): Promise<WorkerTurn> {
+    // Structural backstop for the implementer-only scope: this transport always
+    // launches with bypass permissions (TmuxPane), so it physically cannot honor
+    // read-only. Refuse rather than silently ignore opts.readOnly — the config
+    // layer already keeps interactive off non-implementer roles, so this never
+    // fires in production; it makes the WorkerProvider contract honest regardless
+    // of how runTurn is reached.
+    if (opts.readOnly) {
+      throw new Error(
+        'interactive claude cannot run a read-only turn: the interactive transport always launches with bypass permissions, so it serves the read-write implementer only. A read-only interactive worker (a claude reviewer) is a production item — bind that role to headless claude or codex instead.',
+      );
+    }
     const nonce = randomBytes(8).toString('hex');
     const store = new TranscriptStore(this.transcriptRoot);
     store.snapshot();
