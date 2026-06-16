@@ -204,8 +204,14 @@ export function renderStatus(model: StatusModel): string {
   if (model.gatesAt) lines.push(`gates:    attending ${model.gatesAt.join(', ')} — other gates pre-authorized`);
   if (model.lastActivity) lines.push(`last:     ${model.lastActivity}`);
   lines.push(`rounds:   ${model.rounds.map((r) => `${r.phase} ${r.used}/${r.cap}`).join(', ')}`);
+  // The claude-workers figure is the KNOWN cost; when a claude turn reported no
+  // cost (the interactive transport, by P5) the total is partial, so say so
+  // rather than imply completeness — P5 is "cost shown unavailable, never faked".
+  const claudeWorkers = model.costs.claudeWorkersCostPartial
+    ? `claude workers $${model.costs.claudeWorkersUsd.toFixed(2)} known (+ interactive turns: cost unavailable)`
+    : `claude workers $${model.costs.claudeWorkersUsd.toFixed(2)}`;
   lines.push(
-    `cost:     orchestrator $${model.costs.orchestratorUsd.toFixed(2)}, claude workers $${model.costs.claudeWorkersUsd.toFixed(2)}, codex ${fmtTokens(model.costs.codexTokens.input)} in / ${fmtTokens(model.costs.codexTokens.output)} out tokens`,
+    `cost:     orchestrator $${model.costs.orchestratorUsd.toFixed(2)}, ${claudeWorkers}, codex ${fmtTokens(model.costs.codexTokens.input)} in / ${fmtTokens(model.costs.codexTokens.output)} out tokens`,
   );
   if (model.context.length > 0) {
     lines.push(

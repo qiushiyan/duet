@@ -21,8 +21,8 @@ describe('role bindings', () => {
       `[roles.implementer]\nprovider = "claude"\n\n[roles.reviewer]\nprovider = "claude"\nmodel = "claude-opus-4-6"`,
     );
     const bindings = loadRoleBindings(undefined, path);
-    expect.soft(bindings.implementer).toEqual({ provider: 'claude', model: 'claude-opus-4-8' });
-    expect.soft(bindings.reviewer).toEqual({ provider: 'claude', model: 'claude-opus-4-6' });
+    expect.soft(bindings.implementer).toEqual({ provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' });
+    expect.soft(bindings.reviewer).toEqual({ provider: 'claude', model: 'claude-opus-4-6', transport: 'headless' });
     expect.soft(bindings.orchestrator).toEqual(DEFAULT_BINDINGS.orchestrator);
   });
 
@@ -39,7 +39,7 @@ describe('role bindings', () => {
   test('CLI overrides win over the config file', ({ projectDir }) => {
     const path = configIn(projectDir, `[roles.implementer]\nprovider = "claude"\nmodel = "claude-opus-4-6"`);
     const bindings = loadRoleBindings({ implementer: 'claude:claude-fable-5', reviewer: 'codex' }, path);
-    expect.soft(bindings.implementer).toEqual({ provider: 'claude', model: 'claude-fable-5' });
+    expect.soft(bindings.implementer).toEqual({ provider: 'claude', model: 'claude-fable-5', transport: 'headless' });
     expect.soft(bindings.reviewer).toEqual({ provider: 'codex' });
   });
 
@@ -50,8 +50,88 @@ describe('role bindings', () => {
   });
 });
 
+describe('the transport knob (the subscription-billing opt-in)', () => {
+  test('an interactive transport parses on a claude binding', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.implementer]\nprovider = "claude"\ntransport = "interactive"`);
+    expect(loadRoleBindings(undefined, path).implementer).toEqual({
+      provider: 'claude',
+      model: 'claude-opus-4-8',
+      transport: 'interactive',
+    });
+  });
+
+  test('a claude binding with no transport defaults to headless', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.implementer]\nprovider = "claude"`);
+    expect(loadRoleBindings(undefined, path).implementer.transport).toBe('headless');
+  });
+
+  test('a transport on a codex binding is refused — codex already bills the subscription', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.reviewer]\nprovider = "codex"\ntransport = "interactive"`);
+    expect(() => loadRoleBindings(undefined, path)).toThrow(/transport for the codex provider/);
+  });
+
+  test('an invalid transport value is refused by name', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.implementer]\nprovider = "claude"\ntransport = "tmux"`);
+    expect(() => loadRoleBindings(undefined, path)).toThrow(/transport must be "headless" or "interactive"/);
+  });
+
+  test('an interactive transport is refused on a non-implementer role (implementer-only scope)', ({ projectDir }) => {
+    const reviewer = configIn(projectDir, `[roles.reviewer]\nprovider = "claude"\ntransport = "interactive"`);
+    expect.soft(() => loadRoleBindings(undefined, reviewer)).toThrow(/implementer-only/);
+    const orchestrator = configIn(projectDir, `[roles.orchestrator]\nprovider = "claude"\ntransport = "interactive"`);
+    expect.soft(() => loadRoleBindings(undefined, orchestrator)).toThrow(/implementer-only/);
+  });
+
+  test('a headless transport stays allowed on any claude role — only interactive is implementer-scoped', ({
+    projectDir,
+  }) => {
+    const path = configIn(projectDir, `[roles.reviewer]\nprovider = "claude"\ntransport = "headless"`);
+    expect(loadRoleBindings(undefined, path).reviewer).toEqual({ provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' });
+  });
+});
+
+describe('override-merge preserves a configured interactive transport (the billing footgun)', () => {
+  const interactiveImpl = (dir: string): string =>
+    configIn(dir, `[roles.implementer]\nprovider = "claude"\ntransport = "interactive"`);
+
+  test('a model-only override keeps the configured interactive transport', ({ projectDir }) => {
+    const bindings = loadRoleBindings({ implementer: 'claude:claude-fable-5' }, interactiveImpl(projectDir));
+    expect(bindings.implementer).toEqual({ provider: 'claude', model: 'claude-fable-5', transport: 'interactive' });
+  });
+
+  test('a bare model-less override (claude) still keeps interactive — no injected headless default', ({
+    projectDir,
+  }) => {
+    const bindings = loadRoleBindings({ implementer: 'claude' }, interactiveImpl(projectDir));
+    expect(bindings.implementer).toEqual({ provider: 'claude', model: 'claude-opus-4-8', transport: 'interactive' });
+  });
+
+  test('switching the provider to codex drops the transport', ({ projectDir }) => {
+    const bindings = loadRoleBindings({ implementer: 'codex' }, interactiveImpl(projectDir));
+    expect(bindings.implementer).toEqual({ provider: 'codex' });
+  });
+
+  test('a claude override with no configured transport stays headless', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.implementer]\nprovider = "claude"`);
+    const bindings = loadRoleBindings({ implementer: 'claude:claude-fable-5' }, path);
+    expect(bindings.implementer.transport).toBe('headless');
+  });
+
+  test('switching the provider up from codex to claude defaults headless (nothing to carry)', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.implementer]\nprovider = "codex"`);
+    expect.soft(loadRoleBindings({ implementer: 'claude' }, path).implementer).toEqual({
+      provider: 'claude',
+      model: 'claude-opus-4-8',
+      transport: 'headless',
+    });
+    expect
+      .soft(loadRoleBindings({ implementer: 'claude:claude-fable-5' }, path).implementer.transport)
+      .toBe('headless');
+  });
+});
+
 describe('parseRoleOverride', () => {
-  test('parses provider and optional model, defaulting claude models per role', () => {
+  test('parses provider and optional model, defaulting claude models per role — never a transport', () => {
     expect.soft(parseRoleOverride('implementer', 'claude')).toEqual({ provider: 'claude', model: 'claude-opus-4-8' });
     expect.soft(parseRoleOverride('implementer', 'claude:claude-opus-4-6')).toEqual({
       provider: 'claude',
