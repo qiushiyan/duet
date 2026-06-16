@@ -94,6 +94,7 @@ program
   .description('Start a run: [FRAME →] SPEC → PLAN (walk away) → AFK IMPLEMENTATION → DOCS → PR → opened PR.')
   .option('--spec <path>', 'path to a draft spec file; omit to start from the framing alone (the FRAME phase drafts it)')
   .option('--framing <file>', 'project briefing file — the only place project knowledge enters; omit both flags to write it in your editor')
+  .option('--template <name>', 'seed the editor draft from .duet/templates/<name>.md (bare `duet new` uses .duet/templates/default.md when present); conflicts with --spec/--framing')
   .option(
     '--gates-at <phases>',
     'phases whose gates you attend (from: frame, spec, plan, impl, docs, pr — or a preset: "skip-plan" = walk away at spec approval, return at the Ship gate; "overnight" = frame,spec); the rest are pre-authorized and auto-cross with their packets recorded; pr is always attended; default: every gate',
@@ -102,7 +103,7 @@ program
   .option('--impl <provider[:model]>', 'implementer binding override')
   .option('--reviewer <provider[:model]>', 'reviewer binding override')
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
-  .action(async (opts: { spec?: string; framing?: string; gatesAt?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean }) => {
+  .action(async (opts: { spec?: string; framing?: string; template?: string; gatesAt?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean }) => {
     const cwd = process.cwd();
 
     // The framing's frontmatter is the machine/prose boundary: parsed
@@ -113,6 +114,7 @@ program
       inputs = await resolveRunInputs(cwd, {
         ...(opts.spec ? { spec: opts.spec } : {}),
         ...(opts.framing ? { framing: opts.framing } : {}),
+        ...(opts.template ? { template: opts.template } : {}),
         ...(opts.gatesAt ? { gatesAt: opts.gatesAt } : {}),
       });
     } catch (err) {

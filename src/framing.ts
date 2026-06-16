@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, relative, resolve } from 'node:path';
 import { execa } from 'execa';
@@ -10,9 +10,12 @@ import { ensureDuetDir } from './run-store.ts';
 /**
  * The framing — the one file the human writes per run, and the only place
  * project knowledge enters the system. This module owns its whole journey:
- * the template, the bare-`duet new` editor flow, the machine/prose
- * frontmatter boundary, and the resolution of CLI flags against frontmatter
- * into a run's inputs.
+ * the seed template (the built-in default, or a project's own
+ * `.duet/templates/<name>.md` selected with `--template`), the bare-`duet new`
+ * editor flow, the machine/prose frontmatter boundary, and the resolution of
+ * CLI flags against frontmatter into a run's inputs. A template is just
+ * pre-baked framing — it seeds the editor draft and is then parsed and
+ * archived like any framing, so the framing turn stays the single entry seam.
  *
  * The frontmatter boundary rule (settled 2026-06-12, see
  * docs/automation-design.md §"Gate pre-authorization"): a key belongs in
@@ -34,6 +37,16 @@ import { ensureDuetDir } from './run-store.ts';
  */
 
 export const DEFAULT_FRAMING_FILE = join('.duet', 'framing-draft.md');
+
+/**
+ * Where a project keeps its own framing seed templates, mirroring
+ * `.github/ISSUE_TEMPLATE/`. Self-ignored like the rest of `.duet/` — a
+ * template is the human's own convenience for composing the framing turn,
+ * not a tracked artifact of the host repo (augment, never lock in). Commit
+ * them by carving `!/templates/` into `.duet/.gitignore` if you want them
+ * shared across worktrees.
+ */
+export const TEMPLATES_DIR = join('.duet', 'templates');
 
 export const FRAMING_TEMPLATE = `---
 # Machine-parsed options (fixed values the harness acts on; judgment-weighed
@@ -88,16 +101,77 @@ function resolveEditor(): { command: string; args: string[] } {
 }
 
 /**
- * The bare `duet new` entry: open the user's editor on a draft framing file
- * under .duet/ (seeding the template when the file doesn't exist), block
- * until it closes, and return the file name to run with. Throws when the
- * user wrote nothing — an empty or untouched template means "don't start
- * the run"; an aborted edit leaves the draft in place for next time.
+ * A template name selects a file in TEMPLATES_DIR — it is a plain slug, never
+ * a path. Reject separators, traversal, and leading dots so `--template` can
+ * never read outside the templates dir; append the `.md` extension when the
+ * name omits it.
  */
-export async function editFramingForRun(cwd: string): Promise<string> {
+function templateFileName(name: string): string {
+  const trimmed = name.trim();
+  if (trimmed.startsWith('.') || !/^[A-Za-z0-9._-]+$/.test(trimmed)) {
+    throw new Error(
+      `template name "${name}" is not a plain name — it selects a file in ${TEMPLATES_DIR}, so use letters, digits, "-" or "_" (no slashes or "..")`,
+    );
+  }
+  return trimmed.endsWith('.md') ? trimmed : `${trimmed}.md`;
+}
+
+/** A "did you mean…" tail for a missing-template error: the .md names present
+ *  in the templates dir, or a nudge to create the dir. */
+function availableTemplatesHint(dir: string): string {
+  if (!existsSync(dir)) return `; no ${TEMPLATES_DIR}/ directory yet — create it and add <name>.md files`;
+  const names = readdirSync(dir)
+    .filter((f) => f.endsWith('.md'))
+    .map((f) => f.slice(0, -'.md'.length));
+  return names.length > 0 ? `; available: ${names.join(', ')}` : `; ${TEMPLATES_DIR}/ has no .md templates yet`;
+}
+
+/**
+ * Resolve the text that seeds a fresh framing draft. Templates are pre-baked
+ * framings — a full framing file (frontmatter + prose), parsed normally at run
+ * time, so a template can pre-set `gates_at` as well as the prose skeleton.
+ *
+ * A named template (`--template <name>`) reads `.duet/templates/<name>.md` and
+ * fails loudly, listing what's available, when it's missing — a typo'd name
+ * must never silently fall back to the built-in and start the wrong run. With
+ * no name, a project's own `.duet/templates/default.md` overrides the built-in
+ * when present; otherwise the built-in FRAMING_TEMPLATE.
+ */
+export function resolveTemplateSeed(cwd: string, templateName?: string): string {
+  const dir = resolve(cwd, TEMPLATES_DIR);
+  if (templateName !== undefined) {
+    const file = templateFileName(templateName);
+    const path = join(dir, file);
+    if (!existsSync(path)) {
+      throw new Error(`template "${templateName}" not found at ${join(TEMPLATES_DIR, file)}${availableTemplatesHint(dir)}`);
+    }
+    return readFileSync(path, 'utf8');
+  }
+  const fallback = join(dir, 'default.md');
+  return existsSync(fallback) ? readFileSync(fallback, 'utf8') : FRAMING_TEMPLATE;
+}
+
+/**
+ * The bare `duet new` entry: open the user's editor on a draft framing file
+ * under .duet/ (seeding it from `resolveTemplateSeed` when the file doesn't
+ * exist), block until it closes, and return the file name to run with. Throws
+ * when the user wrote nothing — an empty or untouched template means "don't
+ * start the run"; an aborted edit leaves the draft in place for next time.
+ */
+export async function editFramingForRun(cwd: string, templateName?: string): Promise<string> {
   ensureDuetDir(cwd);
   const path = join(cwd, DEFAULT_FRAMING_FILE);
-  if (!existsSync(path)) writeFileSync(path, FRAMING_TEMPLATE);
+  const seed = resolveTemplateSeed(cwd, templateName);
+  // An explicit --template is a deliberate "start from this template": it
+  // (re)seeds the draft even over a stale one (with a note, since that
+  // discards it). The bare path leaves an existing draft alone, so aborted
+  // work survives to the next `duet new`.
+  if (templateName !== undefined) {
+    if (existsSync(path)) console.log(`--template ${templateName}: re-seeding ${DEFAULT_FRAMING_FILE} (previous draft discarded)`);
+    writeFileSync(path, seed);
+  } else if (!existsSync(path)) {
+    writeFileSync(path, seed);
+  }
 
   const { command, args } = resolveEditor();
   console.log(`no --spec/--framing given — opening ${DEFAULT_FRAMING_FILE} in ${basename(command)}; write the framing, save, and close to start the run`);
@@ -112,7 +186,9 @@ export async function editFramingForRun(cwd: string): Promise<string> {
   if (!content.trim()) {
     throw new Error(`run not started: ${DEFAULT_FRAMING_FILE} is empty`);
   }
-  if (content.trim() === FRAMING_TEMPLATE.trim()) {
+  // Untouched = identical to whatever we seeded (built-in, default.md, or the
+  // named template) — the guard tracks the seed, not just the built-in constant.
+  if (content.trim() === seed.trim()) {
     throw new Error(`run not started: ${DEFAULT_FRAMING_FILE} is still the untouched template — fill it in (it's saved for next time)`);
   }
   return DEFAULT_FRAMING_FILE;
@@ -268,17 +344,23 @@ export interface RunInputs {
 
 /**
  * Resolve `duet new`'s inputs: with neither --spec nor --framing, run the
- * editor flow; parse the framing's frontmatter; apply flag-over-frontmatter
- * precedence for gates_at and spec; validate the spec file exists. Throws
- * with actionable messages — the CLI surfaces them verbatim.
+ * editor flow (seeded from --template or the project default); parse the
+ * framing's frontmatter; apply flag-over-frontmatter precedence for gates_at
+ * and spec; validate the spec file exists. Throws with actionable messages —
+ * the CLI surfaces them verbatim.
  */
 export async function resolveRunInputs(
   cwd: string,
-  opts: { spec?: string; framing?: string; gatesAt?: string },
+  opts: { spec?: string; framing?: string; gatesAt?: string; template?: string },
 ): Promise<RunInputs> {
+  if (opts.template !== undefined && (opts.spec || opts.framing)) {
+    throw new Error(
+      '--template seeds the editor draft for the bare `duet new` flow — it conflicts with --spec/--framing, which supply the framing directly',
+    );
+  }
   let framingFile = opts.framing;
   if (!opts.spec && !framingFile) {
-    framingFile = await editFramingForRun(cwd);
+    framingFile = await editFramingForRun(cwd, opts.template);
   }
 
   let framingRaw: string | undefined;

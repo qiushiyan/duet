@@ -1,7 +1,15 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, test as plain, vi } from 'vitest';
-import { DEFAULT_FRAMING_FILE, composeInEditor, parseFramingFile, parseGatesAt, resolveRunInputs } from '../src/framing.ts';
+import {
+  DEFAULT_FRAMING_FILE,
+  FRAMING_TEMPLATE,
+  composeInEditor,
+  parseFramingFile,
+  parseGatesAt,
+  resolveRunInputs,
+  resolveTemplateSeed,
+} from '../src/framing.ts';
 import { test } from './helpers/fixtures.ts';
 
 describe('parseGatesAt', () => {
@@ -84,6 +92,105 @@ describe('composeInEditor (the no-inline-text path for riders and feedback)', ()
     vi.stubEnv('VISUAL', '');
     vi.stubEnv('EDITOR', 'false'); // exits 1
     await expect(composeInEditor('test')).rejects.toThrow(/editor exited with an error.*nothing was sent/);
+  });
+});
+
+describe('resolveTemplateSeed (the framing draft seed)', () => {
+  const templatesDir = (projectDir: string) => join(projectDir, '.duet', 'templates');
+
+  test('with no name and no project templates, returns the built-in template', ({ projectDir }) => {
+    expect(resolveTemplateSeed(projectDir)).toBe(FRAMING_TEMPLATE);
+  });
+
+  test('with no name, a project default.md overrides the built-in', ({ projectDir }) => {
+    const dir = templatesDir(projectDir);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'default.md'), '# Problem\nproject default seed');
+    expect(resolveTemplateSeed(projectDir)).toBe('# Problem\nproject default seed');
+  });
+
+  test('a named template is read from .duet/templates/<name>.md', ({ projectDir }) => {
+    const dir = templatesDir(projectDir);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'bug.md'), 'bug template body');
+    expect.soft(resolveTemplateSeed(projectDir, 'bug')).toBe('bug template body');
+    // an explicit .md suffix selects the same file, not bug.md.md
+    expect.soft(resolveTemplateSeed(projectDir, 'bug.md')).toBe('bug template body');
+  });
+
+  test('a missing named template fails loudly, listing what is available', ({ projectDir }) => {
+    const dir = templatesDir(projectDir);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'bug.md'), 'x');
+    writeFileSync(join(dir, 'feature.md'), 'y');
+    expect(() => resolveTemplateSeed(projectDir, 'nope')).toThrow(
+      /template "nope" not found.*available: (bug, feature|feature, bug)/,
+    );
+  });
+
+  test('a missing template with no templates dir points at how to make one', ({ projectDir }) => {
+    expect(() => resolveTemplateSeed(projectDir, 'bug')).toThrow(/no \.duet\/templates\/ directory yet/);
+  });
+
+  test('a name with a path separator or traversal is rejected before any read', ({ projectDir }) => {
+    expect.soft(() => resolveTemplateSeed(projectDir, '../secret')).toThrow(/not a plain name/);
+    expect.soft(() => resolveTemplateSeed(projectDir, 'a/b')).toThrow(/not a plain name/);
+    expect.soft(() => resolveTemplateSeed(projectDir, '..')).toThrow(/not a plain name/);
+  });
+});
+
+describe('resolveRunInputs --template (seeding the editor draft)', () => {
+  test('--template seeds the draft from the named project template, and the edit is used', async ({ projectDir }) => {
+    const dir = join(projectDir, '.duet', 'templates');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'feature.md'), '# Problem\nFEATURE SKELETON\n');
+    const editor = join(projectDir, 'editor.sh');
+    writeFileSync(editor, '#!/bin/sh\nprintf "filled in by hand\\n" >> "$1"\n', { mode: 0o755 });
+    vi.stubEnv('VISUAL', '');
+    vi.stubEnv('EDITOR', editor);
+
+    const inputs = await resolveRunInputs(projectDir, { template: 'feature' });
+    expect.soft(inputs.framing).toContain('FEATURE SKELETON');
+    expect.soft(inputs.framing).toContain('filled in by hand');
+    expect.soft(inputs.framingFile).toBe(DEFAULT_FRAMING_FILE);
+  });
+
+  test('an untouched named template refuses to start (the guard tracks the seed)', async ({ projectDir }) => {
+    const dir = join(projectDir, '.duet', 'templates');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'feature.md'), '# Problem\nFEATURE SKELETON\n');
+    vi.stubEnv('VISUAL', '');
+    vi.stubEnv('EDITOR', 'true'); // leaves the seeded draft untouched
+    await expect(resolveRunInputs(projectDir, { template: 'feature' })).rejects.toThrow(/still the untouched template/);
+  });
+
+  test('bare entry seeds from a project default.md when present', async ({ projectDir }) => {
+    const dir = join(projectDir, '.duet', 'templates');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'default.md'), '# Problem\nDEFAULT SKELETON\n');
+    const editor = join(projectDir, 'editor.sh');
+    writeFileSync(editor, '#!/bin/sh\nprintf "the specifics\\n" >> "$1"\n', { mode: 0o755 });
+    vi.stubEnv('VISUAL', '');
+    vi.stubEnv('EDITOR', editor);
+
+    const inputs = await resolveRunInputs(projectDir, {});
+    expect.soft(inputs.framing).toContain('DEFAULT SKELETON');
+    expect.soft(inputs.framing).toContain('the specifics');
+  });
+
+  test('a missing --template surfaces the not-found error', async ({ projectDir }) => {
+    vi.stubEnv('VISUAL', '');
+    vi.stubEnv('EDITOR', 'true');
+    await expect(resolveRunInputs(projectDir, { template: 'ghost' })).rejects.toThrow(/template "ghost" not found/);
+  });
+
+  test('--template conflicts with --framing and with --spec', async ({ projectDir }) => {
+    await expect(resolveRunInputs(projectDir, { template: 'x', framing: 'brief.md' })).rejects.toThrow(
+      /conflicts with --spec\/--framing/,
+    );
+    await expect(resolveRunInputs(projectDir, { template: 'x', spec: 'docs/draft.md' })).rejects.toThrow(
+      /conflicts with --spec\/--framing/,
+    );
   });
 });
 
