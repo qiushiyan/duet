@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 import { COMPACT_CONFIRMATION, ClaudeWorker, parseClaudeTurn } from '../src/providers/claude.ts';
 import { parseRolloutContext } from '../src/providers/codex.ts';
-import { InteractiveClaudeWorker, parseInteractiveTurn } from '../src/providers/interactive-claude.ts';
+import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn } from '../src/providers/interactive-claude.ts';
 import { createWorkers } from '../src/providers/index.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
 import { FakePane } from './helpers/fake-pane.ts';
@@ -333,6 +333,33 @@ describe('InteractiveClaudeWorker (driving over FakePane + a tmpdir, no live aut
       /cannot run a read-only turn/,
     );
     expect(paneBuilt).toBe(false);
+  });
+
+  test('correlates a resumed turn by the appended nonce — a pre-existing session file (Finding 2)', async () =>
+    withFakeTimers(async () => {
+      const dir = tmpRoot();
+      const file = join(dir, 'sess-i.jsonl');
+      // a prior turn already sits in the resumed session file before this turn runs
+      writeFileSync(file, session('sess-i', userTurn('an earlier turn', 'old-nonce'), assistantFinal('earlier answer')));
+      const { worker } = wire(dir, {
+        readyAfter: 0,
+        // this turn APPENDS to the same file — correlation must find it by nonce, not recency
+        onSubmit: (text) => appendFileSync(file, session('sess-i', userMessage(text), assistantFinal('resumed answer'))),
+      });
+
+      const promise = worker.runTurn({ prompt: 'do it', sessionId: 'sess-i', cwd: dir });
+      await vi.advanceTimersByTimeAsync(5_000);
+      const turn = await promise;
+
+      expect.soft(turn.text).toBe('resumed answer');
+      expect.soft(turn.sessionId).toBe('sess-i');
+      rmSync(dir, { recursive: true, force: true });
+    }));
+});
+
+describe('claudeProjectSlug', () => {
+  test("maps a cwd to Claude Code's project-dir name (known case; Slice 5 confirms the rule)", () => {
+    expect(claudeProjectSlug('/Users/qiushi/dev/duet')).toBe('-Users-qiushi-dev-duet');
   });
 });
 

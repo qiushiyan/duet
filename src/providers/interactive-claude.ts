@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { COMPACT_CONFIRMATION, claudeContextUsage } from './claude.ts';
@@ -159,43 +159,53 @@ function injectionBody(prompt: string, nonce: string): string {
   return `${prompt}\n\n${turnMarker(nonce)}`;
 }
 
-// === transcript location (correlation, not newest-file) ===
+// === transcript location (correlation by unique nonce) ===
 
 /**
- * Finds and reads this turn's transcript among the project slug's session files.
+ * Claude Code's project-directory name for a cwd: the absolute path with its
+ * separators (and dots) folded to '-', e.g. `/Users/me/dev/duet` →
+ * `-Users-me-dev-duet`. Isolated and best-effort — the exact transform for
+ * unusual characters is a Slice 5 confirmable. Correctness never depends on
+ * getting it exactly right: `projectDir` falls back to the whole projects tree
+ * when the derived dir is absent, and nonce-correlation protects the result
+ * either way; the slug only buys a scoped (cheaper, spec-aligned) scan.
+ */
+export function claudeProjectSlug(cwd: string): string {
+  return cwd.replace(/[/.]/g, '-');
+}
+
+/** The project's transcript dir under `root`, or `root` itself when that derived dir is absent. */
+function projectDir(root: string, cwd: string | undefined): string {
+  if (!cwd) return root;
+  const scoped = join(root, claudeProjectSlug(cwd));
+  return existsSync(scoped) ? scoped : root;
+}
+
+/**
+ * Finds and reads this turn's transcript among the project's session files.
  * The slug is SHARED — the orchestrator SDK session writes there concurrently —
  * so "newest file" is ambiguous (unlike codex, which knows its id and keys the
- * scan on the `-<id>.jsonl` suffix). Instead: snapshot the candidate files
- * before launch, then select the new/modified file whose content carries the
- * per-turn nonce. A nonce that matches more than one file is a should-not-happen
- * the locator refuses to guess through; reading the whole file (not a fixed
- * tail) keeps the turn-open user record in scope even for a long single turn.
+ * scan on the `-<id>.jsonl` suffix). Instead we correlate on the per-turn nonce:
+ * the session file carrying it IS this turn's, whether the file is new (turn 1)
+ * or an append to a resumed session (turn 2+) — no mtime/recency reasoning, so
+ * a coarse-granularity filesystem can't hide an append. The nonce is unique per
+ * turn, so a match in more than one file is a should-not-happen the locator
+ * refuses to guess through. Reading the whole file (not a fixed tail) keeps the
+ * turn-open user record in scope even for a long single turn.
  */
 class TranscriptStore {
-  private readonly root: string;
-  private baseline = new Map<string, number>();
+  private readonly dir: string;
 
-  constructor(root: string) {
-    this.root = root;
-  }
-
-  /** Record the pre-launch state so the located file is the one this turn writes. */
-  snapshot(): void {
-    this.baseline = this.scan();
+  constructor(dir: string) {
+    this.dir = dir;
   }
 
   /**
-   * The path of the candidate (new- or modified-since-snapshot) session file
-   * carrying `nonce`, or undefined if none yet. Throws — never guesses — when
-   * more than one candidate carries it.
+   * The path of the session file carrying `nonce`, or undefined if none yet (the
+   * watcher keeps polling). Throws — never guesses — when more than one carries it.
    */
   locate(nonce: string): string | undefined {
-    const candidates: string[] = [];
-    for (const [path, mtime] of this.scan()) {
-      const before = this.baseline.get(path);
-      if (before === undefined || mtime > before) candidates.push(path);
-    }
-    const matches = candidates.filter((p) => this.read(p).includes(nonce));
+    const matches = this.sessions().filter((p) => this.read(p).includes(nonce));
     if (matches.length > 1) {
       throw new Error(
         `interactive claude: the turn nonce matched ${matches.length} session transcripts — refusing to guess which is this turn's`,
@@ -212,26 +222,16 @@ class TranscriptStore {
     }
   }
 
-  private scan(): Map<string, number> {
-    const found = new Map<string, number>();
-    if (!existsSync(this.root)) return found;
+  /** Every session transcript under the scoped dir (a directory named *.jsonl reads as empty, harmlessly). */
+  private sessions(): string[] {
+    if (!existsSync(this.dir)) return [];
     let entries: string[];
     try {
-      entries = readdirSync(this.root, { recursive: true }).map(String);
+      entries = readdirSync(this.dir, { recursive: true }).map(String);
     } catch {
-      return found;
+      return [];
     }
-    for (const rel of entries) {
-      if (!rel.endsWith('.jsonl')) continue;
-      const path = join(this.root, rel);
-      try {
-        const st = statSync(path);
-        if (st.isFile()) found.set(path, st.mtimeMs);
-      } catch {
-        // Vanished between readdir and stat — skip, like the codex tail-read.
-      }
-    }
-    return found;
+    return entries.filter((rel) => rel.endsWith('.jsonl')).map((rel) => join(this.dir, rel));
   }
 }
 
@@ -315,8 +315,7 @@ export class InteractiveClaudeWorker implements WorkerProvider {
       );
     }
     const nonce = randomBytes(8).toString('hex');
-    const store = new TranscriptStore(this.transcriptRoot);
-    store.snapshot();
+    const store = new TranscriptStore(projectDir(this.transcriptRoot, opts.cwd));
     const pane = this.newPane({
       model: this.model,
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
