@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
@@ -353,6 +353,51 @@ describe('InteractiveClaudeWorker (driving over FakePane + a tmpdir, no live aut
 
       expect.soft(turn.text).toBe('resumed answer');
       expect.soft(turn.sessionId).toBe('sess-i');
+      rmSync(dir, { recursive: true, force: true });
+    }));
+
+  test('finds the transcript in the cwd-scoped project dir (the fast path)', async () =>
+    withFakeTimers(async () => {
+      const dir = tmpRoot();
+      const cwd = '/proj/example';
+      const scoped = join(dir, claudeProjectSlug(cwd));
+      mkdirSync(scoped, { recursive: true });
+      const { worker } = wire(dir, {
+        readyAfter: 0,
+        onSubmit: (text) =>
+          writeFileSync(join(scoped, 'sess.jsonl'), session('scoped-sess', userMessage(text), assistantFinal('scoped answer'))),
+      });
+
+      const promise = worker.runTurn({ prompt: 'do it', cwd });
+      await vi.advanceTimersByTimeAsync(5_000);
+      const turn = await promise;
+
+      expect.soft(turn.text).toBe('scoped answer');
+      expect.soft(turn.sessionId).toBe('scoped-sess');
+      rmSync(dir, { recursive: true, force: true });
+    }));
+
+  test('falls back to the root scan when the scoped slug dir exists but lacks the turn (wrong-slug shape)', async () =>
+    withFakeTimers(async () => {
+      const dir = tmpRoot();
+      const cwd = '/proj/example';
+      const scoped = join(dir, claudeProjectSlug(cwd));
+      mkdirSync(scoped, { recursive: true });
+      // the scoped dir exists but holds only a decoy without our nonce...
+      writeFileSync(join(scoped, 'decoy.jsonl'), session('decoy', userMessage('unrelated'), assistantFinal('wrong')));
+      const { worker } = wire(dir, {
+        readyAfter: 0,
+        // ...and the real transcript lands elsewhere under the root (a wrong slug guess)
+        onSubmit: (text) =>
+          writeFileSync(join(dir, 'real.jsonl'), session('real-sess', userMessage(text), assistantFinal('right answer'))),
+      });
+
+      const promise = worker.runTurn({ prompt: 'do it', cwd });
+      await vi.advanceTimersByTimeAsync(5_000);
+      const turn = await promise;
+
+      expect.soft(turn.text).toBe('right answer');
+      expect.soft(turn.sessionId).toBe('real-sess');
       rmSync(dir, { recursive: true, force: true });
     }));
 });

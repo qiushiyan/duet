@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { COMPACT_CONFIRMATION, claudeContextUsage } from './claude.ts';
@@ -165,20 +165,25 @@ function injectionBody(prompt: string, nonce: string): string {
  * Claude Code's project-directory name for a cwd: the absolute path with its
  * separators (and dots) folded to '-', e.g. `/Users/me/dev/duet` →
  * `-Users-me-dev-duet`. Isolated and best-effort — the exact transform for
- * unusual characters is a Slice 5 confirmable. Correctness never depends on
- * getting it exactly right: `projectDir` falls back to the whole projects tree
- * when the derived dir is absent, and nonce-correlation protects the result
- * either way; the slug only buys a scoped (cheaper, spec-aligned) scan.
+ * unusual characters is a Slice 5 confirmable. Correctness does not depend on
+ * getting it right, only performance: `searchDirs` puts the scoped dir FIRST but
+ * falls back to the whole projects tree on a miss, so a wrong slug costs a wider
+ * scan, never a missed transcript; nonce-correlation protects the result either way.
  */
 export function claudeProjectSlug(cwd: string): string {
   return cwd.replace(/[/.]/g, '-');
 }
 
-/** The project's transcript dir under `root`, or `root` itself when that derived dir is absent. */
-function projectDir(root: string, cwd: string | undefined): string {
-  if (!cwd) return root;
+/**
+ * Where to look for this turn's transcript, in order: the cwd-derived project dir
+ * first (the fast, spec-aligned path), then the whole projects tree as a fallback.
+ * The fallback is what keeps correctness independent of the slug rule — if the
+ * guess is wrong (or the dir doesn't exist), the root scan still finds the file.
+ */
+function searchDirs(root: string, cwd: string | undefined): string[] {
+  if (!cwd) return [root];
   const scoped = join(root, claudeProjectSlug(cwd));
-  return existsSync(scoped) ? scoped : root;
+  return scoped === root ? [root] : [scoped, root];
 }
 
 /**
@@ -192,12 +197,17 @@ function projectDir(root: string, cwd: string | undefined): string {
  * turn, so a match in more than one file is a should-not-happen the locator
  * refuses to guess through. Reading the whole file (not a fixed tail) keeps the
  * turn-open user record in scope even for a long single turn.
+ *
+ * `dirs` are searched in order (scoped first, root fallback): the common case
+ * finds it in the scoped dir and never scans wider; the root scan fires only on
+ * a miss, which for a correct slug is just the brief window before the prompt's
+ * user record lands, and for a wrong slug is what preserves correctness.
  */
 class TranscriptStore {
-  private readonly dir: string;
+  private readonly dirs: string[];
 
-  constructor(dir: string) {
-    this.dir = dir;
+  constructor(dirs: string[]) {
+    this.dirs = dirs;
   }
 
   /**
@@ -205,13 +215,16 @@ class TranscriptStore {
    * watcher keeps polling). Throws — never guesses — when more than one carries it.
    */
   locate(nonce: string): string | undefined {
-    const matches = this.sessions().filter((p) => this.read(p).includes(nonce));
-    if (matches.length > 1) {
-      throw new Error(
-        `interactive claude: the turn nonce matched ${matches.length} session transcripts — refusing to guess which is this turn's`,
-      );
+    for (const dir of this.dirs) {
+      const matches = this.sessionsIn(dir).filter((p) => this.read(p).includes(nonce));
+      if (matches.length > 1) {
+        throw new Error(
+          `interactive claude: the turn nonce matched ${matches.length} session transcripts — refusing to guess which is this turn's`,
+        );
+      }
+      if (matches.length === 1) return matches[0];
     }
-    return matches[0];
+    return undefined;
   }
 
   read(path: string): string {
@@ -222,16 +235,15 @@ class TranscriptStore {
     }
   }
 
-  /** Every session transcript under the scoped dir (a directory named *.jsonl reads as empty, harmlessly). */
-  private sessions(): string[] {
-    if (!existsSync(this.dir)) return [];
+  /** Every session transcript under `dir` (absent/unreadable dir → none; a dir named *.jsonl reads as empty). */
+  private sessionsIn(dir: string): string[] {
     let entries: string[];
     try {
-      entries = readdirSync(this.dir, { recursive: true }).map(String);
+      entries = readdirSync(dir, { recursive: true }).map(String);
     } catch {
       return [];
     }
-    return entries.filter((rel) => rel.endsWith('.jsonl')).map((rel) => join(this.dir, rel));
+    return entries.filter((rel) => rel.endsWith('.jsonl')).map((rel) => join(dir, rel));
   }
 }
 
@@ -315,7 +327,7 @@ export class InteractiveClaudeWorker implements WorkerProvider {
       );
     }
     const nonce = randomBytes(8).toString('hex');
-    const store = new TranscriptStore(projectDir(this.transcriptRoot, opts.cwd));
+    const store = new TranscriptStore(searchDirs(this.transcriptRoot, opts.cwd));
     const pane = this.newPane({
       model: this.model,
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
