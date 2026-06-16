@@ -1,8 +1,17 @@
 import { describe, expect, test } from 'vitest';
-import { parseClaudeTurn } from '../src/providers/claude.ts';
+import { COMPACT_CONFIRMATION, parseClaudeTurn } from '../src/providers/claude.ts';
 import { parseRolloutContext } from '../src/providers/codex.ts';
+import { parseInteractiveTurn } from '../src/providers/interactive-claude.ts';
 import { createWorkers } from '../src/providers/index.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
+import {
+  assistantFinal,
+  compactBoundary,
+  session,
+  toolStep,
+  userMessage,
+  userTurn,
+} from './helpers/interactive-transcript.ts';
 
 describe('parseClaudeTurn (the CLI output boundary)', () => {
   const result = {
@@ -49,6 +58,72 @@ describe('parseClaudeTurn (the CLI output boundary)', () => {
 
     // The same empty result on a normal prompt stays empty — no invented text.
     expect(parseClaudeTurn(stdout, 'normal prompt').text).toBe('');
+  });
+});
+
+describe('parseInteractiveTurn (the interactive-transcript boundary)', () => {
+  test('extracts the final assistant text and session id for a plain turn', () => {
+    const tail = session('sess-i', userTurn('do the thing', 'nonce-1'), assistantFinal('the worker did it'));
+    expect(parseInteractiveTurn(tail, { nonce: 'nonce-1' })).toEqual({
+      text: 'the worker did it',
+      sessionId: 'sess-i',
+    });
+  });
+
+  test('a tool-using turn returns the final assistant text, not intermediate narration', () => {
+    const tail = session(
+      'sess-i',
+      userTurn('edit the file', 'nonce-1'),
+      toolStep('Edit', 'file written'),
+      assistantFinal('done — the edit is in'),
+    );
+    expect(parseInteractiveTurn(tail, { nonce: 'nonce-1' })?.text).toBe('done — the edit is in');
+  });
+
+  test('tokens and context come from the final assistant message.usage (the claudeContextUsage reuse)', () => {
+    const tail = session(
+      'sess-i',
+      userTurn('analyze', 'nonce-1'),
+      assistantFinal('analysis', {
+        usage: { input_tokens: 60_000, cache_read_input_tokens: 20_000, cache_creation_input_tokens: 2_000, output_tokens: 500 },
+        contextWindow: 200_000,
+      }),
+    );
+    const turn = parseInteractiveTurn(tail, { nonce: 'nonce-1' });
+    expect.soft(turn?.tokens).toEqual({ input: 60_000, output: 500 });
+    expect.soft(turn?.context).toEqual({ usedTokens: 82_500, windowTokens: 200_000 });
+  });
+
+  test('an incomplete turn (no final assistant yet) returns undefined', () => {
+    const tail = session('sess-i', userTurn('start', 'nonce-1'), toolStep('Bash', 'still running'));
+    expect(parseInteractiveTurn(tail, { nonce: 'nonce-1' })).toBeUndefined();
+  });
+
+  test('a /compact turn returns the synthetic confirmation and the unchanged session id', () => {
+    const tail = session('sess-i', userTurn('/compact keep the plan decisions', 'nonce-1'), compactBoundary());
+    expect(parseInteractiveTurn(tail, { nonce: 'nonce-1' })).toEqual({
+      text: COMPACT_CONFIRMATION,
+      sessionId: 'sess-i',
+    });
+  });
+
+  test('a cut or partial trailing JSONL line is tolerated', () => {
+    const tail =
+      session('sess-i', userTurn('do it', 'nonce-1'), assistantFinal('done')) + '{"type":"assistant","mess';
+    expect(parseInteractiveTurn(tail, { nonce: 'nonce-1' })?.text).toBe('done');
+  });
+
+  test('nonce isolation: only the turn whose user record carries the asked nonce is returned', () => {
+    const tail = session(
+      'sess-i',
+      userTurn('first task', 'nonce-1'),
+      assistantFinal('first answer'),
+      userMessage('an unrelated user message with no nonce'),
+      userTurn('second task', 'nonce-2'),
+      assistantFinal('second answer'),
+    );
+    expect.soft(parseInteractiveTurn(tail, { nonce: 'nonce-2' })?.text).toBe('second answer');
+    expect.soft(parseInteractiveTurn(tail, { nonce: 'nonce-1' })?.text).toBe('first answer');
   });
 });
 
