@@ -18,9 +18,31 @@ export interface RoleBinding {
   /** Anthropic model ID. Only meaningful for the claude provider; the codex
    * provider deliberately has no model key (~/.codex/config.toml governs). */
   model?: string;
+  /**
+   * How duet talks to a claude worker: "headless" (default) is `claude -p`,
+   * which draws the metered Agent-SDK credit pool; "interactive" drives the
+   * interactive `claude` TUI so the work bills the flat subscription quota.
+   * Config-file only (the `--<role>` grammar can't express it). Meaningless
+   * for codex (rejected there) — codex already bills the subscription.
+   */
+  transport?: 'headless' | 'interactive';
 }
 
 export type RoleBindings = Record<Role, RoleBinding>;
+
+/**
+ * A CLI `--<role> provider[:model]` override. Deliberately has NO transport
+ * field: the override grammar cannot express transport, so a model-only
+ * override must never manufacture a `transport:"headless"` that overwrites a
+ * configured `interactive`. The merge in loadRoleBindings carries a configured
+ * claude transport forward instead. Keeping this type separate from RoleBinding
+ * (whose parseBinding DOES default the transport) is what makes that clobber
+ * unrepresentable rather than merely avoided.
+ */
+export interface RoleOverride {
+  provider: 'claude' | 'codex';
+  model?: string;
+}
 
 /**
  * Per-role claude-model defaults: Opus 4.8 across the board (updated
@@ -38,16 +60,21 @@ export const DEFAULT_CLAUDE_MODEL: Record<Role, string> = {
 
 /** Shipped default when no config file is present (claude roles on Opus 4.8, reviewer on codex). */
 export const DEFAULT_BINDINGS: RoleBindings = {
-  orchestrator: { provider: 'claude', model: DEFAULT_CLAUDE_MODEL.orchestrator },
-  implementer: { provider: 'claude', model: DEFAULT_CLAUDE_MODEL.implementer },
+  orchestrator: { provider: 'claude', model: DEFAULT_CLAUDE_MODEL.orchestrator, transport: 'headless' },
+  implementer: { provider: 'claude', model: DEFAULT_CLAUDE_MODEL.implementer, transport: 'headless' },
   reviewer: { provider: 'codex' },
 };
 
 export const CONFIG_PATH = join(homedir(), '.config', 'duet', 'config.toml');
 
-function parseBinding(role: Role, raw: unknown): RoleBinding {
-  if (typeof raw !== 'object' || raw === null) throw new Error(`config: [roles.${role}] must be a table`);
-  const table = raw as Record<string, unknown>;
+/**
+ * Validate the provider + model of a binding spec — the part shared by config
+ * tables and CLI overrides. Defaults a claude binding's model per role and
+ * rejects a model on codex; deliberately says NOTHING about transport, which is
+ * a config-only concern parseBinding layers on top (so an override can never
+ * inherit a transport default through this path).
+ */
+function parseProviderModel(role: Role, table: Record<string, unknown>): RoleOverride {
   const provider = table['provider'];
   if (provider !== 'claude' && provider !== 'codex') {
     throw new Error(`config: [roles.${role}].provider must be "claude" or "codex", got ${JSON.stringify(provider)}`);
@@ -67,11 +94,48 @@ function parseBinding(role: Role, raw: unknown): RoleBinding {
   return model === undefined ? { provider } : { provider, model };
 }
 
-/** Parse a `--<role> provider[:model]` CLI override, e.g. "claude:claude-opus-4-6" or "codex". */
-export function parseRoleOverride(role: Role, spec: string): RoleBinding {
+function parseBinding(role: Role, raw: unknown): RoleBinding {
+  if (typeof raw !== 'object' || raw === null) throw new Error(`config: [roles.${role}] must be a table`);
+  const table = raw as Record<string, unknown>;
+  const base = parseProviderModel(role, table);
+  const transport = table['transport'];
+  if (transport !== undefined) {
+    if (base.provider === 'codex') {
+      throw new Error(
+        `config: [roles.${role}] sets a transport for the codex provider — transport is a claude-only knob (codex already bills the subscription); remove it`,
+      );
+    }
+    if (transport !== 'headless' && transport !== 'interactive') {
+      throw new Error(
+        `config: [roles.${role}].transport must be "headless" or "interactive", got ${JSON.stringify(transport)}`,
+      );
+    }
+    // The interactive transport always drives a read-write/bypass session, so in
+    // the spike it serves the implementer only — a read-only interactive reviewer
+    // is a production item (spec §"Path to production"). Reject it loudly here so
+    // a misconfiguration can never silently grant a read-only role write access.
+    if (transport === 'interactive' && role !== 'implementer') {
+      throw new Error(
+        `config: [roles.${role}].transport = "interactive" — the interactive transport is implementer-only in the spike (it runs read-write/bypass; a read-only interactive reviewer is a production item). Only [roles.implementer] may set it.`,
+      );
+    }
+  }
+  // Claude bindings always carry a transport (default headless, alongside the
+  // model default); codex bindings never do.
+  return base.provider === 'claude'
+    ? { ...base, transport: (transport as 'headless' | 'interactive' | undefined) ?? 'headless' }
+    : base;
+}
+
+/**
+ * Parse a `--<role> provider[:model]` CLI override, e.g. "claude:claude-opus-4-6"
+ * or "codex". Returns a RoleOverride (no transport) — the grammar can't express
+ * transport, and the merge in loadRoleBindings owns the effective transport.
+ */
+export function parseRoleOverride(role: Role, spec: string): RoleOverride {
   const [provider, ...rest] = spec.split(':');
   const model = rest.length > 0 ? rest.join(':') : undefined;
-  return parseBinding(role, model === undefined ? { provider } : { provider, model });
+  return parseProviderModel(role, model === undefined ? { provider } : { provider, model });
 }
 
 export function loadRoleBindings(
@@ -93,7 +157,22 @@ export function loadRoleBindings(
 
   for (const role of ['orchestrator', 'implementer', 'reviewer'] as const) {
     const spec = overrides?.[role];
-    if (spec) bindings[role] = parseRoleOverride(role, spec);
+    if (!spec) continue;
+    const override = parseRoleOverride(role, spec);
+    const prev = bindings[role];
+    // Compute the effective transport in the merge — the override can't express
+    // it. Carry a configured claude transport forward when the override keeps
+    // the provider claude; default headless only when the override changes the
+    // provider (nothing to carry) or no prior claude transport existed. This is
+    // the billing footgun the RoleOverride/RoleBinding split prevents: a
+    // model-only override must not silently flip a subscription-billed run back
+    // to metered headless.
+    if (override.provider === 'claude') {
+      const carried = prev.provider === 'claude' ? prev.transport : undefined;
+      bindings[role] = { ...override, transport: carried ?? 'headless' };
+    } else {
+      bindings[role] = override;
+    }
   }
 
   // The orchestrator's capability contract (custom harness tools, cooperative

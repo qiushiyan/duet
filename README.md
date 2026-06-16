@@ -38,7 +38,7 @@ Four ideas shape every design choice:
 
 ## Status
 
-Early and experimental. The full arc is implemented; the framing-through-ship path has been driven end-to-end on real features. The later phases (docs, PR) and overnight gate pre-authorization are built but not yet battle-tested. Expect rough edges. See [`docs/open-questions.md`](docs/open-questions.md) for what's verified versus still open.
+Early and experimental. The full arc is implemented; the framing-through-ship path has been driven end-to-end on real features. The later phases (docs, PR) and overnight gate pre-authorization are built but not yet battle-tested. An opt-in interactive-Claude transport for the implementer (which bills the flat subscription quota) is built as a spike, pending one live-auth check — [`docs/interactive-transport.md`](docs/interactive-transport.md). Expect rough edges. See [`docs/open-questions.md`](docs/open-questions.md) for what's verified versus still open.
 
 ## Requirements
 
@@ -75,6 +75,8 @@ provider = "codex"          # no model key — your ~/.codex/config.toml governs
 ```
 
 That's the only config duet has — role-to-provider bindings, nothing else. Project knowledge never lives here; it goes in the framing turn.
+
+**Advanced (opt-in, experimental):** the claude implementer can drive the interactive `claude` TUI instead of headless `claude -p`, so its turns bill your **flat subscription quota** rather than the metered Agent-SDK credit pool — add `transport = "interactive"` under `[roles.implementer]`. It's a tmux-driven spike: implementer-only, requires a running tmux, and is still pending one live-auth check. See [`docs/interactive-transport.md`](docs/interactive-transport.md).
 
 ## Use
 

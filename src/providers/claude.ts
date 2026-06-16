@@ -3,6 +3,18 @@ import { z } from 'zod';
 import type { RunTurnOptions, WorkerProvider, WorkerTurn } from './types.ts';
 
 /**
+ * What a successful `/compact` turn returns in place of an empty result: the
+ * CLI emits only a compact-boundary event, so the provider substitutes a named
+ * confirmation rather than hand the orchestrator a blank response. Shared by
+ * both claude transports — the headless path (below) and the interactive
+ * transport (interactive-claude.ts) must return the IDENTICAL string, because
+ * the impl phase's first act is a `/compact` turn and the orchestrator keys on
+ * this exact text.
+ */
+export const COMPACT_CONFIRMATION =
+  '(session compacted — context was reset per the instructions; the conversation continues from the summary)';
+
+/**
  * Claude worker provider: spawns `claude -p --output-format json`, which
  * returns a `{result, session_id, total_cost_usd}` envelope and appends to
  * the standard `~/.claude/projects/` transcript (resumable manually).
@@ -87,7 +99,7 @@ export function parseClaudeTurn(stdout: string, prompt: string): WorkerTurn {
   // handed a blank response.
   const text =
     !envelope.result && prompt.trimStart().startsWith('/compact')
-      ? '(session compacted — context was reset per the instructions; the conversation continues from the summary)'
+      ? COMPACT_CONFIRMATION
       : (envelope.result ?? '');
   const context = claudeContextUsage(candidates, envelope.modelUsage);
   return {

@@ -90,7 +90,16 @@ export interface RunState {
 
   costs: {
     orchestratorUsd: number;
+    /**
+     * The KNOWN claude-worker cost. A turn reports `costUsd` only when the
+     * provider includes it (headless does; the interactive transport omits it
+     * by P5 — cost shown unavailable, never faked). When any claude turn
+     * reports no cost, `claudeWorkersCostPartial` flips so consumers never read
+     * this sum as the complete total.
+     */
     claudeWorkersUsd: number;
+    /** True once a claude-worker turn reported no cost — the claudeWorkersUsd total is partial/unknown. */
+    claudeWorkersCostPartial: boolean;
     codexTokens: { input: number; output: number };
   };
   /**
@@ -177,7 +186,7 @@ export function createRun(opts: {
     phaseStarted: {},
     rounds: {},
     phaseSummaries: {},
-    costs: { orchestratorUsd: 0, claudeWorkersUsd: 0, codexTokens: { input: 0, output: 0 } },
+    costs: { orchestratorUsd: 0, claudeWorkersUsd: 0, claudeWorkersCostPartial: false, codexTokens: { input: 0, output: 0 } },
     snippetProposals: [],
   };
   ensureDuetDir(opts.cwd);

@@ -73,6 +73,22 @@ describe('send_prompt', () => {
     const persisted = loadRunState(projectDir, run.runId);
     expect.soft(persisted.costs.claudeWorkersUsd).toBe(1.25);
     expect.soft(persisted.costs.codexTokens).toEqual({ input: 1000, output: 50 });
+    // The claude turn reported a cost and the codex turn never counts toward it,
+    // so the known total is complete.
+    expect.soft(persisted.costs.claudeWorkersCostPartial).toBe(false);
+  });
+
+  test('a claude turn reporting no cost marks the total partial (P5: unavailable, not faked)', async ({
+    projectDir,
+    run,
+  }) => {
+    const implementer = new FakeWorker('claude'); // default script → no costUsd, like an interactive turn
+    const { call } = harness(run, { implementer });
+    await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+
+    const persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.costs.claudeWorkersCostPartial).toBe(true);
+    expect.soft(persisted.costs.claudeWorkersUsd).toBe(0);
   });
 
   test('logs both sides of the exchange into the voice log', async ({ projectDir, run }) => {

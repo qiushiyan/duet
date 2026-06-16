@@ -24,7 +24,7 @@ Placement rule for any new rule: violating it would break the human's authority 
 | `src/harness/lifecycle.ts` | The detached `_drive` process, pid guard, quiescence loop, `gates_at` auto-cross, and `probeRunPosition` (where a run is) | The only place machine actors run for real |
 | `src/harness/orchestrator-prompts.ts` | System prompt + phase entry/resume prompts + the steer block renderer | Governed by `prompting-and-tool-design.md` |
 | `src/run-store.ts` | `.duet/runs/<id>/` persistence: state hint, machine snapshot, voice logs, notes; the CLI↔driver input-staging handshake; the steer store (`steers/`, file-per-steer, rename-consume); the context hint + its `context/<voice>` sidecars | Atomic writes; `state.json` is a HINT — transcripts are truth |
-| `src/providers/` | The worker seam: contract (`types.ts`), claude + codex adapters, factory (`index.ts`); per-provider context-window probes (claude in-band, codex rollout tail-read), fail-soft | Exactly two providers, by design |
+| `src/providers/` | The worker seam: contract (`types.ts`), claude + codex adapters, factory (`index.ts`); per-provider context-window probes (claude in-band, codex rollout tail-read), fail-soft. The claude provider has two transports — headless `claude -p` and the opt-in interactive TUI driver (`interactive-claude.ts` + the `pane.ts` injection seam; `interactive-transport.md`) | Exactly two providers, by design; interactive is a second claude *transport*, not a third provider |
 | `src/framing.ts` | The framing's whole journey: template, editor flow, frontmatter parse, flag-vs-frontmatter resolution | The machine/prose boundary rule lives here |
 | `src/status.ts` | RunState + position → the status model; two renderers (human text, `--json` verbatim), pure | No fs, no process table, no xstate; the JSON schema is additive-only, pinned by test |
 | `src/cli.ts` | Command wiring only | Behavior lives behind it; parses under `import.meta.main`, so the command table imports side-effect free |
@@ -34,7 +34,7 @@ Placement rule for any new rule: violating it would break the human's authority 
 
 ## Seams
 
-A seam = a place behavior swaps without editing code in place. Four deliberate ones exist; tests fake **only** at these:
+A seam = a place behavior swaps without editing code in place. Five deliberate ones exist; tests fake **only** at these:
 
 | Seam | Adapters | Why |
 |---|---|---|
@@ -42,8 +42,9 @@ A seam = a place behavior swaps without editing code in place. Four deliberate o
 | `RunOrchestratorTurn` (`harness/driver.ts`) | Agent SDK, scripted sessions | The SDK boundary; a fake session receives the real tool handlers and may invoke them |
 | `phaseDriver` actor (`harness/machine.ts`) | `runPhase`, `machine.provide` scripts | XState's own substitution mechanism |
 | Environment (`$EDITOR`, config path, notify fn) | real / stubbed | OS boundaries |
+| `PaneController` (`providers/pane.ts`) | `TmuxPane`, tests' `FakePane`, owned-pty (later) | The injection/process sub-seam *inside* the interactive claude transport — keeps the transcript parser transport-independent so owned-pty swaps in unchanged (`interactive-transport.md`) |
 
-Rule: a new abstraction earns a seam only when a second adapter exists or a test needs one. Otherwise call directly — pass-through layers get deleted on sight.
+Rule: a new abstraction earns a seam only when a second adapter exists or a test needs one (`PaneController` earned both — a test now, pty later). Otherwise call directly — pass-through layers get deleted on sight.
 
 ## Patterns that carry the design
 
