@@ -1,11 +1,11 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { basename, join, relative, resolve } from 'node:path';
-import { execa } from 'execa';
-import { z } from 'zod';
-import { GATE_PHASES } from './phases.ts';
-import type { GatePhase } from './phases.ts';
-import { ensureDuetDir } from './run-store.ts';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join, relative, resolve } from "node:path";
+import { execa } from "execa";
+import { z } from "zod";
+import { GATE_PHASES } from "./phases.ts";
+import type { GatePhase } from "./phases.ts";
+import { ensureDuetDir } from "./run-store.ts";
 
 /**
  * The framing — the one file the human writes per run, and the only place
@@ -36,7 +36,7 @@ import { ensureDuetDir } from './run-store.ts';
  * one source of truth in its context.
  */
 
-export const DEFAULT_FRAMING_FILE = join('.duet', 'framing-draft.md');
+export const DEFAULT_FRAMING_FILE = join(".duet", "framing-draft.md");
 
 /**
  * Where a project keeps its own framing seed templates, mirroring
@@ -46,7 +46,7 @@ export const DEFAULT_FRAMING_FILE = join('.duet', 'framing-draft.md');
  * them by carving `!/templates/` into `.duet/.gitignore` if you want them
  * shared across worktrees.
  */
-export const TEMPLATES_DIR = join('.duet', 'templates');
+export const TEMPLATES_DIR = join(".duet", "templates");
 
 export const FRAMING_TEMPLATE = `---
 # Machine-parsed options (fixed values the harness acts on; judgment-weighed
@@ -61,38 +61,33 @@ export const FRAMING_TEMPLATE = `---
 ---
 
 # Problem
-<what to build or change, why, and the scope boundaries — what's explicitly out>
 
 # Onboarding
-<skill to invoke (e.g. /onboarding <topic>) or files each worker should read first>
-<park any assets the framing references (screenshots, mocks) under .duet/ —
- paths like ~/Desktop rot out from under old runs>
 
 # Conventions
-- Specs live at: <e.g. docs/specs/YYYY-MM-DD-<slug>.md>
-- Plans live at: <path or directory convention — required>
-- Branch: <"this worktree's branch is the run's branch", or a naming convention>
-- Commit style: <conventional commits / your norm>
+- Specs live at: docs/specs
+- Plans live at: docs/plans
+- Branch: current branch
 
 # Verification
-- Typecheck: <command>
-- Tests: <command>
-- Environment-only actions (migrations, deploys): flag me — never attempt.
+
+
+Never lint or typecheck on the global project.
 
 # Docs
-<docs-update skill name if one exists, else where docs live and what usually needs updating>
+
 `;
 
 /** GUI editors that detach by default and need a wait flag to block. */
-const NEEDS_WAIT_FLAG = new Set(['code', 'code-insiders', 'cursor', 'windsurf', 'subl', 'zed']);
+const NEEDS_WAIT_FLAG = new Set(["code", "code-insiders", "cursor", "windsurf", "subl", "zed"]);
 
 function resolveEditor(): { command: string; args: string[] } {
-  const raw = process.env['VISUAL'] || process.env['EDITOR'] || 'vi';
+  const raw = process.env["VISUAL"] || process.env["EDITOR"] || "vi";
   const parts = raw.split(/\s+/).filter(Boolean);
-  const command = parts[0] ?? 'vi';
+  const command = parts[0] ?? "vi";
   const args = parts.slice(1);
-  if (NEEDS_WAIT_FLAG.has(basename(command)) && !args.includes('--wait') && !args.includes('-w')) {
-    args.push('--wait');
+  if (NEEDS_WAIT_FLAG.has(basename(command)) && !args.includes("--wait") && !args.includes("-w")) {
+    args.push("--wait");
   }
   return { command, args };
 }
@@ -105,22 +100,25 @@ function resolveEditor(): { command: string; args: string[] } {
  */
 function templateFileName(name: string): string {
   const trimmed = name.trim();
-  if (trimmed.startsWith('.') || !/^[A-Za-z0-9._-]+$/.test(trimmed)) {
+  if (trimmed.startsWith(".") || !/^[A-Za-z0-9._-]+$/.test(trimmed)) {
     throw new Error(
       `template name "${name}" is not a plain name — it selects a file in ${TEMPLATES_DIR}, so use letters, digits, "-" or "_" (no slashes or "..")`,
     );
   }
-  return trimmed.endsWith('.md') ? trimmed : `${trimmed}.md`;
+  return trimmed.endsWith(".md") ? trimmed : `${trimmed}.md`;
 }
 
 /** A "did you mean…" tail for a missing-template error: the .md names present
  *  in the templates dir, or a nudge to create the dir. */
 function availableTemplatesHint(dir: string): string {
-  if (!existsSync(dir)) return `; no ${TEMPLATES_DIR}/ directory yet — create it and add <name>.md files`;
+  if (!existsSync(dir))
+    return `; no ${TEMPLATES_DIR}/ directory yet — create it and add <name>.md files`;
   const names = readdirSync(dir)
-    .filter((f) => f.endsWith('.md'))
-    .map((f) => f.slice(0, -'.md'.length));
-  return names.length > 0 ? `; available: ${names.join(', ')}` : `; ${TEMPLATES_DIR}/ has no .md templates yet`;
+    .filter((f) => f.endsWith(".md"))
+    .map((f) => f.slice(0, -".md".length));
+  return names.length > 0
+    ? `; available: ${names.join(", ")}`
+    : `; ${TEMPLATES_DIR}/ has no .md templates yet`;
 }
 
 /**
@@ -140,12 +138,14 @@ export function resolveTemplateSeed(cwd: string, templateName?: string): string 
     const file = templateFileName(templateName);
     const path = join(dir, file);
     if (!existsSync(path)) {
-      throw new Error(`template "${templateName}" not found at ${join(TEMPLATES_DIR, file)}${availableTemplatesHint(dir)}`);
+      throw new Error(
+        `template "${templateName}" not found at ${join(TEMPLATES_DIR, file)}${availableTemplatesHint(dir)}`,
+      );
     }
-    return readFileSync(path, 'utf8');
+    return readFileSync(path, "utf8");
   }
-  const fallback = join(dir, 'default.md');
-  return existsSync(fallback) ? readFileSync(fallback, 'utf8') : FRAMING_TEMPLATE;
+  const fallback = join(dir, "default.md");
+  return existsSync(fallback) ? readFileSync(fallback, "utf8") : FRAMING_TEMPLATE;
 }
 
 /**
@@ -164,22 +164,29 @@ export async function editFramingForRun(cwd: string, templateName?: string): Pro
   // discards it). The bare path leaves an existing draft alone, so aborted
   // work survives to the next `duet new`.
   if (templateName !== undefined) {
-    if (existsSync(path)) console.log(`--template ${templateName}: re-seeding ${DEFAULT_FRAMING_FILE} (previous draft discarded)`);
+    if (existsSync(path))
+      console.log(
+        `--template ${templateName}: re-seeding ${DEFAULT_FRAMING_FILE} (previous draft discarded)`,
+      );
     writeFileSync(path, seed);
   } else if (!existsSync(path)) {
     writeFileSync(path, seed);
   }
 
   const { command, args } = resolveEditor();
-  console.log(`no --spec/--framing given — opening ${DEFAULT_FRAMING_FILE} in ${basename(command)}; write the framing, save, and close to start the run`);
+  console.log(
+    `no --spec/--framing given — opening ${DEFAULT_FRAMING_FILE} in ${basename(command)}; write the framing, save, and close to start the run`,
+  );
   try {
-    await execa(command, [...args, path], { stdio: 'inherit' });
+    await execa(command, [...args, path], { stdio: "inherit" });
   } catch (err) {
-    const detail = err instanceof Error ? err.message.split('\n')[0] : String(err);
-    throw new Error(`editor exited with an error (${detail}) — run not started; anything you saved is in ${DEFAULT_FRAMING_FILE}`);
+    const detail = err instanceof Error ? err.message.split("\n")[0] : String(err);
+    throw new Error(
+      `editor exited with an error (${detail}) — run not started; anything you saved is in ${DEFAULT_FRAMING_FILE}`,
+    );
   }
 
-  const content = readFileSync(path, 'utf8');
+  const content = readFileSync(path, "utf8");
   if (!content.trim()) {
     throw new Error(`run not started: ${DEFAULT_FRAMING_FILE} is empty`);
   }
@@ -191,7 +198,9 @@ export async function editFramingForRun(cwd: string, templateName?: string): Pro
   // built-in keeps an unfilled draft from silently launching a run.
   const trimmed = content.trim();
   if (trimmed === seed.trim() || trimmed === FRAMING_TEMPLATE.trim()) {
-    throw new Error(`run not started: ${DEFAULT_FRAMING_FILE} is still the untouched template — fill it in (it's saved for next time)`);
+    throw new Error(
+      `run not started: ${DEFAULT_FRAMING_FILE} is still the untouched template — fill it in (it's saved for next time)`,
+    );
   }
   return DEFAULT_FRAMING_FILE;
 }
@@ -205,17 +214,20 @@ export async function editFramingForRun(cwd: string, templateName?: string): Pro
  * life is the staging handshake it feeds.
  */
 export async function composeInEditor(instructions: string): Promise<string> {
-  const dir = mkdtempSync(join(tmpdir(), 'duet-compose-'));
-  const path = join(dir, 'message.md');
-  writeFileSync(path, `<!-- ${instructions}\n     Write below this line; save and close to send. This file is discarded after reading. -->\n\n`);
+  const dir = mkdtempSync(join(tmpdir(), "duet-compose-"));
+  const path = join(dir, "message.md");
+  writeFileSync(
+    path,
+    `<!-- ${instructions}\n     Write below this line; save and close to send. This file is discarded after reading. -->\n\n`,
+  );
   const { command, args } = resolveEditor();
   console.log(`opening ${basename(command)} — write the text, save, and close`);
   try {
-    await execa(command, [...args, path], { stdio: 'inherit' });
-    const content = readFileSync(path, 'utf8');
-    return content.replace(/^<!--[\s\S]*?-->\s*/, '').trim();
+    await execa(command, [...args, path], { stdio: "inherit" });
+    const content = readFileSync(path, "utf8");
+    return content.replace(/^<!--[\s\S]*?-->\s*/, "").trim();
   } catch (err) {
-    const detail = err instanceof Error ? err.message.split('\n')[0] : String(err);
+    const detail = err instanceof Error ? err.message.split("\n")[0] : String(err);
     throw new Error(`editor exited with an error (${detail}) — nothing was sent`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -236,19 +248,19 @@ export async function resolveHumanText(
   inline: string | boolean | undefined,
   instructions: string,
 ): Promise<string> {
-  return typeof inline === 'string' ? inline : composeInEditor(instructions);
+  return typeof inline === "string" ? inline : composeInEditor(instructions);
 }
 
 /** Named presets — pure aliases for gate lists, never a separate vocabulary. */
 const GATES_AT_PRESETS: Record<string, GatePhase[]> = {
   /** Attend nothing after the spec — the full sleep posture. */
-  overnight: ['frame', 'spec'],
+  overnight: ["frame", "spec"],
   /**
    * Walk away at spec approval, return at the Ship gate — the plan loop runs
    * unattended. Born from run evidence (the human reports rubber-stamping
    * plan gates); whether this earns default status is Q20's evidence stream.
    */
-  'skip-plan': ['frame', 'spec', 'impl', 'docs'],
+  "skip-plan": ["frame", "spec", "impl", "docs"],
 };
 
 export interface FramingFrontmatter {
@@ -273,15 +285,17 @@ export function parseGatesAt(value: string): GatePhase[] {
   for (const name of names) {
     if (!(GATE_PHASES as readonly string[]).includes(name)) {
       throw new Error(
-        `gates_at: "${name}" is not a gate-bearing phase — use a list from {${GATE_PHASES.join(', ')}} or a preset: "overnight" (= frame,spec) or "skip-plan" (= frame,spec,impl,docs — walk away at spec approval, return at the Ship gate). The open phase has no gate; pr is always attended.`,
+        `gates_at: "${name}" is not a gate-bearing phase — use a list from {${GATE_PHASES.join(", ")}} or a preset: "overnight" (= frame,spec) or "skip-plan" (= frame,spec,impl,docs — walk away at spec approval, return at the Ship gate). The open phase has no gate; pr is always attended.`,
       );
     }
     if (!gates.includes(name as GatePhase)) gates.push(name as GatePhase);
   }
   if (gates.length === 0) {
-    throw new Error(`gates_at is empty — list the phases whose gates you will attend (from {${GATE_PHASES.join(', ')}}), or omit it to attend every gate.`);
+    throw new Error(
+      `gates_at is empty — list the phases whose gates you will attend (from {${GATE_PHASES.join(", ")}}), or omit it to attend every gate.`,
+    );
   }
-  if (!gates.includes('pr')) gates.push('pr');
+  if (!gates.includes("pr")) gates.push("pr");
   return gates;
 }
 
@@ -292,24 +306,28 @@ export function parseGatesAt(value: string): GatePhase[] {
  * a config typo that silently became prose would change run behavior.
  */
 export function parseFramingFile(content: string): { meta: FramingFrontmatter; body: string } {
-  if (!content.startsWith('---\n')) return { meta: {}, body: content };
-  const end = content.indexOf('\n---', 4);
+  if (!content.startsWith("---\n")) return { meta: {}, body: content };
+  const end = content.indexOf("\n---", 4);
   if (end === -1) {
-    throw new Error('framing frontmatter opened with "---" but never closed — add the closing "---" line or remove the block');
+    throw new Error(
+      'framing frontmatter opened with "---" but never closed — add the closing "---" line or remove the block',
+    );
   }
   const block = content.slice(4, end);
   // EOF right after the closing --- means an empty body (indexOf would
   // return -1 and slice(0) would hand back the whole file, frontmatter included).
-  const afterClose = content.indexOf('\n', end + 1);
-  const body = afterClose === -1 ? '' : content.slice(afterClose + 1).replace(/^\n/, '');
+  const afterClose = content.indexOf("\n", end + 1);
+  const body = afterClose === -1 ? "" : content.slice(afterClose + 1).replace(/^\n/, "");
 
   const raw: Record<string, string> = {};
-  for (const line of block.split('\n')) {
+  for (const line of block.split("\n")) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const colon = trimmed.indexOf(':');
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const colon = trimmed.indexOf(":");
     if (colon === -1) {
-      throw new Error(`framing frontmatter line "${trimmed}" is not "key: value" — only key/value pairs and # comments are allowed in the block`);
+      throw new Error(
+        `framing frontmatter line "${trimmed}" is not "key: value" — only key/value pairs and # comments are allowed in the block`,
+      );
     }
     const key = trimmed.slice(0, colon).trim();
     raw[key] = trimmed.slice(colon + 1).trim();
@@ -320,8 +338,8 @@ export function parseFramingFile(content: string): { meta: FramingFrontmatter; b
     const unknown = Object.keys(raw).filter((k) => !(k in frontmatterSchema.shape));
     throw new Error(
       unknown.length > 0
-        ? `framing frontmatter has unknown key(s): ${unknown.join(', ')} — valid keys are gates_at and spec. Everything the orchestrator should weigh with judgment belongs in the prose body, not here.`
-        : `framing frontmatter is invalid: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
+        ? `framing frontmatter has unknown key(s): ${unknown.join(", ")} — valid keys are gates_at and spec. Everything the orchestrator should weigh with judgment belongs in the prose body, not here.`
+        : `framing frontmatter is invalid: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
     );
   }
 
@@ -357,7 +375,7 @@ export async function resolveRunInputs(
 ): Promise<RunInputs> {
   if (opts.template !== undefined && (opts.spec || opts.framing)) {
     throw new Error(
-      '--template seeds the editor draft for the bare `duet new` flow — it conflicts with --spec/--framing, which supply the framing directly',
+      "--template seeds the editor draft for the bare `duet new` flow — it conflicts with --spec/--framing, which supply the framing directly",
     );
   }
   let framingFile = opts.framing;
@@ -369,7 +387,7 @@ export async function resolveRunInputs(
   let framing: string | undefined;
   let meta: FramingFrontmatter = {};
   if (framingFile) {
-    framingRaw = readFileSync(resolve(cwd, framingFile), 'utf8');
+    framingRaw = readFileSync(resolve(cwd, framingFile), "utf8");
     try {
       const parsed = parseFramingFile(framingRaw);
       meta = parsed.meta;
