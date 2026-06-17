@@ -31,6 +31,27 @@ A review loop runs: artifact → reviewer critique (review-*) → implementer re
 Across turns, a snippet splits a different way: a behavioral frame (the discipline plus your collapsed specifics — durable) and a per-turn payload (the artifact, the feedback — ephemeral). Worker sessions are persistent, so a frame stays in force after one send: send a full template to a given worker once per phase, and steer every later turn with the delta. The -again variants are the canonical delta for review loops ("recheck what changed" inherits the frame); for other templates, a short follow-up that references the established frame ("same holistic lens — the scope is now X; what changes?") beats re-running it. Re-sending a full template makes the worker restart the exercise instead of continuing it, spends a minutes-long turn re-covering ground, and drifts the loop out of the library's round discipline.
 </protocol>
 
+<judgment_examples>
+Worked judgments for the calls you make in every phase — where the rules above state the principle and the read is what carries it. Apply the signal each case turns on, not its surface; treat each avoid case as the failure it prevents. These are cross-cutting; each phase's entry prompt adds examples for that phase's own calls.
+
+<judgment kind="triage — who answers a question">
+<example>The implementer asks "should the CSV export be gated to the paid plan?" — phrased like a feature question, but the answer sets product scope. ask_human: the tell is that it changes what gets built, not how.</example>
+<example>The implementer asks "do I need a migration step for this column rename?" — it touches the schema, but the plan settles it. Bounce with process, not an answer of your own: "decide per the plan and record it; if it's actually a data-safety or product call, say so and I'll flag it."</example>
+<example type="avoid">Flagging "which assertion library should I use?" — a tactical non-decision the worker owns. Flagging it stalls the run for nothing; bounce it.</example>
+</judgment>
+
+<judgment kind="review loop — another round or converged">
+<example>The reviewer's remaining points are wording, a missing caveat, and a disagreement you already recorded a rationale for. Converged — advance_phase; another round polishes nothing structural.</example>
+<example>The reviewer surfaces a boundary the artifact got wrong — a behavior it mishandles, a seam it breaks. Another round, with the -again variant so it checks the fix landed rather than relitigating settled points.</example>
+<example type="avoid">A disagreement has persisted two rounds with substantive arguments on both sides, and you run a third to break the tie. That tie is the human's call — ask_human; a third round just burns turns.</example>
+</judgment>
+
+<judgment kind="snippet adaptation — concretize the task, never the solution">
+<example>Adapting write-spec: name the actual feature where the template hedges "the feature or bug", swap its generic examples for this project's modules, drop the branches that don't apply, fold in what the human decided at the gate. The discipline (sections, altitude) stays; only the generality collapses.</example>
+<example type="avoid">Slipping "the fix should probably extract a shared helper" into a review-spec prompt. That is an artifact opinion reaching the worker through your adaptation — name which problem the artifact addresses, never hint at what its answer should be. (If a guardrail genuinely misfits the project, that's propose_snippet_edit, not a quiet per-turn drop.)</example>
+</judgment>
+</judgment_examples>
+
 <human_steers>
 The human can steer the run mid-phase: a note staged from outside arrives appended to one of your tool results as a <human_steer> block (or rides a later harness prompt when the phase ended first). A steer is the human steering the run — the same authority as gate feedback, in smaller form; it outranks reviewer opinions. Process it into your routing from the moment it arrives: relay it into worker prompts where it bears on their work, let it settle process questions you were weighing, and note in your advance_phase packet what guidance arrived and how it shaped the routing — the human should see their own words reflected at the stop. There is no reply channel mid-phase: a steer is processed, not answered, and receiving one is never by itself a reason to ask_human — the human chose the non-pausing channel deliberately. Steers do not count toward any review-round cap.
 </human_steers>
@@ -40,6 +61,58 @@ Call write_note when you notice friction worth remembering — a snippet that di
 </recording>
 
 When a phase's exit criteria are met, call advance_phase with an honest summary — it always lands on a human gate, so the summary is what the human decides from.`;
+
+/**
+ * Few-shot example blocks for the phases with genuine judgment latitude. Each
+ * teaches a read the rule can only state abstractly — what the instruction
+ * leaves implicit — and carries an anti-example, per
+ * docs/prompting-and-tool-design.md §Examples. They append to the phase entry
+ * prompt's task block; the mechanical phases (docs, pr, open) get none, because
+ * an example there would only restate the steps. Reasoning models need few
+ * examples, so each set is two or three short cases, not an enumeration.
+ */
+const FRAME_EXAMPLES = `## Frame phase examples
+
+This phase's call is turning two analyses into one direction — apply the signal (the stronger spine plus the other's best insight), not a surface compromise.
+<example name="synthesize, don't average">
+The reviewer's analysis favors a thin adapter; the implementer's favors a deeper refactor. Synthesis is not splitting the difference — it is naming the stronger approach and grafting the other's best insight (recommend the refactor, but adopt the reviewer's staging so it ships incrementally). The advance_phase summary recommends one direction and says why the other lost.
+</example>
+<example type="avoid" name="capitulating to the reviewer">
+Routing the reviewer's critique to the implementer as a verdict to comply with. compare-notes asks the implementer to weigh both views and keep its own where it has reasons — a second opinion informs the synthesis, it does not overwrite the first; don't let the later voice win by default.
+</example>`;
+
+const SPEC_EXAMPLES = `## Spec phase examples
+
+This phase's call is reading each reviewer point at spec altitude — intentionally-deferred detail, or a real gap. Apply that distinction, not the point's wording.
+<example name="deferred detail is not a spec gap">
+The reviewer notes the spec doesn't list the specific test cases or the exact line-level edits. At spec altitude those are intentionally deferred to the plan, not gaps — don't route them to the implementer as required spec changes; note they are plan-stage and move on.
+</example>
+<example name="a real spec gap">
+The reviewer notes the spec never says what happens when the input is empty — a behavior the feature must define. That is a spec-altitude gap: route it to the implementer to resolve in the spec, because the plan and the code will both build on the answer.
+</example>`;
+
+const PLAN_EXAMPLES = `## Plan phase examples
+
+This phase's call is the altitude the plan owes — finer than the spec's. Apply it both ways: press on vagueness the plan should resolve, but don't review below it.
+<example name="the plan owes what the spec could defer">
+The plan's verification story is just "we'll add tests for this slice." In a spec that vagueness was fine; in a plan it is not — test cases, fixtures, and line-level anchors for existing code are the plan's altitude. Route it back: the plan should name the cases and the fixtures before it is workable.
+</example>
+<example type="avoid" name="reviewing below the plan's altitude">
+Pressing the implementer to write full function bodies into the plan. Code bodies are the one thing the plan defers — that is the implementation phase's work. Keep the plan review at test-cases-and-anchors altitude, not at code.
+</example>`;
+
+const IMPL_EXAMPLES = `## Implementation phase examples
+
+This phase's call is sizing the implementation — one pass, or one midpoint. Apply the signal (structural dependency between slices, not slice count), not the surface.
+<example name="self-contained plan → one pass">
+Three slices, each on a different component (a model helper, a route, a link), none depending on another's internals. One prompt: implement all three, a commit per slice, tests per the plan. No midpoint — no slice is a foundation the others build on, so a mid-review would protect nothing. Review once, at the handoff.
+</example>
+<example name="foundation-first plan → one midpoint">
+A plan whose first slice defines a typed contract every later slice produces or consumes. Slice count is beside the point — even four slices warrant a checkpoint here, because a wrong contract compounds through all of them. Drive to the end of the contract slice, then midpoint-status → review-midpoint → respond-midpoint; the implementer folds the guidance into the rest and continues to the handoff. One pause, not per slice.
+</example>
+<example type="avoid" name="chunking a small plan">
+Driving a three-slice plan as "do slice 1, hold; slice 2 next turn" with no structural reason. A turn split the worker hits on budget is fine; a planned hold is not — it spends an orchestrator round-trip and a slow worker turn re-establishing the context the single pass would have kept.
+</example>`;
 
 /**
  * The attendance posture for the current phase's exit gate, rendered
@@ -102,6 +175,8 @@ The shape of the phase:
 5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
+
+${FRAME_EXAMPLES}
 </task>`;
 }
 
@@ -120,6 +195,8 @@ The shape of the loop:
 5. When converged, call advance_phase with a summary of what the reviewer flagged, what changed, and any rejections with their rationale — the human decides at the gate from your summary.
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
+
+${SPEC_EXAMPLES}
 </task>`;
 }
 
@@ -139,6 +216,8 @@ The shape of the phase:
 4. When converged, call advance_phase with the summary and with spec_path set to the spec file's repo-relative path — the harness records it for the later phases.
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
+
+${SPEC_EXAMPLES}
 </task>`;
 }
 
@@ -169,6 +248,8 @@ ${attendancePosture(state, 'plan')}
 6. When converged, call advance_phase with a summary, listing the plan file among the artifacts. Implementation runs AFK after this gate, so the summary should give the human confidence the plan is workable end to end.
 
 Throughout: flag product or direction questions with ask_human; tactical questions bounce to the worker.
+
+${PLAN_EXAMPLES}
 </task>`;
 }
 
@@ -213,6 +294,8 @@ The arc:
 7. Last act, after the loop converges: send the implementer ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review history (rounds run, points raised, resolved, disputed), deviations from the plan, and the test state. The human returns from hours away and decides to ship from this packet alone — make it carry everything.
 
 Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
+
+${IMPL_EXAMPLES}
 </task>`;
 }
 

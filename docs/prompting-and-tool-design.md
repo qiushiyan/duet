@@ -62,9 +62,14 @@ The send boundary carries the "self-check before finishing" rule at the moment i
 
 ### Examples
 
-Few-shot examples are the most reliable way to steer format, tone, and structure. Make them relevant (mirror the real use case), diverse (cover edge cases, vary enough to avoid unintended pattern-matching), and wrapped in `<example>`/`<examples>` tags. 3–5 examples is the sweet spot. Curate canonical examples rather than enumerating exhaustive edge-case rules — "examples are the pictures worth a thousand words."
+Few-shot examples are the most reliable way to steer format, tone, and the judgment rules alone struggle to pin down. Make them relevant (mirror the real use case), diverse (cover edge cases, vary enough to avoid unintended pattern-matching), and clearly delimited — `<example>` tags for the individual cases, with a markdown heading or grouping tag to label what a set teaches (the source guidance treats markdown and XML as equally good delimiters; clarity matters more than the characters). 3–5 examples is the sweet spot. Curate canonical examples rather than enumerating exhaustive edge-case rules — "examples are the pictures worth a thousand words."
 
-(Not yet used in duet's prompts; the natural first application is example-laden triage rules if Q13 reveals flag-precision problems that instructions alone can't fix.)
+Applied in `src/harness/orchestrator-prompts.ts` as **two tiers, each labeled by the judgment it teaches** — not a flat list, because the point is to teach the model to *judge and adapt*, and it has to see what each example is for:
+
+- **Cross-cutting reasoning** lives in the system prompt's `<judgment_examples>` section, co-located with the rules it illustrates (`division_of_labor`, `protocol`) and grouped by `<judgment kind="…">`: triage (who answers — flag vs bounce), review-loop convergence (another round vs converged vs flag the tie), and snippet adaptation (concretize the task, never the solution). These are the calls made in every phase.
+- **Phase-level judgment** lives in each phase's entry prompt under a `## <phase> phase examples` markdown heading led by a line naming that phase's call (markdown reads more naturally inline than a nested `<examples>` wrapper; the individual cases keep their `<example name=…>` / `type="avoid"` tags): frame synthesis (synthesize, don't capitulate), the spec→plan altitude shift (deferred detail vs a real gap; the plan owes what the spec could defer), and the impl size/risk call (single pass vs one midpoint, with the chunking anti-pattern).
+
+Each group carries an anti-example, and the mechanical phases (docs, pr, open) carry none — an example there would only restate the steps. The bar: an example earns its tokens only if the orchestrator could *not* derive its lesson from the adjacent rule, and each is framed by the signal to apply (not the surface to match). The cross-cutting examples sit in the system prompt rather than on the `ask_human`/`send_prompt` surfaces so the teaching is grouped and discoverable; the moment-precise nudges those surfaces already carry (e.g. the one-round-from-cap reminder) stay as the complement that fires at the exact moment. Triage flag-precision remains the Q13 evidence loop. Reasoning models need few examples, so each group is two or three short cases.
 
 ### Roles and altitude
 
