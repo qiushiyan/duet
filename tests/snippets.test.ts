@@ -28,7 +28,6 @@ describe('the snippet library', () => {
       'review-spec',
       'update-spec',
       'tdd-plan',
-      'start-plan',
       'review-plan',
       'update-plan',
       'midpoint-status',

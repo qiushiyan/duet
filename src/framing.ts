@@ -23,7 +23,7 @@ import { ensureDuetDir } from './run-store.ts';
  * DETERMINISTIC CONSUMER (the harness) acts on it without judgment. If the
  * value is natural language with riders, or the consumer is the orchestrator
  * applying judgment, it stays in the prose body. Spec/plan locations,
- * verification posture, skills, planning style: prose, always — the planlab
+ * verification posture, skills: prose, always — the planlab
  * run is the evidence (the framing's literal spec dir was wrong relative to
  * the worktree root and judgment resolved it).
  *
@@ -81,9 +81,6 @@ export const FRAMING_TEMPLATE = `---
 
 # Docs
 <docs-update skill name if one exists, else where docs live and what usually needs updating>
-
-# Planning style
-<tdd-plan vs start-plan preference, or let the orchestrator judge>
 `;
 
 /** GUI editors that detach by default and need a wait flag to block. */

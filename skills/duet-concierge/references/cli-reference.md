@@ -128,7 +128,4 @@ A markdown file: an optional `---`-fenced frontmatter block holding only fixed m
 # Docs
 <for the docs phase, which runs after the implementation: a docs-update skill if
  one exists, else where docs live and what a change like this should update>
-
-# Planning style
-<tdd-plan vs start-plan preference, or let the orchestrator judge>
 ```

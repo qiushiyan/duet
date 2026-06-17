@@ -209,40 +209,6 @@ Constraints:
 - Commit per slice, not all at the end.'''
 
 [[snippets]]
-key = "tdd-plan-strict"
-expand = '''
-Plan the implementation using **strict TDD**. Read `~/.claude/skills/tdd/SKILL.md` and the files it references — **treat them as the process, not just a guide**.
-
-Go detailed — name each slice, list specific test cases, sketch helpers and fixtures, cite functions for changes in existing files. **Don't pre-write full code bodies** — describe tests and helpers; actual code happens during red-green-refactor.
-
-Follow red-green-refactor literally per behavior:
-1. **RED** — One failing test. Run it. Verify it fails for the right reason.
-2. **GREEN** — Minimum code to pass. No anticipating future tests, no speculative features.
-3. **REFACTOR** — Only while green. Anything goes red → back to green first.
-
-Then next behavior. **One test, one slice, one cycle.** No batching tests up front, no batching implementation at the end.
-
-Constraints:
-- Follow settled implementation guidelines. Tweak small details if needed; pause before challenging major direction.
-- Skip doc updates — after implementation.
-- One commit per RGR cycle, as you progress.'''
-
-[[snippets]]
-key = "start-plan"
-expand = '''
-Create a technical plan from our discussion.
-
-**Structure:**
-1. A few focused phases, each ending in its own commit.
-2. **Delete complexity, don't rearrange it.** Concepts, modes, and branches should disappear, not get moved around. Prefer clean architecture and clear integration points over ad-hoc patches — the right plan should feel inevitable, not clever.
-3. If existing architecture blocks a clean solution, redesign from first principles around the actual problem — composition and data structures tailored to it.
-4. **Verification per phase** — for each phase, say how you'll confirm it works: the key behaviors to test (not exhaustive), or another check where a test doesn't fit. Note anything deliberately left unverified and why.
-
-**Constraints:**
-- Large UX-affecting changes → **stop, get my approval first**. Provide rationale and 2+ alternatives with tradeoffs.
-- Weigh end-user impact and technical quality together — neither alone is enough.'''
-
-[[snippets]]
 key = "review-plan"
 expand = '''
 Spec updated. I've drafted an implementation plan. Review with the same rigor as the spec.

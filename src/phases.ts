@@ -104,8 +104,6 @@ export const PHASES: readonly PhaseSpec[] = [
     name: 'plan',
     snippets: [
       'tdd-plan',
-      'tdd-plan-strict',
-      'start-plan',
       'review-plan',
       'update-plan',
       'review-plan-again',

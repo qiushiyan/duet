@@ -60,7 +60,7 @@ The protocol substance is the snippets — they encode the altitude lenses, the 
 | `review-spec` / `review-spec-again` | implementer → reviewer | SPEC rounds | Critique at spec altitude / verify round-1 feedback was integrated. |
 | `update-spec` / `update-spec-again` | reviewer → implementer | SPEC rounds | Assess validity, revise or push back / apply round-2 inline, converge. |
 | `compact-for-impl` | → implementer | COMPACT (plan→impl) | Context reset for the slice phase: keep the committed spec + plan, drop the planning journey. (`compact-for-plan` is the manual after-spec variant, kept in the library; duet compacts after the plan instead — `docs/automation-design.md` §"Worker compaction".) |
-| `tdd-plan` (or `start-plan`) | → implementer | PLAN | Vertical slices, test cases, fixtures; stop short of code bodies. |
+| `tdd-plan` | → implementer | PLAN | Vertical slices, test cases, fixtures; stop short of code bodies. |
 | `review-plan` / `update-plan` (+ `-again`) | ⇄ | PLAN rounds | Plan-altitude critique and revision. |
 | `midpoint-status` / `review-midpoint` / `respond-midpoint` | ⇄ | MIDPOINT | Status snapshot → review weighting compounding issues → triage, no code yet. |
 | `compact-for-review` | → implementer | COMPACT | Context reset shaped for review: keep decisions + why, drop build process. |

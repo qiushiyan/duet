@@ -205,7 +205,7 @@ The orchestrator never interprets gate posture from prose. Frontmatter is parsed
 
 The rework path deliberately compresses: a deep error discovered at the next attended gate is handled by reject-with-feedback there (the orchestrator routes the rework) or by abandoning the run — no re-open-an-earlier-phase machinery. Whether overnight runs' encoded recommendations hold up is Q20.
 
-**The frontmatter boundary rule** (also at `src/framing.ts`): a key earns frontmatter only when its practical expression is a **fixed value** and the **harness consumes it without judgment** — if either side is soft, it stays prose. Current keys: `gates_at` and `spec` (a draft-spec path; `--spec` by another door). Pre-approved if Q19 lands a run-level budget model: `budget_usd`. Spec/plan locations, verification posture, skills, planning style: prose, always — the planlab run's framing gave a spec dir that was wrong relative to the worktree root and judgment resolved it; a deterministic consumer would have enforced the error.
+**The frontmatter boundary rule** (also at `src/framing.ts`): a key earns frontmatter only when its practical expression is a **fixed value** and the **harness consumes it without judgment** — if either side is soft, it stays prose. Current keys: `gates_at` and `spec` (a draft-spec path; `--spec` by another door). Pre-approved if Q19 lands a run-level budget model: `budget_usd`. Spec/plan locations, verification posture, skills: prose, always — the planlab run's framing gave a spec dir that was wrong relative to the worktree root and judgment resolved it; a deterministic consumer would have enforced the error.
 
 ### Branch policy
 
