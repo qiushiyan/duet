@@ -1,0 +1,114 @@
+# Documentation standards
+
+duet's docs serve one purpose: give an engineer — human or agent — the **mental model** to understand the orchestrator without reading every source file. They cover architecture, intent, relationships, and the load-bearing constraints; they never duplicate code.
+
+This file is the canonical home for how duet keeps its docs. `CLAUDE.md` carries the always-loaded summary and points here; the `/onboarding` and `/update-docs` skills in `.claude/skills/` are the two ends of the cadence it governs.
+
+## Documentation shape
+
+`docs/` is organized by **kind of content**, not by feature. The conceptual layout:
+
+```
+CLAUDE.md                       always-loaded mental model + conventions; the doc map
+README.md                       orientation + the verified-vs-not status line
+snippets.toml                   the orchestrator's snippet library
+docs/
+  automation-design.md          THE design — roles, layers, phases/gates, triage, policy
+  engineering.md                the codebase mental model — module map, seams, patterns
+  prompting-and-tool-design.md  the binding prompt/tool conventions
+  workflow-model.md             the abstracted snippet protocol
+  observed-pattern.md           the evidence sessions the protocol is drawn from
+  open-questions.md             why each decision is what it is (strike-through = resolved)
+  future-directions.md          the product-direction ledger
+  interactive-transport.md      the opt-in transport's direction + status
+  specs/  plans/                per-feature, forward-looking, dated
+```
+
+Three kinds, three jobs:
+
+- **Design docs** (`automation-design.md`, `engineering.md`, `prompting-and-tool-design.md`, `workflow-model.md`) describe **what is true today**. Durable — updated in place, never appended to. Present tense; future tense ("we will…") is a smell.
+- **Rationale & evidence** (`open-questions.md`, `observed-pattern.md`) record **why**, and the runs that proved it. Resolved questions are struck through and compressed to a verdict + pointer; Q numbers are stable — never renumber.
+- **Direction & specs** (`future-directions.md`, `interactive-transport.md`, `docs/specs/`, `docs/plans/`) are **proposals** — what we might build and why. When one ships, distill its surviving content into the design doc it touches, in present tense, then prune the proposal.
+
+This is a conceptual map. `ls docs/` is the source of truth for what exists right now; don't mirror that listing here, and adding a doc doesn't require editing this file.
+
+## Design vs proposal — keep them apart
+
+The drift to avoid: a feature ships, the spec stays "for history," and now two docs describe one subsystem — one what exists, one what someone wanted. New readers can't tell which is live. The discipline:
+
+- A design doc answers "what is true today?" When a spec or direction lands, fold its decisions into the design doc and prune the proposal.
+- `docs/specs/` and `docs/plans/` are forward-looking and dated; they don't become architecture by sitting still.
+- Status lives in two honest places: the README's verified-vs-not line and `open-questions.md`. Don't sprinkle "shipped" / "not yet" markers through the design docs.
+
+## Two conventions that are duet's, not generic
+
+These already govern the repo (`CLAUDE.md` §Conventions); they bind doc work too:
+
+- **Docs lead, code follows.** A doc/code disagreement is a doc bug or a design regression — resolve it explicitly, never silently match the code to a stale doc or vice versa.
+- **Evidence-backed claims.** A workflow claim cites a run log or `examples/*.jsonl` turn and is tagged **(observed)** vs **(general)**. Don't launder a hoped-for behavior into the present tense; if it isn't verified, the README status line and `open-questions.md` are where that's said.
+
+## When docs need updating
+
+**Update when:**
+
+- A new module, tool, phase, gate, provider, or snippet was introduced and isn't reflected anywhere.
+- A doc section describes behavior a change altered or removed.
+- The module map in `engineering.md` or the Map in `CLAUDE.md` no longer matches the system shape.
+- A cross-reference went stale, or a proposal in `specs/` / `future-directions.md` shipped and should distill into a design doc.
+
+**No update needed when** the change is implementation-level (internal refactor, bug fix, test) and doesn't change how a developer thinks about the system.
+
+**Significance tiers:**
+
+- **None** — bug fixes, internal refactors, test additions, dependency bumps.
+- **Module-level** — a new tool, snippet, or control flow inside an existing subsystem. Update the one design doc that owns it.
+- **Design-level** — a new phase/gate, a new provider or transport, a new seam, a changed policy. May touch `automation-design.md`, the `engineering.md` map, the README status line, and `open-questions.md`.
+
+**Deletion is maintenance; addition is maintenance.** A branch that adds 30 lines of doc and deletes none of the newly-redundant prose has done half the work. For a design-level change, assume the doc *structure* needs reconsidering, not just a wording patch at the point of change.
+
+## Writing standards
+
+**Don't write:**
+
+- Source code — function bodies, signatures, type definitions. They rot instantly; point at the file instead.
+- API tables generated from code, or descriptions of things obvious from a filename.
+- Changelog entries ("added X on date Y") — restructure the narrative to describe the latest state.
+- Absolute file paths — use repo-root-relative ones.
+
+**Do write:**
+
+- The mental model — the core abstraction, how to think about the subsystem.
+- The decisions and their *why* — what was chosen over what, and the cost.
+- Module relationships and boundaries; behavioral flows in prose or pseudo-code.
+- The load-bearing invariants a new contributor would otherwise violate.
+- One-line file pointers ("the statechart: `src/harness/machine.ts`") — never the contents.
+- Directory structures as an indented tree (as above) — indentation under a directory name, not a repeated full path per file.
+
+## Consolidation principles
+
+**Adding content is an opportunity to simplify.** Each time you touch a doc, make it tighter, not just longer — the goal is a stable size as the system grows.
+
+1. Re-read the whole doc, not just the section you're editing.
+2. Merge overlap instead of writing a second description of the same concept.
+3. Combine small related sections under one heading; restructure if the reading order has gone disjoint.
+4. Cut anything that has drifted into implementation detail back to the mental model.
+5. Edit in place — fold new information into the section it belongs in, don't append.
+
+A doc that gains 10 lines of new content should usually shed 5–10 of redundancy.
+
+## Onboarding skill maintenance
+
+`/onboarding [topic]` (`.claude/skills/onboarding/SKILL.md`) bootstraps a session with topic-scoped context in two phases:
+
+- **Phase 1 — always-on core reads:** `CLAUDE.md`, `docs/automation-design.md`, `docs/engineering.md`. The mental model no duet task can safely skip.
+- **Phase 2 — topic deep dive:** the design doc(s) and code for the topic. The doc map in `CLAUDE.md` §Docs is the source of truth; the skill's topic table only turns a phrase into a focus.
+
+Keep it lean. Phase 1 is for what an agent *cannot* skip, not what's merely interesting. Litmus: *"Would an agent on a typical duet task produce wrong code without reading this?"* If not, it's Phase 2.
+
+**Update the skill when** a new top-level doc appears that the topic table doesn't route to, a Phase 1 doc is renamed or split, or a deep-dive path drifts. Routine edits inside an existing doc don't touch the skill — it already points at the doc.
+
+**Update `CLAUDE.md` when** a new cross-cutting invariant earns its way in (the bar is high) or an existing one's framing rots. Implementation-level changes never warrant a `CLAUDE.md` edit.
+
+## Maintenance cadence
+
+Review this file, the two skills, and the shape of `docs/` every 3–6 months or after a major Claude model release. Guardrails written for an older model can become friction for a newer one — instructions that kept past models on track can stop newer ones from making coordinated edits they handle fine. Treat removing stale guidance with the same weight as adding new.

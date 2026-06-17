@@ -42,12 +42,13 @@ Invariants that bite if forgotten (full reasoning: `docs/engineering.md`, `docs/
 - `docs/prompting-and-tool-design.md` — **consult whenever touching any agent prompt, tool description, tool result, or error message**; carries the 5 binding conventions + house patterns.
 - `docs/workflow-model.md` / `docs/observed-pattern.md` — the abstracted protocol / the evidence sessions.
 - `docs/future-directions.md` — the product-direction ledger: active next step (Claude Code as the interaction layer), shelved directions + revisit triggers, declined candidates. Check before proposing a new direction.
+- `docs/documentation-standards.md` — how docs are kept: doc shape, significance tiers, writing + consolidation standards, the skill-maintenance cadence. The user-invocable `/onboarding [topic]` and `/update-docs` dev skills (`.claude/skills/`) are the two ends of that cadence — onboarding bootstraps a session's mental model, update-docs syncs docs to the diff.
 - `snippets.toml` — the orchestrator's snippet library (tabtype schema; guarded by `tests/snippets.test.ts`; porting edits back to tabtype is a manual human step).
 - `references/` — external repo clones; **check `references/README.md` license boundaries before copying anything** (claude-squad AGPL = read-only; Agent SDK proprietary = dependency only).
 
 ## Conventions
 
-- **Docs lead, code follows.** Code/docs disagreement = doc bug or design regression; resolve explicitly, never silently.
+- **Docs lead, code follows.** Code/docs disagreement = doc bug or design regression; resolve explicitly, never silently. How docs are kept lives in `docs/documentation-standards.md`.
 - **Evidence-backed claims.** Workflow claims cite `examples/*.jsonl` turns or run logs; tag **(observed)** vs **(general)**.
 - **Tests are behavior-through-interface.** Fake only at the four seams (`docs/engineering.md` §Seams); never mock our own modules.
 - **Personal tool / augmentation** — see the product goals above; they are conventions too.
