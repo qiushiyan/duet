@@ -65,6 +65,51 @@ export function aliveDriverPid(state: RunState): number | undefined {
   }
 }
 
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stop a run's detached driver if one is alive: SIGTERM, then SIGKILL if it
+ * lingers past the grace. Returns the pid it stopped, or undefined when no
+ * driver was running. Only the driver pid is signalled — an in-flight worker
+ * turn is left to finish harmlessly into its own transcript
+ * (docs/automation-design.md §"Ending a run"), not killed with the group. The
+ * caller (`duet abandon`) then marks or purges the run with the driver already
+ * dead, so its state writes can't race the marker.
+ */
+export async function killDriver(
+  state: RunState,
+  opts: { graceMs?: number; pollMs?: number } = {},
+): Promise<number | undefined> {
+  const pid = aliveDriverPid(state);
+  if (pid === undefined) return undefined;
+  const graceMs = opts.graceMs ?? 5_000;
+  const pollMs = opts.pollMs ?? 100;
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    return undefined; // raced us and exited between the liveness check and the signal
+  }
+  const deadline = Date.now() + graceMs;
+  while (Date.now() < deadline) {
+    if (!pidAlive(pid)) return pid;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  // Lingered past the grace — escalate to the uncatchable signal.
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    // Exited between the last poll and here.
+  }
+  return pid;
+}
+
 /**
  * Where a run actually is, derived from the signals that exist on disk. The
  * machine snapshot alone cannot say: snapshots persist only at quiescent
@@ -83,9 +128,14 @@ export type RunPosition =
   | { kind: 'gate'; phase: GatePhase }
   | { kind: 'flag'; phase: PhaseName }
   | { kind: 'crashed'; phase: PhaseName; resumeEvent?: 'approve' | 'answer' }
+  | { kind: 'abandoned' }
   | { kind: 'done' };
 
 export function probeRunPosition(state: RunState): RunPosition {
+  // A deliberate abandon wins over every disk signal: the driver was killed,
+  // so the snapshot would otherwise read as a crash. `duet continue` clears
+  // the marker to revive (the underlying stop re-derives from there).
+  if (state.abandoned) return { kind: 'abandoned' };
   const stopped = stoppedPosition(state);
   const pid = aliveDriverPid(state);
   // process.pid is excluded: `_drive` prints status at its own exit, when the
@@ -97,7 +147,7 @@ export function probeRunPosition(state: RunState): RunPosition {
 }
 
 /** The position assuming no live driver — also the running phase's identity. */
-function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running' }> {
+function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running' | 'abandoned' }> {
   // The phase a snapshot-less machine starts in (spec-entry runs skip frame).
   const entryPhase: PhaseName = state.specPath ? 'spec' : 'frame';
   const snapshot = loadMachineSnapshot(state);

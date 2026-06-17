@@ -13,8 +13,10 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | `duet continue <run-id> --approve "<rider>"` | Approve with a rider: agreement with the direction plus adjustments, delivered into the next phase as gate feedback in approving form. The human's "yes, but…" in one command. |
 | `duet continue <run-id> --reject "<feedback>"` | Send the gated artifact back; the feedback reaches the orchestrator verbatim, as editor-in-chief input. |
 | `duet continue <run-id> --answer "<answer>"` | Answer the queued question; the run resumes with it. |
-| `duet continue <run-id>` | No flags: status if waiting, crash recovery if the phase died mid-flight. |
+| `duet continue <run-id>` | No flags: status if waiting, crash recovery if the phase died mid-flight. Also revives an abandoned run, re-entering from where it last stopped. |
 | `duet steer "<note>" [run-id]` | Stage a mid-phase note for the orchestrator — delivered on its next tool result (minutes, typically). Legal only while a phase is live or down mid-flight; at a gate or flag it refuses and names that stop's channel. |
+| `duet abandon <run-id>` | Stop a run for good: kills its live driver if one is running, and marks it abandoned. Destructive and **not** pre-approved — like `continue` it needs the human's permission prompt, never the concierge alone. The session transcripts are kept, so the run stays revivable with `duet continue`. |
+| `duet abandon <run-id> --purge` | The above, and also deletes the run dir and the orchestrator + worker session transcripts in `~/.claude` / `~/.codex` — **irreversible**. Only on the human's explicit say-so. |
 | `duet status [run-id]` | Human-readable status: phase, stop, packet or question, rounds, costs, next command. |
 | `duet status --json` | The machine-readable status model (schema below). The concierge's read surface. |
 | `duet status --json --wait` | Blocks until the run reaches its next stop, then prints the model and exits. Read-only and safe to interrupt — the supervision primitive: run it in the background and report when it exits. |
@@ -85,6 +87,17 @@ Top-level fields:
 
 ```json
 { "kind": "crashed", "phase": "impl", "command": "duet continue <run-id>" }
+```
+
+**`abandoned`** — the human stopped the run with `duet abandon`. Report it as stopped-on-purpose, not failed; it stays revivable with `revive`, or `purge` wipes it.
+
+```json
+{
+  "kind": "abandoned",
+  "at": "2026-06-17T09:00:00.000Z",
+  "revive": "duet continue <run-id>",
+  "purge": "duet abandon <run-id> --purge"
+}
 ```
 
 **`done`** — the run is complete; `summary` leads with the PR URL.

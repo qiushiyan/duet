@@ -63,6 +63,8 @@ export function steerRefusal(position: RunPosition, runId: string): string | und
         `the run is paused on a queued question — the answer is the steering channel here: ` +
         `${continueCommand.answer(runId)}.`
       );
+    case 'abandoned':
+      return `run ${runId} was abandoned — there is no live phase to steer. Revive it with ${continueCommand.resume(runId)}, or start fresh with duet new.`;
     case 'done':
       return `run ${runId} is complete — there is no phase to steer. A new run starts with duet new.`;
   }
@@ -82,6 +84,7 @@ export type StopModel =
     }
   | { kind: 'flag'; question: string; context?: string; command: string }
   | { kind: 'crashed'; phase: PhaseName; command: string }
+  | { kind: 'abandoned'; at: string; revive: string; purge: string }
   | { kind: 'done'; summary?: string };
 
 export interface StatusModel {
@@ -162,6 +165,13 @@ function stopModel(state: RunState, position: RunPosition): StopModel {
       };
     case 'crashed':
       return { kind: 'crashed', phase: position.phase, command: continueCommand.resume(state.runId) };
+    case 'abandoned':
+      return {
+        kind: 'abandoned',
+        at: state.abandoned?.at ?? '',
+        revive: continueCommand.resume(state.runId),
+        purge: `duet abandon ${state.runId} --purge`,
+      };
     case 'done':
       return {
         kind: 'done',
@@ -266,6 +276,14 @@ export function renderStatus(model: StatusModel): string {
     return lines.join('\n');
   }
 
+  if (stop.kind === 'abandoned') {
+    lines.push(`\nthis run was abandoned${stop.at ? ` ${fmtStamp(stop.at)}` : ''} — no driver is running.`);
+    lines.push(`the session transcripts are intact, so it's revivable:`);
+    lines.push(`  revive with:  ${stop.revive}   (re-enters from where it last stopped)`);
+    lines.push(`  wipe with:    ${stop.purge}   (deletes the run dir and the session transcripts)`);
+    return lines.join('\n');
+  }
+
   if (stop.kind === 'done') {
     lines.push(`\nrun complete — the PR is open.`);
     if (stop.summary) lines.push(stop.summary);
@@ -277,6 +295,7 @@ export function renderStatus(model: StatusModel): string {
       lines.push(`\nfull bodies in .duet/runs/${model.runId}/state.json; apply the ones you accept to snippets.toml.`);
     }
     lines.push(`\ntranscripts: .duet/runs/${model.runId}/*.log (and the providers' standard session locations)`);
+    lines.push(`nothing is running — merge the PR on GitHub. To remove this run's local artifacts and session transcripts: duet abandon ${model.runId} --purge`);
   }
   return lines.join('\n');
 }

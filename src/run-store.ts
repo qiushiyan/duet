@@ -1,10 +1,12 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { Snapshot } from 'xstate';
 import type { RoleBindings } from './config.ts';
 import type { GatePhase, PhaseName } from './phases.ts';
 import type { ContextUsage } from './providers/types.ts';
+import { locateSessionTranscripts } from './sessions.ts';
 
 /**
  * Per-run working data under `.duet/runs/<run_id>/` in the target project —
@@ -64,6 +66,16 @@ export interface RunState {
   gatesAt?: GatePhase[];
   /** Gates auto-crossed under pre-authorization, for the morning review. */
   autoApprovals?: Array<{ gate: string; at: string }>;
+  /**
+   * Set by `duet abandon`: the human deliberately stopped this run. The marker
+   * exists so a deliberate kill isn't read as a crash — `probeRunPosition`
+   * short-circuits to an `abandoned` position instead of `crashed`. The
+   * transcripts stay intact, so the run is still revivable (`duet continue`
+   * clears the marker; `duet takeover` is unaffected) — abandonment is
+   * reversible, per docs/automation-design.md §"Ending a run". `--purge`
+   * removes the run outright instead of marking it.
+   */
+  abandoned?: { at: string };
 
   /** Mirror of the machine's state value, for humans and `duet status`. */
   machineState?: string;
@@ -234,6 +246,63 @@ export function consumeHumanInput(state: RunState): HumanMessage | undefined {
   if (message?.kind === 'answer') delete state.pendingQuestion;
   saveRunState(state);
   return message;
+}
+
+/**
+ * Mark a run as deliberately abandoned by the human (`duet abandon`). Stops
+ * the position probe from reading the now-dead driver as a crash; the
+ * transcripts are left intact so `continue`/`takeover` can still revive it
+ * (abandonment is reversible — docs/automation-design.md §"Ending a run").
+ * The caller kills the live driver first, so this never races a driver's saves.
+ */
+export function markAbandoned(state: RunState): void {
+  state.abandoned = { at: new Date().toISOString() };
+  saveRunState(state);
+  appendNote(state, 'human', 'run abandoned (driver stopped; transcripts kept)');
+}
+
+export interface PurgeResult {
+  /** The `.duet/runs/<id>/` dir that was removed. */
+  runDir: string;
+  /** The provider session transcripts that were removed (0–3 paths). */
+  transcripts: string[];
+}
+
+/**
+ * Delete everything a run created: its `.duet/runs/<id>/` dir AND the three
+ * providers' session transcripts (orchestrator + both workers), located by
+ * exact session-id match (src/sessions.ts). This is the one duet operation
+ * that removes the user's standard-location CLI artifacts — hence opt-in
+ * (`duet abandon --purge`) — so it returns exactly what it removed for the
+ * caller to echo. Idempotent and provider-aware: each session is resolved
+ * against ITS role's bound provider (roles are provider-decoupled), and
+ * missing files are simply absent from the result.
+ *
+ * Transcripts are gathered from the in-memory state and removed before the run
+ * dir, since the dir holds the only copy of the session ids on disk. `home` is
+ * injectable (the environment seam, like loadRoleBindings's configPath) so
+ * tests resolve transcripts under a tmp dir.
+ */
+export function purgeRun(state: RunState, home: string = homedir()): PurgeResult {
+  const sessions: Array<{ provider: RoleBindings[keyof RoleBindings]['provider']; sessionId: string }> = [];
+  if (state.orchestratorSessionId) {
+    sessions.push({ provider: state.bindings.orchestrator.provider, sessionId: state.orchestratorSessionId });
+  }
+  if (state.workerSessions.implementer) {
+    sessions.push({ provider: state.bindings.implementer.provider, sessionId: state.workerSessions.implementer });
+  }
+  if (state.workerSessions.reviewer) {
+    sessions.push({ provider: state.bindings.reviewer.provider, sessionId: state.workerSessions.reviewer });
+  }
+
+  const transcripts = [
+    ...new Set(sessions.flatMap((s) => locateSessionTranscripts(s.provider, s.sessionId, home))),
+  ];
+  for (const path of transcripts) rmSync(path, { force: true });
+
+  const runDir = runDirOf(state.cwd, state.runId);
+  rmSync(runDir, { recursive: true, force: true });
+  return { runDir, transcripts };
 }
 
 /**

@@ -8,7 +8,7 @@ import { createActor } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
 import { loadRoleBindings } from './config.ts';
 import { DEFAULT_FRAMING_FILE, resolveHumanText, resolveRunInputs } from './framing.ts';
-import { aliveDriverPid, driveToQuiescence, probeRunPosition, spawnDrive, waitForRunStop } from './harness/lifecycle.ts';
+import { aliveDriverPid, driveToQuiescence, killDriver, probeRunPosition, spawnDrive, waitForRunStop } from './harness/lifecycle.ts';
 import type { HumanEvent } from './harness/lifecycle.ts';
 import { duetMachine } from './harness/machine.ts';
 import { phaseOfGateState } from './phases.ts';
@@ -22,7 +22,10 @@ import {
   listRuns,
   loadMachineSnapshot,
   loadRunState,
+  markAbandoned,
+  purgeRun,
   runDirOf,
+  saveRunState,
   stageHumanInput,
   stageSteer,
 } from './run-store.ts';
@@ -84,6 +87,7 @@ Acting on a run:
   at a question       duet continue --answer "<text>"
   into a live phase   duet steer "<note>"     (delivered to the orchestrator mid-flight)
   after a crash       duet continue           (re-enters from the transcripts)
+  done with a run     duet abandon            (stops a live driver; --purge also deletes the sessions)
 
 Watching:  duet status [--json] [--wait] · duet logs · duet view (tmux panes)
 Run state: .duet/runs/<id>/ — state.json is a hint; the JSONL transcripts are truth.`,
@@ -177,6 +181,16 @@ program
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
     if (!state) fail('no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
     if (opts.tmux) await openTmuxView(state);
+
+    // Reviving an abandoned run — abandonment is reversible by design
+    // (docs/automation-design.md §"Ending a run"). Clear the marker so the
+    // probe stops reporting 'abandoned'; the logic below re-enters from
+    // wherever the run last stopped (gate, flag, or mid-phase crash).
+    if (state.abandoned) {
+      console.log(`run ${state.runId} was abandoned — reviving it`);
+      delete state.abandoned;
+      saveRunState(state);
+    }
 
     const chosen = [opts.approve, opts.reject, opts.answer].filter((v) => v !== undefined);
     if (chosen.length > 1) fail('choose one of --approve, --reject, --answer');
@@ -357,6 +371,47 @@ program
   });
 
 program
+  .command('abandon')
+  .description(
+    'Stop a run for good: kill its live driver if one is running, and mark it abandoned. The transcripts stay, so duet continue/takeover still revive it. With --purge, also delete the run dir and the three session transcripts (irreversible).',
+  )
+  .argument('[runId]', 'run id (defaults to the latest run in this project)')
+  .option(
+    '--purge',
+    'also delete .duet/runs/<id>/ and the orchestrator + worker session transcripts in ~/.claude and ~/.codex — irreversible',
+  )
+  .action(async (runId: string | undefined, opts: { purge?: boolean }) => {
+    const cwd = process.cwd();
+    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
+    if (!state) fail('no runs found in this project');
+
+    // abandon is the one command that acts ON a live driver (continue/takeover
+    // refuse while it runs) — kill it first, then mark or purge with the driver
+    // dead so its state writes can't race us.
+    const killed = await killDriver(state);
+    if (killed !== undefined) console.log(`stopped the live driver (pid ${killed})`);
+
+    // Reload: the now-dead driver may have written newer state (session ids,
+    // rounds, costs) than we loaded — the purge needs the freshest session ids,
+    // and the marker must not clobber the driver's last save.
+    const fresh = loadRunState(cwd, state.runId);
+
+    if (opts.purge) {
+      const result = purgeRun(fresh);
+      console.log(`purged run ${fresh.runId}:`);
+      console.log(`  removed ${result.runDir}`);
+      for (const path of result.transcripts) console.log(`  removed ${path}`);
+      if (result.transcripts.length === 0) console.log('  (no session transcripts found to remove)');
+      return;
+    }
+
+    markAbandoned(fresh);
+    console.log(
+      `run ${fresh.runId} abandoned — transcripts kept (revive with: duet continue ${fresh.runId}, or wipe with: duet abandon ${fresh.runId} --purge)`,
+    );
+  });
+
+program
   .command('view')
   .description('Open (or reuse) the tmux viewer: one live pane per voice, tailing the run logs.')
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
@@ -462,7 +517,7 @@ program
       return;
     }
     for (const r of all) {
-      const waiting = r.pendingQuestion ? 'waiting-on-answer' : '';
+      const waiting = r.abandoned ? 'abandoned' : r.pendingQuestion ? 'waiting-on-answer' : '';
       console.log(`${r.runId}  ${r.machineState ?? '?'}  ${waiting}  ${r.specPath ?? '(framing-only)'}`);
     }
   });

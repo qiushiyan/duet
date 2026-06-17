@@ -116,6 +116,7 @@ duet continue --answer "..."   # answer a queued question
 
 duet steer "..."               # nudge the orchestrator mid-phase, without pausing the run
 duet takeover reviewer         # drop into the raw CLI session yourself; pick duet back up after
+duet abandon                   # stop a run for good (kills its driver); --purge also deletes its sessions
 ```
 
 And to follow along live:
