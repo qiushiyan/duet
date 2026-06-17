@@ -93,14 +93,16 @@ The framing you write is duet's only briefing — the issue text, product contex
 
 ### Templates
 
-Most of a framing repeats run to run — the same onboarding skill, conventions, verification commands, doc rules — and only the problem differs. Save the repeating part once as a template, then seed each run's draft from it.
+When most of a framing repeats run to run, save the common part as a template and seed each draft from it — one file per kind of work:
 
-A template is a file at `.duet/templates/<name>.md`; `duet new --template <name>` seeds the editor draft from it (the name is a plain slug — `--template bug` → `bug.md`). It's a **full framing**, the same shape bare `duet new` opens: an optional `---` frontmatter block (`gates_at`, `spec`) over the `# Problem` / `# Onboarding` / `# Conventions` / `# Verification` / `# Docs` / `# Planning style` prose. Pre-fill the project-stable sections and leave `# Problem` as a placeholder — you still review and edit the seeded draft before the run starts.
+```text
+.duet/templates/
+├── default.md    # duet new                  (the bare default)
+├── bug.md        # duet new --template bug
+└── feature.md    # duet new --template feature
+```
 
-- **One file per type** — keep a `bug.md`, a `feature.md`, a `spike.md`, each tuned to its kind of work: a `feature.md` can set `gates_at: skip-plan` in its frontmatter, a `bug.md` can name a different onboarding skill or a lighter verification posture.
-- **`default.md` is the bare default** — `duet new` with no `--template` seeds from `.duet/templates/default.md` when it exists, otherwise the built-in skeleton. A typo'd `--template` name aborts and lists what's available, so it never silently starts the wrong run.
-- **To make one**, copy the built-in skeleton (a fresh `.duet/framing-draft.md` left by a bare `duet new`) or a past run's `.duet/runs/<id>/framing.md`, clear the problem, and save it under `.duet/templates/`.
-- **Sharing** — templates are self-ignored along with the rest of `.duet/`; add `!/templates/` to `.duet/.gitignore` to commit them or share across worktrees.
+Each file is a full framing with the project-stable parts pre-filled; you fill in the problem before the run starts. How to author them: [`docs/automation-design.md`](docs/automation-design.md).
 
 From there you mostly watch and decide:
 
