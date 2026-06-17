@@ -89,7 +89,18 @@ duet new --spec spec.md        # start from a spec you already wrote
 duet new --gates-at overnight  # pre-authorize later gates: approve the spec, then walk away
 ```
 
-The framing you write is duet's only briefing — the issue text, product context, which skills to invoke, where artifacts go. Save it and the run kicks off in the background. When most of that briefing repeats across runs, save it once as a template in `.duet/templates/` and seed the draft with `--template <name>` (bare `duet new` picks up `.duet/templates/default.md` if present) — a template is just pre-baked framing, so you still review and edit it before the run starts.
+The framing you write is duet's only briefing — the issue text, product context, which skills to invoke, where artifacts go. Save it and the run kicks off in the background.
+
+### Templates
+
+Most of a framing repeats run to run — the same onboarding skill, conventions, verification commands, doc rules — and only the problem differs. Save the repeating part once as a template, then seed each run's draft from it.
+
+A template is a file at `.duet/templates/<name>.md`; `duet new --template <name>` seeds the editor draft from it (the name is a plain slug — `--template bug` → `bug.md`). It's a **full framing**, the same shape bare `duet new` opens: an optional `---` frontmatter block (`gates_at`, `spec`) over the `# Problem` / `# Onboarding` / `# Conventions` / `# Verification` / `# Docs` / `# Planning style` prose. Pre-fill the project-stable sections and leave `# Problem` as a placeholder — you still review and edit the seeded draft before the run starts.
+
+- **One file per type** — keep a `bug.md`, a `feature.md`, a `spike.md`, each tuned to its kind of work: a `feature.md` can set `gates_at: skip-plan` in its frontmatter, a `bug.md` can name a different onboarding skill or a lighter verification posture.
+- **`default.md` is the bare default** — `duet new` with no `--template` seeds from `.duet/templates/default.md` when it exists, otherwise the built-in skeleton. A typo'd `--template` name aborts and lists what's available, so it never silently starts the wrong run.
+- **To make one**, copy the built-in skeleton (a fresh `.duet/framing-draft.md` left by a bare `duet new`) or a past run's `.duet/runs/<id>/framing.md`, clear the problem, and save it under `.duet/templates/`.
+- **Sharing** — templates are self-ignored along with the rest of `.duet/`; add `!/templates/` to `.duet/.gitignore` to commit them or share across worktrees.
 
 From there you mostly watch and decide:
 
