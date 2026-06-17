@@ -159,7 +159,7 @@ PLANNING (attended)
   plan draft → review/update rounds   (planning keeps full spec-exploration context)
     ── GATE: Plan approval ──            ← human walks away here
 IMPLEMENTATION (AFK)
-  commit plan → compact-for-impl + reread → slices (midpoint checkpoint at orchestrator's judgment)
+  commit plan → compact-for-impl + reread → single implementation pass (one midpoint checkpoint only if large)
   → compact-for-review (judgment) → implementation-handoff
   → review/respond rounds → fixes → re-review
   → ceo-summary (implementer drafts; last act of the phase)
@@ -246,7 +246,7 @@ Loop exit (another review round vs. converged) is **orchestrator judgment** — 
 
 The old mechanisms this replaces: severity-label parsing (never built), `disagree.point` string-matching across rounds (the orchestrator now *reads* the disagreement and judges whether it's persistent and substantive — flagging via `ask_human` when it is), and fixed caps as the primary exit rule.
 
-The midpoint checkpoint is orchestrator judgment too (invoke for large implementations, skip for small — per the user's 2026-06-11 decision it is *not* a mandatory human gate); if the midpoint triage surfaces a product question, that flags like any other.
+Implementation runs as a **single pass** by default: the orchestrator instructs the implementer to build the whole plan end to end, and crosses worker turns only because a turn is budget/time-bounded (resumption, not a review rhythm) — the review loop runs once, after the full implementation, never between slices. Splitting the build into implement-a-slice → review → implement-more cycles is the waste this guards against (observed in the first runs: a 3-slice plan driven as two implement turns with a needless inter-turn hold). The **midpoint checkpoint** is the one judgment-gated exception, for a genuinely large plan — more than ~6 slices is a rough signal, but the orchestrator judges by real size and structural risk, not the count. It is a *single* pause: the implementer takes the reviewer's midpoint guidance, applies the now-fixes, and folds the rest into the remaining slices, then continues to the handoff — it pauses once, not per slice, and is skipped entirely for small or moderate work. It is *not* a mandatory human gate (per the user's 2026-06-11 decision); if the midpoint triage surfaces a product question, that flags like any other.
 
 ## Worker structured output — demoted, not removed
 
