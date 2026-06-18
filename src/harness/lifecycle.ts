@@ -232,6 +232,31 @@ export async function driveToQuiescence(
 ): Promise<{ snapshot: AnyMachineSnapshot; state: RunState }> {
   const machine = deps.machine ?? duetMachine;
   const notify = deps.notify ?? desktopNotify;
+
+  // Spent-marker guard. If we are restoring at the marker phase's OWN gate or
+  // flag-wait, the transition that marker drove already persisted — we are
+  // parked past it, so the marker is a spent leftover from the crash window
+  // between the snapshot save and the clear below. Clear it before the human
+  // event re-enters the phase loop: otherwise a stale `flag` re-entered by an
+  // answer (frameFlagWait → frameLoop) or a stale `advance` re-entered by a
+  // reject (directionGate → frameLoop) would replay the old decision and
+  // swallow the human's input — the run bounces straight back, authority lost.
+  // A crash BEFORE the transition restores at a prior quiescent state (phase
+  // loops are never persisted), so this guard does not fire there and the
+  // driver still replays the live marker on loop re-entry (crash-before-
+  // transition replay, src/harness/driver.ts / stdio-host.ts).
+  const restoredMarker = state.terminalMarker;
+  const restoredState = state.machineState;
+  if (
+    restoredMarker &&
+    restoredState &&
+    (phaseOfGateState(restoredState) === restoredMarker.phase ||
+      restoredState === flagWaitStateOf(restoredMarker.phase))
+  ) {
+    delete state.terminalMarker;
+    saveRunState(state);
+  }
+
   const actor = createActor(machine, {
     input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
     ...(options?.snapshot ? { snapshot: options.snapshot } : {}),
@@ -255,10 +280,11 @@ export async function driveToQuiescence(
     // Clear it here — after the snapshot save, before any gates_at auto-cross
     // re-enters the next phase — so a pre-authorized continue can't carry a
     // stale marker into the next phase's runPhase (markerToEvent is phase-keyed,
-    // but clearing keeps the on-disk state honest). A crash in the window
-    // between the snapshot save and this clear re-delivers the marker on
-    // re-entry, which is harmless: the parked gate/flag-wait ignores phase.*,
-    // and a same-phase re-entry re-drives the identical transition.
+    // but clearing keeps the on-disk state honest). If a crash lands in the
+    // window between the snapshot save and this clear, the marker survives to
+    // the next driveToQuiescence — where the spent-marker guard at entry clears
+    // it before any human event can re-enter the loop and replay it (the
+    // same-phase replay is NOT inherently harmless: see that guard above).
     if (fresh.terminalMarker) {
       delete fresh.terminalMarker;
       saveRunState(fresh);

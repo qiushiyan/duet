@@ -120,3 +120,71 @@ describe('control events survive the stdio MCP boundary', () => {
     TIMEOUT,
   );
 });
+
+describe('crash-before-transition replay over the boundary', () => {
+  test(
+    'a terminal marker for this phase on entry replays without spawning the kernel or running orchestrate',
+    async ({ projectDir, run }) => {
+      // The mirror of the in-process driver's entry replay (driver.ts): a marker
+      // for this phase survived a crash before the machine transitioned. Re-emit
+      // it without re-running the external turn. (A SPENT marker would already
+      // have been cleared by the lifecycle's spent-marker guard, so a marker seen
+      // here is live — no supersede exception, exactly like the in-process entry.)
+      const planted = loadRunState(projectDir, run.runId);
+      planted.terminalMarker = { phase: 'frame', kind: 'advance' };
+      saveRunState(planted);
+
+      let orchestrateCalled = false;
+      const event = await runPhaseOverStdio({ runId: run.runId, cwd: projectDir, phase: 'frame' }, async () => {
+        orchestrateCalled = true;
+      });
+
+      expect.soft(event).toEqual({ type: 'phase.advance' });
+      expect.soft(orchestrateCalled).toBe(false); // the external turn was not re-run (no subprocess spawned)
+    },
+    TIMEOUT,
+  );
+});
+
+describe('nudge-once parity over the boundary', () => {
+  test(
+    'a silent orchestrate turn gets exactly one nudge; advancing on the nudge crosses as advance',
+    async ({ projectDir, run }) => {
+      const attempts: number[] = [];
+      const event = await runPhaseOverStdio(
+        { runId: run.runId, cwd: projectDir, phase: 'frame' },
+        async ({ client, attempt }) => {
+          attempts.push(attempt);
+          // attempt 0 is silent (a quiet turn, no terminal call); the host nudges
+          // once and the orchestrator advances on attempt 1 — same connected session.
+          if (attempt === 1) {
+            await client.callTool({ name: 'advance_phase', arguments: { summary: 'done after the nudge', artifacts: [] } });
+          }
+        },
+      );
+
+      expect.soft(attempts).toEqual([0, 1]); // nudged exactly once
+      expect.soft(event).toEqual({ type: 'phase.advance' });
+    },
+    TIMEOUT,
+  );
+
+  test(
+    'two silent orchestrate turns are a stuck run — flagged with the twice-ended question',
+    async ({ projectDir, run }) => {
+      const attempts: number[] = [];
+      const event = await runPhaseOverStdio(
+        { runId: run.runId, cwd: projectDir, phase: 'frame' },
+        async ({ attempt }) => {
+          attempts.push(attempt);
+          // never calls a terminal tool — silent on both the turn and the nudge
+        },
+      );
+
+      expect.soft(attempts).toEqual([0, 1]); // the single nudge happened, then it flagged
+      expect.soft(event).toEqual({ type: 'phase.flag' });
+      expect.soft(loadRunState(projectDir, run.runId).pendingQuestion?.question).toContain('twice ended its turn');
+    },
+    TIMEOUT,
+  );
+});

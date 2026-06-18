@@ -2,7 +2,13 @@ import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
+import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { fromCallback } from 'xstate';
+import type { EventObject } from 'xstate';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
+import { runPhase } from '../src/harness/driver.ts';
+import type { DriverInput, RunOrchestratorTurn } from '../src/harness/driver.ts';
+import { duetMachine } from '../src/harness/machine.ts';
 import type { PhaseEvent } from '../src/harness/phase-events.ts';
 import { driveToQuiescence, probeRunPosition, waitForRunStop } from '../src/harness/lifecycle.ts';
 import { createRun, loadMachineSnapshot, loadRunState, runDirOf, saveRunState } from '../src/run-store.ts';
@@ -28,6 +34,136 @@ function recordingNotify() {
 }
 
 const advanced: PhaseEvent = { type: 'phase.advance' };
+
+/**
+ * The duetMachine driving the REAL runPhase (with the SDK turn faked), rather
+ * than a scripted phase event. scriptedMachine's driver sends a phase.* event
+ * directly and so bypasses runPhase's terminal-marker entry short-circuit —
+ * the exact path the spent-marker guard protects. This helper keeps that
+ * short-circuit live, so a stale marker that the guard fails to clear WOULD
+ * replay and swallow the human's input. `calls` records each session run.
+ */
+function realDriverMachine(
+  turn: (ctx: Parameters<RunOrchestratorTurn>[0]) => Promise<SDKMessage[]>,
+): { machine: typeof duetMachine; calls: string[] } {
+  const calls: string[] = [];
+  const runTurn: RunOrchestratorTurn = async function* (ctx) {
+    calls.push(ctx.prompt);
+    yield* await turn(ctx);
+  };
+  const machine = duetMachine.provide({
+    actors: {
+      phaseDriver: fromCallback<EventObject, DriverInput>(({ input, sendBack }) => {
+        runPhase(input, runTurn)
+          .then((event) => sendBack(event))
+          .catch(() => sendBack({ type: 'phase.flag' }));
+      }),
+    },
+  });
+  return { machine, calls };
+}
+
+const success = (): SDKMessage =>
+  ({ type: 'result', subtype: 'success', session_id: 'orc-session', total_cost_usd: 0.1 }) as SDKMessage;
+
+const callTool = async (
+  ctx: Parameters<RunOrchestratorTurn>[0],
+  name: string,
+  args: Record<string, unknown>,
+): Promise<void> => {
+  const tool = ctx.tools.find((t) => t.name === name);
+  if (!tool) throw new Error(`no such tool: ${name}`);
+  await tool.handler(args as never, {});
+};
+
+describe('the spent-marker guard (human authority must not be lost to a stale terminal marker)', () => {
+  const quiet = async () => {};
+
+  test('a flag marker surviving into an answered flag-wait is cleared — the answer re-runs the phase, no replayed flag', async ({
+    projectDir,
+    run,
+  }) => {
+    // Park at frame's flag-wait so the snapshot the human resumes from is durable.
+    await driveToQuiescence(run, undefined, { machine: scriptedMachine([{ type: 'phase.flag' }]).machine, notify: quiet });
+
+    // The crash window: the marker is cleared only AFTER the snapshot save
+    // (deliver-before-clear), so a crash in between leaves it on disk. The human
+    // then answers — `duet continue --answer` stages the message.
+    const crashed = loadRunState(projectDir, run.runId);
+    crashed.terminalMarker = { phase: 'frame', kind: 'flag' };
+    crashed.pendingQuestion = { question: 'which scope?' };
+    crashed.pendingMessage = { kind: 'answer', text: 'narrow it' };
+    saveRunState(crashed);
+
+    const driver = realDriverMachine(async (ctx) => {
+      await callTool(ctx, 'advance_phase', { summary: 'resolved with the answer', artifacts: [] });
+      return [success()];
+    });
+    const resumed = await driveToQuiescence(
+      crashed,
+      { snapshot: loadMachineSnapshot(crashed), event: { type: 'human.answer' } },
+      { machine: driver.machine, notify: quiet },
+    );
+
+    expect.soft(driver.calls).toHaveLength(1); // the phase re-ran — the stale flag did NOT short-circuit it
+    expect.soft(resumed.snapshot.value).toBe('directionGate'); // advanced past the answer, not bounced back to frameFlagWait
+    expect.soft(loadRunState(projectDir, run.runId).terminalMarker).toBeUndefined();
+  });
+
+  test('an advance marker surviving into a rejected gate is cleared — the rejection re-runs the phase, no replayed advance', async ({
+    projectDir,
+    run,
+  }) => {
+    // Park at frame's gate so the resume snapshot sits past the advance.
+    await driveToQuiescence(run, undefined, { machine: scriptedMachine([advanced]).machine, notify: quiet });
+
+    const crashed = loadRunState(projectDir, run.runId);
+    crashed.terminalMarker = { phase: 'frame', kind: 'advance' };
+    crashed.pendingMessage = { kind: 'feedback', text: 'invert the scope' };
+    saveRunState(crashed);
+
+    const driver = realDriverMachine(async (ctx) => {
+      // On the rework the orchestrator flags instead of advancing — a distinct
+      // outcome from the replayed advance, which would re-reach directionGate.
+      await callTool(ctx, 'ask_human', { question: 'about that rework — narrower how?' });
+      return [success()];
+    });
+    const resumed = await driveToQuiescence(
+      crashed,
+      { snapshot: loadMachineSnapshot(crashed), event: { type: 'human.reject' } },
+      { machine: driver.machine, notify: quiet },
+    );
+
+    expect.soft(driver.calls).toHaveLength(1); // the phase re-ran on the rejection
+    expect.soft(resumed.snapshot.value).toBe('frameFlagWait'); // re-ran and flagged — NOT the replayed advance→directionGate
+    expect.soft(loadRunState(projectDir, run.runId).terminalMarker).toBeUndefined();
+  });
+
+  test('live replay is preserved: a marker restored at a prior state (crash before the transition) is not cleared', async ({
+    projectDir,
+    run,
+  }) => {
+    // Before any phase parks, the marker is live — the snapshot does not yet
+    // reflect the transition. The guard must NOT fire; the driver replays the
+    // decision without re-running the (minutes-long) session.
+    const live = loadRunState(projectDir, run.runId);
+    live.terminalMarker = { phase: 'frame', kind: 'advance' };
+    live.phaseSummaries.frame = { summary: 'decided before the crash', artifacts: [] };
+    saveRunState(live);
+
+    const driver = realDriverMachine(async () => {
+      throw new Error('the session must not run — the live marker should replay');
+    });
+    const stop = await driveToQuiescence(loadRunState(projectDir, run.runId), undefined, {
+      machine: driver.machine,
+      notify: quiet,
+    });
+
+    expect.soft(driver.calls).toHaveLength(0); // replayed — the session never ran
+    expect.soft(stop.snapshot.value).toBe('directionGate'); // the replayed advance reached the gate
+    expect.soft(loadRunState(projectDir, run.runId).terminalMarker).toBeUndefined(); // cleared at quiescence, as normal
+  });
+});
 
 describe('attended stops', () => {
   test('stops at the first attended gate', async ({ run }) => {
