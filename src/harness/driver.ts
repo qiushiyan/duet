@@ -18,6 +18,7 @@ import type { HumanMessage, RunState } from '../run-store.ts';
 import { markerToEvent } from './phase-events.ts';
 import type { PhaseEvent } from './phase-events.ts';
 import { createPhaseTools } from './tools.ts';
+import type { KernelTool } from './tools.ts';
 import {
   ORCHESTRATOR_SYSTEM_PROMPT,
   answerResumePrompt,
@@ -63,8 +64,23 @@ export interface DriverInput {
 export type RunOrchestratorTurn = (args: {
   prompt: string;
   options: Options;
-  tools: Array<SdkMcpToolDefinition<any>>;
+  tools: Array<KernelTool<any>>;
 }) => AsyncIterable<SDKMessage>;
+
+/**
+ * The in-process host adapter: a KernelTool is structurally an Agent SDK tool
+ * definition, so this is a re-typing, not a rewrite. Keeping the SDK tool shape
+ * here (rather than in the registry) is the point — the kernel surface stays
+ * host-neutral; only this adapter knows the Agent SDK.
+ */
+export const toSdkTools = (tools: Array<KernelTool<any>>): Array<SdkMcpToolDefinition<any>> =>
+  tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+    ...(t.annotations ? { annotations: t.annotations } : {}),
+    handler: t.handler,
+  }));
 
 const sdkTurn: RunOrchestratorTurn = ({ prompt, options, tools }) =>
   query({
@@ -75,7 +91,7 @@ const sdkTurn: RunOrchestratorTurn = ({ prompt, options, tools }) =>
         orchestrator: createSdkMcpServer({
           name: 'orchestrator',
           version: '0.1.0',
-          tools,
+          tools: toSdkTools(tools),
           // Tools must be present when a RESUMED session's first prompt is
           // built; without alwaysLoad, resume races MCP startup (spike finding).
           alwaysLoad: true,

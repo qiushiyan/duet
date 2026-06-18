@@ -1,5 +1,4 @@
-import { tool } from '@anthropic-ai/claude-agent-sdk';
-import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
+import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { execa } from 'execa';
 import { z } from 'zod';
 import { PHASE } from '../phases.ts';
@@ -18,6 +17,45 @@ import {
 } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
 import { renderSteerBlock } from './orchestrator-prompts.ts';
+
+/**
+ * A host-neutral tool definition — the single source of truth for the
+ * orchestrator's surface, independent of any one SDK. It carries exactly what
+ * both transports need (name, description, a zod input shape, MCP annotations,
+ * and an async handler returning an MCP CallToolResult). Two thin adapters host
+ * it: the in-process Agent SDK server (src/harness/driver.ts) and the standard
+ * stdio MCP server (src/harness/mcp-server.ts). Keeping the Agent SDK's tool
+ * type out of here is the point — nothing that hosts the kernel should have to
+ * import it.
+ */
+export interface KernelTool<Schema extends z.ZodRawShape = z.ZodRawShape> {
+  name: string;
+  description: string;
+  inputSchema: Schema;
+  annotations?: ToolAnnotations;
+  handler: (args: z.infer<z.ZodObject<Schema>>, extra: unknown) => Promise<CallToolResult>;
+}
+
+/**
+ * Package a kernel tool — the same call shape the Agent SDK's `tool()` helper
+ * used, so the handler bodies below are unchanged; only the type they land in
+ * differs (KernelTool, not SdkMcpToolDefinition).
+ */
+function kernelTool<Schema extends z.ZodRawShape>(
+  name: string,
+  description: string,
+  inputSchema: Schema,
+  handler: (args: z.infer<z.ZodObject<Schema>>, extra: unknown) => Promise<CallToolResult>,
+  extras?: { annotations?: ToolAnnotations },
+): KernelTool<Schema> {
+  return {
+    name,
+    description,
+    inputSchema,
+    handler,
+    ...(extras?.annotations ? { annotations: extras.annotations } : {}),
+  };
+}
 
 /**
  * The orchestrator's tool surface — the seven harness tools and every
@@ -45,9 +83,8 @@ export interface PhaseToolsDeps {
 }
 
 export interface PhaseTools {
-  // The SDK's own surface takes Array<SdkMcpToolDefinition<any>> — each tool
-  // has its own schema, so the list is heterogeneous by nature.
-  tools: Array<SdkMcpToolDefinition<any>>;
+  // Each tool has its own schema, so the list is heterogeneous by nature.
+  tools: Array<KernelTool<any>>;
 }
 
 export function createPhaseTools({ state, phase, providers, log, stagedAnswer: initialAnswer }: PhaseToolsDeps): PhaseTools {
@@ -90,8 +127,8 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   const resendWarned = new Set<string>();
   const isBaseTemplate = (tag: string): boolean => tag !== 'custom' && !tag.endsWith('-again');
 
-  const tools: Array<SdkMcpToolDefinition<any>> = [
-    tool(
+  const tools: Array<KernelTool<any>> = [
+    kernelTool(
       'list_snippets',
       'Read the snippet library — the prompt templates the workflow uses, which encode its conventions (altitude lenses, round-2 discipline, compaction shapes); read them before composing worker prompts. By default the result is focused on the current phase: this phase’s templates and the always-available helpers in full, plus a by-key index of the other phases’ templates in arc order — the snippets you actually reach for now, without the rest as noise. Pass all=true for every snippet’s full body, which you want when you genuinely need a template from another phase. Snippets you have already sent this phase are annotated: those workers still hold the instructions, so later turns want the delta, not the template.',
       {
@@ -112,7 +149,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       { annotations: { readOnlyHint: true } }, // genuinely read-only; also batches with parallel sends
     ),
 
-    tool(
+    kernelTool(
       'send_prompt',
       'Send a prompt to a worker agent and return its final response. Each role is one persistent session: a later call to the same role continues that worker’s conversation, so refer back to earlier turns instead of repeating context the worker has already seen — and the instructions you send persist the same way, so a full snippet template goes to a given worker once per phase, with later turns steered by deltas (-again variants, short frame-referencing follow-ups). Worker turns are slow (often minutes) and a sent prompt becomes a permanent part of the session — there is no unsend — so compose the full body before calling and send one well-formed prompt rather than iterating by sending. Independent turns to different roles can be issued as parallel tool calls in one message and run concurrently — the frame phase’s two unshared analyses are the canonical case; a second turn to the same role while one is in flight is refused until the first returns (one session is one conversation). Worker budget is per-turn: each call carries a fresh cost ceiling, so a worker reporting low budget mid-turn means the remaining work continues in another turn — never let the budget rail shrink the scope; descoping is a product decision that needs work-content reasons. Sending the reviewer a prompt whose tag starts with "review" counts as a review round against the phase’s backstop cap. A claude-bound worker’s context can be deliberately compacted: a body that is literally "/compact " followed by your instructions (e.g. an adapted compact-for-* snippet) resets that session in place, keeping what the instructions name; codex-bound workers compact themselves automatically, so this applies only to claude.',
       {
@@ -274,7 +311,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       { annotations: { readOnlyHint: true } },
     ),
 
-    tool(
+    kernelTool(
       'ask_human',
       'Flag a question for the human: product or direction calls, environment actions only they can take (deploys, credentials, migrations), or blockers you cannot route around. Route technical and content questions to a worker instead — the human is the editor-in-chief, not a third engineer. Asking always pauses the run until the answer arrives: minutes when the human is at the terminal, hours during the AFK phase — so make every question self-contained, and let questions that can wait for a gate wait.',
       {
@@ -308,7 +345,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       },
     ),
 
-    tool(
+    kernelTool(
       'create_branch',
       'Create and switch to the run’s working branch — for when the repo sits on its default branch (or one unrelated to this problem) at run start. The branch is fixed once a worker has been prompted, so this is only callable before your first send_prompt; after creating it, name the branch in your first prompt to each worker with the note that branch management is settled outside their sessions.',
       {
@@ -356,7 +393,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       },
     ),
 
-    tool(
+    kernelTool(
       'advance_phase',
       'Declare the current phase complete. Legal only when the phase’s exit criteria are met (the review loop converged, open points are minor or settled). Lands on the phase’s human gate — your summary is what the human decides from, so make it honest about what changed, what was rejected, and what remains open.',
       {
@@ -413,7 +450,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       },
     ),
 
-    tool(
+    kernelTool(
       'propose_snippet_edit',
       'Queue a persistent change to the snippet library for the human’s end-of-run review. Library edits never apply mid-run: a silently changed prompt would compound across every later run, so the human stays editor-in-chief of the library. Use this when a snippet was persistently inadequate, not for one-off adaptations (those you just make per-turn).',
       {
@@ -441,7 +478,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       },
     ),
 
-    tool(
+    kernelTool(
       'write_note',
       'Append a friction observation to the run’s notes file — the shared journal the human reviews to improve the workflow between runs. Note things like a snippet that didn’t fit, a triage call you were unsure about, or worker behavior worth remembering.',
       {
@@ -466,7 +503,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
    * between redelivers (a repeated instruction is benign where a lost one is
    * not). The steer path is fail-soft — it must never corrupt a tool result.
    */
-  const withSteerDelivery = (def: SdkMcpToolDefinition<any>): SdkMcpToolDefinition<any> => ({
+  const withSteerDelivery = (def: KernelTool<any>): KernelTool<any> => ({
     ...def,
     handler: async (args, extra) => {
       const result = await def.handler(args, extra);

@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, vi } from 'vitest';
-import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { createPhaseTools } from '../src/harness/tools.ts';
+import type { KernelTool } from '../src/harness/tools.ts';
 import type { PhaseName } from '../src/phases.ts';
 import { listPendingSteers, loadRunState, runDirOf, stageSteer } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
@@ -15,7 +15,7 @@ import { FakeWorker, test } from './helpers/fixtures.ts';
  * WorkerProvider seam; the filesystem is the run dir fixture.
  */
 
-type ToolResult = Awaited<ReturnType<SdkMcpToolDefinition['handler']>>;
+type ToolResult = Awaited<ReturnType<KernelTool['handler']>>;
 
 function harness(
   run: RunState,
