@@ -38,7 +38,7 @@ Four ideas shape every design choice:
 
 ## Status
 
-Early and experimental. The full arc is implemented; the framing-through-ship path has been driven end-to-end on real features. The later phases (docs, PR) and overnight gate pre-authorization are built but not yet battle-tested. An opt-in interactive-Claude transport for the implementer (which bills the flat subscription quota) is built as a spike, pending one live-auth check — [`docs/interactive-transport.md`](docs/interactive-transport.md). Expect rough edges. See [`docs/open-questions.md`](docs/open-questions.md) for what's verified versus still open.
+Early and experimental. The full arc is implemented; the framing-through-ship path has been driven end-to-end on real features. The later phases (docs, PR) and overnight gate pre-authorization are built but not yet battle-tested. An opt-in interactive-Claude transport for the implementer (which bills the flat subscription quota) is built as a spike, pending one live-auth check — [`docs/interactive-transport.md`](docs/interactive-transport.md). The kernel that lets a separate process drive the orchestrator — the enabling architecture for eventually running Claude Code itself as the orchestrator — is built and proven at behavioral parity by the test suite, but not yet live-verified; the user-facing interactive orchestrator is a deferred follow-on ([`docs/future-directions.md`](docs/future-directions.md) §A). Expect rough edges. See [`docs/open-questions.md`](docs/open-questions.md) for what's verified versus still open.
 
 ## Requirements
 

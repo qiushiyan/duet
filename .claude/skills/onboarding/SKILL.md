@@ -49,9 +49,11 @@ Open the focus's docs and code; don't re-read Phase 1.
 docs/automation-design.md   §Phases and gates, §Lifecycle (re-skim)
 src/phases.ts               the phase table — every per-phase fact
 src/harness/
-  machine.ts                gates cross only on human.* events
-  driver.ts                 one phase = one orchestrator SDK session
-  lifecycle.ts              detached driver, gates_at auto-cross, probeRunPosition
+  machine.ts                a phase emits phase.*; gates cross only on human.*
+  phase-events.ts           the phase.*/human.* vocabulary + the marker→event read
+  driver.ts                 the in-process host: one phase = one orchestrator SDK session
+  stdio-host.ts             the out-of-process host (Orchestrate seam) + mcp-server.ts's `_mcp`
+  lifecycle.ts              detached driver, gates_at auto-cross, spent-marker guard, probeRunPosition
 ```
 
 **`providers`** — the worker seam and transports:
