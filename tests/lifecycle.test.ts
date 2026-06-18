@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
-import type { DriverOutput } from '../src/harness/driver.ts';
+import type { PhaseEvent } from '../src/harness/phase-events.ts';
 import { driveToQuiescence, probeRunPosition, waitForRunStop } from '../src/harness/lifecycle.ts';
 import { createRun, loadMachineSnapshot, loadRunState, runDirOf, saveRunState } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
@@ -27,7 +27,7 @@ function recordingNotify() {
   };
 }
 
-const advanced: DriverOutput = { outcome: 'advanced' };
+const advanced: PhaseEvent = { type: 'phase.advance' };
 
 describe('attended stops', () => {
   test('stops at the first attended gate', async ({ run }) => {
@@ -45,7 +45,7 @@ describe('attended stops', () => {
   test('a flag-wait stops the driver even when the phase gate is pre-authorized', async ({ projectDir, run }) => {
     run.gatesAt = ['pr'];
     saveRunState(run);
-    const { machine } = scriptedMachine([{ outcome: 'flagged' }]);
+    const { machine } = scriptedMachine([{ type: 'phase.flag' }]);
     const { notify } = recordingNotify();
 
     const stop = await driveToQuiescence(run, undefined, { machine, notify });
@@ -105,7 +105,7 @@ describe('probeRunPosition', () => {
   }) => {
     run.pendingQuestion = { question: 'which scope?' };
     saveRunState(run);
-    await driveToQuiescence(run, undefined, { machine: scriptedMachine([{ outcome: 'flagged' }]).machine, notify: quiet });
+    await driveToQuiescence(run, undefined, { machine: scriptedMachine([{ type: 'phase.flag' }]).machine, notify: quiet });
 
     const fresh = loadRunState(projectDir, run.runId);
     expect(probeRunPosition(fresh)).toEqual({ kind: 'flag', phase: 'frame' });
@@ -238,14 +238,14 @@ describe('gate pre-authorization (gates_at)', () => {
     saveRunState(run);
 
     // First drive: frame advances, directionGate auto-crosses, spec flags.
-    const first = scriptedMachine([advanced, { outcome: 'flagged' }]);
+    const first = scriptedMachine([advanced, { type: 'phase.flag' }]);
     const quiet = recordingNotify();
     await driveToQuiescence(run, undefined, { machine: first.machine, notify: quiet.notify });
     expect(loadRunState(projectDir, run.runId).autoApprovals?.map((a) => a.gate)).toEqual(['directionGate']);
 
     // Simulated crash recovery: re-enter from scratch; frame re-runs and the
     // same gate is reached again.
-    const second = scriptedMachine([advanced, { outcome: 'flagged' }]);
+    const second = scriptedMachine([advanced, { type: 'phase.flag' }]);
     const fresh = loadRunState(projectDir, run.runId);
     await driveToQuiescence(fresh, undefined, { machine: second.machine, notify: quiet.notify });
     expect(loadRunState(projectDir, run.runId).autoApprovals?.map((a) => a.gate)).toEqual(['directionGate']);

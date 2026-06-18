@@ -40,6 +40,23 @@ export interface HumanMessage {
   text: string;
 }
 
+/**
+ * The persisted terminal decision of a phase — set by the first of
+ * advance_phase/ask_human in a turn, written atomically with the gate packet
+ * (phaseSummaries) or queued question (pendingQuestion) it carries. This is
+ * the one cross-process channel for "which phase.* event to emit at
+ * quiescence": the in-process driver reads it off its live RunState, the
+ * stdio host runner reads it off disk after the orchestrator session quiesces.
+ * It is honored only when `phase` matches the running phase (markerToEvent),
+ * and cleared in driveToQuiescence after the resulting snapshot is durable
+ * (deliver-before-clear), so a crash across the non-transactional
+ * state.json/machine.json boundary re-delivers rather than loses the event.
+ */
+export interface TerminalMarker {
+  phase: PhaseName;
+  kind: 'advance' | 'flag';
+}
+
 export interface RunState {
   runId: string;
   createdAt: string;
@@ -99,6 +116,12 @@ export interface RunState {
   pendingQuestion?: { question: string; context?: string };
   /** Staged human input — written via stageHumanInput, read via consumeHumanInput. */
   pendingMessage?: HumanMessage;
+  /**
+   * The phase's terminal decision (advance/flag), written by the first
+   * advance_phase/ask_human in a turn and consumed at quiescence. See
+   * TerminalMarker; absent in the normal continue/nudge/crash paths.
+   */
+  terminalMarker?: TerminalMarker;
 
   costs: {
     orchestratorUsd: number;

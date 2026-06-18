@@ -24,7 +24,7 @@ function harness(
   const implementer = opts.implementer ?? new FakeWorker('claude');
   const reviewer = opts.reviewer ?? new FakeWorker('codex');
   const lines: string[] = [];
-  const { tools, outcome } = createPhaseTools({
+  const { tools } = createPhaseTools({
     state: run,
     phase: opts.phase ?? 'spec',
     providers: { implementer, reviewer },
@@ -36,7 +36,9 @@ function harness(
     if (!tool) throw new Error(`no such tool: ${name}`);
     return tool.handler(args as never, {});
   };
-  return { call, outcome, implementer, reviewer, lines };
+  // The terminal decision now lives on the run state the handlers mutate (the
+  // persisted marker), not a returned outcome flag — assertions read run.terminalMarker.
+  return { call, implementer, reviewer, lines };
 }
 
 const text = (result: ToolResult): string => (result.content[0] as { text: string }).text;
@@ -285,28 +287,46 @@ describe('review-round backstop cap', () => {
 
 describe('ask_human (the cooperative pause)', () => {
   test('queues the question, persists it, and tells the orchestrator to end its turn', async ({ projectDir, run }) => {
-    const { call, outcome } = harness(run);
+    const { call } = harness(run);
     const result = await call('ask_human', { question: 'ship behind a flag?', context: 'billing implications' });
 
-    expect.soft(outcome.questionQueued).toBe(true);
+    // The flag marker rides the same atomic write as the question.
+    expect.soft(run.terminalMarker).toEqual({ phase: 'spec', kind: 'flag' });
     expect.soft(text(result)).toContain('End your turn');
     // Persisted at the moment of the call — the human-visible artifact
     // exists before the model regains control.
-    expect.soft(loadRunState(projectDir, run.runId).pendingQuestion).toEqual({
+    const persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.pendingQuestion).toEqual({
       question: 'ship behind a flag?',
       context: 'billing implications',
     });
+    expect.soft(persisted.terminalMarker).toEqual({ phase: 'spec', kind: 'flag' });
   });
 
   test('a staged answer feeds the first ask_human without pausing; the next one queues', async ({ run }) => {
-    const { call, outcome } = harness(run, { stagedAnswer: 'yes, behind a flag' });
+    const { call } = harness(run, { stagedAnswer: 'yes, behind a flag' });
 
     const first = await call('ask_human', { question: 'ship behind a flag?' });
     expect.soft(text(first)).toBe('The human answered: yes, behind a flag');
-    expect.soft(outcome.questionQueued).toBe(false);
+    // The staged-answer fast-path is NOT terminal — no marker, the phase continues.
+    expect.soft(run.terminalMarker).toBeUndefined();
 
     await call('ask_human', { question: 'a second question' });
-    expect(outcome.questionQueued).toBe(true);
+    expect(run.terminalMarker).toEqual({ phase: 'spec', kind: 'flag' });
+  });
+
+  test('first-terminal-wins: a second terminal call after one is recorded is refused', async ({ run }) => {
+    const { call } = harness(run, { phase: 'frame' }); // frame has no review-round requirement
+    const first = await call('advance_phase', { summary: 'done', artifacts: [] });
+    expect.soft(first.isError).toBeUndefined();
+    expect.soft(run.terminalMarker).toEqual({ phase: 'frame', kind: 'advance' });
+
+    // The phase is already ending — ask_human now is refused, and the marker
+    // stays the first decision (advance), so exactly one phase.* event emits.
+    const second = await call('ask_human', { question: 'wait, actually?' });
+    expect.soft(second.isError).toBe(true);
+    expect.soft(text(second)).toContain('already ending');
+    expect.soft(run.terminalMarker).toEqual({ phase: 'frame', kind: 'advance' });
   });
 });
 
@@ -346,28 +366,30 @@ describe('create_branch (the branch policy)', () => {
 
 describe('advance_phase (the gate packet)', () => {
   test('refuses in a review-loop phase before any review round', async ({ run }) => {
-    const { call, outcome } = harness(run, { phase: 'spec' });
+    const { call } = harness(run, { phase: 'spec' });
     const result = await call('advance_phase', { summary: 'all good', artifacts: [] });
 
     expect(result.isError).toBe(true);
     expect.soft(text(result)).toContain('No review round has run');
-    expect.soft(outcome.advanceRequested).toBe(false);
+    expect.soft(run.terminalMarker).toBeUndefined();
   });
 
   test('records the gate packet and reports a live gate ahead', async ({ projectDir, run }) => {
     run.rounds.spec = 2;
-    const { call, outcome } = harness(run, { phase: 'spec' });
+    const { call } = harness(run, { phase: 'spec' });
     const result = await call('advance_phase', {
       summary: 'reviewer flagged X, fixed; Y rejected with rationale',
       artifacts: ['docs/specs/feature.md'],
       spec_path: 'docs/specs/feature.md',
     });
 
-    expect.soft(outcome.advanceRequested).toBe(true);
+    expect.soft(run.terminalMarker).toEqual({ phase: 'spec', kind: 'advance' });
     expect.soft(text(result)).toContain('the run moves to the human gate');
     const persisted = loadRunState(projectDir, run.runId);
     expect.soft(persisted.phaseSummaries.spec?.summary).toContain('reviewer flagged X');
     expect.soft(persisted.specPath).toBe('docs/specs/feature.md');
+    // The advance marker is persisted atomically with the gate packet.
+    expect.soft(persisted.terminalMarker).toEqual({ phase: 'spec', kind: 'advance' });
   });
 
   test('a pre-authorized gate is reported as auto-crossing, not as a live decision', async ({ run }) => {

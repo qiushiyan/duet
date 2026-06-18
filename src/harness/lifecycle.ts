@@ -250,6 +250,20 @@ export async function driveToQuiescence(
     const fresh = loadRunState(state.cwd, state.runId);
     fresh.machineState = typeof snapshot.value === 'string' ? snapshot.value : JSON.stringify(snapshot.value);
 
+    // Deliver-before-clear: the snapshot above now durably reflects the
+    // transition the terminal marker drove, so the marker has done its job.
+    // Clear it here — after the snapshot save, before any gates_at auto-cross
+    // re-enters the next phase — so a pre-authorized continue can't carry a
+    // stale marker into the next phase's runPhase (markerToEvent is phase-keyed,
+    // but clearing keeps the on-disk state honest). A crash in the window
+    // between the snapshot save and this clear re-delivers the marker on
+    // re-entry, which is harmless: the parked gate/flag-wait ignores phase.*,
+    // and a same-phase re-entry re-drives the identical transition.
+    if (fresh.terminalMarker) {
+      delete fresh.terminalMarker;
+      saveRunState(fresh);
+    }
+
     const gatePhase = snapshot.status !== 'done' ? phaseOfGateState(fresh.machineState) : undefined;
     if (gatePhase && !gateAttended(fresh, gatePhase)) {
       // Dedupe on crash-recovery re-entry at the same gate.

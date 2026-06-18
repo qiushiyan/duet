@@ -1,22 +1,28 @@
-import { fromPromise } from 'xstate';
-import type { DriverInput, DriverOutput } from '../../src/harness/driver.ts';
+import { fromCallback } from 'xstate';
+import type { EventObject } from 'xstate';
+import type { DriverInput } from '../../src/harness/driver.ts';
+import type { PhaseEvent } from '../../src/harness/phase-events.ts';
 import { duetMachine } from '../../src/harness/machine.ts';
 
 /**
  * The duetMachine with its phase driver scripted instead of running an LLM
- * session: each phase (re-)entry shifts the next outcome off the script and
- * records the phase name. Same statechart, same guards — the seam is
- * machine.provide, exactly how the real driver is plugged in.
+ * session: each phase (re-)entry records the phase name and sends back the next
+ * scripted phase.* event. Same statechart, same handlers — the seam is
+ * machine.provide, exactly how the real driver (a callback actor that sendBacks
+ * the phase's terminal event) is plugged in.
  */
-export function scriptedMachine(script: DriverOutput[]): { machine: typeof duetMachine; calls: string[] } {
+export function scriptedMachine(script: PhaseEvent[]): { machine: typeof duetMachine; calls: string[] } {
   const calls: string[] = [];
   const machine = duetMachine.provide({
     actors: {
-      phaseDriver: fromPromise<DriverOutput, DriverInput>(async ({ input }) => {
+      phaseDriver: fromCallback<EventObject, DriverInput>(({ input, sendBack }) => {
         calls.push(input.phase);
         const next = script.shift();
         if (!next) throw new Error('phase driver called more times than scripted');
-        return next;
+        // Defer one microtask: a sendBack fired synchronously during the
+        // callback's initial run can land before the parent subscribes. The
+        // real driver defers naturally (it sendBacks after an async runPhase).
+        queueMicrotask(() => sendBack(next));
       }),
     },
   });

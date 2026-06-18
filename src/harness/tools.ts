@@ -48,16 +48,27 @@ export interface PhaseTools {
   // The SDK's own surface takes Array<SdkMcpToolDefinition<any>> — each tool
   // has its own schema, so the list is heterogeneous by nature.
   tools: Array<SdkMcpToolDefinition<any>>;
-  /**
-   * Live outcome flags the driver loop reads after each orchestrator turn:
-   * advance_phase and ask_human set them at call time.
-   */
-  outcome: { advanceRequested: boolean; questionQueued: boolean };
 }
 
 export function createPhaseTools({ state, phase, providers, log, stagedAnswer: initialAnswer }: PhaseToolsDeps): PhaseTools {
-  const outcome = { advanceRequested: false, questionQueued: false };
   let stagedAnswer = initialAnswer ?? null;
+
+  // First-terminal-wins: advance_phase and ask_human each end the phase, so the
+  // first to run this phase records the terminal marker; a second terminal call
+  // afterward is refused (the phase is already ending) so exactly one phase.*
+  // event is emitted at quiescence. Scoped to this phase: a stale marker from a
+  // prior phase (a crash re-delivered it across the snapshot boundary) does not
+  // block this phase's first terminal call — it is overwritten.
+  const terminalAlreadySet = (): boolean => state.terminalMarker?.phase === phase;
+  const alreadyEnding = (): { content: Array<{ type: 'text'; text: string }>; isError: true } => ({
+    content: [
+      {
+        type: 'text' as const,
+        text: 'This phase is already ending — you have already called advance_phase or ask_human this turn, and that decision is recorded. A second terminal call is ignored. End your turn with a one-line status; the run proceeds from the decision already made.',
+      },
+    ],
+    isError: true,
+  });
 
   // Roles with a worker turn currently in flight. Parallel send_prompt calls
   // to DIFFERENT roles are legal and wanted (the scheduler runs them
@@ -276,10 +287,14 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           stagedAnswer = null;
           return { content: [{ type: 'text' as const, text: `The human answered: ${answer}` }] };
         }
+        if (terminalAlreadySet()) return alreadyEnding();
         state.pendingQuestion = { question: args.question, ...(args.context ? { context: args.context } : {}) };
         state.lastActivity = 'ask_human (queued)';
+        // The marker rides the SAME atomic write as the question it carries, so
+        // first-terminal-wins and the flag packet land together — never a
+        // half-state where one persisted and the other did not.
+        state.terminalMarker = { phase, kind: 'flag' };
         saveRunState(state);
-        outcome.questionQueued = true;
         log(`[ask_human] queued: ${args.question}`);
         appendVoiceLog(state, 'orchestrator', `ask_human queued`, args.question);
         return {
@@ -361,6 +376,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           .describe('Repo-relative path of the spec file, when this phase produced or moved it — the harness records it for later phases.'),
       },
       async (args) => {
+        if (terminalAlreadySet()) return alreadyEnding();
         const roundsRun = state.rounds[phase] ?? 0;
         if (PHASE[phase].reviewLoop && roundsRun === 0) {
           return {
@@ -376,8 +392,10 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         if (args.spec_path) state.specPath = args.spec_path;
         state.phaseSummaries[phase] = { summary: args.summary, artifacts: args.artifacts };
         state.lastActivity = `advance_phase (${phase})`;
+        // The marker rides the SAME atomic write as the gate packet, so
+        // first-terminal-wins and the packet are one durable record.
+        state.terminalMarker = { phase, kind: 'advance' };
         saveRunState(state);
-        outcome.advanceRequested = true;
         log(`[advance_phase] ${phase} phase complete (${roundsRun} review rounds)`);
         appendVoiceLog(state, 'orchestrator', `advance_phase (${phase})`, args.summary);
         // Convention 5 (docs/prompting-and-tool-design.md): the result must
@@ -441,10 +459,10 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
    * after a handler produces its result — refusals included — pending human
    * steers are appended as a tagged block and consumed. Two exceptions, one
    * rule: steers deliver only on results that CONTINUE the phase. A call that
-   * set an outcome flag (advance requested, question queued) is ending the
-   * turn, and guidance appended to a dying turn lands and dies — those steers
-   * stay pending and ride the next harness prompt instead (carry-forward,
-   * src/harness/driver.ts). Peek → append → mark-delivered order: a crash in
+   * recorded this phase's terminal marker (advance requested, question queued)
+   * is ending the turn, and guidance appended to a dying turn lands and dies —
+   * those steers stay pending and ride the next harness prompt instead
+   * (carry-forward, src/harness/driver.ts). Peek → append → mark-delivered order: a crash in
    * between redelivers (a repeated instruction is benign where a lost one is
    * not). The steer path is fail-soft — it must never corrupt a tool result.
    */
@@ -452,7 +470,12 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     ...def,
     handler: async (args, extra) => {
       const result = await def.handler(args, extra);
-      if (outcome.advanceRequested || outcome.questionQueued) return result;
+      // A turn-ending result (this phase's terminal marker is now set) is not a
+      // delivery surface: steers appended to a dying turn land and die, so they
+      // stay pending and ride the next harness prompt (carry-forward). The
+      // phase scope matters — a stale marker from a prior phase must not
+      // suppress delivery on this phase's continuing results.
+      if (state.terminalMarker?.phase === phase) return result;
       try {
         const steers = listPendingSteers(state);
         if (steers.length === 0) return result;
@@ -470,5 +493,5 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     },
   });
 
-  return { tools: tools.map(withSteerDelivery), outcome };
+  return { tools: tools.map(withSteerDelivery) };
 }
