@@ -86,13 +86,16 @@ describe('the spent-marker guard (human authority must not be lost to a stale te
     // Park at frame's flag-wait so the snapshot the human resumes from is durable.
     await driveToQuiescence(run, undefined, { machine: scriptedMachine([{ type: 'phase.flag' }]).machine, notify: quiet });
 
-    // The crash window: the marker is cleared only AFTER the snapshot save
-    // (deliver-before-clear), so a crash in between leaves it on disk. The human
-    // then answers — `duet continue --answer` stages the message.
+    // The earliest crash boundary: machine.json is durably saved at frameFlagWait,
+    // but the crash landed before the state.json machineState mirror was written
+    // and the marker cleared — so machineState is absent/stale while the marker
+    // survives. The guard must key spent-vs-live off the restored snapshot
+    // (machine.json), not state.machineState; deleting it here proves that.
     const crashed = loadRunState(projectDir, run.runId);
     crashed.terminalMarker = { phase: 'frame', kind: 'flag' };
     crashed.pendingQuestion = { question: 'which scope?' };
     crashed.pendingMessage = { kind: 'answer', text: 'narrow it' };
+    delete crashed.machineState;
     saveRunState(crashed);
 
     const driver = realDriverMachine(async (ctx) => {
@@ -117,9 +120,12 @@ describe('the spent-marker guard (human authority must not be lost to a stale te
     // Park at frame's gate so the resume snapshot sits past the advance.
     await driveToQuiescence(run, undefined, { machine: scriptedMachine([advanced]).machine, notify: quiet });
 
+    // Same earliest crash boundary: machine.json durably at directionGate, the
+    // state.json machineState mirror never written (absent/stale), marker alive.
     const crashed = loadRunState(projectDir, run.runId);
     crashed.terminalMarker = { phase: 'frame', kind: 'advance' };
     crashed.pendingMessage = { kind: 'feedback', text: 'invert the scope' };
+    delete crashed.machineState;
     saveRunState(crashed);
 
     const driver = realDriverMachine(async (ctx) => {

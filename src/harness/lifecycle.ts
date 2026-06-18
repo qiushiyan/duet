@@ -233,35 +233,40 @@ export async function driveToQuiescence(
   const machine = deps.machine ?? duetMachine;
   const notify = deps.notify ?? desktopNotify;
 
-  // Spent-marker guard. If we are restoring at the marker phase's OWN gate or
-  // flag-wait, the transition that marker drove already persisted — we are
-  // parked past it, so the marker is a spent leftover from the crash window
-  // between the snapshot save and the clear below. Clear it before the human
-  // event re-enters the phase loop: otherwise a stale `flag` re-entered by an
-  // answer (frameFlagWait → frameLoop) or a stale `advance` re-entered by a
-  // reject (directionGate → frameLoop) would replay the old decision and
-  // swallow the human's input — the run bounces straight back, authority lost.
-  // A crash BEFORE the transition restores at a prior quiescent state (phase
-  // loops are never persisted), so this guard does not fire there and the
-  // driver still replays the live marker on loop re-entry (crash-before-
-  // transition replay, src/harness/driver.ts / stdio-host.ts).
-  const restoredMarker = state.terminalMarker;
-  const restoredState = state.machineState;
-  if (
-    restoredMarker &&
-    restoredState &&
-    (phaseOfGateState(restoredState) === restoredMarker.phase ||
-      restoredState === flagWaitStateOf(restoredMarker.phase))
-  ) {
-    delete state.terminalMarker;
-    saveRunState(state);
-  }
-
   const actor = createActor(machine, {
     input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
     ...(options?.snapshot ? { snapshot: options.snapshot } : {}),
   });
   actor.start();
+
+  // Spent-marker guard. Keyed off the RESTORED snapshot value — the snapshot
+  // the actor just hydrated from machine.json, the durable record of where the
+  // machine resumed — NOT state.machineState, which is the state.json mirror
+  // written only after saveMachineSnapshot and so stale/absent in the very
+  // crash window this guards (machine.json saved at the gate, the mirror not
+  // yet). If we resumed AT the marker phase's OWN gate or flag-wait, the
+  // transition that marker drove already applied — we are parked past it, so
+  // the marker is a spent leftover. Clear it before the human event re-enters
+  // the phase loop: otherwise a stale `flag` re-entered by an answer
+  // (frameFlagWait → frameLoop) or a stale `advance` re-entered by a reject
+  // (directionGate → frameLoop) would replay the old decision and swallow the
+  // human's input — the run bounces straight back, authority lost. A crash
+  // BEFORE the transition restores at a prior quiescent state (phase loops are
+  // never persisted), so the restored value is not this marker's gate/flag-wait,
+  // the guard does not fire, and the driver still replays the live marker on
+  // loop re-entry (crash-before-transition replay, driver.ts / stdio-host.ts).
+  const restoredMarker = state.terminalMarker;
+  const restoredValue = actor.getSnapshot().value;
+  if (
+    restoredMarker &&
+    typeof restoredValue === 'string' &&
+    (phaseOfGateState(restoredValue) === restoredMarker.phase ||
+      restoredValue === flagWaitStateOf(restoredMarker.phase))
+  ) {
+    delete state.terminalMarker;
+    saveRunState(state);
+  }
+
   if (options?.event) actor.send(options.event);
 
   for (;;) {
