@@ -15,21 +15,18 @@ import {
   saveRunState,
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
+import { markerToEvent } from './phase-events.ts';
+import type { PhaseEvent } from './phase-events.ts';
 import { createPhaseTools } from './tools.ts';
+import type { KernelTool } from './tools.ts';
 import {
   ORCHESTRATOR_SYSTEM_PROMPT,
   answerResumePrompt,
   approvalRiderBlock,
-  docsPhaseEntryPrompt,
+  buildPhaseBrief,
   feedbackResumePrompt,
-  framePhaseEntryPrompt,
-  implPhaseEntryPrompt,
   nudgeContinuePrompt,
-  openPhaseEntryPrompt,
-  planPhaseEntryPrompt,
-  prPhaseEntryPrompt,
   renderSteerBlock,
-  specPhaseEntryPrompt,
 } from './orchestrator-prompts.ts';
 
 /**
@@ -43,18 +40,14 @@ import {
  * see src/spike/repro-*.ts).
  *
  * The tool surface itself — and every protocol rail it enforces — lives in
- * ./tools.ts; this module hosts it inside an SDK session and maps the
- * session's end into the statechart's outcome vocabulary.
+ * ./tools.ts; this module hosts it inside an SDK session and resolves the
+ * session's end into the machine's phase.* event vocabulary (./phase-events.ts).
  */
 
 export interface DriverInput {
   runId: string;
   cwd: string;
   phase: PhaseName;
-}
-
-export interface DriverOutput {
-  outcome: 'advanced' | 'flagged';
 }
 
 /**
@@ -65,8 +58,23 @@ export interface DriverOutput {
 export type RunOrchestratorTurn = (args: {
   prompt: string;
   options: Options;
-  tools: Array<SdkMcpToolDefinition<any>>;
+  tools: Array<KernelTool<any>>;
 }) => AsyncIterable<SDKMessage>;
+
+/**
+ * The in-process host adapter: a KernelTool is structurally an Agent SDK tool
+ * definition, so this is a re-typing, not a rewrite. Keeping the SDK tool shape
+ * here (rather than in the registry) is the point — the kernel surface stays
+ * host-neutral; only this adapter knows the Agent SDK.
+ */
+export const toSdkTools = (tools: Array<KernelTool<any>>): Array<SdkMcpToolDefinition<any>> =>
+  tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+    ...(t.annotations ? { annotations: t.annotations } : {}),
+    handler: t.handler,
+  }));
 
 const sdkTurn: RunOrchestratorTurn = ({ prompt, options, tools }) =>
   query({
@@ -77,7 +85,7 @@ const sdkTurn: RunOrchestratorTurn = ({ prompt, options, tools }) =>
         orchestrator: createSdkMcpServer({
           name: 'orchestrator',
           version: '0.1.0',
-          tools,
+          tools: toSdkTools(tools),
           // Tools must be present when a RESUMED session's first prompt is
           // built; without alwaysLoad, resume races MCP startup (spike finding).
           alwaysLoad: true,
@@ -90,8 +98,16 @@ const sdkTurn: RunOrchestratorTurn = ({ prompt, options, tools }) =>
 export async function runPhase(
   { runId, cwd, phase }: DriverInput,
   runTurn: RunOrchestratorTurn = sdkTurn,
-): Promise<DriverOutput> {
+): Promise<PhaseEvent> {
   const state = loadRunState(cwd, runId);
+
+  // Crash re-entry into the SAME phase: a terminal marker for this phase
+  // survived from a session that decided before the machine could transition
+  // (the snapshot was never saved). Re-emit that decision without re-running
+  // the session — the packet it carries was persisted atomically with it.
+  const persisted = markerToEvent(state.terminalMarker, phase);
+  if (persisted) return persisted;
+
   const pendingMessage = consumeHumanInput(state);
 
   try {
@@ -109,7 +125,7 @@ export async function runPhase(
       };
       saveRunState(state);
     }
-    return { outcome: 'flagged' };
+    return { type: 'phase.flag' };
   }
 }
 
@@ -118,14 +134,14 @@ async function drivePhase(
   phase: PhaseName,
   pendingMessage: HumanMessage | undefined,
   runTurn: RunOrchestratorTurn,
-): Promise<DriverOutput> {
+): Promise<PhaseEvent> {
   // Narration goes to plain stdout — the detached driver's log file. The
   // [tag] palette is applied through the one view-time colorizer (picocolors
   // auto-disables off-TTY, so the file stays plain; `duet logs` and the tmux
   // panes re-apply it where a human is watching).
   const log = (line: string) => console.log(colorizeDriverLine(line));
 
-  const { tools, outcome } = createPhaseTools({
+  const { tools } = createPhaseTools({
     state,
     phase,
     providers: createWorkers(state.bindings, {
@@ -175,7 +191,7 @@ async function drivePhase(
     }
   }
 
-  return { outcome: result };
+  return result === 'advanced' ? { type: 'phase.advance' } : { type: 'phase.flag' };
 
   async function driveTurn(turnPrompt: string, turnOptions: Options): Promise<'advanced' | 'flagged' | 'continue'> {
     // The last request's usage IS the current context fill (fresh input +
@@ -218,8 +234,12 @@ async function drivePhase(
         }
       }
     }
-    if (outcome.advanceRequested) return 'advanced';
-    if (outcome.questionQueued) return 'flagged';
+    // The terminal decision is read from the persisted marker (set by
+    // advance_phase/ask_human on the live state this loop shares), not a polled
+    // flag — the one channel every host reads, in or across a process boundary.
+    // Phase-scoped: a stale marker from a prior phase reads as continue.
+    const event = markerToEvent(state.terminalMarker, phase);
+    if (event) return event.type === 'phase.advance' ? 'advanced' : 'flagged';
     return 'continue';
   }
 }
@@ -265,23 +285,7 @@ function basePrompt(
   if (!state.phaseStarted[phase]) {
     state.phaseStarted[phase] = true;
     saveRunState(state);
-    const cap = PHASE[phase].roundCap;
-    switch (phase) {
-      case 'frame':
-        return framePhaseEntryPrompt(state, cap);
-      case 'spec':
-        return specPhaseEntryPrompt(state, cap);
-      case 'plan':
-        return planPhaseEntryPrompt(state, cap);
-      case 'impl':
-        return implPhaseEntryPrompt(state, cap);
-      case 'docs':
-        return docsPhaseEntryPrompt(state, cap);
-      case 'pr':
-        return prPhaseEntryPrompt(state, cap);
-      case 'open':
-        return openPhaseEntryPrompt();
-    }
+    return buildPhaseBrief(state, phase);
   }
   if (pendingMessage?.kind === 'answer') return answerResumePrompt(pendingMessage.text);
   if (pendingMessage?.kind === 'feedback') return feedbackResumePrompt(phase, pendingMessage.text);

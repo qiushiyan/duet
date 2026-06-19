@@ -40,6 +40,23 @@ export interface HumanMessage {
   text: string;
 }
 
+/**
+ * The persisted terminal decision of a phase — set by the first of
+ * advance_phase/ask_human in a turn, written atomically with the gate packet
+ * (phaseSummaries) or queued question (pendingQuestion) it carries. This is
+ * the one cross-process channel for "which phase.* event to emit at
+ * quiescence": the in-process driver reads it off its live RunState, the
+ * stdio host runner reads it off disk after the orchestrator session quiesces.
+ * It is honored only when `phase` matches the running phase (markerToEvent),
+ * and cleared in driveToQuiescence after the resulting snapshot is durable
+ * (deliver-before-clear), so a crash across the non-transactional
+ * state.json/machine.json boundary re-delivers rather than loses the event.
+ */
+export interface TerminalMarker {
+  phase: PhaseName;
+  kind: 'advance' | 'flag';
+}
+
 export interface RunState {
   runId: string;
   createdAt: string;
@@ -76,6 +93,18 @@ export interface RunState {
    * removes the run outright instead of marking it.
    */
   abandoned?: { at: string };
+  /**
+   * Set by `duet orchestrate` when the human's interactive Claude Code session
+   * is the orchestrator for this run (FRAME → PLAN). A run-level marker, NOT a
+   * config role-binding (src/config.ts stays role→provider/model only). Two
+   * readers: `duet continue` chooses the interactive rest-vs-handoff path from
+   * it, and `probeRunPosition` reads a resting phase-loop snapshot as
+   * interactive-active rather than crashed. Cleared at the plan-gate handoff to
+   * headless impl (and the `--headless` fallback); absent on every headless run,
+   * so the headless path is byte-for-byte unchanged. Never traps a run —
+   * `takeover`/`abandon` ignore it.
+   */
+  orchestrationHost?: 'interactive';
 
   /** Mirror of the machine's state value, for humans and `duet status`. */
   machineState?: string;
@@ -99,9 +128,24 @@ export interface RunState {
   pendingQuestion?: { question: string; context?: string };
   /** Staged human input — written via stageHumanInput, read via consumeHumanInput. */
   pendingMessage?: HumanMessage;
+  /**
+   * The phase's terminal decision (advance/flag), written by the first
+   * advance_phase/ask_human in a turn and consumed at quiescence. See
+   * TerminalMarker; absent in the normal continue/nudge/crash paths.
+   */
+  terminalMarker?: TerminalMarker;
 
   costs: {
     orchestratorUsd: number;
+    /**
+     * True once the orchestrator ran on the interactive host (the human's
+     * Claude Code session, flat subscription quota — no `total_cost_usd`), so
+     * `orchestratorUsd` is partial/unmetered. Sticky: set at launch and NEVER
+     * cleared, because the fact that orchestrator spend went unmetered must
+     * outlive the plan-gate handoff that clears `orchestrationHost`. Mirrors
+     * claudeWorkersCostPartial; never overload orchestratorUsd.
+     */
+    orchestratorCostPartial: boolean;
     /**
      * The KNOWN claude-worker cost. A turn reports `costUsd` only when the
      * provider includes it (headless does; the interactive transport omits it
@@ -198,7 +242,7 @@ export function createRun(opts: {
     phaseStarted: {},
     rounds: {},
     phaseSummaries: {},
-    costs: { orchestratorUsd: 0, claudeWorkersUsd: 0, claudeWorkersCostPartial: false, codexTokens: { input: 0, output: 0 } },
+    costs: { orchestratorUsd: 0, orchestratorCostPartial: false, claudeWorkersUsd: 0, claudeWorkersCostPartial: false, codexTokens: { input: 0, output: 0 } },
     snippetProposals: [],
   };
   ensureDuetDir(opts.cwd);

@@ -2,10 +2,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, vi } from 'vitest';
-import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
+import { buildPhaseBrief } from '../src/harness/orchestrator-prompts.ts';
 import { createPhaseTools } from '../src/harness/tools.ts';
+import type { KernelTool } from '../src/harness/tools.ts';
 import type { PhaseName } from '../src/phases.ts';
-import { listPendingSteers, loadRunState, runDirOf, stageSteer } from '../src/run-store.ts';
+import { listPendingSteers, loadRunState, runDirOf, stageHumanInput, stageSteer } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import { FakeWorker, test } from './helpers/fixtures.ts';
 
@@ -15,7 +16,7 @@ import { FakeWorker, test } from './helpers/fixtures.ts';
  * WorkerProvider seam; the filesystem is the run dir fixture.
  */
 
-type ToolResult = Awaited<ReturnType<SdkMcpToolDefinition['handler']>>;
+type ToolResult = Awaited<ReturnType<KernelTool['handler']>>;
 
 function harness(
   run: RunState,
@@ -24,7 +25,7 @@ function harness(
   const implementer = opts.implementer ?? new FakeWorker('claude');
   const reviewer = opts.reviewer ?? new FakeWorker('codex');
   const lines: string[] = [];
-  const { tools, outcome } = createPhaseTools({
+  const { tools } = createPhaseTools({
     state: run,
     phase: opts.phase ?? 'spec',
     providers: { implementer, reviewer },
@@ -36,7 +37,9 @@ function harness(
     if (!tool) throw new Error(`no such tool: ${name}`);
     return tool.handler(args as never, {});
   };
-  return { call, outcome, implementer, reviewer, lines };
+  // The terminal decision now lives on the run state the handlers mutate (the
+  // persisted marker), not a returned outcome flag — assertions read run.terminalMarker.
+  return { call, implementer, reviewer, lines };
 }
 
 const text = (result: ToolResult): string => (result.content[0] as { text: string }).text;
@@ -285,28 +288,46 @@ describe('review-round backstop cap', () => {
 
 describe('ask_human (the cooperative pause)', () => {
   test('queues the question, persists it, and tells the orchestrator to end its turn', async ({ projectDir, run }) => {
-    const { call, outcome } = harness(run);
+    const { call } = harness(run);
     const result = await call('ask_human', { question: 'ship behind a flag?', context: 'billing implications' });
 
-    expect.soft(outcome.questionQueued).toBe(true);
+    // The flag marker rides the same atomic write as the question.
+    expect.soft(run.terminalMarker).toEqual({ phase: 'spec', kind: 'flag' });
     expect.soft(text(result)).toContain('End your turn');
     // Persisted at the moment of the call — the human-visible artifact
     // exists before the model regains control.
-    expect.soft(loadRunState(projectDir, run.runId).pendingQuestion).toEqual({
+    const persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.pendingQuestion).toEqual({
       question: 'ship behind a flag?',
       context: 'billing implications',
     });
+    expect.soft(persisted.terminalMarker).toEqual({ phase: 'spec', kind: 'flag' });
   });
 
   test('a staged answer feeds the first ask_human without pausing; the next one queues', async ({ run }) => {
-    const { call, outcome } = harness(run, { stagedAnswer: 'yes, behind a flag' });
+    const { call } = harness(run, { stagedAnswer: 'yes, behind a flag' });
 
     const first = await call('ask_human', { question: 'ship behind a flag?' });
     expect.soft(text(first)).toBe('The human answered: yes, behind a flag');
-    expect.soft(outcome.questionQueued).toBe(false);
+    // The staged-answer fast-path is NOT terminal — no marker, the phase continues.
+    expect.soft(run.terminalMarker).toBeUndefined();
 
     await call('ask_human', { question: 'a second question' });
-    expect(outcome.questionQueued).toBe(true);
+    expect(run.terminalMarker).toEqual({ phase: 'spec', kind: 'flag' });
+  });
+
+  test('first-terminal-wins: a second terminal call after one is recorded is refused', async ({ run }) => {
+    const { call } = harness(run, { phase: 'frame' }); // frame has no review-round requirement
+    const first = await call('advance_phase', { summary: 'done', artifacts: [] });
+    expect.soft(first.isError).toBeUndefined();
+    expect.soft(run.terminalMarker).toEqual({ phase: 'frame', kind: 'advance' });
+
+    // The phase is already ending — ask_human now is refused, and the marker
+    // stays the first decision (advance), so exactly one phase.* event emits.
+    const second = await call('ask_human', { question: 'wait, actually?' });
+    expect.soft(second.isError).toBe(true);
+    expect.soft(text(second)).toContain('already ending');
+    expect.soft(run.terminalMarker).toEqual({ phase: 'frame', kind: 'advance' });
   });
 });
 
@@ -346,28 +367,30 @@ describe('create_branch (the branch policy)', () => {
 
 describe('advance_phase (the gate packet)', () => {
   test('refuses in a review-loop phase before any review round', async ({ run }) => {
-    const { call, outcome } = harness(run, { phase: 'spec' });
+    const { call } = harness(run, { phase: 'spec' });
     const result = await call('advance_phase', { summary: 'all good', artifacts: [] });
 
     expect(result.isError).toBe(true);
     expect.soft(text(result)).toContain('No review round has run');
-    expect.soft(outcome.advanceRequested).toBe(false);
+    expect.soft(run.terminalMarker).toBeUndefined();
   });
 
   test('records the gate packet and reports a live gate ahead', async ({ projectDir, run }) => {
     run.rounds.spec = 2;
-    const { call, outcome } = harness(run, { phase: 'spec' });
+    const { call } = harness(run, { phase: 'spec' });
     const result = await call('advance_phase', {
       summary: 'reviewer flagged X, fixed; Y rejected with rationale',
       artifacts: ['docs/specs/feature.md'],
       spec_path: 'docs/specs/feature.md',
     });
 
-    expect.soft(outcome.advanceRequested).toBe(true);
+    expect.soft(run.terminalMarker).toEqual({ phase: 'spec', kind: 'advance' });
     expect.soft(text(result)).toContain('the run moves to the human gate');
     const persisted = loadRunState(projectDir, run.runId);
     expect.soft(persisted.phaseSummaries.spec?.summary).toContain('reviewer flagged X');
     expect.soft(persisted.specPath).toBe('docs/specs/feature.md');
+    // The advance marker is persisted atomically with the gate packet.
+    expect.soft(persisted.terminalMarker).toEqual({ phase: 'spec', kind: 'advance' });
   });
 
   test('a pre-authorized gate is reported as auto-crossing, not as a live decision', async ({ run }) => {
@@ -488,6 +511,124 @@ describe('steer delivery (every phase-continuing tool result)', () => {
     const log = readFileSync(join(runDirOf(projectDir, run.runId), 'orchestrator.log'), 'utf8');
     expect.soft(log).toContain('human steer delivered');
     expect.soft(log).toContain('logged note');
+  });
+});
+
+describe('get_task (the brief surface, side-effecting exactly-once)', () => {
+  test('mid-phase, folds a staged input once and marks phaseStarted; a later call returns the base brief alone', async ({
+    projectDir,
+    run,
+  }) => {
+    stageHumanInput(run, { kind: 'approval', text: 'agreed — cap questions at 3' });
+    const { call } = harness(run, { phase: 'spec' });
+
+    const first = await call('get_task');
+    expect.soft(first.isError).toBeUndefined();
+    expect.soft(text(first)).toContain('Draft the spec'); // the spec entry brief, in full
+    expect.soft(text(first)).toContain('<approval_rider>'); // the staged input, folded as a block
+    expect.soft(text(first)).toContain('cap questions at 3');
+    expect.soft(run.phaseStarted.spec).toBe(true);
+    // Consumed once and persisted — a crash can't replay it.
+    expect.soft(loadRunState(projectDir, run.runId).pendingMessage).toBeUndefined();
+
+    const second = await call('get_task');
+    // The base brief, byte-equal to the renderer, with nothing left to fold.
+    expect.soft(text(second)).toBe(buildPhaseBrief(run, 'spec'));
+    expect.soft(text(second)).not.toContain('<approval_rider>');
+    expect.soft(run.phaseStarted.spec).toBe(true); // still set once
+  });
+
+  test('same-phase re-entry: a freshly staged reject/answer folds even though the phase is long started', async ({
+    run,
+  }) => {
+    run.phaseStarted.spec = true; // the phase has been running for a while
+    const { call } = harness(run, { phase: 'spec' });
+    stageHumanInput(run, { kind: 'feedback', text: 'invert the scope' });
+
+    const folded = await call('get_task');
+    expect.soft(text(folded)).toContain('Draft the spec'); // the brief, in full
+    expect.soft(text(folded)).toContain('invert the scope'); // the feedback, folded
+    expect.soft(text(folded)).toContain('editor-in-chief');
+
+    const after = await call('get_task');
+    expect.soft(text(after)).toBe(buildPhaseBrief(run, 'spec')); // consumed once
+  });
+
+  test('parked at a gate, it reports the park and performs no side effect', async ({ run }) => {
+    run.terminalMarker = { phase: 'spec', kind: 'advance' };
+    stageHumanInput(run, { kind: 'feedback', text: 'should not be consumed' });
+    delete run.phaseStarted.spec;
+    const { call } = harness(run, { phase: 'spec' });
+
+    const parked = await call('get_task');
+    expect.soft(text(parked)).toContain('parked at its gate');
+    expect.soft(text(parked)).toContain('duet continue');
+    // No side effects: the phase is not marked started, the input not consumed.
+    expect.soft(run.phaseStarted.spec).toBeUndefined();
+    expect.soft(run.pendingMessage).toEqual({ kind: 'feedback', text: 'should not be consumed' });
+  });
+
+  test('parked at a flag, it points at the answer channel', async ({ run }) => {
+    run.terminalMarker = { phase: 'spec', kind: 'flag' };
+    const { call } = harness(run, { phase: 'spec' });
+    const parked = await call('get_task');
+    expect.soft(text(parked)).toContain('queued question');
+    expect.soft(text(parked)).toContain('--answer');
+  });
+
+  test('carries no readOnlyHint — it mutates', ({ run }) => {
+    const { tools } = createPhaseTools({
+      state: run,
+      phase: 'spec',
+      providers: { implementer: new FakeWorker('claude'), reviewer: new FakeWorker('codex') },
+      log: () => {},
+    });
+    expect(tools.find((t) => t.name === 'get_task')?.annotations?.readOnlyHint).toBeUndefined();
+  });
+});
+
+describe('the post-terminal quiescence rail', () => {
+  test('every phase-continuing tool is refused once this phase’s terminal marker is set, with no side effect', async ({
+    projectDir,
+    run,
+  }) => {
+    await execa('git', ['init', '-b', 'main'], { cwd: projectDir });
+    run.terminalMarker = { phase: 'spec', kind: 'advance' };
+    const implementer = new FakeWorker('claude');
+    const reviewer = new FakeWorker('codex');
+    const { call } = harness(run, { phase: 'spec', implementer, reviewer });
+
+    for (const [name, args] of [
+      ['send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'x' }],
+      ['list_snippets', {}],
+      ['create_branch', { name: 'feat/nope' }],
+      ['propose_snippet_edit', { snippet_key: 'k', proposed_body: 'b', rationale: 'r' }],
+      ['write_note', { observation: 'n' }],
+    ] as const) {
+      const result = await call(name, args);
+      expect.soft(result.isError, name).toBe(true);
+      expect.soft(text(result), name).toContain(`${name} is refused here`);
+    }
+    // None of them ran: no worker turn, no branch, no proposal, no note.
+    expect.soft(implementer.calls).toHaveLength(0);
+    expect.soft(reviewer.calls).toHaveLength(0);
+    expect.soft(run.branch).toBeUndefined();
+    const persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.snippetProposals).toHaveLength(0);
+
+    // The status/re-anchor read stays open.
+    expect.soft((await call('get_task')).isError).toBeUndefined();
+  });
+
+  test('is a no-op with no marker, and with a stale marker from a different phase', async ({ run }) => {
+    const noMarker = harness(run, { phase: 'spec' });
+    expect.soft((await noMarker.call('write_note', { observation: 'runs fine' })).isError).toBeUndefined();
+
+    run.terminalMarker = { phase: 'frame', kind: 'advance' }; // foreign to spec
+    const stale = harness(run, { phase: 'spec' });
+    const result = await stale.call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'x' });
+    expect.soft(result.isError).toBeUndefined(); // the stale marker does not refuse this phase's work
+    expect.soft(text(result)).toBe('scripted response');
   });
 });
 

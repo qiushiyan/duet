@@ -1,5 +1,4 @@
-import { tool } from '@anthropic-ai/claude-agent-sdk';
-import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
+import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { execa } from 'execa';
 import { z } from 'zod';
 import { PHASE } from '../phases.ts';
@@ -9,18 +8,65 @@ import { getSnippet, renderSnippetLibrary } from '../snippets.ts';
 import {
   appendNote,
   appendVoiceLog,
+  consumeHumanInput,
   contextPercent,
   gateAttended,
   listPendingSteers,
+  loadRunState,
   markSteersDelivered,
   recordContextUsage,
   saveRunState,
 } from '../run-store.ts';
-import type { RunState } from '../run-store.ts';
-import { renderSteerBlock } from './orchestrator-prompts.ts';
+import type { HumanMessage, RunState } from '../run-store.ts';
+import {
+  answerResumePrompt,
+  approvalRiderBlock,
+  buildPhaseBrief,
+  feedbackResumePrompt,
+  renderSteerBlock,
+} from './orchestrator-prompts.ts';
 
 /**
- * The orchestrator's tool surface — the seven harness tools and every
+ * A host-neutral tool definition — the single source of truth for the
+ * orchestrator's surface, independent of any one SDK. It carries exactly what
+ * both transports need (name, description, a zod input shape, MCP annotations,
+ * and an async handler returning an MCP CallToolResult). Two thin adapters host
+ * it: the in-process Agent SDK server (src/harness/driver.ts) and the standard
+ * stdio MCP server (src/harness/mcp-server.ts). Keeping the Agent SDK's tool
+ * type out of here is the point — nothing that hosts the kernel should have to
+ * import it.
+ */
+export interface KernelTool<Schema extends z.ZodRawShape = z.ZodRawShape> {
+  name: string;
+  description: string;
+  inputSchema: Schema;
+  annotations?: ToolAnnotations;
+  handler: (args: z.infer<z.ZodObject<Schema>>, extra: unknown) => Promise<CallToolResult>;
+}
+
+/**
+ * Package a kernel tool — the same call shape the Agent SDK's `tool()` helper
+ * used, so the handler bodies below are unchanged; only the type they land in
+ * differs (KernelTool, not SdkMcpToolDefinition).
+ */
+function kernelTool<Schema extends z.ZodRawShape>(
+  name: string,
+  description: string,
+  inputSchema: Schema,
+  handler: (args: z.infer<z.ZodObject<Schema>>, extra: unknown) => Promise<CallToolResult>,
+  extras?: { annotations?: ToolAnnotations },
+): KernelTool<Schema> {
+  return {
+    name,
+    description,
+    inputSchema,
+    handler,
+    ...(extras?.annotations ? { annotations: extras.annotations } : {}),
+  };
+}
+
+/**
+ * The orchestrator's tool surface — the harness tools and every
  * protocol rail they enforce: once-per-phase template economy
  * (warn-once-then-allow), review-round backstop caps, the
  * branch-fixed-after-first-prompt rule, advance-needs-a-review-round, and
@@ -42,22 +88,41 @@ export interface PhaseToolsDeps {
   log: (line: string) => void;
   /** A staged human answer, delivered to the first ask_human call instead of pausing. */
   stagedAnswer?: string;
+  /**
+   * The per-phase in-memory rails — the same-role in-flight guard and the
+   * warn-once resend set — injected by a host that rebuilds the tool surface per
+   * call against fresh disk state but must keep these alive across calls within
+   * a phase (the run-scoped interactive server, mcp-server.ts). Omitted by the
+   * headless driver and the explicit-phase server, which build one registry per
+   * phase invocation and so own a fresh pair.
+   */
+  rails?: { turnsInFlight: Set<WorkerRole>; resendWarned: Set<string> };
 }
 
 export interface PhaseTools {
-  // The SDK's own surface takes Array<SdkMcpToolDefinition<any>> — each tool
-  // has its own schema, so the list is heterogeneous by nature.
-  tools: Array<SdkMcpToolDefinition<any>>;
-  /**
-   * Live outcome flags the driver loop reads after each orchestrator turn:
-   * advance_phase and ask_human set them at call time.
-   */
-  outcome: { advanceRequested: boolean; questionQueued: boolean };
+  // Each tool has its own schema, so the list is heterogeneous by nature.
+  tools: Array<KernelTool<any>>;
 }
 
-export function createPhaseTools({ state, phase, providers, log, stagedAnswer: initialAnswer }: PhaseToolsDeps): PhaseTools {
-  const outcome = { advanceRequested: false, questionQueued: false };
+export function createPhaseTools({ state, phase, providers, log, stagedAnswer: initialAnswer, rails }: PhaseToolsDeps): PhaseTools {
   let stagedAnswer = initialAnswer ?? null;
+
+  // First-terminal-wins: advance_phase and ask_human each end the phase, so the
+  // first to run this phase records the terminal marker; a second terminal call
+  // afterward is refused (the phase is already ending) so exactly one phase.*
+  // event is emitted at quiescence. Scoped to this phase: a stale marker from a
+  // prior phase (a crash re-delivered it across the snapshot boundary) does not
+  // block this phase's first terminal call — it is overwritten.
+  const terminalAlreadySet = (): boolean => state.terminalMarker?.phase === phase;
+  const alreadyEnding = (): { content: Array<{ type: 'text'; text: string }>; isError: true } => ({
+    content: [
+      {
+        type: 'text' as const,
+        text: 'This phase is already ending — you have already called advance_phase or ask_human this turn, and that decision is recorded. A second terminal call is ignored. End your turn with a one-line status; the run proceeds from the decision already made.',
+      },
+    ],
+    isError: true,
+  });
 
   // Roles with a worker turn currently in flight. Parallel send_prompt calls
   // to DIFFERENT roles are legal and wanted (the scheduler runs them
@@ -65,7 +130,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   // turns into the SAME role would race one session's resume, so that case is
   // refused here. In-memory is correct: concurrency exists only within one
   // driver process (the pid guard excludes a second).
-  const turnsInFlight = new Set<WorkerRole>();
+  const turnsInFlight = rails?.turnsInFlight ?? new Set<WorkerRole>();
 
   // Once-per-phase template discipline (system prompt <protocol>): a base
   // template re-sent to the same worker in the same phase gets one steering
@@ -76,11 +141,62 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     const roles = (phases[phase] ??= {});
     return (roles[role] ??= []);
   };
-  const resendWarned = new Set<string>();
+  const resendWarned = rails?.resendWarned ?? new Set<string>();
   const isBaseTemplate = (tag: string): boolean => tag !== 'custom' && !tag.endsWith('-again');
 
-  const tools: Array<SdkMcpToolDefinition<any>> = [
-    tool(
+  // get_task folds a staged human input (an approval rider, a reject's
+  // feedback, or an answer) into the phase brief as an appended block — reusing
+  // the same resume/rider prose the headless prompt path builds, so the
+  // orchestrator reads the human's words identically in either host.
+  const stagedInputBlock = (msg: HumanMessage): string => {
+    switch (msg.kind) {
+      case 'approval':
+        return approvalRiderBlock(msg.text);
+      case 'answer':
+        return answerResumePrompt(msg.text);
+      case 'feedback':
+        return feedbackResumePrompt(phase, msg.text);
+    }
+  };
+  // When this phase's terminal marker is set, get_task is the one surface the
+  // post-terminal rail leaves open: it reports the park and re-anchors, with no
+  // side effects.
+  const parkedBrief = (kind: 'advance' | 'flag'): string =>
+    kind === 'advance'
+      ? 'This phase is parked at its gate — your advance_phase packet is recorded. Present it to the human and propose the crossing (duet continue --approve "<rider>", or --reject "<feedback>"); a gate is crossed by the human’s tap, never by a tool of yours. Do not start new work — the phase is ending. Re-anchor here any time with get_task.'
+      : 'This phase is parked on a queued question — your ask_human flag is recorded. Present it to the human and wait for their answer (duet continue --answer "<answer>"). Do not start new work until it arrives. Re-anchor here any time with get_task.';
+
+  const tools: Array<KernelTool<any>> = [
+    kernelTool(
+      'get_task',
+      'Read your task for the current phase — the orchestrator’s entry brief: the documents in scope, the branch policy, the attendance posture, and the worked examples, returned in full every time you call it. Call it at the start of each phase, and to re-anchor on disk truth whenever your context may be stale (your operating instructions name when). Not read-only: the first call in a phase marks the phase started, and a pending piece of human input — a gate-approval rider, a reject’s feedback, or an answer to a queued question — is folded into the brief as an appended block exactly once; a later call returns the brief alone, with nothing left to consume. When the phase is already parked at its gate or flag (you have called advance_phase or ask_human), this instead reports that you are parked and should present the packet and propose duet continue, and performs no side effect.',
+      {},
+      async () => {
+        // Parked: a current-phase terminal marker means the orchestrator
+        // already advanced/flagged. Report the park; touch nothing.
+        const marker = state.terminalMarker;
+        if (marker?.phase === phase) {
+          return { content: [{ type: 'text' as const, text: parkedBrief(marker.kind) }] };
+        }
+        // Side effect 1 — mark the phase started once per phase (the first call
+        // that finds it unset), exactly as the headless basePrompt does.
+        if (!state.phaseStarted[phase]) {
+          state.phaseStarted[phase] = true;
+          saveRunState(state);
+        }
+        // Side effect 2 — consume any staged human input, once per message and
+        // independent of phaseStarted, so a same-phase reject/answer (where the
+        // phase is long since started) still folds. consumeHumanInput persists,
+        // so a later call finds nothing and returns the base brief alone.
+        const pending = consumeHumanInput(state);
+        const brief = buildPhaseBrief(state, phase);
+        if (!pending) return { content: [{ type: 'text' as const, text: brief }] };
+        log(`[get_task] folded staged ${pending.kind} into the ${phase} brief`);
+        return { content: [{ type: 'text' as const, text: `${brief}\n\n${stagedInputBlock(pending)}` }] };
+      },
+    ),
+
+    kernelTool(
       'list_snippets',
       'Read the snippet library — the prompt templates the workflow uses, which encode its conventions (altitude lenses, round-2 discipline, compaction shapes); read them before composing worker prompts. By default the result is focused on the current phase: this phase’s templates and the always-available helpers in full, plus a by-key index of the other phases’ templates in arc order — the snippets you actually reach for now, without the rest as noise. Pass all=true for every snippet’s full body, which you want when you genuinely need a template from another phase. Snippets you have already sent this phase are annotated: those workers still hold the instructions, so later turns want the delta, not the template.',
       {
@@ -101,7 +217,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       { annotations: { readOnlyHint: true } }, // genuinely read-only; also batches with parallel sends
     ),
 
-    tool(
+    kernelTool(
       'send_prompt',
       'Send a prompt to a worker agent and return its final response. Each role is one persistent session: a later call to the same role continues that worker’s conversation, so refer back to earlier turns instead of repeating context the worker has already seen — and the instructions you send persist the same way, so a full snippet template goes to a given worker once per phase, with later turns steered by deltas (-again variants, short frame-referencing follow-ups). Worker turns are slow (often minutes) and a sent prompt becomes a permanent part of the session — there is no unsend — so compose the full body before calling and send one well-formed prompt rather than iterating by sending. Independent turns to different roles can be issued as parallel tool calls in one message and run concurrently — the frame phase’s two unshared analyses are the canonical case; a second turn to the same role while one is in flight is refused until the first returns (one session is one conversation). Worker budget is per-turn: each call carries a fresh cost ceiling, so a worker reporting low budget mid-turn means the remaining work continues in another turn — never let the budget rail shrink the scope; descoping is a product decision that needs work-content reasons. Sending the reviewer a prompt whose tag starts with "review" counts as a review round against the phase’s backstop cap. A claude-bound worker’s context can be deliberately compacted: a body that is literally "/compact " followed by your instructions (e.g. an adapted compact-for-* snippet) resets that session in place, keeping what the instructions name; codex-bound workers compact themselves automatically, so this applies only to claude.',
       {
@@ -186,15 +302,30 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             readOnly: args.role === 'reviewer',
             cwd: state.cwd,
           });
-          state.workerSessions[args.role] = turn.sessionId;
-          // Re-read rather than reusing `used`: the worker turn above is a
-          // minutes-long await, and the orchestrator may issue tool calls in
-          // parallel — a stale capture would undercount the round.
-          if (isReviewRound) state.rounds[phase] = (state.rounds[phase] ?? 0) + 1;
-          if (isBaseTemplate(args.tag) && !sentThisPhase(args.role).includes(args.tag)) {
-            sentThisPhase(args.role).push(args.tag);
+          // Merge this turn's results against FRESH disk state, then save — so a
+          // concurrent cross-role send cannot clobber the other's worker session
+          // / cost / sent-snippets / rounds / context with a stale full-object
+          // save. Under the run-scoped interactive host each call loads its own
+          // RunState (mcp-server.ts), so two parallel sends would otherwise each
+          // save the call-start object and the later wins. The load→merge→save
+          // here runs synchronously (no await), so concurrent sends serialize at
+          // this point: the second loads after the first saved, and the deltas
+          // (a set session, a += cost, an appended tag, a +1 round) compose. In
+          // headless the shared `state` is already disk-fresh, so the merge is a
+          // no-op overlay. Re-sync the closed-over `state` afterward so
+          // subsequent same-phase reads — the warn-once / round rails,
+          // list_snippets annotations — see this turn's result.
+          const fresh = loadRunState(state.cwd, state.runId);
+          fresh.workerSessions[args.role] = turn.sessionId;
+          // Re-read off fresh rather than reusing `used`: the minutes-long await
+          // above means a parallel call may have moved the round count.
+          if (isReviewRound) fresh.rounds[phase] = (fresh.rounds[phase] ?? 0) + 1;
+          if (isBaseTemplate(args.tag)) {
+            const sent = ((fresh.sentSnippets ??= {})[phase] ??= {});
+            const tags = (sent[args.role] ??= []);
+            if (!tags.includes(args.tag)) tags.push(args.tag);
           }
-          if (turn.costUsd) state.costs.claudeWorkersUsd += turn.costUsd;
+          if (turn.costUsd) fresh.costs.claudeWorkersUsd += turn.costUsd;
           // A claude turn that reported no cost (the interactive transport, by
           // P5) means the claudeWorkersUsd total is partial — mark it so the
           // status never presents the known sum as the complete total. The
@@ -202,15 +333,16 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           // optional in the envelope, so anything needing "interactive"
           // specifically reads the binding's transport, never a missing cost.
           if (provider.name === 'claude' && turn.costUsd === undefined) {
-            state.costs.claudeWorkersCostPartial = true;
+            fresh.costs.claudeWorkersCostPartial = true;
           }
           if (provider.name === 'codex' && turn.tokens) {
-            state.costs.codexTokens.input += turn.tokens.input;
-            state.costs.codexTokens.output += turn.tokens.output;
+            fresh.costs.codexTokens.input += turn.tokens.input;
+            fresh.costs.codexTokens.output += turn.tokens.output;
           }
-          if (turn.context) recordContextUsage(state, args.role, turn.context);
-          state.lastActivity = `send_prompt → ${args.role} (${args.tag})`;
-          saveRunState(state);
+          if (turn.context) recordContextUsage(fresh, args.role, turn.context);
+          fresh.lastActivity = `send_prompt → ${args.role} (${args.tag})`;
+          saveRunState(fresh);
+          Object.assign(state, fresh);
           const ctx = turn.context ? ` · context ${contextPercent(turn.context)}%` : '';
           appendVoiceLog(state, args.role, `▶ response (session ${turn.sessionId})${ctx}`, turn.text);
           log(`[send_prompt] ← ${args.role} responded (${turn.text.length} chars${ctx})`);
@@ -263,7 +395,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       { annotations: { readOnlyHint: true } },
     ),
 
-    tool(
+    kernelTool(
       'ask_human',
       'Flag a question for the human: product or direction calls, environment actions only they can take (deploys, credentials, migrations), or blockers you cannot route around. Route technical and content questions to a worker instead — the human is the editor-in-chief, not a third engineer. Asking always pauses the run until the answer arrives: minutes when the human is at the terminal, hours during the AFK phase — so make every question self-contained, and let questions that can wait for a gate wait.',
       {
@@ -276,10 +408,14 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           stagedAnswer = null;
           return { content: [{ type: 'text' as const, text: `The human answered: ${answer}` }] };
         }
+        if (terminalAlreadySet()) return alreadyEnding();
         state.pendingQuestion = { question: args.question, ...(args.context ? { context: args.context } : {}) };
         state.lastActivity = 'ask_human (queued)';
+        // The marker rides the SAME atomic write as the question it carries, so
+        // first-terminal-wins and the flag packet land together — never a
+        // half-state where one persisted and the other did not.
+        state.terminalMarker = { phase, kind: 'flag' };
         saveRunState(state);
-        outcome.questionQueued = true;
         log(`[ask_human] queued: ${args.question}`);
         appendVoiceLog(state, 'orchestrator', `ask_human queued`, args.question);
         return {
@@ -293,7 +429,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       },
     ),
 
-    tool(
+    kernelTool(
       'create_branch',
       'Create and switch to the run’s working branch — for when the repo sits on its default branch (or one unrelated to this problem) at run start. The branch is fixed once a worker has been prompted, so this is only callable before your first send_prompt; after creating it, name the branch in your first prompt to each worker with the note that branch management is settled outside their sessions.',
       {
@@ -341,7 +477,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       },
     ),
 
-    tool(
+    kernelTool(
       'advance_phase',
       'Declare the current phase complete. Legal only when the phase’s exit criteria are met (the review loop converged, open points are minor or settled). Lands on the phase’s human gate — your summary is what the human decides from, so make it honest about what changed, what was rejected, and what remains open.',
       {
@@ -361,6 +497,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           .describe('Repo-relative path of the spec file, when this phase produced or moved it — the harness records it for later phases.'),
       },
       async (args) => {
+        if (terminalAlreadySet()) return alreadyEnding();
         const roundsRun = state.rounds[phase] ?? 0;
         if (PHASE[phase].reviewLoop && roundsRun === 0) {
           return {
@@ -376,8 +513,10 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         if (args.spec_path) state.specPath = args.spec_path;
         state.phaseSummaries[phase] = { summary: args.summary, artifacts: args.artifacts };
         state.lastActivity = `advance_phase (${phase})`;
+        // The marker rides the SAME atomic write as the gate packet, so
+        // first-terminal-wins and the packet are one durable record.
+        state.terminalMarker = { phase, kind: 'advance' };
         saveRunState(state);
-        outcome.advanceRequested = true;
         log(`[advance_phase] ${phase} phase complete (${roundsRun} review rounds)`);
         appendVoiceLog(state, 'orchestrator', `advance_phase (${phase})`, args.summary);
         // Convention 5 (docs/prompting-and-tool-design.md): the result must
@@ -395,7 +534,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       },
     ),
 
-    tool(
+    kernelTool(
       'propose_snippet_edit',
       'Queue a persistent change to the snippet library for the human’s end-of-run review. Library edits never apply mid-run: a silently changed prompt would compound across every later run, so the human stays editor-in-chief of the library. Use this when a snippet was persistently inadequate, not for one-off adaptations (those you just make per-turn).',
       {
@@ -423,7 +562,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       },
     ),
 
-    tool(
+    kernelTool(
       'write_note',
       'Append a friction observation to the run’s notes file — the shared journal the human reviews to improve the workflow between runs. Note things like a snippet that didn’t fit, a triage call you were unsure about, or worker behavior worth remembering.',
       {
@@ -441,18 +580,23 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
    * after a handler produces its result — refusals included — pending human
    * steers are appended as a tagged block and consumed. Two exceptions, one
    * rule: steers deliver only on results that CONTINUE the phase. A call that
-   * set an outcome flag (advance requested, question queued) is ending the
-   * turn, and guidance appended to a dying turn lands and dies — those steers
-   * stay pending and ride the next harness prompt instead (carry-forward,
-   * src/harness/driver.ts). Peek → append → mark-delivered order: a crash in
+   * recorded this phase's terminal marker (advance requested, question queued)
+   * is ending the turn, and guidance appended to a dying turn lands and dies —
+   * those steers stay pending and ride the next harness prompt instead
+   * (carry-forward, src/harness/driver.ts). Peek → append → mark-delivered order: a crash in
    * between redelivers (a repeated instruction is benign where a lost one is
    * not). The steer path is fail-soft — it must never corrupt a tool result.
    */
-  const withSteerDelivery = (def: SdkMcpToolDefinition<any>): SdkMcpToolDefinition<any> => ({
+  const withSteerDelivery = (def: KernelTool<any>): KernelTool<any> => ({
     ...def,
     handler: async (args, extra) => {
       const result = await def.handler(args, extra);
-      if (outcome.advanceRequested || outcome.questionQueued) return result;
+      // A turn-ending result (this phase's terminal marker is now set) is not a
+      // delivery surface: steers appended to a dying turn land and die, so they
+      // stay pending and ride the next harness prompt (carry-forward). The
+      // phase scope matters — a stale marker from a prior phase must not
+      // suppress delivery on this phase's continuing results.
+      if (state.terminalMarker?.phase === phase) return result;
       try {
         const steers = listPendingSteers(state);
         if (steers.length === 0) return result;
@@ -470,5 +614,50 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     },
   });
 
-  return { tools: tools.map(withSteerDelivery), outcome };
+  /**
+   * The post-terminal quiescence rail (Stage 1): a long-lived interactive
+   * kernel server has no process exit to make a phase quiescent, so once this
+   * phase's terminal marker is set, every phase-CONTINUING tool is refused
+   * structurally — the orchestrator must present the packet and cross, not send
+   * another worker turn or mutate the run after the gate packet is recorded.
+   * get_task stays open (the status/re-anchor read), and the terminal tools
+   * self-gate via terminalAlreadySet, so neither is wrapped. Harmless headless
+   * (the turn has already ended), load-bearing interactive. Scoped to THIS
+   * phase: a stale marker from a prior phase does not refuse this phase's work.
+   */
+  const REFUSED_AFTER_TERMINAL = new Set([
+    'send_prompt',
+    'list_snippets',
+    'create_branch',
+    'propose_snippet_edit',
+    'write_note',
+  ]);
+  const phaseEnding = (toolName: string): CallToolResult => ({
+    content: [
+      {
+        type: 'text' as const,
+        text: `This phase is ending — it is parked at its gate or flag and that decision is recorded, so ${toolName} is refused here. Present the packet to the human and cross with duet continue, or re-anchor with get_task; the run proceeds from the decision already made.`,
+      },
+    ],
+    isError: true,
+  });
+  const withPostTerminalRail = (def: KernelTool<any>): KernelTool<any> => ({
+    ...def,
+    handler: async (args, extra) => {
+      if (state.terminalMarker?.phase === phase) return phaseEnding(def.name);
+      return def.handler(args, extra);
+    },
+  });
+
+  // Rail first, then steer delivery: a refused call returns before any steer
+  // could ride a dying phase (withSteerDelivery's own marker guard also holds,
+  // so this is belt-and-suspenders — the rail adds the refusal of the handler
+  // itself, which withSteerDelivery alone would not).
+  return {
+    tools: tools.map((def) =>
+      REFUSED_AFTER_TERMINAL.has(def.name)
+        ? withSteerDelivery(withPostTerminalRail(def))
+        : withSteerDelivery(def),
+    ),
+  };
 }

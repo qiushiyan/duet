@@ -1,16 +1,24 @@
-import { fromPromise, setup } from 'xstate';
+import { fromCallback, setup } from 'xstate';
+import type { EventObject } from 'xstate';
 import { runPhase } from './driver.ts';
-import type { DriverInput, DriverOutput } from './driver.ts';
+import type { DriverInput } from './driver.ts';
+import type { PhaseEvent } from './phase-events.ts';
 import { PHASES } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
 
 /**
  * The harness statechart — Layer 1 of the three-layer architecture
  * (docs/automation-design.md). Each phase is a state that runs the
- * orchestrator agent (an invoked promise actor); each gate and flag-wait is
- * an actor-less state that transitions ONLY on human events. Agent code has
- * no channel to send machine events, so gate-skipping is unrepresentable,
- * not merely forbidden.
+ * orchestrator agent (an invoked actor that emits a phase.* event when its
+ * session resolves); each gate and flag-wait is an actor-less state that
+ * transitions ONLY on human events. Agent code has no channel to send the
+ * human events, so gate-skipping is unrepresentable, not merely forbidden.
+ *
+ * Two event vocabularies, kept distinct: `phase.advance`/`phase.flag` are
+ * internal, valid only from phase states; `human.approve|reject|answer` are
+ * authority, valid only from gate/flag-wait states. A gate has no `phase.*`
+ * handler, so `advance_phase` parks but cannot cross — a property of the
+ * vocabulary, not a prompt (src/harness/phase-events.ts).
  *
  * The states are built from the phase table (src/phases.ts) — the arc is a
  * linear chain, so each phase contributes `<name>Loop` + `<name>FlagWait` +
@@ -66,19 +74,15 @@ function phaseState(
         cwd: context.cwd,
         phase,
       }),
-      onDone: [
-        {
-          guard: {
-            type: 'isAdvanced',
-            params: ({ event }: { event: { output: DriverOutput } }) => ({ output: event.output }),
-          },
-          target: targets.advanced,
-        },
-        { target: targets.flagWait },
-      ],
-      // Driver errors are caught inside runPhase and surfaced as flags; this
-      // is the backstop for bugs in the driver itself.
+      // Driver errors are caught inside runPhase (and the actor's own catch)
+      // and surfaced as phase.flag; this is the backstop for an error escaping
+      // both — e.g. a synchronous throw building the actor input.
       onError: { target: targets.flagWait },
+    },
+    // The phase driver emits exactly one of these when its session resolves.
+    on: {
+      'phase.advance': { target: targets.advanced },
+      'phase.flag': { target: targets.flagWait },
     },
   };
 }
@@ -128,18 +132,56 @@ export const duetMachine = setup({
   types: {} as {
     context: MachineInput;
     input: MachineInput;
-    events: { type: 'human.approve' } | { type: 'human.reject' } | { type: 'human.answer' };
+    events:
+      | { type: 'human.approve' }
+      | { type: 'human.reject' }
+      | { type: 'human.answer' }
+      | PhaseEvent;
   },
   guards: {
-    isAdvanced: (_, params: { output: DriverOutput }) => params.output.outcome === 'advanced',
     hasSpec: ({ context }) => context.hasSpec,
   },
   actors: {
-    phaseDriver: fromPromise<DriverOutput, DriverInput>(({ input }) => runPhase(input)),
+    // A callback actor, not a promise: it emits a phase.* event to the parent
+    // when the session resolves (a cooperative hand-off), rather than resolving
+    // an output the parent guards on. The catch is the crash backstop — runPhase
+    // already converts infra failure to phase.flag and persists the question, so
+    // an exception reaching here is an unexpected escape, still surfaced as a flag.
+    phaseDriver: fromCallback<EventObject, DriverInput>(({ input, sendBack }) => {
+      runPhase(input)
+        .then((event) => sendBack(event))
+        .catch(() => sendBack({ type: 'phase.flag' }));
+    }),
   },
 }).createMachine({
   id: 'duet',
   context: ({ input }) => input,
   initial: 'route',
   states: buildStates(),
+});
+
+/**
+ * The interactive variant — Stage 1's host, where the human's Claude Code
+ * session drives each phase by calling kernel tools and `duet continue`
+ * (crossInteractive) applies the gate events. The phaseDriver is replaced via
+ * the same `machine.provide` seam stdioPhaseMachine and the test scriptedMachine
+ * use, but with an INERT actor: it runs no session and never sendBacks a
+ * phase.* event. The machine therefore advances only on events sent to it, never
+ * on its own.
+ *
+ * `provide` swaps the actor, it does NOT remove the phase states' `invoke` — so
+ * a restored phase-loop snapshot still re-invokes this actor, but harmlessly,
+ * because it carries no in-flight work to lose. That is exactly the property the
+ * persistence guardrail needs (never blind-restart an actor with live work):
+ * here restability comes from the actor being inert, not absent, which makes a
+ * phase loop a legitimate RESTING state for an interactive run (for the real
+ * driver the same snapshot would be mid-flight, hence never persisted).
+ */
+export const interactiveMachine: typeof duetMachine = duetMachine.provide({
+  actors: {
+    phaseDriver: fromCallback<EventObject, DriverInput>(() => {
+      // Inert by design: the interactive session is the driver. No runPhase, no
+      // sendBack — the machine waits for the events crossInteractive applies.
+    }),
+  },
 });

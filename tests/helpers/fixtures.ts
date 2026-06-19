@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { test as base } from 'vitest';
 import { DEFAULT_BINDINGS } from '../../src/config.ts';
 import type { RunTurnOptions, WorkerProvider, WorkerTurn } from '../../src/providers/types.ts';
-import { createRun } from '../../src/run-store.ts';
+import { createRun, saveRunState } from '../../src/run-store.ts';
 import type { RunState } from '../../src/run-store.ts';
 
 /**
@@ -41,6 +41,8 @@ export interface Fixtures {
   projectDir: string;
   /** A framing-only run created in projectDir with the default bindings. */
   run: RunState;
+  /** A framing-only run whose orchestration host is the interactive session. */
+  interactiveRun: RunState;
 }
 
 export const test = base.extend<Fixtures>({
@@ -51,5 +53,11 @@ export const test = base.extend<Fixtures>({
   },
   run: async ({ projectDir }, use) => {
     await use(createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, framing: 'test framing' }));
+  },
+  interactiveRun: async ({ projectDir }, use) => {
+    const state = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, framing: 'test framing' });
+    state.orchestrationHost = 'interactive';
+    saveRunState(state);
+    await use(state);
   },
 });

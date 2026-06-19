@@ -8,9 +8,21 @@ import { createActor } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
 import { loadRoleBindings } from './config.ts';
 import { DEFAULT_FRAMING_FILE, resolveHumanText, resolveRunInputs } from './framing.ts';
-import { aliveDriverPid, driveToQuiescence, killDriver, probeRunPosition, spawnDrive, waitForRunStop } from './harness/lifecycle.ts';
+import {
+  aliveDriverPid,
+  crossInteractive,
+  driveToQuiescence,
+  interactiveContinuePlan,
+  killDriver,
+  probeRunPosition,
+  spawnDrive,
+  validateInteractiveCrossing,
+  waitForRunStop,
+} from './harness/lifecycle.ts';
 import type { HumanEvent } from './harness/lifecycle.ts';
 import { duetMachine } from './harness/machine.ts';
+import { serveKernelStdio, serveRunScopedKernelStdio } from './harness/mcp-server.ts';
+import { runOrchestrate } from './orchestrate.ts';
 import { phaseOfGateState } from './phases.ts';
 import { buildStatusModel, renderStatus, steerRefusal } from './status.ts';
 import { openTmuxView } from './tmux-view.ts';
@@ -107,7 +119,8 @@ program
   .option('--impl <provider[:model]>', 'implementer binding override')
   .option('--reviewer <provider[:model]>', 'reviewer binding override')
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
-  .action(async (opts: { spec?: string; framing?: string; template?: string; gatesAt?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean }) => {
+  .option('--interactive', 'orchestrate this run from your own interactive Claude Code session (/duet) instead of the headless driver — brings up the wired session over FRAME → PLAN; impl onward still runs headless after the plan-gate handoff')
+  .action(async (opts: { spec?: string; framing?: string; template?: string; gatesAt?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean; interactive?: boolean }) => {
     const cwd = process.cwd();
 
     // The framing's frontmatter is the machine/prose boundary: parsed
@@ -155,9 +168,92 @@ program
     );
     if (state.gatesAt) console.log(`gates: attending ${state.gatesAt.join(', ')} — other gates pre-authorized (auto-cross, packets recorded)`);
     console.log('');
+    if (opts.interactive) {
+      // Stage 1: orchestrate from the human's interactive /duet session instead
+      // of the headless driver — no auto-spawnDrive. runOrchestrate marks the run
+      // interactive and launches the wired claude session (it blocks until that
+      // session ends). --gates-at still applies to the headless tail after the
+      // plan-gate handoff.
+      console.log(`bringing up the interactive /duet orchestrator for run ${state.runId} …`);
+      const launched = runOrchestrate(state);
+      if (launched.error) fail(launched.error.message);
+      return;
+    }
     const pid = spawnDrive(state);
     printWatchHints(state, pid, state.specPath ? 'SPEC review loop' : 'FRAME phase');
   });
+
+program
+  .command('orchestrate')
+  .description(
+    'Bring up the interactive /duet orchestrator for a run: a Claude Code session wired to drive it over FRAME → PLAN, with the single gate-safety ask rule applied. Relaunch to reconnect after a dropped session (it re-anchors on disk via get_task).',
+  )
+  .argument('[runId]', 'run id (defaults to the latest run in this project)')
+  .action((runId: string | undefined) => {
+    const cwd = process.cwd();
+    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
+    if (!state) fail('no runs found in this project — start one with duet new --interactive');
+    console.log(`bringing up the interactive /duet orchestrator for run ${state.runId} …`);
+    const launched = runOrchestrate(state);
+    if (launched.error) fail(launched.error.message);
+  });
+
+/**
+ * Stage the human's verbatim text for a gate/flag crossing — reject feedback,
+ * an approval rider, or a flag answer — composing in $EDITOR for a bare flag.
+ * Shared by the headless and interactive continue paths. Aborts (fail) on an
+ * empty reject/answer; an empty approval rider just approves without one.
+ */
+async function stageContinueText(
+  state: RunState,
+  opts: { approve?: boolean | string; reject?: boolean | string; answer?: boolean | string },
+): Promise<void> {
+  if (opts.reject !== undefined) {
+    const feedback = await resolveHumanText(
+      opts.reject,
+      'Rejecting the gate: write the feedback that sends the artifact back. It reaches the orchestrator verbatim, as editor-in-chief input.',
+    );
+    if (!feedback.trim()) {
+      fail('rejection aborted — no feedback written. A reject sends the artifact back, and the orchestrator routes the rework from your why.');
+    }
+    stageHumanInput(state, { kind: 'feedback', text: feedback });
+  }
+  if (opts.approve !== undefined) {
+    const rider = await resolveHumanText(
+      opts.approve,
+      'Approving the gate: optionally write a rider — adjustments that ride into the next phase with your approval. Save empty to approve without one.',
+    );
+    if (rider.trim()) stageHumanInput(state, { kind: 'approval', text: rider.trim() });
+  }
+  if (opts.answer !== undefined) {
+    const answer = await resolveHumanText(
+      opts.answer,
+      'Answering the queued question: write your answer. It reaches the orchestrator verbatim.',
+    );
+    if (!answer.trim()) {
+      fail('answer aborted — nothing written. The queued question is still waiting; answer it with duet continue --answer "<text>".');
+    }
+    stageHumanInput(state, { kind: 'answer', text: answer });
+  }
+}
+
+/**
+ * Catch the certain mistake where an optional-value flag swallowed a run id as
+ * its text (`duet continue --approve <runId>`): a run id parsed as flag text is
+ * never what the human meant.
+ */
+function guardRunIdAsText(
+  cwd: string,
+  opts: { approve?: boolean | string; reject?: boolean | string; answer?: boolean | string },
+): void {
+  for (const value of [opts.approve, opts.reject, opts.answer]) {
+    if (typeof value === 'string' && listRuns(cwd).some((r) => r.runId === value)) {
+      fail(
+        `"${value}" is a run id, but it was parsed as the flag's text — put the run id before the flag (duet continue ${value} --approve), or quote the text if you really meant it.`,
+      );
+    }
+  }
+}
 
 program
   .command('continue')
@@ -175,8 +271,12 @@ program
     '--answer [text]',
     'answer the queued question; the text reaches the orchestrator verbatim. Bare --answer opens $EDITOR to compose it (an empty result aborts)',
   )
+  .option(
+    '--headless',
+    'drop an interactive (/duet) run to the headless driver: with a gate decision it crosses then hands off to a detached _drive; bare (mid-phase) it continues the current phase headless. The fallback for a dead or unwanted interactive session.',
+  )
   .option('--tmux', 'open (or reuse) the tmux viewer for this run')
-  .action(async (runId: string | undefined, opts: { approve?: boolean | string; reject?: boolean | string; answer?: boolean | string; tmux?: boolean }) => {
+  .action(async (runId: string | undefined, opts: { approve?: boolean | string; reject?: boolean | string; answer?: boolean | string; headless?: boolean; tmux?: boolean }) => {
     const cwd = process.cwd();
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
     if (!state) fail('no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
@@ -206,6 +306,69 @@ program
       }
       showStatus(state);
       console.log(`\nphase running in the background (pid ${runningPid}) — live logs: duet view ${state.runId}`);
+      return;
+    }
+
+    const eventType = opts.approve !== undefined
+      ? ('approve' as const)
+      : opts.reject !== undefined
+        ? ('reject' as const)
+        : opts.answer !== undefined
+          ? ('answer' as const)
+          : undefined;
+
+    // Stage 1: the human's interactive /duet session is the orchestrator.
+    // `duet continue` advances the machine inline (crossInteractive, no _drive)
+    // until the plan-gate handoff. Runs BEFORE the snapshot-based validation
+    // below, because the first FRAME gate has no machine snapshot until
+    // crossInteractive persists one — the headless path's "no snapshot ⇒ crash"
+    // would misfire on it.
+    if (state.orchestrationHost === 'interactive') {
+      const position = probeRunPosition(state);
+
+      if (!eventType) {
+        if (opts.headless) {
+          // --headless with no decision is a mid-phase drop to the headless
+          // driver. At a gate/flag the human owes a decision first, not a drop.
+          if (position.kind === 'gate' || position.kind === 'flag') {
+            fail(
+              `the run is parked at its ${position.kind} — cross it with --headless --approve/--reject (a gate) or --answer (a flag); bare --headless is only for a mid-phase drop.`,
+            );
+          }
+          delete state.orchestrationHost;
+          saveRunState(state);
+          const pid = spawnDrive(state);
+          printWatchHints(state, pid, 'dropped to headless (mid-phase)');
+          return;
+        }
+        showStatus(state); // bare continue on an interactive run: show the gate/rest
+        return;
+      }
+
+      const invalid = validateInteractiveCrossing(position, eventType);
+      if (invalid) fail(`run ${state.runId} ${invalid}.`);
+
+      guardRunIdAsText(cwd, opts);
+      await stageContinueText(state, opts);
+
+      // Validation passed, so the position is a gate or flag — both carry a phase.
+      if (position.kind !== 'gate' && position.kind !== 'flag') return;
+      const action = interactiveContinuePlan(position.phase, eventType, Boolean(opts.headless));
+      crossInteractive(state, { type: `human.${eventType}` });
+
+      if (action === 'handoff') {
+        const handed = loadRunState(cwd, state.runId);
+        delete handed.orchestrationHost;
+        saveRunState(handed);
+        const pid = spawnDrive(handed);
+        printWatchHints(handed, pid, opts.headless ? 'handed off to headless' : 'plan approved — AFK impl');
+        return;
+      }
+      const rest = probeRunPosition(loadRunState(cwd, state.runId));
+      const restPhase = rest.kind === 'interactive' ? rest.phase : undefined;
+      console.log(
+        `run ${state.runId}: crossed inline${restPhase ? ` — the /duet session drives the ${restPhase} phase next (re-anchor with get_task)` : ''}.`,
+      );
       return;
     }
 
@@ -252,13 +415,6 @@ program
       return;
     }
 
-    const eventType = opts.approve !== undefined
-      ? ('approve' as const)
-      : opts.reject !== undefined
-        ? ('reject' as const)
-        : opts.answer !== undefined
-          ? ('answer' as const)
-          : undefined;
     if (!eventType) {
       showStatus(state);
       return;
@@ -276,45 +432,8 @@ program
       );
     }
 
-    // An optional-value flag swallows the next token, so a run id typed after
-    // the flag would silently become the text. Catch the certain mistake.
-    for (const value of [opts.approve, opts.reject, opts.answer]) {
-      if (typeof value === 'string' && listRuns(cwd).some((r) => r.runId === value)) {
-        fail(
-          `"${value}" is a run id, but it was parsed as the flag's text — put the run id before the flag (duet continue ${value} --approve), or quote the text if you really meant it.`,
-        );
-      }
-    }
-
-    // A bare flag means "compose in the editor" — a shell flag is a hostile
-    // place for substantial feedback (the text is discarded after staging).
-    if (opts.reject !== undefined) {
-      const feedback = await resolveHumanText(
-        opts.reject,
-        'Rejecting the gate: write the feedback that sends the artifact back. It reaches the orchestrator verbatim, as editor-in-chief input.',
-      );
-      if (!feedback.trim()) {
-        fail('rejection aborted — no feedback written. A reject sends the artifact back, and the orchestrator routes the rework from your why.');
-      }
-      stageHumanInput(state, { kind: 'feedback', text: feedback });
-    }
-    if (opts.approve !== undefined) {
-      const rider = await resolveHumanText(
-        opts.approve,
-        'Approving the gate: optionally write a rider — adjustments that ride into the next phase with your approval. Save empty to approve without one.',
-      );
-      if (rider.trim()) stageHumanInput(state, { kind: 'approval', text: rider.trim() });
-    }
-    if (opts.answer !== undefined) {
-      const answer = await resolveHumanText(
-        opts.answer,
-        'Answering the queued question: write your answer. It reaches the orchestrator verbatim.',
-      );
-      if (!answer.trim()) {
-        fail('answer aborted — nothing written. The queued question is still waiting; answer it with duet continue --answer "<text>".');
-      }
-      stageHumanInput(state, { kind: 'answer', text: answer });
-    }
+    guardRunIdAsText(cwd, opts);
+    await stageContinueText(state, opts);
 
     const pid = spawnDrive(state, eventType);
     printWatchHints(state, pid, `phase (after --${eventType})`);
@@ -339,6 +458,27 @@ const driveCommand = new Command('_drive')
     showStatus(stop.state);
   });
 program.addCommand(driveCommand, { hidden: true });
+
+// Internal harness: serve a run's kernel tool surface over stdio MCP, so a
+// client process outside duet can call the orchestrator tools. Two modes:
+// with an explicit <phase>, a single-phase server (the Stage-0 boundary/test
+// path); without it, the run-scoped phase-less server the Stage-1 interactive
+// session connects to — it resolves the active phase from disk per call and
+// follows the run across its gates. Production headless still drives in-process
+// (_drive). All narration goes to stderr — stdout is the JSON-RPC channel.
+const mcpCommand = new Command('_mcp')
+  .argument('<runId>')
+  .argument('[phase]')
+  .action(async (runId: string, phase: string | undefined) => {
+    try {
+      if (phase) await serveKernelStdio(process.cwd(), runId, phase);
+      else await serveRunScopedKernelStdio(process.cwd(), runId);
+    } catch (err) {
+      console.error(`[_mcp] ${err instanceof Error ? err.message : String(err)}`);
+      process.exitCode = 1;
+    }
+  });
+program.addCommand(mcpCommand, { hidden: true });
 
 program
   .command('steer')

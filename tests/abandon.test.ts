@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect } from 'vitest';
 import { aliveDriverPid, driveToQuiescence, killDriver, probeRunPosition } from '../src/harness/lifecycle.ts';
-import type { DriverOutput } from '../src/harness/driver.ts';
+import type { PhaseEvent } from '../src/harness/phase-events.ts';
 import { loadRunState, markAbandoned, purgeRun, runDirOf, saveRunState } from '../src/run-store.ts';
 import { locateSessionTranscripts } from '../src/sessions.ts';
 import { buildStatusModel, renderStatus, steerRefusal } from '../src/status.ts';
@@ -18,7 +18,7 @@ import { scriptedMachine } from './helpers/scripted-machine.ts';
  * crash, and abandonment stays reversible (the transcripts are kept).
  */
 
-const advanced: DriverOutput = { outcome: 'advanced' };
+const advanced: PhaseEvent = { type: 'phase.advance' };
 const quiet = async () => {};
 
 /** A throwaway $HOME with the providers' transcript dirs laid out. */

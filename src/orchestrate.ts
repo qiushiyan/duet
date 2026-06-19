@@ -1,0 +1,214 @@
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { loadRunState, saveRunState } from './run-store.ts';
+import type { RunState } from './run-store.ts';
+
+/**
+ * The `duet orchestrate <runId>` launcher (Stage 1) — the one place that brings
+ * up the human's interactive Claude Code session wired to drive a run over
+ * FRAME → PLAN, and the one place that applies the single gate-safety
+ * permission rule. A skill cannot do launch-time wiring (the runId is dynamic),
+ * which is why the launcher and the `skills/duet/` identity coexist by design:
+ * the skill is what `--append-system-prompt-file` carries.
+ *
+ * The process spawn is the Environment seam (modeled on providers/pane.ts'
+ * PaneFactory): runOrchestrate takes an injectable ClaudeLauncher so tests
+ * capture the launch spec and never spawn claude.
+ */
+
+// The orchestrator identity fed to the session as system-prompt-strength text
+// (durable across compaction, unlike a skill body). Resolved package-relative
+// from this module like snippets.ts resolves snippets.toml — and, like
+// snippets.toml, shipped only because the `skills/` entry is in package.json
+// `files` (tests/skill.test.ts pins this target into the publish surface). Drop
+// `skills/` from `files` and a packed build points --append-system-prompt-file
+// at a missing file. (docs/engineering.md §Build.)
+export const IDENTITY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'duet', 'identity.md');
+
+/**
+ * The single gate-safety rule: an `ask` prompt on `duet continue`. It survives
+ * `bypassPermissions` — deny/ask rules apply in every permission mode, only
+ * `allow` becomes a no-op under bypass — so the one tap protects the gate even
+ * when the human launches every session with permissions bypassed.
+ *
+ * Colon prefix form, matching the documented Claude Code rule shape
+ * (`Bash(git status:*)`) and the shipped concierge's `Bash(duet status:*)`
+ * (skills/duet-concierge/SKILL.md, pinned by tests/skill.test.ts) — so no
+ * concierge migration is needed.
+ */
+export const GATE_ASK_RULE = 'Bash(duet continue:*)';
+
+export interface LaunchSpec {
+  command: string;
+  args: string[];
+}
+
+/**
+ * The current CLI's own executable + entry, so the MCP server is launched as the
+ * SAME duet that is running — not whatever `duet` happens to be on PATH (a
+ * missing link, a different checkout, a version skew). Mirrors spawnDrive
+ * (lifecycle.ts), which self-references the detached driver the same way.
+ * Injectable so buildLaunchSpec stays a pure argv builder under test.
+ */
+export interface CliSelfRef {
+  exec: string;
+  entry: string;
+}
+const currentSelfRef = (): CliSelfRef => ({ exec: process.execPath, entry: process.argv[1]! });
+
+/** Build the `claude` argv that wires an interactive session to drive `state`. */
+export function buildLaunchSpec(state: RunState, self: CliSelfRef = currentSelfRef()): LaunchSpec {
+  // The MCP server is THIS cli's own executable + entry (self.exec self.entry),
+  // not a bare `duet` PATH lookup — so the kernel the session attaches is the
+  // same duet that launched it (the spawnDrive pattern, lifecycle.ts). The runId
+  // is baked into the args at launch — what a static project .mcp.json or a
+  // mid-session skill cannot do. No `cwd` field: the Claude Code stdio MCP schema
+  // is command/args/env only, so the server inherits claude's launch cwd (the
+  // project dir, where the human runs `duet orchestrate`); `_mcp` reads
+  // process.cwd() from there.
+  const mcpConfig = JSON.stringify({
+    mcpServers: { duet: { command: self.exec, args: [self.entry, '_mcp', state.runId] } },
+  });
+  const settings = JSON.stringify({ permissions: { ask: [GATE_ASK_RULE] } });
+  return {
+    command: 'claude',
+    args: [
+      '--mcp-config', mcpConfig,
+      // The session's MCP surface is exactly the duet kernel — no user/global
+      // MCP leakage, the hygiene the headless host gets from strictMcpConfig.
+      '--strict-mcp-config',
+      '--append-system-prompt-file', IDENTITY_PATH,
+      '--settings', settings,
+    ],
+  };
+}
+
+/**
+ * The process-spawn seam — a fake captures the spec; the default hands the
+ * terminal to claude. `error` carries an IMMEDIATE spawn failure (the session
+ * never started: ENOENT when claude isn't on PATH, EACCES, bad args) — distinct
+ * from a non-zero exit AFTER a real session, which the blocking launcher reports
+ * only on return and is a normal session end, not a launch failure.
+ */
+export type ClaudeLauncher = (spec: { command: string; args: string[]; env: NodeJS.ProcessEnv }) => {
+  pid?: number;
+  error?: Error;
+};
+
+const defaultLauncher: ClaudeLauncher = (spec) => {
+  // spawnSync hands the terminal fully to claude and blocks until it exits — the
+  // right shape for an interactive handoff (duet returns when the session ends),
+  // and synchronous like the seam. result.error is the spawn-layer failure
+  // (ENOENT etc.); result.status is the session's exit code, which we ignore —
+  // a real session that exits non-zero is not a launch failure.
+  const result = spawnSync(spec.command, spec.args, { stdio: 'inherit', env: spec.env });
+  return { pid: result.pid, ...(result.error ? { error: result.error } : {}) };
+};
+
+/** Whether the built spec carries the gate-safety ask rule the launcher promised. */
+export function gateAskRuleLive(spec: LaunchSpec): boolean {
+  const idx = spec.args.indexOf('--settings');
+  if (idx < 0) return false;
+  try {
+    const parsed = JSON.parse(spec.args[idx + 1] ?? '') as { permissions?: { ask?: unknown } };
+    return Array.isArray(parsed.permissions?.ask) && parsed.permissions.ask.includes(GATE_ASK_RULE);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Mark the run interactively orchestrated and launch the wired session. Two
+ * failure surfaces are made explicit so a setup problem can't leave the run
+ * claiming a phantom interactive owner:
+ *
+ *  - PREFLIGHT, before marking: the identity file the launcher feeds
+ *    --append-system-prompt-file must exist (a packed build missing skills/, or
+ *    a corrupt checkout, would otherwise bring up a session with no orchestrator
+ *    role). Refuse without touching the run.
+ *  - LAUNCH error, after marking: an immediate spawn failure (ENOENT etc.) means
+ *    no session started, so RESTORE the pre-call state — a fresh launch reverts
+ *    to unmarked, but a failed relaunch of an already-interactive run keeps its
+ *    valid interactive rest and any real prior spend, so `duet status` stays
+ *    honest either way.
+ *
+ * The ask-rule self-check is a WARNING, not a failure: it warns loudly (to
+ * stderr) if the gate-safety rule isn't in the spec — gate protection is not a
+ * setup step the human can silently forget — but still launches, because the
+ * session is attended and the human sees it. Returns `{ error }` for the caller
+ * to surface (a non-zero exit); the launch and warning paths return `{ pid }`.
+ */
+export function runOrchestrate(
+  state: RunState,
+  opts: {
+    launcher?: ClaudeLauncher;
+    buildSpec?: (state: RunState) => LaunchSpec;
+    log?: (line: string) => void;
+    /** Preflight target; defaults to the launcher's IDENTITY_PATH (test seam). */
+    identityPath?: string;
+  } = {},
+): { pid?: number; error?: Error } {
+  const launcher = opts.launcher ?? defaultLauncher;
+  const buildSpec = opts.buildSpec ?? buildLaunchSpec;
+  const log = opts.log ?? ((line: string) => console.error(line));
+  const identityPath = opts.identityPath ?? IDENTITY_PATH;
+
+  // Preflight before marking: if the identity file is missing the run must stay
+  // untouched, so a broken install fails fast rather than launching a roleless
+  // session and stranding the run as interactively owned.
+  if (!existsSync(identityPath)) {
+    return {
+      error: new Error(
+        `the orchestrator identity file is missing (${identityPath}) — the /duet session would launch without its role. This is a broken install: confirm duet's skills/ shipped (it is in package.json "files"), then retry: duet orchestrate ${state.runId}. The run is unchanged.`,
+      ),
+    };
+  }
+
+  // Capture the pre-marking state so an immediate launch failure can RESTORE it
+  // rather than blanket-clear it. A fresh launch has {host absent, partial
+  // false}, so restore == clear; but a failed RELAUNCH of an already-interactive
+  // run (the spec's crash-recovery path is "relaunch duet orchestrate") must
+  // keep its valid interactive rest and any real prior interactive spend —
+  // clearing the host would flip probeRunPosition's phase-loop snapshot into
+  // headless-crash semantics, and zeroing the partial flag would lie about cost.
+  const prevHost = state.orchestrationHost;
+  const prevPartial = state.costs.orchestratorCostPartial;
+
+  state.orchestrationHost = 'interactive';
+  // Sticky: orchestrator spend now runs on the flat subscription quota, so the
+  // known total is partial — and stays partial past the handoff that clears
+  // orchestrationHost.
+  state.costs.orchestratorCostPartial = true;
+  saveRunState(state);
+
+  const spec = buildSpec(state);
+  if (!gateAskRuleLive(spec)) {
+    log(
+      `[orchestrate] WARNING: the gate-safety ask rule (${GATE_ASK_RULE}) is missing from the launch settings — a "duet continue" could cross a gate WITHOUT a permission prompt. Apply it manually before trusting this session for gate decisions.`,
+    );
+  }
+
+  const result = launcher({ ...spec, env: { ...process.env } });
+  if (result.error) {
+    // The session never started. Restore the pre-call state: a fresh launch
+    // reverts to unmarked; a relaunch keeps its prior interactive rest and spend.
+    // Either way status stays honest and no phantom owner is left behind.
+    const fresh = loadRunState(state.cwd, state.runId);
+    if (prevHost === undefined) delete fresh.orchestrationHost;
+    else fresh.orchestrationHost = prevHost;
+    fresh.costs.orchestratorCostPartial = prevPartial;
+    saveRunState(fresh);
+    const enoent = (result.error as NodeJS.ErrnoException).code === 'ENOENT';
+    return {
+      ...result,
+      error: new Error(
+        enoent
+          ? `could not launch "claude" — it was not found on PATH. Install Claude Code (or put it on PATH), then retry: duet orchestrate ${state.runId}. The run is unchanged.`
+          : `the interactive session failed to launch (${result.error.message}). The run is unchanged; fix the cause, then retry: duet orchestrate ${state.runId}.`,
+      ),
+    };
+  }
+  return result;
+}

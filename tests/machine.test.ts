@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import { createActor, waitFor } from 'xstate';
+import { createActor, fromCallback, waitFor } from 'xstate';
 import type { AnyMachineSnapshot } from 'xstate';
-import { duetMachine } from '../src/harness/machine.ts';
+import { duetMachine, interactiveMachine } from '../src/harness/machine.ts';
 import { PHASES } from '../src/phases.ts';
 import { scriptedMachine } from './helpers/scripted-machine.ts';
 
@@ -52,7 +52,7 @@ describe('phase table ⇄ machine coherence', () => {
 
 describe('entry routing', () => {
   test('framing-only runs start at the frame phase', async () => {
-    const { machine, calls } = scriptedMachine([{ outcome: 'advanced' }]);
+    const { machine, calls } = scriptedMachine([{ type: 'phase.advance' }]);
     const actor = startActor(machine);
     const snap = await waitFor(actor, quiescent);
     expect(snap.value).toBe('directionGate');
@@ -60,7 +60,7 @@ describe('entry routing', () => {
   });
 
   test('spec-entry runs skip the frame phase and start at the spec loop', async () => {
-    const { machine, calls } = scriptedMachine([{ outcome: 'advanced' }]);
+    const { machine, calls } = scriptedMachine([{ type: 'phase.advance' }]);
     const actor = startActor(machine, true);
     const snap = await waitFor(actor, quiescent);
     expect(snap.value).toBe('commitSpecGate');
@@ -70,7 +70,7 @@ describe('entry routing', () => {
 
 describe('gate and flag-wait guarantees', () => {
   test('gate events at a flag-wait are structural no-ops', async () => {
-    const { machine } = scriptedMachine([{ outcome: 'flagged' }]);
+    const { machine } = scriptedMachine([{ type: 'phase.flag' }]);
     const actor = startActor(machine);
     const snap = await waitFor(actor, quiescent);
     expect(snap.value).toBe('frameFlagWait');
@@ -82,7 +82,7 @@ describe('gate and flag-wait guarantees', () => {
   });
 
   test('answer events at a gate are structural no-ops', async () => {
-    const { machine } = scriptedMachine([{ outcome: 'advanced' }]);
+    const { machine } = scriptedMachine([{ type: 'phase.advance' }]);
     const actor = startActor(machine);
     const snap = await waitFor(actor, quiescent);
     expect(snap.value).toBe('directionGate');
@@ -92,8 +92,52 @@ describe('gate and flag-wait guarantees', () => {
     expect(actor.getSnapshot().value).toBe('directionGate');
   });
 
+  test('phase.* events at a gate are structural no-ops — advance_phase parks but cannot cross', async () => {
+    // The load-bearing invariant: a gate state has no phase.* handler, so an
+    // orchestrator tool's event (delivered here only by a buggy or replayed
+    // path) leaves the run parked. Crossing needs human authority.
+    const { machine } = scriptedMachine([{ type: 'phase.advance' }]);
+    const actor = startActor(machine);
+    const snap = await waitFor(actor, quiescent);
+    expect(snap.value).toBe('directionGate');
+
+    expect(snap.can({ type: 'phase.advance' })).toBe(false);
+    expect(snap.can({ type: 'phase.flag' })).toBe(false);
+    actor.send({ type: 'phase.advance' });
+    actor.send({ type: 'phase.flag' });
+    expect(actor.getSnapshot().value).toBe('directionGate');
+  });
+
+  test('phase.* events at a flag-wait are structural no-ops', async () => {
+    const { machine } = scriptedMachine([{ type: 'phase.flag' }]);
+    const actor = startActor(machine);
+    const snap = await waitFor(actor, quiescent);
+    expect(snap.value).toBe('frameFlagWait');
+
+    expect(snap.can({ type: 'phase.advance' })).toBe(false);
+    expect(snap.can({ type: 'phase.flag' })).toBe(false);
+    actor.send({ type: 'phase.advance' });
+    expect(actor.getSnapshot().value).toBe('frameFlagWait');
+  });
+
+  test('human.* events while a phase runs cross nothing — phase states have no human handler', () => {
+    // The authority half of the vocabulary split: a phase state transitions
+    // only on phase.* (from its driver), never on human.*. A phase driver that
+    // never resolves holds the run in the phase state so the guarantee is
+    // observable without racing the actor's send-back.
+    const machine = duetMachine.provide({ actors: { phaseDriver: fromCallback(() => {}) } });
+    const actor = startActor(machine);
+    expect(actor.getSnapshot().value).toBe('frameLoop');
+    for (const type of ['human.approve', 'human.reject', 'human.answer'] as const) {
+      expect.soft(actor.getSnapshot().can({ type })).toBe(false);
+      actor.send({ type });
+    }
+    expect(actor.getSnapshot().value).toBe('frameLoop');
+    actor.stop();
+  });
+
   test('a quiescent snapshot persists and restores across a process exit', async () => {
-    const { machine } = scriptedMachine([{ outcome: 'flagged' }]);
+    const { machine } = scriptedMachine([{ type: 'phase.flag' }]);
     let actor = startActor(machine);
     await waitFor(actor, quiescent);
 
@@ -108,7 +152,7 @@ describe('gate and flag-wait guarantees', () => {
   });
 
   test('answer at a flag-wait resumes the same phase loop', async () => {
-    const { machine, calls } = scriptedMachine([{ outcome: 'flagged' }, { outcome: 'advanced' }]);
+    const { machine, calls } = scriptedMachine([{ type: 'phase.flag' }, { type: 'phase.advance' }]);
     const actor = startActor(machine);
     await waitFor(actor, quiescent);
 
@@ -119,7 +163,7 @@ describe('gate and flag-wait guarantees', () => {
   });
 
   test('reject at a gate re-runs the loop it gates', async () => {
-    const { machine, calls } = scriptedMachine([{ outcome: 'advanced' }, { outcome: 'advanced' }]);
+    const { machine, calls } = scriptedMachine([{ type: 'phase.advance' }, { type: 'phase.advance' }]);
     const actor = startActor(machine);
     await waitFor(actor, quiescent);
 
@@ -130,20 +174,64 @@ describe('gate and flag-wait guarantees', () => {
   });
 });
 
+describe('the interactive machine variant (Stage 1 — the session drives, the actor is inert)', () => {
+  test('advances only on the events sent to it, and a phase-loop snapshot restores inert', () => {
+    const actor = createActor(interactiveMachine, { input: { runId: 'test', cwd: '/tmp', hasSpec: false } });
+    actor.start();
+    // No driver runs — the inert actor never sendBacks, so the loop holds until
+    // an event is applied (the real driver would advance it from runPhase).
+    expect.soft(actor.getSnapshot().value).toBe('frameLoop');
+
+    actor.send({ type: 'phase.advance' });
+    expect.soft(actor.getSnapshot().value).toBe('directionGate');
+    actor.send({ type: 'human.approve' });
+    expect.soft(actor.getSnapshot().value).toBe('specLoop');
+
+    const persisted = actor.getPersistedSnapshot();
+    actor.stop();
+
+    // Restoring the phase-loop rest re-invokes the inert actor harmlessly: it
+    // rests at specLoop rather than running any phase work or advancing itself.
+    const restored = createActor(interactiveMachine, {
+      input: { runId: 'test', cwd: '/tmp', hasSpec: false },
+      snapshot: persisted,
+    });
+    restored.start();
+    expect.soft(restored.getSnapshot().value).toBe('specLoop');
+    restored.stop();
+  });
+
+  test('a spec-entry interactive run rests at the spec loop from the start', () => {
+    const actor = createActor(interactiveMachine, { input: { runId: 'test', cwd: '/tmp', hasSpec: true } });
+    actor.start();
+    expect(actor.getSnapshot().value).toBe('specLoop');
+    actor.stop();
+  });
+
+  test('introduces no human.* path from a phase loop — gate-uncrossable is unchanged', () => {
+    const actor = createActor(interactiveMachine, { input: { runId: 'test', cwd: '/tmp', hasSpec: false } });
+    actor.start();
+    for (const type of ['human.approve', 'human.reject', 'human.answer'] as const) {
+      expect.soft(actor.getSnapshot().can({ type })).toBe(false);
+    }
+    actor.stop();
+  });
+});
+
 describe('the full arc', () => {
   test('frame → spec → plan → impl → docs → pr → open → done, with flags and rejects along the way', async () => {
     const { machine, calls } = scriptedMachine([
-      { outcome: 'flagged' }, // frame entry → queued question
-      { outcome: 'advanced' }, // frame resume after answer → direction gate
-      { outcome: 'advanced' }, // frame re-entry after gate reject → gate again
-      { outcome: 'advanced' }, // spec → commit-spec gate
-      { outcome: 'advanced' }, // plan → plan-approval gate
-      { outcome: 'flagged' }, // impl entry → queued question
-      { outcome: 'advanced' }, // impl resume → ship gate
-      { outcome: 'advanced' }, // docs → docs-plan gate
-      { outcome: 'advanced' }, // pr → open-pr gate
-      { outcome: 'advanced' }, // pr re-entry after gate reject → gate again
-      { outcome: 'advanced' }, // open → done
+      { type: 'phase.flag' }, // frame entry → queued question
+      { type: 'phase.advance' }, // frame resume after answer → direction gate
+      { type: 'phase.advance' }, // frame re-entry after gate reject → gate again
+      { type: 'phase.advance' }, // spec → commit-spec gate
+      { type: 'phase.advance' }, // plan → plan-approval gate
+      { type: 'phase.flag' }, // impl entry → queued question
+      { type: 'phase.advance' }, // impl resume → ship gate
+      { type: 'phase.advance' }, // docs → docs-plan gate
+      { type: 'phase.advance' }, // pr → open-pr gate
+      { type: 'phase.advance' }, // pr re-entry after gate reject → gate again
+      { type: 'phase.advance' }, // open → done
     ]);
     const actor = startActor(machine);
 

@@ -48,6 +48,13 @@ describe('steerRefusal (the steer channel gate)', () => {
     expect.soft(copy).toContain('duet continue r1 --answer');
   });
 
+  test('an interactive run points to the /duet chat, not a staged steer', () => {
+    const copy = steerRefusal({ kind: 'interactive', phase: 'spec' }, 'r1');
+    expect.soft(copy).toBeDefined(); // not the generic "nothing to steer" fallback
+    expect.soft(copy).toContain('/duet session');
+    expect.soft(copy).toContain('chat');
+  });
+
   test('a finished run says so', () => {
     expect(steerRefusal({ kind: 'done' }, 'r1')).toContain('complete');
   });
@@ -93,6 +100,11 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     expect.soft(buildStatusModel(run, { kind: 'done' }, []).stop).toEqual({
       kind: 'done',
       summary: 'PR: https://example.com/pr/7',
+    });
+
+    expect.soft(buildStatusModel(run, { kind: 'interactive', phase: 'spec' }, []).stop).toEqual({
+      kind: 'interactive',
+      phase: 'spec',
     });
   });
 
@@ -238,6 +250,16 @@ describe('renderStatus', () => {
       .toContain('claude workers $0.00 known (+ interactive turns: cost unavailable)');
   });
 
+  test('the cost line marks the orchestrator total unavailable only when interactive-hosted', ({ run }) => {
+    run.machineState = 'specLoop';
+    expect.soft(render(run, { kind: 'interactive', phase: 'spec' })).not.toContain('subscription quota');
+
+    run.costs.orchestratorCostPartial = true;
+    expect
+      .soft(render(run, { kind: 'interactive', phase: 'spec' }))
+      .toContain('orchestrator $0.00 known (interactive turns on the subscription quota: cost unavailable)');
+  });
+
   test('context fill renders as plain percentages per voice', ({ run }) => {
     run.machineState = 'implFlagWait';
     run.contextUsage = {
@@ -269,5 +291,13 @@ describe('renderStatus', () => {
 
     expect.soft(out).toContain('the impl phase stopped mid-flight');
     expect.soft(out).toContain(`resume with:  duet continue ${run.runId}`);
+  });
+
+  test('an interactive stop names the phase the /duet session is driving', ({ run }) => {
+    run.machineState = 'specLoop';
+    const out = render(run, { kind: 'interactive', phase: 'spec' });
+
+    expect.soft(out).toContain('the interactive orchestrator is driving the spec phase');
+    expect.soft(out).toContain('/duet session');
   });
 });

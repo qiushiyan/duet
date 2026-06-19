@@ -63,6 +63,14 @@ export function steerRefusal(position: RunPosition, runId: string): string | und
         `the run is paused on a queued question — the answer is the steering channel here: ` +
         `${continueCommand.answer(runId)}.`
       );
+    case 'interactive':
+      // The behaviour is correct — there is no headless driver to deliver a
+      // staged steer to — but the channel is the /duet chat, not duet steer.
+      return (
+        `run ${runId} is orchestrated in your /duet session — steer it there in chat, ` +
+        `as your editor-in-chief voice (the conversation is the channel, no relay). ` +
+        `duet steer is for the headless phases.`
+      );
     case 'abandoned':
       return `run ${runId} was abandoned — there is no live phase to steer. Revive it with ${continueCommand.resume(runId)}, or start fresh with duet new.`;
     case 'done':
@@ -73,6 +81,7 @@ export function steerRefusal(position: RunPosition, runId: string): string | und
 /** The discriminated stop — what the run is waiting on, and the command that acts there. */
 export type StopModel =
   | { kind: 'running'; pid: number; phase: PhaseName }
+  | { kind: 'interactive'; phase: PhaseName }
   | {
       kind: 'gate';
       phase: GatePhase;
@@ -139,6 +148,7 @@ export function buildStatusModel(state: RunState, position: RunPosition, pending
 function stopModel(state: RunState, position: RunPosition): StopModel {
   switch (position.kind) {
     case 'running':
+    case 'interactive':
       return position;
     case 'gate': {
       const gate = gateOf(position.phase);
@@ -220,8 +230,13 @@ export function renderStatus(model: StatusModel): string {
   const claudeWorkers = model.costs.claudeWorkersCostPartial
     ? `claude workers $${model.costs.claudeWorkersUsd.toFixed(2)} known (+ interactive turns: cost unavailable)`
     : `claude workers $${model.costs.claudeWorkersUsd.toFixed(2)}`;
+  // The orchestrator total is partial when the interactive host drove it (flat
+  // subscription quota, no per-turn cost) — say so rather than imply completeness.
+  const orchestrator = model.costs.orchestratorCostPartial
+    ? `orchestrator $${model.costs.orchestratorUsd.toFixed(2)} known (interactive turns on the subscription quota: cost unavailable)`
+    : `orchestrator $${model.costs.orchestratorUsd.toFixed(2)}`;
   lines.push(
-    `cost:     orchestrator $${model.costs.orchestratorUsd.toFixed(2)}, ${claudeWorkers}, codex ${fmtTokens(model.costs.codexTokens.input)} in / ${fmtTokens(model.costs.codexTokens.output)} out tokens`,
+    `cost:     ${orchestrator}, ${claudeWorkers}, codex ${fmtTokens(model.costs.codexTokens.input)} in / ${fmtTokens(model.costs.codexTokens.output)} out tokens`,
   );
   if (model.context.length > 0) {
     lines.push(
@@ -248,6 +263,11 @@ export function renderStatus(model: StatusModel): string {
   }
 
   const stop = model.stop;
+  if (stop.kind === 'interactive') {
+    lines.push(`\nthe interactive orchestrator is driving the ${stop.phase} phase — steer it in your /duet session.`);
+    return lines.join('\n');
+  }
+
   if (stop.kind === 'flag') {
     lines.push(`\nQUEUED QUESTION for you:`);
     lines.push(`  ${stop.question}`);
