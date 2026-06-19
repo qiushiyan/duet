@@ -48,6 +48,13 @@ describe('steerRefusal (the steer channel gate)', () => {
     expect.soft(copy).toContain('duet continue r1 --answer');
   });
 
+  test('an interactive run points to the /duet chat, not a staged steer', () => {
+    const copy = steerRefusal({ kind: 'interactive', phase: 'spec' }, 'r1');
+    expect.soft(copy).toBeDefined(); // not the generic "nothing to steer" fallback
+    expect.soft(copy).toContain('/duet session');
+    expect.soft(copy).toContain('chat');
+  });
+
   test('a finished run says so', () => {
     expect(steerRefusal({ kind: 'done' }, 'r1')).toContain('complete');
   });

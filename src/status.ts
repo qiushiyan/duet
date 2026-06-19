@@ -63,6 +63,14 @@ export function steerRefusal(position: RunPosition, runId: string): string | und
         `the run is paused on a queued question — the answer is the steering channel here: ` +
         `${continueCommand.answer(runId)}.`
       );
+    case 'interactive':
+      // The behaviour is correct — there is no headless driver to deliver a
+      // staged steer to — but the channel is the /duet chat, not duet steer.
+      return (
+        `run ${runId} is orchestrated in your /duet session — steer it there in chat, ` +
+        `as your editor-in-chief voice (the conversation is the channel, no relay). ` +
+        `duet steer is for the headless phases.`
+      );
     case 'abandoned':
       return `run ${runId} was abandoned — there is no live phase to steer. Revive it with ${continueCommand.resume(runId)}, or start fresh with duet new.`;
     case 'done':
