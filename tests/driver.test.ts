@@ -2,6 +2,13 @@ import { describe, expect } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { runPhase } from '../src/harness/driver.ts';
 import type { RunOrchestratorTurn } from '../src/harness/driver.ts';
+import {
+  buildPhaseBrief,
+  framePhaseEntryPrompt,
+  planPhaseEntryPrompt,
+  specPhaseEntryPrompt,
+} from '../src/harness/orchestrator-prompts.ts';
+import { PHASE } from '../src/phases.ts';
 import { listPendingSteers, loadRunState, saveRunState, stageSteer } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
 
@@ -56,6 +63,17 @@ const quiesce = (cwd: string, runId: string): void => {
   delete s.terminalMarker;
   saveRunState(s);
 };
+
+describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)', () => {
+  test('returns each phase’s entry prompt with the phase table’s round cap', ({ run }) => {
+    // The extraction is a pure move: the headless basePrompt and the interactive
+    // get_task both build the brief here, dispatching the right *PhaseEntryPrompt
+    // with the right cap. A wrong-phase or wrong-cap dispatch would break this.
+    expect.soft(buildPhaseBrief(run, 'frame')).toBe(framePhaseEntryPrompt(run, PHASE.frame.roundCap));
+    expect.soft(buildPhaseBrief(run, 'spec')).toBe(specPhaseEntryPrompt(run, PHASE.spec.roundCap));
+    expect.soft(buildPhaseBrief(run, 'plan')).toBe(planPhaseEntryPrompt(run, PHASE.plan.roundCap));
+  });
+});
 
 describe('orchestrator context capture', () => {
   test('the last assistant usage against modelUsage’s window lands in the run state', async ({

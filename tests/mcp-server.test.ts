@@ -20,6 +20,7 @@ import type { RunState } from '../src/run-store.ts';
  */
 
 const ALL_TOOLS = [
+  'get_task',
   'list_snippets',
   'send_prompt',
   'ask_human',
@@ -48,7 +49,7 @@ async function linkedClient(server: ReturnType<typeof buildKernelMcpServer>): Pr
 }
 
 describe('the stdio-MCP adapter over the kernel registry', () => {
-  test('a standard MCP client enumerates all seven tools by name and schema', async ({ run }) => {
+  test('a standard MCP client enumerates all eight tools by name and schema', async ({ run }) => {
     const client = await linkedClient(buildKernelMcpServer(registryFor(run)));
     const { tools } = await client.listTools();
 

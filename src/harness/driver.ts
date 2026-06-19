@@ -23,16 +23,10 @@ import {
   ORCHESTRATOR_SYSTEM_PROMPT,
   answerResumePrompt,
   approvalRiderBlock,
-  docsPhaseEntryPrompt,
+  buildPhaseBrief,
   feedbackResumePrompt,
-  framePhaseEntryPrompt,
-  implPhaseEntryPrompt,
   nudgeContinuePrompt,
-  openPhaseEntryPrompt,
-  planPhaseEntryPrompt,
-  prPhaseEntryPrompt,
   renderSteerBlock,
-  specPhaseEntryPrompt,
 } from './orchestrator-prompts.ts';
 
 /**
@@ -291,23 +285,7 @@ function basePrompt(
   if (!state.phaseStarted[phase]) {
     state.phaseStarted[phase] = true;
     saveRunState(state);
-    const cap = PHASE[phase].roundCap;
-    switch (phase) {
-      case 'frame':
-        return framePhaseEntryPrompt(state, cap);
-      case 'spec':
-        return specPhaseEntryPrompt(state, cap);
-      case 'plan':
-        return planPhaseEntryPrompt(state, cap);
-      case 'impl':
-        return implPhaseEntryPrompt(state, cap);
-      case 'docs':
-        return docsPhaseEntryPrompt(state, cap);
-      case 'pr':
-        return prPhaseEntryPrompt(state, cap);
-      case 'open':
-        return openPhaseEntryPrompt();
-    }
+    return buildPhaseBrief(state, phase);
   }
   if (pendingMessage?.kind === 'answer') return answerResumePrompt(pendingMessage.text);
   if (pendingMessage?.kind === 'feedback') return feedbackResumePrompt(phase, pendingMessage.text);

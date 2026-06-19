@@ -8,6 +8,7 @@ import { getSnippet, renderSnippetLibrary } from '../snippets.ts';
 import {
   appendNote,
   appendVoiceLog,
+  consumeHumanInput,
   contextPercent,
   gateAttended,
   listPendingSteers,
@@ -15,8 +16,14 @@ import {
   recordContextUsage,
   saveRunState,
 } from '../run-store.ts';
-import type { RunState } from '../run-store.ts';
-import { renderSteerBlock } from './orchestrator-prompts.ts';
+import type { HumanMessage, RunState } from '../run-store.ts';
+import {
+  answerResumePrompt,
+  approvalRiderBlock,
+  buildPhaseBrief,
+  feedbackResumePrompt,
+  renderSteerBlock,
+} from './orchestrator-prompts.ts';
 
 /**
  * A host-neutral tool definition — the single source of truth for the
@@ -58,7 +65,7 @@ function kernelTool<Schema extends z.ZodRawShape>(
 }
 
 /**
- * The orchestrator's tool surface — the seven harness tools and every
+ * The orchestrator's tool surface — the harness tools and every
  * protocol rail they enforce: once-per-phase template economy
  * (warn-once-then-allow), review-round backstop caps, the
  * branch-fixed-after-first-prompt rule, advance-needs-a-review-round, and
@@ -127,7 +134,58 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   const resendWarned = new Set<string>();
   const isBaseTemplate = (tag: string): boolean => tag !== 'custom' && !tag.endsWith('-again');
 
+  // get_task folds a staged human input (an approval rider, a reject's
+  // feedback, or an answer) into the phase brief as an appended block — reusing
+  // the same resume/rider prose the headless prompt path builds, so the
+  // orchestrator reads the human's words identically in either host.
+  const stagedInputBlock = (msg: HumanMessage): string => {
+    switch (msg.kind) {
+      case 'approval':
+        return approvalRiderBlock(msg.text);
+      case 'answer':
+        return answerResumePrompt(msg.text);
+      case 'feedback':
+        return feedbackResumePrompt(phase, msg.text);
+    }
+  };
+  // When this phase's terminal marker is set, get_task is the one surface the
+  // post-terminal rail leaves open: it reports the park and re-anchors, with no
+  // side effects.
+  const parkedBrief = (kind: 'advance' | 'flag'): string =>
+    kind === 'advance'
+      ? 'This phase is parked at its gate — your advance_phase packet is recorded. Present it to the human and propose the crossing (duet continue --approve "<rider>", or --reject "<feedback>"); a gate is crossed by the human’s tap, never by a tool of yours. Do not start new work — the phase is ending. Re-anchor here any time with get_task.'
+      : 'This phase is parked on a queued question — your ask_human flag is recorded. Present it to the human and wait for their answer (duet continue --answer "<answer>"). Do not start new work until it arrives. Re-anchor here any time with get_task.';
+
   const tools: Array<KernelTool<any>> = [
+    kernelTool(
+      'get_task',
+      'Read your task for the current phase — the orchestrator’s entry brief: the documents in scope, the branch policy, the attendance posture, and the worked examples, returned in full every time you call it. Call it to learn what to do at the start of a phase, to pick up the next phase’s brief right after a gate is crossed, and to re-anchor on disk truth after your context is compacted or your session is resumed. Not read-only: the first call in a phase marks the phase started, and a pending piece of human input — a gate-approval rider, a reject’s feedback, or an answer to a queued question — is folded into the brief as an appended block exactly once; a later call returns the brief alone, with nothing left to consume. When the phase is already parked at its gate or flag (you have called advance_phase or ask_human), this instead reports that you are parked and should present the packet and propose duet continue, and performs no side effect.',
+      {},
+      async () => {
+        // Parked: a current-phase terminal marker means the orchestrator
+        // already advanced/flagged. Report the park; touch nothing.
+        const marker = state.terminalMarker;
+        if (marker?.phase === phase) {
+          return { content: [{ type: 'text' as const, text: parkedBrief(marker.kind) }] };
+        }
+        // Side effect 1 — mark the phase started once per phase (the first call
+        // that finds it unset), exactly as the headless basePrompt does.
+        if (!state.phaseStarted[phase]) {
+          state.phaseStarted[phase] = true;
+          saveRunState(state);
+        }
+        // Side effect 2 — consume any staged human input, once per message and
+        // independent of phaseStarted, so a same-phase reject/answer (where the
+        // phase is long since started) still folds. consumeHumanInput persists,
+        // so a later call finds nothing and returns the base brief alone.
+        const pending = consumeHumanInput(state);
+        const brief = buildPhaseBrief(state, phase);
+        if (!pending) return { content: [{ type: 'text' as const, text: brief }] };
+        log(`[get_task] folded staged ${pending.kind} into the ${phase} brief`);
+        return { content: [{ type: 'text' as const, text: `${brief}\n\n${stagedInputBlock(pending)}` }] };
+      },
+    ),
+
     kernelTool(
       'list_snippets',
       'Read the snippet library — the prompt templates the workflow uses, which encode its conventions (altitude lenses, round-2 discipline, compaction shapes); read them before composing worker prompts. By default the result is focused on the current phase: this phase’s templates and the always-available helpers in full, plus a by-key index of the other phases’ templates in arc order — the snippets you actually reach for now, without the rest as noise. Pass all=true for every snippet’s full body, which you want when you genuinely need a template from another phase. Snippets you have already sent this phase are annotated: those workers still hold the instructions, so later turns want the delta, not the template.',
@@ -530,5 +588,50 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     },
   });
 
-  return { tools: tools.map(withSteerDelivery) };
+  /**
+   * The post-terminal quiescence rail (Stage 1): a long-lived interactive
+   * kernel server has no process exit to make a phase quiescent, so once this
+   * phase's terminal marker is set, every phase-CONTINUING tool is refused
+   * structurally — the orchestrator must present the packet and cross, not send
+   * another worker turn or mutate the run after the gate packet is recorded.
+   * get_task stays open (the status/re-anchor read), and the terminal tools
+   * self-gate via terminalAlreadySet, so neither is wrapped. Harmless headless
+   * (the turn has already ended), load-bearing interactive. Scoped to THIS
+   * phase: a stale marker from a prior phase does not refuse this phase's work.
+   */
+  const REFUSED_AFTER_TERMINAL = new Set([
+    'send_prompt',
+    'list_snippets',
+    'create_branch',
+    'propose_snippet_edit',
+    'write_note',
+  ]);
+  const phaseEnding = (toolName: string): CallToolResult => ({
+    content: [
+      {
+        type: 'text' as const,
+        text: `This phase is ending — it is parked at its gate or flag and that decision is recorded, so ${toolName} is refused here. Present the packet to the human and cross with duet continue, or re-anchor with get_task; the run proceeds from the decision already made.`,
+      },
+    ],
+    isError: true,
+  });
+  const withPostTerminalRail = (def: KernelTool<any>): KernelTool<any> => ({
+    ...def,
+    handler: async (args, extra) => {
+      if (state.terminalMarker?.phase === phase) return phaseEnding(def.name);
+      return def.handler(args, extra);
+    },
+  });
+
+  // Rail first, then steer delivery: a refused call returns before any steer
+  // could ride a dying phase (withSteerDelivery's own marker guard also holds,
+  // so this is belt-and-suspenders — the rail adds the refusal of the handler
+  // itself, which withSteerDelivery alone would not).
+  return {
+    tools: tools.map((def) =>
+      REFUSED_AFTER_TERMINAL.has(def.name)
+        ? withSteerDelivery(withPostTerminalRail(def))
+        : withSteerDelivery(def),
+    ),
+  };
 }

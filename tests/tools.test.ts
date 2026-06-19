@@ -2,10 +2,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, vi } from 'vitest';
+import { buildPhaseBrief } from '../src/harness/orchestrator-prompts.ts';
 import { createPhaseTools } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
 import type { PhaseName } from '../src/phases.ts';
-import { listPendingSteers, loadRunState, runDirOf, stageSteer } from '../src/run-store.ts';
+import { listPendingSteers, loadRunState, runDirOf, stageHumanInput, stageSteer } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import { FakeWorker, test } from './helpers/fixtures.ts';
 
@@ -510,6 +511,124 @@ describe('steer delivery (every phase-continuing tool result)', () => {
     const log = readFileSync(join(runDirOf(projectDir, run.runId), 'orchestrator.log'), 'utf8');
     expect.soft(log).toContain('human steer delivered');
     expect.soft(log).toContain('logged note');
+  });
+});
+
+describe('get_task (the brief surface, side-effecting exactly-once)', () => {
+  test('mid-phase, folds a staged input once and marks phaseStarted; a later call returns the base brief alone', async ({
+    projectDir,
+    run,
+  }) => {
+    stageHumanInput(run, { kind: 'approval', text: 'agreed — cap questions at 3' });
+    const { call } = harness(run, { phase: 'spec' });
+
+    const first = await call('get_task');
+    expect.soft(first.isError).toBeUndefined();
+    expect.soft(text(first)).toContain('Draft the spec'); // the spec entry brief, in full
+    expect.soft(text(first)).toContain('<approval_rider>'); // the staged input, folded as a block
+    expect.soft(text(first)).toContain('cap questions at 3');
+    expect.soft(run.phaseStarted.spec).toBe(true);
+    // Consumed once and persisted — a crash can't replay it.
+    expect.soft(loadRunState(projectDir, run.runId).pendingMessage).toBeUndefined();
+
+    const second = await call('get_task');
+    // The base brief, byte-equal to the renderer, with nothing left to fold.
+    expect.soft(text(second)).toBe(buildPhaseBrief(run, 'spec'));
+    expect.soft(text(second)).not.toContain('<approval_rider>');
+    expect.soft(run.phaseStarted.spec).toBe(true); // still set once
+  });
+
+  test('same-phase re-entry: a freshly staged reject/answer folds even though the phase is long started', async ({
+    run,
+  }) => {
+    run.phaseStarted.spec = true; // the phase has been running for a while
+    const { call } = harness(run, { phase: 'spec' });
+    stageHumanInput(run, { kind: 'feedback', text: 'invert the scope' });
+
+    const folded = await call('get_task');
+    expect.soft(text(folded)).toContain('Draft the spec'); // the brief, in full
+    expect.soft(text(folded)).toContain('invert the scope'); // the feedback, folded
+    expect.soft(text(folded)).toContain('editor-in-chief');
+
+    const after = await call('get_task');
+    expect.soft(text(after)).toBe(buildPhaseBrief(run, 'spec')); // consumed once
+  });
+
+  test('parked at a gate, it reports the park and performs no side effect', async ({ run }) => {
+    run.terminalMarker = { phase: 'spec', kind: 'advance' };
+    stageHumanInput(run, { kind: 'feedback', text: 'should not be consumed' });
+    delete run.phaseStarted.spec;
+    const { call } = harness(run, { phase: 'spec' });
+
+    const parked = await call('get_task');
+    expect.soft(text(parked)).toContain('parked at its gate');
+    expect.soft(text(parked)).toContain('duet continue');
+    // No side effects: the phase is not marked started, the input not consumed.
+    expect.soft(run.phaseStarted.spec).toBeUndefined();
+    expect.soft(run.pendingMessage).toEqual({ kind: 'feedback', text: 'should not be consumed' });
+  });
+
+  test('parked at a flag, it points at the answer channel', async ({ run }) => {
+    run.terminalMarker = { phase: 'spec', kind: 'flag' };
+    const { call } = harness(run, { phase: 'spec' });
+    const parked = await call('get_task');
+    expect.soft(text(parked)).toContain('queued question');
+    expect.soft(text(parked)).toContain('--answer');
+  });
+
+  test('carries no readOnlyHint — it mutates', ({ run }) => {
+    const { tools } = createPhaseTools({
+      state: run,
+      phase: 'spec',
+      providers: { implementer: new FakeWorker('claude'), reviewer: new FakeWorker('codex') },
+      log: () => {},
+    });
+    expect(tools.find((t) => t.name === 'get_task')?.annotations?.readOnlyHint).toBeUndefined();
+  });
+});
+
+describe('the post-terminal quiescence rail', () => {
+  test('every phase-continuing tool is refused once this phase’s terminal marker is set, with no side effect', async ({
+    projectDir,
+    run,
+  }) => {
+    await execa('git', ['init', '-b', 'main'], { cwd: projectDir });
+    run.terminalMarker = { phase: 'spec', kind: 'advance' };
+    const implementer = new FakeWorker('claude');
+    const reviewer = new FakeWorker('codex');
+    const { call } = harness(run, { phase: 'spec', implementer, reviewer });
+
+    for (const [name, args] of [
+      ['send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'x' }],
+      ['list_snippets', {}],
+      ['create_branch', { name: 'feat/nope' }],
+      ['propose_snippet_edit', { snippet_key: 'k', proposed_body: 'b', rationale: 'r' }],
+      ['write_note', { observation: 'n' }],
+    ] as const) {
+      const result = await call(name, args);
+      expect.soft(result.isError, name).toBe(true);
+      expect.soft(text(result), name).toContain(`${name} is refused here`);
+    }
+    // None of them ran: no worker turn, no branch, no proposal, no note.
+    expect.soft(implementer.calls).toHaveLength(0);
+    expect.soft(reviewer.calls).toHaveLength(0);
+    expect.soft(run.branch).toBeUndefined();
+    const persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.snippetProposals).toHaveLength(0);
+
+    // The status/re-anchor read stays open.
+    expect.soft((await call('get_task')).isError).toBeUndefined();
+  });
+
+  test('is a no-op with no marker, and with a stale marker from a different phase', async ({ run }) => {
+    const noMarker = harness(run, { phase: 'spec' });
+    expect.soft((await noMarker.call('write_note', { observation: 'runs fine' })).isError).toBeUndefined();
+
+    run.terminalMarker = { phase: 'frame', kind: 'advance' }; // foreign to spec
+    const stale = harness(run, { phase: 'spec' });
+    const result = await stale.call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'x' });
+    expect.soft(result.isError).toBeUndefined(); // the stale marker does not refuse this phase's work
+    expect.soft(text(result)).toBe('scripted response');
   });
 });
 

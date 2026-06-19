@@ -347,6 +347,35 @@ If the push or PR creation fails for an environment reason (auth, remote, permis
 }
 
 /**
+ * A phase's entry brief — the *PhaseEntryPrompt body for `phase`, with the
+ * phase table's round cap folded in. The one place the phase→entry-prompt
+ * dispatch lives, shared by two callers: the headless driver's basePrompt
+ * (which additionally marks phaseStarted on the first build), and the
+ * interactive get_task tool (which returns this idempotently and folds any
+ * staged human input as a separate appended block). Pure — no side effects —
+ * so each caller owns its own phaseStarted/consume bookkeeping.
+ */
+export function buildPhaseBrief(state: RunState, phase: PhaseName): string {
+  const cap = PHASE[phase].roundCap;
+  switch (phase) {
+    case 'frame':
+      return framePhaseEntryPrompt(state, cap);
+    case 'spec':
+      return specPhaseEntryPrompt(state, cap);
+    case 'plan':
+      return planPhaseEntryPrompt(state, cap);
+    case 'impl':
+      return implPhaseEntryPrompt(state, cap);
+    case 'docs':
+      return docsPhaseEntryPrompt(state, cap);
+    case 'pr':
+      return prPhaseEntryPrompt(state, cap);
+    case 'open':
+      return openPhaseEntryPrompt();
+  }
+}
+
+/**
  * The steer block, rendered for its two delivery surfaces: appended to a
  * live tool result ('live') or carried into the next harness prompt when
  * the steer missed its phase ('carried' — provenance attached, staleness
