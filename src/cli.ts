@@ -22,6 +22,7 @@ import {
 import type { HumanEvent } from './harness/lifecycle.ts';
 import { duetMachine } from './harness/machine.ts';
 import { serveKernelStdio, serveRunScopedKernelStdio } from './harness/mcp-server.ts';
+import { runOrchestrate } from './orchestrate.ts';
 import { phaseOfGateState } from './phases.ts';
 import { buildStatusModel, renderStatus, steerRefusal } from './status.ts';
 import { openTmuxView } from './tmux-view.ts';
@@ -118,7 +119,8 @@ program
   .option('--impl <provider[:model]>', 'implementer binding override')
   .option('--reviewer <provider[:model]>', 'reviewer binding override')
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
-  .action(async (opts: { spec?: string; framing?: string; template?: string; gatesAt?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean }) => {
+  .option('--interactive', 'orchestrate this run from your own interactive Claude Code session (/duet) instead of the headless driver — brings up the wired session over FRAME → PLAN; impl onward still runs headless after the plan-gate handoff')
+  .action(async (opts: { spec?: string; framing?: string; template?: string; gatesAt?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean; interactive?: boolean }) => {
     const cwd = process.cwd();
 
     // The framing's frontmatter is the machine/prose boundary: parsed
@@ -166,8 +168,32 @@ program
     );
     if (state.gatesAt) console.log(`gates: attending ${state.gatesAt.join(', ')} — other gates pre-authorized (auto-cross, packets recorded)`);
     console.log('');
+    if (opts.interactive) {
+      // Stage 1: orchestrate from the human's interactive /duet session instead
+      // of the headless driver — no auto-spawnDrive. runOrchestrate marks the run
+      // interactive and launches the wired claude session (it blocks until that
+      // session ends). --gates-at still applies to the headless tail after the
+      // plan-gate handoff.
+      console.log(`bringing up the interactive /duet orchestrator for run ${state.runId} …`);
+      runOrchestrate(state);
+      return;
+    }
     const pid = spawnDrive(state);
     printWatchHints(state, pid, state.specPath ? 'SPEC review loop' : 'FRAME phase');
+  });
+
+program
+  .command('orchestrate')
+  .description(
+    'Bring up the interactive /duet orchestrator for a run: a Claude Code session wired to drive it over FRAME → PLAN, with the single gate-safety ask rule applied. Relaunch to reconnect after a dropped session (it re-anchors on disk via get_task).',
+  )
+  .argument('[runId]', 'run id (defaults to the latest run in this project)')
+  .action((runId: string | undefined) => {
+    const cwd = process.cwd();
+    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
+    if (!state) fail('no runs found in this project — start one with duet new --interactive');
+    console.log(`bringing up the interactive /duet orchestrator for run ${state.runId} …`);
+    runOrchestrate(state);
   });
 
 /**
