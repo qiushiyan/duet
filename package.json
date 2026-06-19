@@ -20,7 +20,8 @@
   },
   "files": [
     "dist",
-    "snippets.toml"
+    "snippets.toml",
+    "skills"
   ],
   "scripts": {
     "duet": "node src/cli.ts",

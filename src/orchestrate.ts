@@ -19,9 +19,12 @@ import type { RunState } from './run-store.ts';
 
 // The orchestrator identity fed to the session as system-prompt-strength text
 // (durable across compaction, unlike a skill body). Resolved package-relative
-// from this module the same way snippets.ts resolves its data — survives the
-// publish bundle (docs/engineering.md §Build).
-const IDENTITY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'duet', 'identity.md');
+// from this module like snippets.ts resolves snippets.toml — and, like
+// snippets.toml, shipped only because the `skills/` entry is in package.json
+// `files` (tests/skill.test.ts pins this target into the publish surface). Drop
+// `skills/` from `files` and a packed build points --append-system-prompt-file
+// at a missing file. (docs/engineering.md §Build.)
+export const IDENTITY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'duet', 'identity.md');
 
 /**
  * The single gate-safety rule: an `ask` prompt on `duet continue`. It survives

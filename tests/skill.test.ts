@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
+import { dirname, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 import { program } from '../src/cli.ts';
+import { IDENTITY_PATH } from '../src/orchestrate.ts';
 
 /**
  * Coherence guard for the shipped concierge skill (skills/duet-concierge/):
@@ -100,6 +103,23 @@ describe('the duet orchestrator skill coheres with the CLI', () => {
 
   test('orchestrate is a public command — the launcher the skill names', () => {
     expect(publicCommands.has('orchestrate')).toBe(true);
+  });
+
+  test('the launcher identity target is inside the publish surface (package.json files)', () => {
+    // M2: --append-system-prompt-file <pkg>/skills/duet/identity.md must be a
+    // SHIPPED file. With no .npmignore, the `files` allowlist is the whole
+    // publish surface, so the launcher's IDENTITY_PATH must fall under one of its
+    // entries — drop `skills/` and a packed build feeds claude a missing file.
+    const pkgUrl = new URL('../package.json', import.meta.url);
+    const packageRoot = dirname(fileURLToPath(pkgUrl));
+    const files: string[] = JSON.parse(readFileSync(pkgUrl, 'utf8')).files;
+    const rel = relative(packageRoot, IDENTITY_PATH).replaceAll('\\', '/');
+    const shipped = files.some((entry) => {
+      const base = entry.replace(/\/$/, '');
+      return rel === base || rel.startsWith(`${base}/`);
+    });
+    expect.soft(rel, 'IDENTITY_PATH resolves under the package root').toBe('skills/duet/identity.md');
+    expect.soft(shipped, `${rel} is not covered by package.json files: ${files.join(', ')}`).toBe(true);
   });
 
   test.for([
