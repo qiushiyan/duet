@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
-import { GATE_ASK_RULE, buildLaunchSpec, gateAskRuleLive, runOrchestrate } from '../src/orchestrate.ts';
+import { GATE_ASK_RULE, KICKOFF_PROMPT, buildLaunchSpec, gateAskRuleLive, runOrchestrate } from '../src/orchestrate.ts';
 import type { ClaudeLauncher } from '../src/orchestrate.ts';
 import { loadRunState, runDirOf, saveRunState } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
@@ -61,6 +61,16 @@ describe('buildLaunchSpec — the wired claude argv', () => {
     expect.soft(JSON.parse(args[args.indexOf('--settings') + 1]!)).toEqual({
       permissions: { ask: ['Bash(duet continue:*)'] },
     });
+  });
+
+  test('seeds the kickoff user turn as the trailing [prompt] operand (Family A)', ({ run }) => {
+    const args = buildLaunchSpec(run).args;
+    // The kickoff is claude's positional prompt, so it must be the LAST arg —
+    // after every option and its value, or claude would read it as a flag value.
+    // This is what opens the wired session working instead of at a blank prompt.
+    expect.soft(args[args.length - 1]).toBe(KICKOFF_PROMPT);
+    // It drives the session to its first act — anchoring via get_task.
+    expect.soft(KICKOFF_PROMPT).toMatch(/get_task/);
   });
 });
 

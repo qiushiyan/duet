@@ -48,10 +48,10 @@ describe('steerRefusal (the steer channel gate)', () => {
     expect.soft(copy).toContain('duet continue r1 --answer');
   });
 
-  test('an interactive run points to the /duet chat, not a staged steer', () => {
+  test('an interactive run points to the interactive orchestrator session, not a staged steer', () => {
     const copy = steerRefusal({ kind: 'interactive', phase: 'spec' }, 'r1');
     expect.soft(copy).toBeDefined(); // not the generic "nothing to steer" fallback
-    expect.soft(copy).toContain('/duet session');
+    expect.soft(copy).toContain('interactive orchestrator session');
     expect.soft(copy).toContain('chat');
   });
 
@@ -293,11 +293,11 @@ describe('renderStatus', () => {
     expect.soft(out).toContain(`resume with:  duet continue ${run.runId}`);
   });
 
-  test('an interactive stop names the phase the /duet session is driving', ({ run }) => {
+  test('an interactive stop names the phase the interactive orchestrator session is driving', ({ run }) => {
     run.machineState = 'specLoop';
     const out = render(run, { kind: 'interactive', phase: 'spec' });
 
     expect.soft(out).toContain('the interactive orchestrator is driving the spec phase');
-    expect.soft(out).toContain('/duet session');
+    expect.soft(out).toContain('interactive orchestrator session');
   });
 });

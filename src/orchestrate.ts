@@ -9,9 +9,10 @@ import type { RunState } from './run-store.ts';
  * The `duet orchestrate <runId>` launcher (Stage 1) — the one place that brings
  * up the human's interactive Claude Code session wired to drive a run over
  * FRAME → PLAN, and the one place that applies the single gate-safety
- * permission rule. A skill cannot do launch-time wiring (the runId is dynamic),
- * which is why the launcher and the `skills/duet/` identity coexist by design:
- * the skill is what `--append-system-prompt-file` carries.
+ * permission rule. The orchestrator role can't be installed by a slash command
+ * (a skill can't do launch-time wiring — the runId is dynamic), so the launcher
+ * feeds `skills/duet/identity.md` to the session as a system prompt
+ * (`--append-system-prompt-file`) instead — there is no `/duet` command.
  *
  * The process spawn is the Environment seam (modeled on providers/pane.ts'
  * PaneFactory): runOrchestrate takes an injectable ClaudeLauncher so tests
@@ -39,6 +40,18 @@ export const IDENTITY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..',
  * concierge migration is needed.
  */
 export const GATE_ASK_RULE = 'Bash(duet continue:*)';
+
+/**
+ * Family A — the first user turn, seeded so the wired session opens *working*
+ * instead of at a blank prompt. The launcher already feeds the orchestrator
+ * identity as the system prompt (`--append-system-prompt-file`), so the role is
+ * loaded before any turn; this is the kickoff *user* message that gets the
+ * session to act. Gentle by design: orient and propose, then wait for the
+ * human's go before spending worker turns — a fresh session that auto-spawned
+ * workers on launch would surprise.
+ */
+export const KICKOFF_PROMPT =
+  'Read get_task to anchor on the current phase and the framing, then give me a one-paragraph plan of attack and wait for my go before sending the first worker prompt.';
 
 export interface LaunchSpec {
   command: string;
@@ -81,6 +94,11 @@ export function buildLaunchSpec(state: RunState, self: CliSelfRef = currentSelfR
       '--strict-mcp-config',
       '--append-system-prompt-file', IDENTITY_PATH,
       '--settings', settings,
+      // Family A: the first user turn, as claude's positional [prompt] operand,
+      // so the session opens working instead of blank. It trails every option —
+      // the variadic `--mcp-config` stopped at `--strict-mcp-config`, and
+      // `--settings` takes a single value — so claude parses it as [prompt].
+      KICKOFF_PROMPT,
     ],
   };
 }
@@ -161,7 +179,7 @@ export function runOrchestrate(
   if (!existsSync(identityPath)) {
     return {
       error: new Error(
-        `the orchestrator identity file is missing (${identityPath}) — the /duet session would launch without its role. This is a broken install: confirm duet's skills/ shipped (it is in package.json "files"), then retry: duet orchestrate ${state.runId}. The run is unchanged.`,
+        `the orchestrator identity file is missing (${identityPath}) — the interactive orchestrator session would launch without its role. This is a broken install: confirm duet's skills/ shipped (it is in package.json "files"), then retry: duet orchestrate ${state.runId}. The run is unchanged.`,
       ),
     };
   }
