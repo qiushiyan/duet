@@ -138,6 +138,15 @@ export interface RunState {
   costs: {
     orchestratorUsd: number;
     /**
+     * True once the orchestrator ran on the interactive host (the human's
+     * Claude Code session, flat subscription quota — no `total_cost_usd`), so
+     * `orchestratorUsd` is partial/unmetered. Sticky: set at launch and NEVER
+     * cleared, because the fact that orchestrator spend went unmetered must
+     * outlive the plan-gate handoff that clears `orchestrationHost`. Mirrors
+     * claudeWorkersCostPartial; never overload orchestratorUsd.
+     */
+    orchestratorCostPartial: boolean;
+    /**
      * The KNOWN claude-worker cost. A turn reports `costUsd` only when the
      * provider includes it (headless does; the interactive transport omits it
      * by P5 — cost shown unavailable, never faked). When any claude turn
@@ -233,7 +242,7 @@ export function createRun(opts: {
     phaseStarted: {},
     rounds: {},
     phaseSummaries: {},
-    costs: { orchestratorUsd: 0, claudeWorkersUsd: 0, claudeWorkersCostPartial: false, codexTokens: { input: 0, output: 0 } },
+    costs: { orchestratorUsd: 0, orchestratorCostPartial: false, claudeWorkersUsd: 0, claudeWorkersCostPartial: false, codexTokens: { input: 0, output: 0 } },
     snippetProposals: [],
   };
   ensureDuetDir(opts.cwd);

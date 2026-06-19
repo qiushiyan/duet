@@ -243,6 +243,16 @@ describe('renderStatus', () => {
       .toContain('claude workers $0.00 known (+ interactive turns: cost unavailable)');
   });
 
+  test('the cost line marks the orchestrator total unavailable only when interactive-hosted', ({ run }) => {
+    run.machineState = 'specLoop';
+    expect.soft(render(run, { kind: 'interactive', phase: 'spec' })).not.toContain('subscription quota');
+
+    run.costs.orchestratorCostPartial = true;
+    expect
+      .soft(render(run, { kind: 'interactive', phase: 'spec' }))
+      .toContain('orchestrator $0.00 known (interactive turns on the subscription quota: cost unavailable)');
+  });
+
   test('context fill renders as plain percentages per voice', ({ run }) => {
     run.machineState = 'implFlagWait';
     run.contextUsage = {

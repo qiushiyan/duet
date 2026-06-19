@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect } from 'vitest';
 import { GATE_ASK_RULE, buildLaunchSpec, gateAskRuleLive, runOrchestrate } from '../src/orchestrate.ts';
 import type { ClaudeLauncher } from '../src/orchestrate.ts';
-import { loadRunState, runDirOf } from '../src/run-store.ts';
+import { loadRunState, runDirOf, saveRunState } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**
@@ -53,11 +53,33 @@ describe('runOrchestrate — marks the run and launches over the seam', () => {
     const rec = recordingLauncher();
     runOrchestrate(run, { launcher: rec.launcher });
 
-    expect.soft(loadRunState(projectDir, run.runId).orchestrationHost).toBe('interactive');
+    const after = loadRunState(projectDir, run.runId);
+    expect.soft(after.orchestrationHost).toBe('interactive');
+    // The orchestrator now bills the flat subscription quota — the known total is partial.
+    expect.soft(after.costs.orchestratorCostPartial).toBe(true);
     expect.soft(rec.calls).toHaveLength(1);
     expect.soft(rec.calls[0]!.args).toContain('--strict-mcp-config'); // the real spec reached the launcher
     // The interactive host has no _drive — nothing headless was spawned.
     expect.soft(existsSync(join(runDirOf(projectDir, run.runId), 'driver.pid'))).toBe(false);
+  });
+
+  test('orchestratorCostPartial is sticky — it outlives the handoff that clears orchestrationHost', ({
+    projectDir,
+    run,
+  }) => {
+    runOrchestrate(run, { launcher: recordingLauncher().launcher });
+    // Simulate the plan-gate handoff: orchestrationHost is cleared, but the fact
+    // that orchestrator spend went unmetered must persist.
+    const handed = loadRunState(projectDir, run.runId);
+    delete handed.orchestrationHost;
+    saveRunState(handed);
+    const final = loadRunState(projectDir, run.runId);
+    expect.soft(final.orchestrationHost).toBeUndefined();
+    expect.soft(final.costs.orchestratorCostPartial).toBe(true);
+  });
+
+  test('createRun defaults orchestratorCostPartial to false', ({ run }) => {
+    expect(run.costs.orchestratorCostPartial).toBe(false);
   });
 
   test('warns loudly when the gate-safety rule is missing from the spec, but still launches', ({ run }) => {

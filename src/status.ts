@@ -222,8 +222,13 @@ export function renderStatus(model: StatusModel): string {
   const claudeWorkers = model.costs.claudeWorkersCostPartial
     ? `claude workers $${model.costs.claudeWorkersUsd.toFixed(2)} known (+ interactive turns: cost unavailable)`
     : `claude workers $${model.costs.claudeWorkersUsd.toFixed(2)}`;
+  // The orchestrator total is partial when the interactive host drove it (flat
+  // subscription quota, no per-turn cost) — say so rather than imply completeness.
+  const orchestrator = model.costs.orchestratorCostPartial
+    ? `orchestrator $${model.costs.orchestratorUsd.toFixed(2)} known (interactive turns on the subscription quota: cost unavailable)`
+    : `orchestrator $${model.costs.orchestratorUsd.toFixed(2)}`;
   lines.push(
-    `cost:     orchestrator $${model.costs.orchestratorUsd.toFixed(2)}, ${claudeWorkers}, codex ${fmtTokens(model.costs.codexTokens.input)} in / ${fmtTokens(model.costs.codexTokens.output)} out tokens`,
+    `cost:     ${orchestrator}, ${claudeWorkers}, codex ${fmtTokens(model.costs.codexTokens.input)} in / ${fmtTokens(model.costs.codexTokens.output)} out tokens`,
   );
   if (model.context.length > 0) {
     lines.push(

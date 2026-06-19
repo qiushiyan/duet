@@ -104,6 +104,10 @@ export function runOrchestrate(
   const log = opts.log ?? ((line: string) => console.error(line));
 
   state.orchestrationHost = 'interactive';
+  // Sticky: orchestrator spend now runs on the flat subscription quota, so the
+  // known total is partial — and stays partial past the handoff that clears
+  // orchestrationHost.
+  state.costs.orchestratorCostPartial = true;
   saveRunState(state);
 
   const spec = buildSpec(state);
