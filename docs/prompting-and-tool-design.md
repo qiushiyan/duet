@@ -88,7 +88,7 @@ The through-line: **everything the agent sees through a tool — name, descripti
 
 ### Few thoughtful tools, not API wrappers
 
-More tools don't lead to better outcomes; ambiguous overlap between tools actively hurts. Build a few tools targeting whole workflows, consolidating multiple operations behind one call (`schedule_event` instead of `list_users` + `list_events` + `create_event`). Duet's seven-tool orchestrator surface follows this — `send_prompt` hides spawn/resume/stream/persist behind one verb.
+More tools don't lead to better outcomes; ambiguous overlap between tools actively hurts. Build a few tools targeting whole workflows, consolidating multiple operations behind one call (`schedule_event` instead of `list_users` + `list_events` + `create_event`). Duet's eight-tool orchestrator surface follows this — `send_prompt` hides spawn/resume/stream/persist behind one verb, and `get_task` is the single way in to a phase (the brief, plus any staged human input folded once), so the interactive host re-anchors through one call rather than several.
 
 ### Descriptions are prompts: surface the implicit
 
@@ -119,7 +119,7 @@ When a tool result changes what the agent should do next, the result text says s
 
 > The human is away, so your question has been queued and the run is pausing. End your turn with a one-line status — anything you do past this point happens without the answer you just asked for. The run resumes with the human's answer.
 
-This is what makes the cooperative pause reliable without any mechanical enforcement. Backstop-cap hits and `advance_phase` acknowledgements get the same treatment.
+This is what makes the cooperative pause reliable without any mechanical enforcement. Backstop-cap hits and `advance_phase` acknowledgements get the same treatment. The interactive host leans on it harder still: once a phase is parked, `get_task` reports the park and the post-terminal rail refuses further worker turns — each a prescribed says-what-happens-next result ("present the packet, propose `duet continue`"), so a long-lived session never silently no-ops past a gate.
 
 A house variant for soft constraints: **warn-once-then-allow**. When the agent attempts something usually-but-not-always wrong (duet's case: re-sending a full snippet template to a worker that already holds it), the first attempt returns a steering error naming the why and the alternatives; repeating the identical call passes. Judgment keeps the override; the harness makes the override deliberate and leaves both calls in the transcript. Prefer this over hard blocks whenever the rule has legitimate exceptions — a hard block is the dumb-router trap of approximating judgment with mechanism.
 
