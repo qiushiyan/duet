@@ -16,7 +16,8 @@ import {
 } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
 import { describeStop } from '../status.ts';
-import { duetMachine, flagWaitStateOf } from './machine.ts';
+import { duetMachine, flagWaitStateOf, interactiveMachine } from './machine.ts';
+import { markerToEvent } from './phase-events.ts';
 
 /**
  * The run lifecycle — how phases actually execute (docs/automation-design.md
@@ -361,4 +362,84 @@ export async function driveToQuiescence(
     await notify(`duet ${fresh.runId}`, describeStop(fresh, snapshot.status === 'done'));
     return { snapshot, state: fresh };
   }
+}
+
+/**
+ * Advance an interactive run's machine inline — the Stage-1 continue, with no
+ * `_drive`. The human's session drives each phase, so a crossing is a pure disk
+ * transition: restore the inert interactiveMachine at its resting phase loop,
+ * consume the marker's recorded phase.* to reach the gate/flag, apply the
+ * human's authority event, then persist the resulting next phase-loop rest and
+ * clear the marker deliver-before-clear.
+ *
+ * Marker-then-human ordering is load-bearing: at a phase loop the human.* event
+ * has no handler (only phase.* does), and only human.* crosses a gate/flag — so
+ * the marker's phase.* must move the machine to the gate/flag BEFORE the human
+ * event applies. (A naive `spawnDrive(state,'approve')` sends the human event
+ * first, against a phase loop that ignores it, then replays the marker and parks
+ * at the gate — never crossing. That is why an interactive crossing cannot go
+ * through driveToQuiescence, which sends its event before the marker replays.)
+ */
+export function crossInteractive(state: RunState, humanEvent: HumanEvent): void {
+  const snapshot = loadMachineSnapshot(state);
+  const actor = createActor(interactiveMachine, {
+    input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
+    ...(snapshot ? { snapshot } : {}),
+  });
+  actor.start();
+  // The actor rests at the phase loop the session was driving (or the entry
+  // phase, fresh, on the first crossing). Consume the marker keyed off that
+  // resting phase, so a stale marker can't drive a foreign phase's decision.
+  const restValue = actor.getSnapshot().value;
+  const restPhase =
+    typeof restValue === 'string' ? PHASES.find((p) => `${p.name}Loop` === restValue)?.name : undefined;
+  const markerEvent = restPhase ? markerToEvent(state.terminalMarker, restPhase) : null;
+  if (markerEvent) actor.send(markerEvent);
+  actor.send(humanEvent);
+  // The interactive phase loop IS the rest (the provided actor is inert, so
+  // restore is safe — machine.ts). Persist it, then clear the marker
+  // deliver-before-clear: a crash between the two writes leaves a stale marker
+  // the probe ignores, since it no longer matches the moved-on rest phase.
+  saveMachineSnapshot(state, actor.getPersistedSnapshot());
+  actor.stop();
+  const fresh = loadRunState(state.cwd, state.runId);
+  delete fresh.terminalMarker;
+  saveRunState(fresh);
+}
+
+/**
+ * Whether an interactive crossing rests inline (the connected session drives the
+ * next phase via get_task) or hands off to a detached headless `_drive`. The
+ * plan-approval gate is THE handoff — impl onward is the permanent AFK
+ * substrate — as is any explicit `--headless` fallback.
+ */
+export function interactiveContinuePlan(
+  gatePhase: PhaseName,
+  eventType: 'approve' | 'reject' | 'answer',
+  headless: boolean,
+): 'inline' | 'handoff' {
+  return (gatePhase === 'plan' && eventType === 'approve') || headless ? 'handoff' : 'inline';
+}
+
+/**
+ * Validate an interactive decision against the marker-derived position — the
+ * interactive rest is a phase loop with no human.* handler, so `restored.can()`
+ * would reject every crossing. A gate admits approve/reject; a flag admits
+ * answer; anywhere else, the orchestrator hasn't advanced and there is nothing
+ * to cross. Returns a friendly error sentence, or undefined when the decision is
+ * legal.
+ */
+export function validateInteractiveCrossing(
+  position: RunPosition,
+  eventType: 'approve' | 'reject' | 'answer',
+): string | undefined {
+  if (position.kind === 'gate') {
+    return eventType === 'answer'
+      ? 'is at a gate — use --approve or --reject "<feedback>", not --answer'
+      : undefined;
+  }
+  if (position.kind === 'flag') {
+    return eventType === 'answer' ? undefined : 'has a queued question — use --answer "<text>"';
+  }
+  return "isn't at a gate or flag yet — the orchestrator hasn't advanced, so there's nothing to cross";
 }

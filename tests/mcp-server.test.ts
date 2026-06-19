@@ -6,13 +6,14 @@ import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect } from 'vitest';
 import { createActor } from 'xstate';
 import { toSdkTools } from '../src/harness/driver.ts';
+import { crossInteractive } from '../src/harness/lifecycle.ts';
 import { interactiveMachine } from '../src/harness/machine.ts';
 import { buildKernelMcpServer, buildKernelTools, createRunScopedKernel } from '../src/harness/mcp-server.ts';
 import { createPhaseTools } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
 import { renderSnippetLibrary } from '../src/snippets.ts';
 import { FakeWorker, test } from './helpers/fixtures.ts';
-import { loadRunState, markAbandoned, saveMachineSnapshot, saveRunState } from '../src/run-store.ts';
+import { loadRunState, markAbandoned, saveMachineSnapshot, saveRunState, stageHumanInput } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
 
 const CLI_ENTRY = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
@@ -253,6 +254,37 @@ describe('the run-scoped, phase-less kernel server (Stage 1)', () => {
     await kernel.callTool('send_prompt', t, {}); // first send in the new phase — passes
     // The second identical send warns FRESH, proving the rail reset at the boundary.
     expect((await kernel.callTool('send_prompt', t, {})).isError).toBe(true);
+  });
+
+  test('a live connection sees a cross-process duet continue --reject and folds the feedback on its next get_task', async ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    // Park spec at its gate: the session drove into spec and advanced.
+    restAtSpec(loadRunState(projectDir, interactiveRun.runId));
+    const parked = loadRunState(projectDir, interactiveRun.runId);
+    parked.phaseStarted.spec = true;
+    parked.terminalMarker = { phase: 'spec', kind: 'advance' };
+    saveRunState(parked);
+
+    const kernel = createRunScopedKernel(projectDir, interactiveRun.runId);
+    // Parked: get_task reports the park, not a fresh brief.
+    expect.soft(textOf(await kernel.callTool('get_task', {}, {}))).toContain('parked at its gate');
+
+    // Simulate `duet continue --reject "..."` from the CLI process — a SEPARATE
+    // writer stages the feedback and crosses inline.
+    const cli = loadRunState(projectDir, interactiveRun.runId);
+    stageHumanInput(cli, { kind: 'feedback', text: 'invert the data model' });
+    crossInteractive(cli, { type: 'human.reject' });
+
+    // The SAME live kernel, on its next get_task, sees the fresh disk state: the
+    // marker is gone, the run re-enters spec, and the feedback folds — once. This
+    // is the whole point of rebuilding the tool surface per call against disk.
+    const folded = textOf(await kernel.callTool('get_task', {}, {}));
+    expect.soft(folded).toContain('invert the data model');
+    expect.soft(folded).toContain('Draft the spec'); // the spec brief, intact
+    const second = textOf(await kernel.callTool('get_task', {}, {}));
+    expect.soft(second).not.toContain('invert the data model'); // consumed exactly once
   });
 
   test('refuses a run it cannot host — handed off (orchestrationHost unset) or abandoned (no hostable phase)', async ({

@@ -10,8 +10,15 @@ import { runPhase } from '../src/harness/driver.ts';
 import type { DriverInput, RunOrchestratorTurn } from '../src/harness/driver.ts';
 import { duetMachine, interactiveMachine } from '../src/harness/machine.ts';
 import type { PhaseEvent } from '../src/harness/phase-events.ts';
-import { driveToQuiescence, probeRunPosition, waitForRunStop } from '../src/harness/lifecycle.ts';
-import { createRun, loadMachineSnapshot, loadRunState, runDirOf, saveMachineSnapshot, saveRunState } from '../src/run-store.ts';
+import {
+  crossInteractive,
+  driveToQuiescence,
+  interactiveContinuePlan,
+  probeRunPosition,
+  validateInteractiveCrossing,
+  waitForRunStop,
+} from '../src/harness/lifecycle.ts';
+import { createRun, loadMachineSnapshot, loadRunState, markAbandoned, runDirOf, saveMachineSnapshot, saveRunState } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
 import { scriptedMachine } from './helpers/scripted-machine.ts';
@@ -421,6 +428,113 @@ describe('probeRunPosition — the interactive resting model (Stage 1)', () => {
     fresh.terminalMarker = { phase: 'spec', kind: 'advance' };
     saveRunState(fresh);
     expect.soft(probeRunPosition(fresh)).toEqual({ kind: 'gate', phase: 'frame' });
+  });
+});
+
+describe('crossInteractive + the interactive continue model (Slice 4)', () => {
+  function restInteractive(
+    state: RunState,
+    sends: Array<{ type: 'phase.advance' } | { type: 'phase.flag' } | { type: 'human.approve' } | { type: 'human.reject' } | { type: 'human.answer' }>,
+  ): void {
+    const actor = createActor(interactiveMachine, {
+      input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
+    });
+    actor.start();
+    for (const e of sends) actor.send(e);
+    saveMachineSnapshot(state, actor.getPersistedSnapshot());
+    actor.stop();
+  }
+
+  test('first crossing (no prior snapshot): frame advance + approve rests at spec, marker cleared', ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    const state = loadRunState(projectDir, interactiveRun.runId);
+    state.terminalMarker = { phase: 'frame', kind: 'advance' };
+    saveRunState(state);
+    crossInteractive(state, { type: 'human.approve' });
+
+    const after = loadRunState(projectDir, interactiveRun.runId);
+    expect.soft(after.terminalMarker).toBeUndefined();
+    expect.soft(probeRunPosition(after)).toEqual({ kind: 'interactive', phase: 'spec' });
+  });
+
+  test('mid-arc: a spec advance + approve rests at plan', ({ projectDir, interactiveRun }) => {
+    restInteractive(interactiveRun, [{ type: 'phase.advance' }, { type: 'human.approve' }]); // specLoop
+    const state = loadRunState(projectDir, interactiveRun.runId);
+    state.terminalMarker = { phase: 'spec', kind: 'advance' };
+    saveRunState(state);
+    crossInteractive(state, { type: 'human.approve' });
+    expect(probeRunPosition(loadRunState(projectDir, interactiveRun.runId))).toEqual({ kind: 'interactive', phase: 'plan' });
+  });
+
+  test('reject re-enters the same phase loop, marker cleared', ({ projectDir, interactiveRun }) => {
+    restInteractive(interactiveRun, [{ type: 'phase.advance' }, { type: 'human.approve' }]); // specLoop
+    const state = loadRunState(projectDir, interactiveRun.runId);
+    state.terminalMarker = { phase: 'spec', kind: 'advance' };
+    saveRunState(state);
+    crossInteractive(state, { type: 'human.reject' });
+    const after = loadRunState(projectDir, interactiveRun.runId);
+    expect.soft(after.terminalMarker).toBeUndefined();
+    expect.soft(probeRunPosition(after)).toEqual({ kind: 'interactive', phase: 'spec' });
+  });
+
+  test('answer re-enters the same phase loop', ({ projectDir, interactiveRun }) => {
+    restInteractive(interactiveRun, [{ type: 'phase.advance' }, { type: 'human.approve' }]); // specLoop
+    const state = loadRunState(projectDir, interactiveRun.runId);
+    state.terminalMarker = { phase: 'spec', kind: 'flag' };
+    saveRunState(state);
+    crossInteractive(state, { type: 'human.answer' });
+    expect(probeRunPosition(loadRunState(projectDir, interactiveRun.runId))).toEqual({ kind: 'interactive', phase: 'spec' });
+  });
+
+  test('plan-gate approve reaches implLoop (marker-then-human ordering), not parked at the gate', ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    restInteractive(interactiveRun, [
+      { type: 'phase.advance' },
+      { type: 'human.approve' }, // → specLoop
+      { type: 'phase.advance' },
+      { type: 'human.approve' }, // → planLoop
+    ]);
+    const state = loadRunState(projectDir, interactiveRun.runId);
+    state.terminalMarker = { phase: 'plan', kind: 'advance' };
+    saveRunState(state);
+    crossInteractive(state, { type: 'human.approve' });
+
+    const after = loadRunState(projectDir, interactiveRun.runId);
+    // The durable snapshot reached impl — a naive spawnDrive(state,'approve') would
+    // instead have sent the human event at planLoop (ignored), replayed the marker,
+    // and parked at planApprovalGate. The marker-then-human ordering is the fix.
+    expect.soft(after.terminalMarker).toBeUndefined();
+    expect.soft(probeRunPosition(after)).toEqual({ kind: 'interactive', phase: 'impl' });
+  });
+
+  test('interactiveContinuePlan: plan-approve and any --headless hand off; earlier gates rest inline', () => {
+    expect.soft(interactiveContinuePlan('plan', 'approve', false)).toBe('handoff');
+    expect.soft(interactiveContinuePlan('frame', 'approve', false)).toBe('inline');
+    expect.soft(interactiveContinuePlan('spec', 'reject', false)).toBe('inline');
+    expect.soft(interactiveContinuePlan('plan', 'reject', false)).toBe('inline'); // a plan REJECT re-enters, not handoff
+    expect.soft(interactiveContinuePlan('spec', 'approve', true)).toBe('handoff'); // --headless always hands off
+  });
+
+  test('validateInteractiveCrossing: a gate admits approve/reject, a flag admits answer, a rest admits nothing', () => {
+    expect.soft(validateInteractiveCrossing({ kind: 'gate', phase: 'spec' }, 'approve')).toBeUndefined();
+    expect.soft(validateInteractiveCrossing({ kind: 'gate', phase: 'spec' }, 'reject')).toBeUndefined();
+    expect.soft(validateInteractiveCrossing({ kind: 'gate', phase: 'spec' }, 'answer')).toContain('--answer');
+    expect.soft(validateInteractiveCrossing({ kind: 'flag', phase: 'spec' }, 'answer')).toBeUndefined();
+    expect.soft(validateInteractiveCrossing({ kind: 'flag', phase: 'spec' }, 'approve')).toContain('queued question');
+    expect.soft(validateInteractiveCrossing({ kind: 'interactive', phase: 'spec' }, 'approve')).toContain("hasn't advanced");
+  });
+
+  test('never-trap: markAbandoned on an interactive run reads as abandoned, not stranded', ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    restInteractive(interactiveRun, [{ type: 'phase.advance' }, { type: 'human.approve' }]);
+    markAbandoned(loadRunState(projectDir, interactiveRun.runId));
+    expect(probeRunPosition(loadRunState(projectDir, interactiveRun.runId))).toEqual({ kind: 'abandoned' });
   });
 });
 
