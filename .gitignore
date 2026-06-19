@@ -5,6 +5,8 @@ node_modules/
 references/*
 !references/README.md
 
+*.local*
+
 # duet run state (per-repo working data, never committed)
 .duet/
 
