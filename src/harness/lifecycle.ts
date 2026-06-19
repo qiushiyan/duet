@@ -160,21 +160,26 @@ function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running
 
   // The interactive resting model (Stage 1): the human's session drives each
   // phase, so a non-quiescent phase-loop snapshot is a REST, not a crash. The
-  // terminal marker — when the orchestrator has advanced/flagged — is the sole
-  // signal that the run is parked at the phase's gate/flag (the interactive
-  // snapshot still sits at the phase loop; it is never persisted AT the gate,
-  // which is what keeps the spent-marker guard from ever colliding with this
-  // branch). Guarded on orchestrationHost, so headless runs are untouched.
+  // terminal marker — when it belongs to the RESTING phase — is the signal that
+  // the run is parked at that phase's gate/flag (the interactive snapshot still
+  // sits at the phase loop; it is never persisted AT the gate). A marker whose
+  // phase no longer matches the rest is STALE: crossInteractive saves the
+  // next-phase snapshot and then clears the marker as two writes, and a crash
+  // between them leaves the prior phase's marker beside a moved-on snapshot — so
+  // we key liveness off `marker.phase === restPhase` and ignore the leftover.
+  // (The read-only probe has no spent-marker guard of its own — that one lives
+  // in driveToQuiescence, which interactive runs don't go through.) Guarded on
+  // orchestrationHost, so headless runs are untouched.
   if (state.orchestrationHost === 'interactive') {
+    const restPhase = (snapshot && interactiveRestPhase(state, snapshot)) || entryPhase;
     const marker = state.terminalMarker;
-    if (marker) {
+    if (marker && marker.phase === restPhase) {
       return marker.kind === 'advance' && PHASE[marker.phase].gate
         ? { kind: 'gate', phase: marker.phase as GatePhase }
         : { kind: 'flag', phase: marker.phase };
     }
-    // No marker: resting at the phase loop the session is actively driving.
-    const phase = (snapshot && interactiveRestPhase(state, snapshot)) || entryPhase;
-    return { kind: 'interactive', phase };
+    // No live marker: resting at the phase loop the session is actively driving.
+    return { kind: 'interactive', phase: restPhase };
   }
 
   if (!snapshot) {

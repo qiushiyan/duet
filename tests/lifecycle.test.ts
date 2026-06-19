@@ -347,18 +347,46 @@ describe('probeRunPosition — the interactive resting model (Stage 1)', () => {
     });
   });
 
-  test('an advance marker with no live driver parks at the phase gate', ({ projectDir, interactiveRun }) => {
+  test('an advance marker on the resting phase parks at that gate', ({ projectDir, interactiveRun }) => {
+    // Realistic parked state: the session drove into spec (snapshot at specLoop)
+    // and then advanced — the marker belongs to the phase the snapshot rests at.
+    restInteractiveAt(interactiveRun, [{ type: 'phase.advance' }, { type: 'human.approve' }]);
     const parked = loadRunState(projectDir, interactiveRun.runId);
     parked.terminalMarker = { phase: 'spec', kind: 'advance' };
     saveRunState(parked);
     expect(probeRunPosition(parked)).toEqual({ kind: 'gate', phase: 'spec' });
   });
 
-  test('a flag marker with no live driver parks at the phase flag', ({ projectDir, interactiveRun }) => {
+  test('a flag marker on the resting phase parks at that flag', ({ projectDir, interactiveRun }) => {
+    restInteractiveAt(interactiveRun, [{ type: 'phase.advance' }, { type: 'human.approve' }]);
     const parked = loadRunState(projectDir, interactiveRun.runId);
     parked.terminalMarker = { phase: 'spec', kind: 'flag' };
     saveRunState(parked);
     expect(probeRunPosition(parked)).toEqual({ kind: 'flag', phase: 'spec' });
+  });
+
+  test('a first-FRAME advance marker with no snapshot parks at the frame gate', ({ projectDir, interactiveRun }) => {
+    // The first phase has no snapshot until crossInteractive persists one, so
+    // restPhase falls back to the entry phase — a {frame,advance} marker there
+    // is live (it belongs to the resting entry phase).
+    const parked = loadRunState(projectDir, interactiveRun.runId);
+    parked.terminalMarker = { phase: 'frame', kind: 'advance' };
+    saveRunState(parked);
+    expect(probeRunPosition(parked)).toEqual({ kind: 'gate', phase: 'frame' });
+  });
+
+  test('a stale marker from the prior phase is ignored — reports the rest, not the old gate', ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    // The deliver-before-clear crash window: crossInteractive saved the specLoop
+    // rest but died before clearing frame's advance marker. The probe must read
+    // the rest (interactive spec), not replay the moved-on frame gate.
+    restInteractiveAt(interactiveRun, [{ type: 'phase.advance' }, { type: 'human.approve' }]);
+    const crashed = loadRunState(projectDir, interactiveRun.runId);
+    crashed.terminalMarker = { phase: 'frame', kind: 'advance' }; // stale — snapshot rests at specLoop
+    saveRunState(crashed);
+    expect(probeRunPosition(crashed)).toEqual({ kind: 'interactive', phase: 'spec' });
   });
 
   test('a live driver pid wins over the interactive rest — running (the --headless fallback case)', ({
