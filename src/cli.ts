@@ -175,7 +175,8 @@ program
       // session ends). --gates-at still applies to the headless tail after the
       // plan-gate handoff.
       console.log(`bringing up the interactive /duet orchestrator for run ${state.runId} …`);
-      runOrchestrate(state);
+      const launched = runOrchestrate(state);
+      if (launched.error) fail(launched.error.message);
       return;
     }
     const pid = spawnDrive(state);
@@ -193,7 +194,8 @@ program
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
     if (!state) fail('no runs found in this project — start one with duet new --interactive');
     console.log(`bringing up the interactive /duet orchestrator for run ${state.runId} …`);
-    runOrchestrate(state);
+    const launched = runOrchestrate(state);
+    if (launched.error) fail(launched.error.message);
   });
 
 /**

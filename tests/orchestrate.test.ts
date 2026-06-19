@@ -114,4 +114,35 @@ describe('runOrchestrate — marks the run and launches over the seam', () => {
     expect.soft(out).toContain(GATE_ASK_RULE);
     expect.soft(rec.calls).toHaveLength(1); // still launched — the session is attended
   });
+
+  test('an immediate launch failure (ENOENT) rolls the interactive marking back', ({ projectDir, run }) => {
+    const enoent = Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' });
+    const result = runOrchestrate(run, { launcher: () => ({ error: enoent }) });
+
+    // The error is surfaced for the caller to fail on, with prescribed recovery.
+    expect.soft(result.error).toBeDefined();
+    expect.soft(result.error?.message).toContain('claude');
+    expect.soft(result.error?.message).toContain('not found on PATH');
+    // The run is NOT left claiming a phantom interactive owner.
+    const after = loadRunState(projectDir, run.runId);
+    expect.soft(after.orchestrationHost).toBeUndefined();
+    // No orchestrator turn ran, so the partial flag returns to false.
+    expect.soft(after.costs.orchestratorCostPartial).toBe(false);
+  });
+
+  test('a missing identity file is refused at preflight, before the run is marked', ({ projectDir, run }) => {
+    const rec = recordingLauncher();
+    const result = runOrchestrate(run, {
+      launcher: rec.launcher,
+      identityPath: join(projectDir, 'no', 'such', 'identity.md'),
+    });
+
+    expect.soft(result.error).toBeDefined();
+    expect.soft(result.error?.message).toContain('identity file is missing');
+    expect.soft(rec.calls).toHaveLength(0); // never reached the launcher
+    // Marking happens only after preflight, so the run is untouched.
+    const after = loadRunState(projectDir, run.runId);
+    expect.soft(after.orchestrationHost).toBeUndefined();
+    expect.soft(after.costs.orchestratorCostPartial).toBe(false);
+  });
 });
