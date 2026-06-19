@@ -186,6 +186,53 @@ describe('the run-scoped, phase-less kernel server (Stage 1)', () => {
     expect.soft((await first).isError).toBeUndefined();
   });
 
+  /** A worker whose turn resolves with a caller-supplied result when finished. */
+  function controllableWorker(name: 'claude' | 'codex') {
+    const worker = new FakeWorker(name);
+    let resolveTurn!: (over: { sessionId: string; costUsd?: number; tokens?: { input: number; output: number } }) => void;
+    worker.runTurn = (opts) => {
+      worker.calls.push(opts);
+      return new Promise((resolve) => {
+        resolveTurn = (over) => resolve({ text: 'done', ...over });
+      });
+    };
+    // runTurn (and so resolveTurn's assignment) fires during callTool, before finish.
+    return { worker, finish: (over: { sessionId: string; costUsd?: number; tokens?: { input: number; output: number } }) => resolveTurn(over) };
+  }
+
+  test('concurrent cross-role sends both survive — the per-call state load does not clobber', async ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    // The price the rails-only cache must pay: each call loads its own RunState,
+    // so without the fresh-load/merge/save the later post-await save would erase
+    // the other role's session/cost/sent-snippets/rounds. FRAME fans out exactly
+    // this way (implementer + reviewer in parallel).
+    const impl = controllableWorker('claude');
+    const rev = controllableWorker('codex');
+    const kernel = createRunScopedKernel(projectDir, interactiveRun.runId, () => ({
+      implementer: impl.worker,
+      reviewer: rev.worker,
+    }));
+
+    const implSend = kernel.callTool('send_prompt', { role: 'implementer', tag: 'think-holistic', body: 'analyze' }, {});
+    const revSend = kernel.callTool('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'critique' }, {});
+    await new Promise((r) => setTimeout(r, 0)); // both turns in flight
+
+    impl.finish({ sessionId: 'impl-session', costUsd: 1.5 });
+    rev.finish({ sessionId: 'rev-session', tokens: { input: 100, output: 20 } });
+    await Promise.all([implSend, revSend]);
+
+    const disk = loadRunState(projectDir, interactiveRun.runId);
+    expect.soft(disk.workerSessions.implementer).toBe('impl-session'); // not clobbered by the reviewer's save
+    expect.soft(disk.workerSessions.reviewer).toBe('rev-session');
+    expect.soft(disk.sentSnippets?.frame?.implementer).toEqual(['think-holistic']);
+    expect.soft(disk.sentSnippets?.frame?.reviewer).toEqual(['review-spec']);
+    expect.soft(disk.costs.claudeWorkersUsd).toBe(1.5);
+    expect.soft(disk.costs.codexTokens).toEqual({ input: 100, output: 20 });
+    expect.soft(disk.rounds.frame).toBe(1); // the reviewer's review-* send counted a round
+  });
+
   test('crossing to a new phase resets the warn-once rail — a re-sent base template warns fresh', async ({
     projectDir,
     interactiveRun,

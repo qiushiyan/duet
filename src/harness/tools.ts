@@ -12,6 +12,7 @@ import {
   contextPercent,
   gateAttended,
   listPendingSteers,
+  loadRunState,
   markSteersDelivered,
   recordContextUsage,
   saveRunState,
@@ -301,15 +302,30 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             readOnly: args.role === 'reviewer',
             cwd: state.cwd,
           });
-          state.workerSessions[args.role] = turn.sessionId;
-          // Re-read rather than reusing `used`: the worker turn above is a
-          // minutes-long await, and the orchestrator may issue tool calls in
-          // parallel — a stale capture would undercount the round.
-          if (isReviewRound) state.rounds[phase] = (state.rounds[phase] ?? 0) + 1;
-          if (isBaseTemplate(args.tag) && !sentThisPhase(args.role).includes(args.tag)) {
-            sentThisPhase(args.role).push(args.tag);
+          // Merge this turn's results against FRESH disk state, then save — so a
+          // concurrent cross-role send cannot clobber the other's worker session
+          // / cost / sent-snippets / rounds / context with a stale full-object
+          // save. Under the run-scoped interactive host each call loads its own
+          // RunState (mcp-server.ts), so two parallel sends would otherwise each
+          // save the call-start object and the later wins. The load→merge→save
+          // here runs synchronously (no await), so concurrent sends serialize at
+          // this point: the second loads after the first saved, and the deltas
+          // (a set session, a += cost, an appended tag, a +1 round) compose. In
+          // headless the shared `state` is already disk-fresh, so the merge is a
+          // no-op overlay. Re-sync the closed-over `state` afterward so
+          // subsequent same-phase reads — the warn-once / round rails,
+          // list_snippets annotations — see this turn's result.
+          const fresh = loadRunState(state.cwd, state.runId);
+          fresh.workerSessions[args.role] = turn.sessionId;
+          // Re-read off fresh rather than reusing `used`: the minutes-long await
+          // above means a parallel call may have moved the round count.
+          if (isReviewRound) fresh.rounds[phase] = (fresh.rounds[phase] ?? 0) + 1;
+          if (isBaseTemplate(args.tag)) {
+            const sent = ((fresh.sentSnippets ??= {})[phase] ??= {});
+            const tags = (sent[args.role] ??= []);
+            if (!tags.includes(args.tag)) tags.push(args.tag);
           }
-          if (turn.costUsd) state.costs.claudeWorkersUsd += turn.costUsd;
+          if (turn.costUsd) fresh.costs.claudeWorkersUsd += turn.costUsd;
           // A claude turn that reported no cost (the interactive transport, by
           // P5) means the claudeWorkersUsd total is partial — mark it so the
           // status never presents the known sum as the complete total. The
@@ -317,15 +333,16 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           // optional in the envelope, so anything needing "interactive"
           // specifically reads the binding's transport, never a missing cost.
           if (provider.name === 'claude' && turn.costUsd === undefined) {
-            state.costs.claudeWorkersCostPartial = true;
+            fresh.costs.claudeWorkersCostPartial = true;
           }
           if (provider.name === 'codex' && turn.tokens) {
-            state.costs.codexTokens.input += turn.tokens.input;
-            state.costs.codexTokens.output += turn.tokens.output;
+            fresh.costs.codexTokens.input += turn.tokens.input;
+            fresh.costs.codexTokens.output += turn.tokens.output;
           }
-          if (turn.context) recordContextUsage(state, args.role, turn.context);
-          state.lastActivity = `send_prompt → ${args.role} (${args.tag})`;
-          saveRunState(state);
+          if (turn.context) recordContextUsage(fresh, args.role, turn.context);
+          fresh.lastActivity = `send_prompt → ${args.role} (${args.tag})`;
+          saveRunState(fresh);
+          Object.assign(state, fresh);
           const ctx = turn.context ? ` · context ${contextPercent(turn.context)}%` : '';
           appendVoiceLog(state, args.role, `▶ response (session ${turn.sessionId})${ctx}`, turn.text);
           log(`[send_prompt] ← ${args.role} responded (${turn.text.length} chars${ctx})`);
