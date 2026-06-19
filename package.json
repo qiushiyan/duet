@@ -28,6 +28,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "sync-skills": "node scripts/sync-skills.mjs",
     "build": "tsdown",
     "prepack": "pnpm typecheck && pnpm test && pnpm build"
   },
