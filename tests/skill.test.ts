@@ -83,3 +83,48 @@ describe('the duet-concierge skill coheres with the CLI', () => {
     }
   });
 });
+
+const duetSkillDir = new URL('../skills/duet/', import.meta.url);
+const duetSkillMd = readFileSync(new URL('SKILL.md', duetSkillDir), 'utf8');
+const duetIdentityMd = readFileSync(new URL('identity.md', duetSkillDir), 'utf8');
+
+describe('the duet orchestrator skill coheres with the CLI', () => {
+  test('SKILL.md frontmatter names the skill and is explicit-invocation only', () => {
+    const fm = frontmatterOf(duetSkillMd);
+    expect.soft(fm['name']).toBe('duet');
+    expect.soft(fm['description']).toBeTruthy();
+    // Explicit invocation only — a session developing duet never inherits the
+    // orchestrator role (mirrors the concierge).
+    expect.soft(fm['disable-model-invocation']).toBe('true');
+  });
+
+  test('orchestrate is a public command — the launcher the skill names', () => {
+    expect(publicCommands.has('orchestrate')).toBe(true);
+  });
+
+  test.for([
+    ['SKILL.md', duetSkillMd],
+    ['identity.md', duetIdentityMd],
+  ] as const)('every duet verb and flag named in %s exists on the CLI', ([, markdown]) => {
+    expect.hasAssertions();
+    for (const line of codeLines(markdown)) {
+      // Only `duet <verb>` spans are CLI verbs; kernel tool names (get_task,
+      // send_prompt, advance_phase, …) appear in spans too but are never
+      // preceded by "duet ", so the extractor skips them.
+      const verbs = [...line.matchAll(/\bduet\s+([a-z_]+)/g)].map((m) => m[1]!);
+      if (verbs.length === 0) continue;
+
+      for (const verb of verbs) {
+        expect.soft(publicCommands.has(verb), `"duet ${verb}" in: ${line.trim()}`).toBe(true);
+      }
+
+      const command = publicCommands.get(verbs[0]!);
+      if (!command) continue;
+      const longs = new Set(command.options.map((o) => o.long));
+      longs.add('--help');
+      for (const [flag] of line.matchAll(/--[a-z][a-z-]*/g)) {
+        expect.soft(longs.has(flag), `"${flag}" is not a flag of "duet ${verbs[0]}" in: ${line.trim()}`).toBe(true);
+      }
+    }
+  });
+});
