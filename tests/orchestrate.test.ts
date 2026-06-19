@@ -130,6 +130,30 @@ describe('runOrchestrate — marks the run and launches over the seam', () => {
     expect.soft(after.costs.orchestratorCostPartial).toBe(false);
   });
 
+  test('a failed RELAUNCH of an already-interactive run preserves its host and cost-partial', ({
+    projectDir,
+    run,
+  }) => {
+    // The run is already interactively orchestrated, with real prior interactive
+    // spend recorded (orchestratorCostPartial true). The spec's crash-recovery
+    // path is "relaunch duet orchestrate", so a relaunch whose spawn fails must
+    // NOT discard that valid state.
+    run.orchestrationHost = 'interactive';
+    run.costs.orchestratorCostPartial = true;
+    saveRunState(run);
+
+    const enoent = Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' });
+    const result = runOrchestrate(run, { launcher: () => ({ error: enoent }) });
+    expect.soft(result.error).toBeDefined();
+
+    // The failure must not flip a valid interactive rest into headless-crash
+    // semantics (probeRunPosition keys off orchestrationHost), nor zero out
+    // telemetry from real interactive turns.
+    const after = loadRunState(projectDir, run.runId);
+    expect.soft(after.orchestrationHost).toBe('interactive');
+    expect.soft(after.costs.orchestratorCostPartial).toBe(true);
+  });
+
   test('a missing identity file is refused at preflight, before the run is marked', ({ projectDir, run }) => {
     const rec = recordingLauncher();
     const result = runOrchestrate(run, {

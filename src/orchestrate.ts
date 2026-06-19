@@ -129,8 +129,10 @@ export function gateAskRuleLive(spec: LaunchSpec): boolean {
  *    a corrupt checkout, would otherwise bring up a session with no orchestrator
  *    role). Refuse without touching the run.
  *  - LAUNCH error, after marking: an immediate spawn failure (ENOENT etc.) means
- *    no session started, so roll the interactive marking back — the run stays
- *    headless-owned and `duet status` stays honest.
+ *    no session started, so RESTORE the pre-call state — a fresh launch reverts
+ *    to unmarked, but a failed relaunch of an already-interactive run keeps its
+ *    valid interactive rest and any real prior spend, so `duet status` stays
+ *    honest either way.
  *
  * The ask-rule self-check is a WARNING, not a failure: it warns loudly (to
  * stderr) if the gate-safety rule isn't in the spec — gate protection is not a
@@ -164,6 +166,16 @@ export function runOrchestrate(
     };
   }
 
+  // Capture the pre-marking state so an immediate launch failure can RESTORE it
+  // rather than blanket-clear it. A fresh launch has {host absent, partial
+  // false}, so restore == clear; but a failed RELAUNCH of an already-interactive
+  // run (the spec's crash-recovery path is "relaunch duet orchestrate") must
+  // keep its valid interactive rest and any real prior interactive spend —
+  // clearing the host would flip probeRunPosition's phase-loop snapshot into
+  // headless-crash semantics, and zeroing the partial flag would lie about cost.
+  const prevHost = state.orchestrationHost;
+  const prevPartial = state.costs.orchestratorCostPartial;
+
   state.orchestrationHost = 'interactive';
   // Sticky: orchestrator spend now runs on the flat subscription quota, so the
   // known total is partial — and stays partial past the handoff that clears
@@ -180,20 +192,20 @@ export function runOrchestrate(
 
   const result = launcher({ ...spec, env: { ...process.env } });
   if (result.error) {
-    // The session never started. Roll the interactive marking back so status
-    // doesn't claim an owner that isn't there; orchestratorCostPartial returns
-    // to false because no orchestrator turn ran — the sticky-never-cleared rule
-    // is about surviving a real handoff, not undoing a launch that failed.
+    // The session never started. Restore the pre-call state: a fresh launch
+    // reverts to unmarked; a relaunch keeps its prior interactive rest and spend.
+    // Either way status stays honest and no phantom owner is left behind.
     const fresh = loadRunState(state.cwd, state.runId);
-    delete fresh.orchestrationHost;
-    fresh.costs.orchestratorCostPartial = false;
+    if (prevHost === undefined) delete fresh.orchestrationHost;
+    else fresh.orchestrationHost = prevHost;
+    fresh.costs.orchestratorCostPartial = prevPartial;
     saveRunState(fresh);
     const enoent = (result.error as NodeJS.ErrnoException).code === 'ENOENT';
     return {
       ...result,
       error: new Error(
         enoent
-          ? `could not launch "claude" — it was not found on PATH. Install Claude Code (or put it on PATH), then retry: duet orchestrate ${state.runId}. The run is unchanged (headless-owned).`
+          ? `could not launch "claude" — it was not found on PATH. Install Claude Code (or put it on PATH), then retry: duet orchestrate ${state.runId}. The run is unchanged.`
           : `the interactive session failed to launch (${result.error.message}). The run is unchanged; fix the cause, then retry: duet orchestrate ${state.runId}.`,
       ),
     };
