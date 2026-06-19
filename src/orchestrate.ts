@@ -41,12 +41,31 @@ export interface LaunchSpec {
   args: string[];
 }
 
+/**
+ * The current CLI's own executable + entry, so the MCP server is launched as the
+ * SAME duet that is running — not whatever `duet` happens to be on PATH (a
+ * missing link, a different checkout, a version skew). Mirrors spawnDrive
+ * (lifecycle.ts), which self-references the detached driver the same way.
+ * Injectable so buildLaunchSpec stays a pure argv builder under test.
+ */
+export interface CliSelfRef {
+  exec: string;
+  entry: string;
+}
+const currentSelfRef = (): CliSelfRef => ({ exec: process.execPath, entry: process.argv[1]! });
+
 /** Build the `claude` argv that wires an interactive session to drive `state`. */
-export function buildLaunchSpec(state: RunState): LaunchSpec {
-  // The runId is baked into the MCP server args at launch — what a static
-  // project .mcp.json or a mid-session skill cannot do.
+export function buildLaunchSpec(state: RunState, self: CliSelfRef = currentSelfRef()): LaunchSpec {
+  // The MCP server is THIS cli's own executable + entry (self.exec self.entry),
+  // not a bare `duet` PATH lookup — so the kernel the session attaches is the
+  // same duet that launched it (the spawnDrive pattern, lifecycle.ts). The runId
+  // is baked into the args at launch — what a static project .mcp.json or a
+  // mid-session skill cannot do. No `cwd` field: the Claude Code stdio MCP schema
+  // is command/args/env only, so the server inherits claude's launch cwd (the
+  // project dir, where the human runs `duet orchestrate`); `_mcp` reads
+  // process.cwd() from there.
   const mcpConfig = JSON.stringify({
-    mcpServers: { duet: { command: 'duet', args: ['_mcp', state.runId] } },
+    mcpServers: { duet: { command: self.exec, args: [self.entry, '_mcp', state.runId] } },
   });
   const settings = JSON.stringify({ permissions: { ask: [GATE_ASK_RULE] } });
   return {

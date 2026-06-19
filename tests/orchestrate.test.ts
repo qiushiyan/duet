@@ -22,15 +22,34 @@ function recordingLauncher() {
 }
 
 describe('buildLaunchSpec — the wired claude argv', () => {
-  test('bakes the runId into the MCP server args and carries hygiene + identity + the ask rule', ({ run }) => {
+  test('self-references the running CLI for the MCP server, with the runId baked in (injected self)', ({ run }) => {
+    const self = { exec: '/opt/node/bin/node', entry: '/checkout/src/cli.ts' };
+    const spec = buildLaunchSpec(run, self);
+    const args = spec.args;
+    const mcp = JSON.parse(args[args.indexOf('--mcp-config') + 1]!);
+    // The MCP server is THIS cli's exec + entry, not a bare `duet` PATH lookup —
+    // so the kernel that attaches is the same duet that launched (the spawnDrive
+    // pattern). The runId is baked into the args (no phase — resolved per call).
+    expect.soft(mcp.mcpServers.duet).toEqual({
+      command: self.exec,
+      args: [self.entry, '_mcp', run.runId],
+    });
+  });
+
+  test('the default self-reference is the live process exec + entry, never a PATH lookup', ({ run }) => {
+    const spec = buildLaunchSpec(run);
+    const args = spec.args;
+    const duet = JSON.parse(args[args.indexOf('--mcp-config') + 1]!).mcpServers.duet;
+    // Mirrors spawnDrive (lifecycle.ts): process.execPath runs process.argv[1].
+    expect.soft(duet.command).toBe(process.execPath);
+    expect.soft(duet.args).toEqual([process.argv[1], '_mcp', run.runId]);
+    expect.soft(duet.command).not.toBe('duet'); // the bug this replaced
+  });
+
+  test('carries hygiene + identity + the ask rule', ({ run }) => {
     const spec = buildLaunchSpec(run);
     expect.soft(spec.command).toBe('claude');
     const args = spec.args;
-
-    // --mcp-config declares the one duet kernel server with the runId baked into
-    // its args (no phase — the run-scoped server resolves it per call).
-    const mcp = JSON.parse(args[args.indexOf('--mcp-config') + 1]!);
-    expect.soft(mcp.mcpServers.duet).toEqual({ command: 'duet', args: ['_mcp', run.runId] });
 
     expect.soft(args).toContain('--strict-mcp-config'); // MCP-surface hygiene
 
