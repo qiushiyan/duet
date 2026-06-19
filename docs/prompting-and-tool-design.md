@@ -75,6 +75,10 @@ Each group carries an anti-example, and the mechanical phases (docs, pr, open) c
 
 A role sentence in the system prompt focuses behavior — even one line helps. For agent system prompts, aim for the "Goldilocks zone": specific enough to guide behavior, flexible enough to be heuristics rather than brittle hardcoded logic. Strive for the **minimal set of information that fully outlines expected behavior** — minimal does not mean short; it means nothing redundant, nothing missing.
 
+### Write for the cold reader
+
+Every surface duet ships — the orchestrator and worker prompts, tool descriptions, and the `skills/` skills — is read *standalone*, by a session that holds none of your context: not this codebase, not the conversation you wrote it in, not the duet mental model you carry while authoring. That context is yours, not the surface's, and the gap is invisible precisely when your own context is fullest — which is exactly when you're authoring one. So anchor the basics before the specifics — what the thing is and the system it belongs to — then read it cold: if a fresh session saw *only* this, would it know what it is and what to do? The shipped skills bite hardest, since a Claude Code session loads one with nothing else around it. **(observed:** the `duet-frame` skill's first draft opened "a duet framing is…" and never said duet is a CLI that orchestrates an implementer and a reviewer from a framing — obvious to the author mid-build, opaque to the cold reader; fixed with a one-line "what duet is" anchor.**)** This is the standalone-surface form of the golden rule (§"Thinking framework over prohibition"): here the colleague has *zero* shared context, not merely minimal — so the failure is under-supplying the thing's identity, the mirror image of over-supplying mechanism.
+
 ### Agentic / long-horizon specifics
 
 - **State the context-management contract.** If the harness compacts or resumes, say so ("your context will be compacted; don't stop early for budget reasons") — otherwise the model wraps up prematurely near its limit.
