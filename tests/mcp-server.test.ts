@@ -1,14 +1,25 @@
+import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect } from 'vitest';
+import { createActor } from 'xstate';
 import { toSdkTools } from '../src/harness/driver.ts';
-import { buildKernelMcpServer, buildKernelTools } from '../src/harness/mcp-server.ts';
+import { interactiveMachine } from '../src/harness/machine.ts';
+import { buildKernelMcpServer, buildKernelTools, createRunScopedKernel } from '../src/harness/mcp-server.ts';
 import { createPhaseTools } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
 import { renderSnippetLibrary } from '../src/snippets.ts';
 import { FakeWorker, test } from './helpers/fixtures.ts';
+import { loadRunState, markAbandoned, saveMachineSnapshot, saveRunState } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
+
+const CLI_ENTRY = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
+
+/** Extract the first text block of an MCP/kernel tool result. */
+const textOf = (result: unknown): string =>
+  ((result as { content?: Array<{ text?: string }> }).content ?? [])[0]?.text ?? '';
 
 /**
  * The stdio-MCP adapter over the host-neutral registry: a standard MCP client
@@ -107,4 +118,153 @@ describe('duet _mcp refuses a run/phase it cannot host', () => {
   test('an unknown run is refused with a prescribed-recovery error', ({ projectDir }) => {
     expect(() => buildKernelTools(projectDir, 'nope-not-a-run', 'spec')).toThrow(/no run state.*is .* a run of this project/s);
   });
+});
+
+describe('the run-scoped, phase-less kernel server (Stage 1)', () => {
+  /** A worker whose turn resolves only when the test says so. */
+  function slowWorker(name: 'claude' | 'codex') {
+    const worker = new FakeWorker(name);
+    let finish!: (turn: { text: string; sessionId: string }) => void;
+    worker.runTurn = (opts) => {
+      worker.calls.push(opts);
+      return new Promise((resolve) => (finish = resolve));
+    };
+    return { worker, finish: () => finish({ text: 'done', sessionId: 's' }) };
+  }
+
+  /** Persist an interactive rest at the spec loop (frame advanced, direction approved). */
+  function restAtSpec(state: RunState): void {
+    const actor = createActor(interactiveMachine, {
+      input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
+    });
+    actor.start();
+    actor.send({ type: 'phase.advance' });
+    actor.send({ type: 'human.approve' });
+    saveMachineSnapshot(state, actor.getPersistedSnapshot());
+    actor.stop();
+  }
+
+  test('resolves the phase from disk per call — one connection follows the run across a gate', async ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    const kernel = createRunScopedKernel(projectDir, interactiveRun.runId);
+
+    // Resting at frame (no snapshot) → the frame-focused library.
+    expect.soft(textOf(await kernel.callTool('list_snippets', {}, {}))).toBe(
+      renderSnippetLibrary({ phase: 'frame', sentTo: {}, all: undefined }),
+    );
+
+    // Advance on disk to rest at spec; the next call on the same kernel follows.
+    restAtSpec(loadRunState(projectDir, interactiveRun.runId));
+    expect.soft(textOf(await kernel.callTool('list_snippets', {}, {}))).toBe(
+      renderSnippetLibrary({ phase: 'spec', sentTo: {}, all: undefined }),
+    );
+  });
+
+  test('the in-flight rail is shared within a phase — a second concurrent same-role send is refused', async ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    const slow = slowWorker('claude');
+    const kernel = createRunScopedKernel(projectDir, interactiveRun.runId, () => ({
+      implementer: slow.worker,
+      reviewer: new FakeWorker('codex'),
+    }));
+
+    const first = kernel.callTool('send_prompt', { role: 'implementer', tag: 'custom', body: 'one' }, {});
+    await new Promise((r) => setTimeout(r, 0)); // let the first turn enter flight
+    const refused = await kernel.callTool('send_prompt', { role: 'implementer', tag: 'custom', body: 'two' }, {});
+
+    // The rail only refuses if turnsInFlight is shared across the per-call tool
+    // rebuilds — which is the cache's whole point.
+    expect.soft(refused.isError).toBe(true);
+    expect.soft(textOf(refused)).toContain('already in flight');
+    expect.soft(slow.worker.calls).toHaveLength(1); // the second prompt never reached the worker
+
+    slow.finish();
+    expect.soft((await first).isError).toBeUndefined();
+  });
+
+  test('crossing to a new phase resets the warn-once rail — a re-sent base template warns fresh', async ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    const kernel = createRunScopedKernel(projectDir, interactiveRun.runId, () => ({
+      implementer: new FakeWorker('claude'),
+      reviewer: new FakeWorker('codex'),
+    }));
+    const t = { role: 'implementer', tag: 'think-holistic', body: 'x' };
+
+    // Frame: send, re-send (warns once), re-send (passes) — resendWarned now holds it.
+    await kernel.callTool('send_prompt', t, {});
+    expect.soft((await kernel.callTool('send_prompt', t, {})).isError).toBe(true);
+    expect.soft((await kernel.callTool('send_prompt', t, {})).isError).toBeUndefined();
+
+    // Cross to spec on disk; the per-phase rails are rebuilt (resendWarned reset).
+    restAtSpec(loadRunState(projectDir, interactiveRun.runId));
+    await kernel.callTool('send_prompt', t, {}); // first send in the new phase — passes
+    // The second identical send warns FRESH, proving the rail reset at the boundary.
+    expect((await kernel.callTool('send_prompt', t, {})).isError).toBe(true);
+  });
+
+  test('refuses a run it cannot host — handed off (orchestrationHost unset) or abandoned (no hostable phase)', async ({
+    projectDir,
+    run,
+    interactiveRun,
+  }) => {
+    // A headless run (orchestrationHost never set) → refused, never served.
+    const r1 = await createRunScopedKernel(projectDir, run.runId).callTool('list_snippets', {}, {});
+    expect.soft(r1.isError).toBe(true);
+    expect.soft(textOf(r1)).toContain('no longer being orchestrated interactively');
+
+    // An abandoned interactive run: markAbandoned leaves orchestrationHost set,
+    // but the probe short-circuits to abandoned — no hostable phase → refused.
+    markAbandoned(loadRunState(projectDir, interactiveRun.runId));
+    const r2 = await createRunScopedKernel(projectDir, interactiveRun.runId).callTool('list_snippets', {}, {});
+    expect.soft(r2.isError).toBe(true);
+    expect.soft(textOf(r2)).toContain('finished or been abandoned');
+  });
+
+  test('handoff safety: serves while interactive, refuses the next call once the host marker is cleared on disk', async ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    const kernel = createRunScopedKernel(projectDir, interactiveRun.runId);
+    expect.soft((await kernel.callTool('list_snippets', {}, {})).isError).toBeUndefined();
+
+    // The plan-gate handoff / --headless drop clears orchestrationHost on disk.
+    const handed = loadRunState(projectDir, interactiveRun.runId);
+    delete handed.orchestrationHost;
+    saveRunState(handed);
+
+    // The next mutating call on the SAME connection cannot write into a now
+    // headless-owned run — the two-writer gap is closed.
+    const refused = await kernel.callTool('write_note', { observation: 'too late' }, {});
+    expect.soft(refused.isError).toBe(true);
+    expect.soft(textOf(refused)).toContain('no longer being orchestrated interactively');
+  });
+
+  test(
+    'phase-less duet _mcp over a real subprocess enumerates the surface and answers list_snippets at zero worker cost',
+    async ({ projectDir, interactiveRun }) => {
+      const transport = new StdioClientTransport({
+        command: process.execPath,
+        args: [CLI_ENTRY, '_mcp', interactiveRun.runId],
+        cwd: projectDir,
+        stderr: 'inherit',
+      });
+      const client = new Client({ name: 'test', version: '0' });
+      await client.connect(transport);
+      try {
+        expect.soft((await client.listTools()).tools.map((t) => t.name).sort()).toEqual(ALL_TOOLS); // incl get_task
+        const result = await client.callTool({ name: 'list_snippets', arguments: {} });
+        expect.soft(textOf(result)).toBe(renderSnippetLibrary({ phase: 'frame', sentTo: {}, all: undefined }));
+      } finally {
+        await client.close();
+        await transport.close();
+      }
+    },
+    30_000,
+  );
 });

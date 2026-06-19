@@ -11,7 +11,7 @@ import { DEFAULT_FRAMING_FILE, resolveHumanText, resolveRunInputs } from './fram
 import { aliveDriverPid, driveToQuiescence, killDriver, probeRunPosition, spawnDrive, waitForRunStop } from './harness/lifecycle.ts';
 import type { HumanEvent } from './harness/lifecycle.ts';
 import { duetMachine } from './harness/machine.ts';
-import { serveKernelStdio } from './harness/mcp-server.ts';
+import { serveKernelStdio, serveRunScopedKernelStdio } from './harness/mcp-server.ts';
 import { phaseOfGateState } from './phases.ts';
 import { buildStatusModel, renderStatus, steerRefusal } from './status.ts';
 import { openTmuxView } from './tmux-view.ts';
@@ -341,17 +341,20 @@ const driveCommand = new Command('_drive')
   });
 program.addCommand(driveCommand, { hidden: true });
 
-// Internal developer/test harness: serve a run+phase's kernel tool surface over
-// stdio MCP, so a client process outside duet can call the orchestrator tools.
-// Production drives in-process (_drive); this exists to exercise the stdio
-// boundary. The phase is explicit (a quiescent run has no live phase). All
-// narration goes to stderr — stdout is the JSON-RPC channel.
+// Internal harness: serve a run's kernel tool surface over stdio MCP, so a
+// client process outside duet can call the orchestrator tools. Two modes:
+// with an explicit <phase>, a single-phase server (the Stage-0 boundary/test
+// path); without it, the run-scoped phase-less server the Stage-1 interactive
+// session connects to — it resolves the active phase from disk per call and
+// follows the run across its gates. Production headless still drives in-process
+// (_drive). All narration goes to stderr — stdout is the JSON-RPC channel.
 const mcpCommand = new Command('_mcp')
   .argument('<runId>')
-  .argument('<phase>')
-  .action(async (runId: string, phase: string) => {
+  .argument('[phase]')
+  .action(async (runId: string, phase: string | undefined) => {
     try {
-      await serveKernelStdio(process.cwd(), runId, phase);
+      if (phase) await serveKernelStdio(process.cwd(), runId, phase);
+      else await serveRunScopedKernelStdio(process.cwd(), runId);
     } catch (err) {
       console.error(`[_mcp] ${err instanceof Error ? err.message : String(err)}`);
       process.exitCode = 1;

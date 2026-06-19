@@ -87,6 +87,15 @@ export interface PhaseToolsDeps {
   log: (line: string) => void;
   /** A staged human answer, delivered to the first ask_human call instead of pausing. */
   stagedAnswer?: string;
+  /**
+   * The per-phase in-memory rails — the same-role in-flight guard and the
+   * warn-once resend set — injected by a host that rebuilds the tool surface per
+   * call against fresh disk state but must keep these alive across calls within
+   * a phase (the run-scoped interactive server, mcp-server.ts). Omitted by the
+   * headless driver and the explicit-phase server, which build one registry per
+   * phase invocation and so own a fresh pair.
+   */
+  rails?: { turnsInFlight: Set<WorkerRole>; resendWarned: Set<string> };
 }
 
 export interface PhaseTools {
@@ -94,7 +103,7 @@ export interface PhaseTools {
   tools: Array<KernelTool<any>>;
 }
 
-export function createPhaseTools({ state, phase, providers, log, stagedAnswer: initialAnswer }: PhaseToolsDeps): PhaseTools {
+export function createPhaseTools({ state, phase, providers, log, stagedAnswer: initialAnswer, rails }: PhaseToolsDeps): PhaseTools {
   let stagedAnswer = initialAnswer ?? null;
 
   // First-terminal-wins: advance_phase and ask_human each end the phase, so the
@@ -120,7 +129,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   // turns into the SAME role would race one session's resume, so that case is
   // refused here. In-memory is correct: concurrency exists only within one
   // driver process (the pid guard excludes a second).
-  const turnsInFlight = new Set<WorkerRole>();
+  const turnsInFlight = rails?.turnsInFlight ?? new Set<WorkerRole>();
 
   // Once-per-phase template discipline (system prompt <protocol>): a base
   // template re-sent to the same worker in the same phase gets one steering
@@ -131,7 +140,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     const roles = (phases[phase] ??= {});
     return (roles[role] ??= []);
   };
-  const resendWarned = new Set<string>();
+  const resendWarned = rails?.resendWarned ?? new Set<string>();
   const isBaseTemplate = (tag: string): boolean => tag !== 'custom' && !tag.endsWith('-again');
 
   // get_task folds a staged human input (an approval rider, a reject's
