@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { createActor, fromCallback, waitFor } from 'xstate';
 import type { AnyMachineSnapshot } from 'xstate';
-import { duetMachine } from '../src/harness/machine.ts';
+import { duetMachine, interactiveMachine } from '../src/harness/machine.ts';
 import { PHASES } from '../src/phases.ts';
 import { scriptedMachine } from './helpers/scripted-machine.ts';
 
@@ -171,6 +171,50 @@ describe('gate and flag-wait guarantees', () => {
     const snap = await waitFor(actor, quiescent);
     expect(snap.value).toBe('directionGate');
     expect(calls).toEqual(['frame', 'frame']);
+  });
+});
+
+describe('the interactive machine variant (Stage 1 — the session drives, the actor is inert)', () => {
+  test('advances only on the events sent to it, and a phase-loop snapshot restores inert', () => {
+    const actor = createActor(interactiveMachine, { input: { runId: 'test', cwd: '/tmp', hasSpec: false } });
+    actor.start();
+    // No driver runs — the inert actor never sendBacks, so the loop holds until
+    // an event is applied (the real driver would advance it from runPhase).
+    expect.soft(actor.getSnapshot().value).toBe('frameLoop');
+
+    actor.send({ type: 'phase.advance' });
+    expect.soft(actor.getSnapshot().value).toBe('directionGate');
+    actor.send({ type: 'human.approve' });
+    expect.soft(actor.getSnapshot().value).toBe('specLoop');
+
+    const persisted = actor.getPersistedSnapshot();
+    actor.stop();
+
+    // Restoring the phase-loop rest re-invokes the inert actor harmlessly: it
+    // rests at specLoop rather than running any phase work or advancing itself.
+    const restored = createActor(interactiveMachine, {
+      input: { runId: 'test', cwd: '/tmp', hasSpec: false },
+      snapshot: persisted,
+    });
+    restored.start();
+    expect.soft(restored.getSnapshot().value).toBe('specLoop');
+    restored.stop();
+  });
+
+  test('a spec-entry interactive run rests at the spec loop from the start', () => {
+    const actor = createActor(interactiveMachine, { input: { runId: 'test', cwd: '/tmp', hasSpec: true } });
+    actor.start();
+    expect(actor.getSnapshot().value).toBe('specLoop');
+    actor.stop();
+  });
+
+  test('introduces no human.* path from a phase loop — gate-uncrossable is unchanged', () => {
+    const actor = createActor(interactiveMachine, { input: { runId: 'test', cwd: '/tmp', hasSpec: false } });
+    actor.start();
+    for (const type of ['human.approve', 'human.reject', 'human.answer'] as const) {
+      expect.soft(actor.getSnapshot().can({ type })).toBe(false);
+    }
+    actor.stop();
   });
 });
 

@@ -93,6 +93,18 @@ export interface RunState {
    * removes the run outright instead of marking it.
    */
   abandoned?: { at: string };
+  /**
+   * Set by `duet orchestrate` when the human's interactive Claude Code session
+   * is the orchestrator for this run (FRAME → PLAN). A run-level marker, NOT a
+   * config role-binding (src/config.ts stays role→provider/model only). Two
+   * readers: `duet continue` chooses the interactive rest-vs-handoff path from
+   * it, and `probeRunPosition` reads a resting phase-loop snapshot as
+   * interactive-active rather than crashed. Cleared at the plan-gate handoff to
+   * headless impl (and the `--headless` fallback); absent on every headless run,
+   * so the headless path is byte-for-byte unchanged. Never traps a run —
+   * `takeover`/`abandon` ignore it.
+   */
+  orchestrationHost?: 'interactive';
 
   /** Mirror of the machine's state value, for humans and `duet status`. */
   machineState?: string;

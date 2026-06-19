@@ -159,3 +159,29 @@ export const duetMachine = setup({
   initial: 'route',
   states: buildStates(),
 });
+
+/**
+ * The interactive variant — Stage 1's host, where the human's Claude Code
+ * session drives each phase by calling kernel tools and `duet continue`
+ * (crossInteractive) applies the gate events. The phaseDriver is replaced via
+ * the same `machine.provide` seam stdioPhaseMachine and the test scriptedMachine
+ * use, but with an INERT actor: it runs no session and never sendBacks a
+ * phase.* event. The machine therefore advances only on events sent to it, never
+ * on its own.
+ *
+ * `provide` swaps the actor, it does NOT remove the phase states' `invoke` — so
+ * a restored phase-loop snapshot still re-invokes this actor, but harmlessly,
+ * because it carries no in-flight work to lose. That is exactly the property the
+ * persistence guardrail needs (never blind-restart an actor with live work):
+ * here restability comes from the actor being inert, not absent, which makes a
+ * phase loop a legitimate RESTING state for an interactive run (for the real
+ * driver the same snapshot would be mid-flight, hence never persisted).
+ */
+export const interactiveMachine: typeof duetMachine = duetMachine.provide({
+  actors: {
+    phaseDriver: fromCallback<EventObject, DriverInput>(() => {
+      // Inert by design: the interactive session is the driver. No runPhase, no
+      // sendBack — the machine waits for the events crossInteractive applies.
+    }),
+  },
+});

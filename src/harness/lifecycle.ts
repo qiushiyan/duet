@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { createActor, waitFor } from 'xstate';
 import type { AnyMachineSnapshot, Snapshot } from 'xstate';
 import { notify as desktopNotify } from '../notify.ts';
-import { PHASES, phaseOfGateState } from '../phases.ts';
+import { PHASE, PHASES, phaseOfGateState } from '../phases.ts';
 import type { GatePhase, PhaseName } from '../phases.ts';
 import {
   gateAttended,
@@ -122,9 +122,15 @@ export async function killDriver(
  * crossing — `approve` for a gate the human already approved, `answer` for a
  * flag whose answer was already consumed; absent means there is no snapshot
  * and the machine restarts from its entry point.
+ *
+ * `interactive` is the Stage-1 resting position: an interactive run (the human's
+ * session is the orchestrator) between gates rests AT its phase loop — there is
+ * no `_drive`, so a non-quiescent phase-loop snapshot is a legitimate rest, not
+ * a crash. The marker, when set, names the parked gate/flag instead.
  */
 export type RunPosition =
   | { kind: 'running'; pid: number; phase: PhaseName }
+  | { kind: 'interactive'; phase: PhaseName }
   | { kind: 'gate'; phase: GatePhase }
   | { kind: 'flag'; phase: PhaseName }
   | { kind: 'crashed'; phase: PhaseName; resumeEvent?: 'approve' | 'answer' }
@@ -151,6 +157,26 @@ function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running
   // The phase a snapshot-less machine starts in (spec-entry runs skip frame).
   const entryPhase: PhaseName = state.specPath ? 'spec' : 'frame';
   const snapshot = loadMachineSnapshot(state);
+
+  // The interactive resting model (Stage 1): the human's session drives each
+  // phase, so a non-quiescent phase-loop snapshot is a REST, not a crash. The
+  // terminal marker — when the orchestrator has advanced/flagged — is the sole
+  // signal that the run is parked at the phase's gate/flag (the interactive
+  // snapshot still sits at the phase loop; it is never persisted AT the gate,
+  // which is what keeps the spent-marker guard from ever colliding with this
+  // branch). Guarded on orchestrationHost, so headless runs are untouched.
+  if (state.orchestrationHost === 'interactive') {
+    const marker = state.terminalMarker;
+    if (marker) {
+      return marker.kind === 'advance' && PHASE[marker.phase].gate
+        ? { kind: 'gate', phase: marker.phase as GatePhase }
+        : { kind: 'flag', phase: marker.phase };
+    }
+    // No marker: resting at the phase loop the session is actively driving.
+    const phase = (snapshot && interactiveRestPhase(state, snapshot)) || entryPhase;
+    return { kind: 'interactive', phase };
+  }
+
   if (!snapshot) {
     // The driver died (or was killed) before the first quiescent stop.
     return { kind: 'crashed', phase: entryPhase };
@@ -185,6 +211,23 @@ function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running
   // Unreachable for snapshots we persist (quiescent states only) — treat a
   // foreign snapshot as a mid-phase crash so the run stays actionable.
   return { kind: 'crashed', phase: entryPhase };
+}
+
+/**
+ * The phase an interactive resting snapshot sits in, read off its `<phase>Loop`
+ * state value. Restores the snapshot WITHOUT starting the actor (the same
+ * side-effect-free read stoppedPosition uses), so no phaseDriver is invoked
+ * regardless of which machine variant persisted it. Returns undefined for a
+ * snapshot that is not at a phase loop (e.g. a gate/done value), letting the
+ * caller fall back to the entry phase.
+ */
+function interactiveRestPhase(state: RunState, snapshot: Snapshot<unknown>): PhaseName | undefined {
+  const restored = createActor(duetMachine, {
+    input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
+    snapshot,
+  }).getSnapshot();
+  const value = typeof restored.value === 'string' ? restored.value : JSON.stringify(restored.value);
+  return PHASES.find((p) => `${p.name}Loop` === value)?.name;
 }
 
 /**

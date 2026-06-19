@@ -73,6 +73,7 @@ export function steerRefusal(position: RunPosition, runId: string): string | und
 /** The discriminated stop — what the run is waiting on, and the command that acts there. */
 export type StopModel =
   | { kind: 'running'; pid: number; phase: PhaseName }
+  | { kind: 'interactive'; phase: PhaseName }
   | {
       kind: 'gate';
       phase: GatePhase;
@@ -139,6 +140,7 @@ export function buildStatusModel(state: RunState, position: RunPosition, pending
 function stopModel(state: RunState, position: RunPosition): StopModel {
   switch (position.kind) {
     case 'running':
+    case 'interactive':
       return position;
     case 'gate': {
       const gate = gateOf(position.phase);
@@ -248,6 +250,11 @@ export function renderStatus(model: StatusModel): string {
   }
 
   const stop = model.stop;
+  if (stop.kind === 'interactive') {
+    lines.push(`\nthe interactive orchestrator is driving the ${stop.phase} phase — steer it in your /duet session.`);
+    return lines.join('\n');
+  }
+
   if (stop.kind === 'flag') {
     lines.push(`\nQUEUED QUESTION for you:`);
     lines.push(`  ${stop.question}`);

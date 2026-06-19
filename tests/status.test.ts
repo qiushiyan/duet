@@ -94,6 +94,11 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
       kind: 'done',
       summary: 'PR: https://example.com/pr/7',
     });
+
+    expect.soft(buildStatusModel(run, { kind: 'interactive', phase: 'spec' }, []).stop).toEqual({
+      kind: 'interactive',
+      phase: 'spec',
+    });
   });
 
   test('the schema promise: a fully-populated model pins its key set (additive-only)', ({ run }) => {
@@ -269,5 +274,13 @@ describe('renderStatus', () => {
 
     expect.soft(out).toContain('the impl phase stopped mid-flight');
     expect.soft(out).toContain(`resume with:  duet continue ${run.runId}`);
+  });
+
+  test('an interactive stop names the phase the /duet session is driving', ({ run }) => {
+    run.machineState = 'specLoop';
+    const out = render(run, { kind: 'interactive', phase: 'spec' });
+
+    expect.soft(out).toContain('the interactive orchestrator is driving the spec phase');
+    expect.soft(out).toContain('/duet session');
   });
 });

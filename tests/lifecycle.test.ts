@@ -3,15 +3,16 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import { fromCallback } from 'xstate';
+import { createActor, fromCallback } from 'xstate';
 import type { EventObject } from 'xstate';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
 import { runPhase } from '../src/harness/driver.ts';
 import type { DriverInput, RunOrchestratorTurn } from '../src/harness/driver.ts';
-import { duetMachine } from '../src/harness/machine.ts';
+import { duetMachine, interactiveMachine } from '../src/harness/machine.ts';
 import type { PhaseEvent } from '../src/harness/phase-events.ts';
 import { driveToQuiescence, probeRunPosition, waitForRunStop } from '../src/harness/lifecycle.ts';
-import { createRun, loadMachineSnapshot, loadRunState, runDirOf, saveRunState } from '../src/run-store.ts';
+import { createRun, loadMachineSnapshot, loadRunState, runDirOf, saveMachineSnapshot, saveRunState } from '../src/run-store.ts';
+import type { RunState } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
 import { scriptedMachine } from './helpers/scripted-machine.ts';
 
@@ -302,6 +303,96 @@ describe('probeRunPosition', () => {
 
     expect.soft(atPrGate.snapshot.status).toBe('done');
     expect.soft(probeRunPosition(loadRunState(projectDir, run.runId))).toEqual({ kind: 'done' });
+  });
+});
+
+describe('probeRunPosition — the interactive resting model (Stage 1)', () => {
+  const quiet = async () => {};
+
+  /** Persist an interactive phase-loop rest by driving the inert variant through `sends`. */
+  function restInteractiveAt(
+    state: RunState,
+    sends: Array<{ type: 'phase.advance' } | { type: 'phase.flag' } | { type: 'human.approve' } | { type: 'human.reject' } | { type: 'human.answer' }>,
+  ): void {
+    const actor = createActor(interactiveMachine, {
+      input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
+    });
+    actor.start();
+    for (const e of sends) actor.send(e);
+    saveMachineSnapshot(state, actor.getPersistedSnapshot());
+    actor.stop();
+  }
+
+  test('no snapshot, no marker → resting at the entry phase (frame, and spec for a spec-entry run)', ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    expect.soft(probeRunPosition(interactiveRun)).toEqual({ kind: 'interactive', phase: 'frame' });
+
+    const specEntry = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, specPath: 'docs/spec.md' });
+    specEntry.orchestrationHost = 'interactive';
+    saveRunState(specEntry);
+    expect.soft(probeRunPosition(specEntry)).toEqual({ kind: 'interactive', phase: 'spec' });
+  });
+
+  test('a resting phase-loop snapshot reads as interactive at that phase — never crashed (the key assertion)', ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    // Frame advanced, direction approved: the session is now driving spec.
+    restInteractiveAt(interactiveRun, [{ type: 'phase.advance' }, { type: 'human.approve' }]);
+    expect(probeRunPosition(loadRunState(projectDir, interactiveRun.runId))).toEqual({
+      kind: 'interactive',
+      phase: 'spec',
+    });
+  });
+
+  test('an advance marker with no live driver parks at the phase gate', ({ projectDir, interactiveRun }) => {
+    const parked = loadRunState(projectDir, interactiveRun.runId);
+    parked.terminalMarker = { phase: 'spec', kind: 'advance' };
+    saveRunState(parked);
+    expect(probeRunPosition(parked)).toEqual({ kind: 'gate', phase: 'spec' });
+  });
+
+  test('a flag marker with no live driver parks at the phase flag', ({ projectDir, interactiveRun }) => {
+    const parked = loadRunState(projectDir, interactiveRun.runId);
+    parked.terminalMarker = { phase: 'spec', kind: 'flag' };
+    saveRunState(parked);
+    expect(probeRunPosition(parked)).toEqual({ kind: 'flag', phase: 'spec' });
+  });
+
+  test('a live driver pid wins over the interactive rest — running (the --headless fallback case)', ({
+    projectDir,
+    interactiveRun,
+    onTestFinished,
+  }) => {
+    restInteractiveAt(interactiveRun, [{ type: 'phase.advance' }, { type: 'human.approve' }]); // rest at specLoop
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
+    onTestFinished(() => {
+      child.kill();
+    });
+    writeFileSync(join(runDirOf(projectDir, interactiveRun.runId), 'driver.pid'), `${child.pid}\n`);
+    expect(probeRunPosition(loadRunState(projectDir, interactiveRun.runId))).toEqual({
+      kind: 'running',
+      pid: child.pid,
+      phase: 'spec',
+    });
+  });
+
+  test('a headless run is unchanged — the gate comes from the snapshot, and the marker is ignored', async ({
+    projectDir,
+    run,
+  }) => {
+    // The same snapshot+marker that mean "parked at the gate" for an interactive
+    // run stay headless-as-today: the gate is derived from the snapshot value,
+    // and the probe does not consume terminalMarker on the headless path.
+    await driveToQuiescence(run, undefined, { machine: scriptedMachine([advanced]).machine, notify: quiet });
+    const fresh = loadRunState(projectDir, run.runId);
+    expect.soft(probeRunPosition(fresh)).toEqual({ kind: 'gate', phase: 'frame' });
+
+    fresh.terminalMarker = { phase: 'spec', kind: 'advance' };
+    saveRunState(fresh);
+    expect.soft(probeRunPosition(fresh)).toEqual({ kind: 'gate', phase: 'frame' });
   });
 });
 
