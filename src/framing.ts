@@ -241,14 +241,25 @@ export async function composeInEditor(instructions: string): Promise<string> {
  * `--flag "text"` value or a positional argument) is returned verbatim; a
  * bare flag (commander hands back `true`) or an omitted optional argument
  * (`undefined`) opens the editor on a throwaway file seeded with
- * `instructions` (see `composeInEditor`). Callers decide what an empty
- * result means — approve treats it as "no rider", the rest abort.
+ * `instructions` (see `composeInEditor`) — but ONLY on an interactive
+ * terminal.
+ *
+ * Off a TTY (a headless concierge, a piped invocation) a bare flag returns
+ * the `undefined` SENTINEL instead of opening an editor the caller can't
+ * drive — the non-interactive editor hang this fixes (#6). `undefined` is
+ * deliberately distinct from `""` (an editor saved empty): the caller maps
+ * the sentinel per intent — approve treats it as "no rider", reject/answer/
+ * steer fail fast naming the inline/file/stdin forms. `isTTY` is injected
+ * (the environment seam) so tests pin interactivity without a real terminal.
  */
 export async function resolveHumanText(
   inline: string | boolean | undefined,
   instructions: string,
-): Promise<string> {
-  return typeof inline === "string" ? inline : composeInEditor(instructions);
+  { isTTY = Boolean(process.stdin.isTTY) }: { isTTY?: boolean } = {},
+): Promise<string | undefined> {
+  if (typeof inline === "string") return inline;
+  if (!isTTY) return undefined;
+  return composeInEditor(instructions);
 }
 
 /** Named presets — pure aliases for gate lists, never a separate vocabulary. */

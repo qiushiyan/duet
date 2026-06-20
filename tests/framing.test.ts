@@ -1,12 +1,14 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, test as plain, vi } from 'vitest';
+import { existsSync } from 'node:fs';
 import {
   DEFAULT_FRAMING_FILE,
   FRAMING_TEMPLATE,
   composeInEditor,
   parseFramingFile,
   parseGatesAt,
+  resolveHumanText,
   resolveRunInputs,
   resolveTemplateSeed,
 } from '../src/framing.ts';
@@ -92,6 +94,37 @@ describe('composeInEditor (the no-inline-text path for riders and feedback)', ()
     vi.stubEnv('VISUAL', '');
     vi.stubEnv('EDITOR', 'false'); // exits 1
     await expect(composeInEditor('test')).rejects.toThrow(/editor exited with an error.*nothing was sent/);
+  });
+});
+
+describe('resolveHumanText (inline / editor / non-TTY sentinel)', () => {
+  test('an inline string is returned verbatim — no editor, TTY or not', async () => {
+    // The inline short-circuit is independent of interactivity: the value is
+    // what the human typed after the flag.
+    expect.soft(await resolveHumanText('approve, but cap at 3', 'instr', { isTTY: false })).toBe('approve, but cap at 3');
+    expect.soft(await resolveHumanText('approve, but cap at 3', 'instr', { isTTY: true })).toBe('approve, but cap at 3');
+  });
+
+  test('a bare flag on a TTY opens the editor and returns what it saved', async ({ projectDir }) => {
+    const editor = join(projectDir, 'editor.sh');
+    writeFileSync(editor, '#!/bin/sh\nprintf "from the editor\\n" >> "$1"\n', { mode: 0o755 });
+    vi.stubEnv('VISUAL', '');
+    vi.stubEnv('EDITOR', editor);
+    expect(await resolveHumanText(true, 'instr', { isTTY: true })).toBe('from the editor');
+  });
+
+  test('a bare flag off a TTY returns the sentinel and never opens the editor', async ({ projectDir }) => {
+    // The non-interactive trap (#6): a headless caller must not block on an
+    // editor it can't drive. An EDITOR that would leave a marker proves it
+    // never ran; the result is the undefined sentinel the caller maps per intent.
+    const marker = join(projectDir, 'editor-ran.marker');
+    const editor = join(projectDir, 'editor.sh');
+    writeFileSync(editor, `#!/bin/sh\ntouch "${marker}"\n`, { mode: 0o755 });
+    vi.stubEnv('VISUAL', '');
+    vi.stubEnv('EDITOR', editor);
+    expect.soft(await resolveHumanText(undefined, 'instr', { isTTY: false })).toBeUndefined();
+    expect.soft(await resolveHumanText(true, 'instr', { isTTY: false })).toBeUndefined();
+    expect.soft(existsSync(marker)).toBe(false);
   });
 });
 

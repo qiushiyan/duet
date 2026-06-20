@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { unlinkSync } from 'node:fs';
+import { readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { Command } from 'commander';
@@ -198,38 +198,106 @@ program
     if (launched.error) fail(launched.error.message);
   });
 
+/** The continue/steer write-path opts: a flag may be bare, carry inline text,
+ *  or (reject/answer) name a file (`-` = stdin) for quoting-safe verbatim relay. */
+interface ContinueTextOpts {
+  approve?: boolean | string;
+  reject?: boolean | string;
+  answer?: boolean | string;
+  rejectFile?: string;
+  answerFile?: string;
+}
+
+/** Read all of stdin to a string — the `--reject-file -` / `--answer-file -` path. */
+async function readAllStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+/** Read a decision file verbatim, failing with the path on an unreadable file. */
+function readDecisionFile(path: string): string {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch (err) {
+    return fail(`could not read ${path}: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`);
+  }
+}
+
+/**
+ * Resolve one decision's text in priority order: a `--*-file <path>` (or `-`
+ * for stdin) read VERBATIM wins; otherwise resolveHumanText (inline value, or
+ * the editor on a TTY, or the non-TTY `undefined` sentinel). The file/stdin
+ * forms exist so the human's exact words never pass through shell quoting.
+ */
+async function resolveDecisionText(
+  inline: string | boolean | undefined,
+  file: string | undefined,
+  instructions: string,
+  io: { isTTY: boolean; readStdin: () => Promise<string> },
+): Promise<string | undefined> {
+  if (file !== undefined) return file === '-' ? io.readStdin() : readDecisionFile(file);
+  return resolveHumanText(inline, instructions, { isTTY: io.isTTY });
+}
+
 /**
  * Stage the human's verbatim text for a gate/flag crossing — reject feedback,
- * an approval rider, or a flag answer — composing in $EDITOR for a bare flag.
- * Shared by the headless and interactive continue paths. Aborts (fail) on an
- * empty reject/answer; an empty approval rider just approves without one.
+ * an approval rider, or a flag answer. Shared by the headless and interactive
+ * continue paths. Text arrives inline, from a file/stdin (`--reject-file` /
+ * `--answer-file`, reject/answer only), or composed in $EDITOR on a TTY.
+ *
+ * Off a TTY a bare flag resolves to the `undefined` sentinel (resolveHumanText
+ * never opens an editor a headless caller can't drive) — mapped per intent:
+ * approve treats it as "no rider" (advance plain), reject/answer FAIL FAST
+ * naming the inline/file/stdin forms (an empty reject/answer is meaningless).
+ * `io` is the environment seam (injectable isTTY + stdin reader) for tests.
  */
-async function stageContinueText(
+export async function stageContinueText(
   state: RunState,
-  opts: { approve?: boolean | string; reject?: boolean | string; answer?: boolean | string },
+  opts: ContinueTextOpts,
+  io: { isTTY?: boolean; readStdin?: () => Promise<string> } = {},
 ): Promise<void> {
-  if (opts.reject !== undefined) {
-    const feedback = await resolveHumanText(
+  const env = { isTTY: io.isTTY ?? Boolean(process.stdin.isTTY), readStdin: io.readStdin ?? readAllStdin };
+
+  if (opts.reject !== undefined || opts.rejectFile !== undefined) {
+    const feedback = await resolveDecisionText(
       opts.reject,
+      opts.rejectFile,
       'Rejecting the gate: write the feedback that sends the artifact back. It reaches the orchestrator verbatim, as editor-in-chief input.',
+      env,
     );
+    if (feedback === undefined) {
+      fail(
+        'a rejection needs feedback and this is a non-interactive shell — pass it inline (--reject "<text>"), from a file (--reject-file <path>), or on stdin (--reject-file -).',
+      );
+    }
     if (!feedback.trim()) {
       fail('rejection aborted — no feedback written. A reject sends the artifact back, and the orchestrator routes the rework from your why.');
     }
     stageHumanInput(state, { kind: 'feedback', text: feedback });
   }
   if (opts.approve !== undefined) {
-    const rider = await resolveHumanText(
+    const rider = await resolveDecisionText(
       opts.approve,
+      undefined,
       'Approving the gate: optionally write a rider — adjustments that ride into the next phase with your approval. Save empty to approve without one.',
+      env,
     );
-    if (rider.trim()) stageHumanInput(state, { kind: 'approval', text: rider.trim() });
+    // The sentinel (non-TTY bare) or an empty editor result → approve, no rider.
+    if (rider !== undefined && rider.trim()) stageHumanInput(state, { kind: 'approval', text: rider.trim() });
   }
-  if (opts.answer !== undefined) {
-    const answer = await resolveHumanText(
+  if (opts.answer !== undefined || opts.answerFile !== undefined) {
+    const answer = await resolveDecisionText(
       opts.answer,
+      opts.answerFile,
       'Answering the queued question: write your answer. It reaches the orchestrator verbatim.',
+      env,
     );
+    if (answer === undefined) {
+      fail(
+        'an answer is required and this is a non-interactive shell — pass it inline (--answer "<text>"), from a file (--answer-file <path>), or on stdin (--answer-file -).',
+      );
+    }
     if (!answer.trim()) {
       fail('answer aborted — nothing written. The queued question is still waiting; answer it with duet continue --answer "<text>".');
     }
@@ -272,11 +340,19 @@ program
     'answer the queued question; the text reaches the orchestrator verbatim. Bare --answer opens $EDITOR to compose it (an empty result aborts)',
   )
   .option(
+    '--reject-file <path>',
+    'reject with feedback read VERBATIM from a file (or "-" for stdin) — for text with apostrophes, em-dashes, or newlines that shell quoting would mangle',
+  )
+  .option(
+    '--answer-file <path>',
+    'answer with text read VERBATIM from a file (or "-" for stdin) — the quoting-safe form of --answer',
+  )
+  .option(
     '--headless',
     'drop an interactive run to the headless driver: with a gate decision it crosses then hands off to a detached _drive; bare (mid-phase) it continues the current phase headless. The fallback for a dead or unwanted interactive session.',
   )
   .option('--tmux', 'open (or reuse) the tmux viewer for this run')
-  .action(async (runId: string | undefined, opts: { approve?: boolean | string; reject?: boolean | string; answer?: boolean | string; headless?: boolean; tmux?: boolean }) => {
+  .action(async (runId: string | undefined, opts: ContinueTextOpts & { headless?: boolean; tmux?: boolean }) => {
     const cwd = process.cwd();
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
     if (!state) fail('no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
@@ -292,7 +368,14 @@ program
       saveRunState(state);
     }
 
-    const chosen = [opts.approve, opts.reject, opts.answer].filter((v) => v !== undefined);
+    // A decision can arrive as a flag (--approve/--reject/--answer) or, for
+    // reject/answer, as a file form (--reject-file/--answer-file) — fold both
+    // into one intent per channel so every downstream check (chosen, eventType)
+    // sees the file forms too.
+    const approveIntent = opts.approve !== undefined;
+    const rejectIntent = opts.reject !== undefined || opts.rejectFile !== undefined;
+    const answerIntent = opts.answer !== undefined || opts.answerFile !== undefined;
+    const chosen = [approveIntent, rejectIntent, answerIntent].filter(Boolean);
     if (chosen.length > 1) fail('choose one of --approve, --reject, --answer');
 
     // A phase driver already running owns this run — a second one would race
@@ -309,11 +392,11 @@ program
       return;
     }
 
-    const eventType = opts.approve !== undefined
+    const eventType = approveIntent
       ? ('approve' as const)
-      : opts.reject !== undefined
+      : rejectIntent
         ? ('reject' as const)
-        : opts.answer !== undefined
+        : answerIntent
           ? ('answer' as const)
           : undefined;
 
@@ -499,6 +582,12 @@ program
       text,
       'Steering the live phase: write the note for the orchestrator. It reaches it verbatim, as your editor-in-chief voice, on the next tool result.',
     );
+    // Off a TTY a bare `duet steer` resolves to the sentinel (resolveHumanText
+    // won't open an editor a headless caller can't drive) — fail fast naming the
+    // inline form, the same non-TTY treatment continue's reject/answer get.
+    if (note === undefined) {
+      fail('no note written and this is a non-interactive shell — pass it inline: duet steer "<note>".');
+    }
     if (!note.trim()) {
       fail('steer aborted — nothing written. A steer is your voice mid-phase; send one with duet steer "<note>".');
     }
