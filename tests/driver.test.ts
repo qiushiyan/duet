@@ -1,7 +1,9 @@
+import { join } from 'node:path';
 import { describe, expect, onTestFinished, vi } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { runPhase } from '../src/harness/driver.ts';
 import type { RunOrchestratorTurn } from '../src/harness/driver.ts';
+import { claudeApiError, claudeAssistantText, jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
 import {
   buildPhaseBrief,
   framePhaseEntryPrompt,
@@ -357,6 +359,88 @@ describe('opt-in infra auto-retry (#4b)', () => {
     expect(await p).toEqual({ type: 'phase.flag' });
     // Escalated after EXACTLY one retry — persistent auth becomes login-required.
     expect(loadRunState(projectDir, run.runId).pendingQuestion?.errorClass).toBe('login-required');
+  });
+});
+
+describe('a terminal decision survives a post-call stream throw (#1 — first-terminal-wins)', () => {
+  test('advance_phase then the stream throws → phase.advance, never a false infra flag (retry off)', async ({ projectDir, run }) => {
+    const { runTurn } = scriptedSession(async (ctx) => {
+      await callTool(ctx, 'advance_phase', { summary: 'done', artifacts: [] });
+      throw new Error('fetch failed: ECONNRESET'); // recoverable class, but the decision already exists
+    });
+    const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    expect(result).toEqual({ type: 'phase.advance' });
+    const s = loadRunState(projectDir, run.runId);
+    expect.soft(s.pendingQuestion).toBeUndefined(); // not turned into an infra stop
+    expect.soft(s.terminalMarker).toEqual({ phase: 'frame', kind: 'advance' });
+  });
+
+  test('advance_phase then a recoverable throw → phase.advance, never retried (retry on)', async ({ projectDir, run }) => {
+    run.retryInfra = 5;
+    saveRunState(run);
+    // Only ONE turn is scripted: were the marker ignored, the recoverable class
+    // would retry and re-enter drivePhase, exhausting the script (a thrown error).
+    const { runTurn, prompts } = scriptedSession(async (ctx) => {
+      await callTool(ctx, 'advance_phase', { summary: 'done', artifacts: [] });
+      throw new Error('fetch failed: ECONNRESET');
+    });
+    const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    expect(result).toEqual({ type: 'phase.advance' });
+    expect.soft(prompts).toHaveLength(1); // no retry turn ran
+    expect.soft(loadRunState(projectDir, run.runId).retryState).toBeUndefined(); // episode concluded
+  });
+
+  test('ask_human then a recoverable throw → phase.flag, stays cause:human, never retried (retry on)', async ({ projectDir, run }) => {
+    run.retryInfra = 5;
+    saveRunState(run);
+    const { runTurn, prompts } = scriptedSession(async (ctx) => {
+      await callTool(ctx, 'ask_human', { question: 'the real question' });
+      throw new Error('fetch failed: ECONNRESET');
+    });
+    const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    expect(result).toEqual({ type: 'phase.flag' });
+    const q = loadRunState(projectDir, run.runId).pendingQuestion;
+    expect.soft(q?.question).toBe('the real question');
+    expect.soft(q?.cause).toBe('human'); // not reclassified to infra by the throw
+    expect.soft(prompts).toHaveLength(1); // no retry turn ran
+  });
+
+  test('the entry replay concludes the retry episode — a stale retryState is cleared', async ({ projectDir, run }) => {
+    const staged = loadRunState(projectDir, run.runId);
+    staged.terminalMarker = { phase: 'frame', kind: 'advance' };
+    staged.retryState = { attempts: 2, lastClass: 'network' };
+    saveRunState(staged);
+    const event = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, async function* () {
+      throw new Error('the session must not run on a same-phase marker re-entry');
+    });
+    expect(event).toEqual({ type: 'phase.advance' });
+    expect(loadRunState(projectDir, run.runId).retryState).toBeUndefined();
+  });
+});
+
+describe('classifyInfraError — a recovered transcript error never names an opaque throw (#2)', () => {
+  test('opaque throw + a recent-but-superseded transcript error → flags unknown, never retries (retry on)', async ({ projectDir, run }) => {
+    const home = join(projectDir, 'home');
+    vi.stubEnv('HOME', home); // classifyInfraError reads the orchestrator tail via homedir()
+    run.retryInfra = 5;
+    run.orchestratorSessionId = 'orc-1';
+    saveRunState(run);
+    // A recent terminal ECONNRESET, THEN later normal activity (recovered): the
+    // error is recent but superseded, so it must not be read as the live cause.
+    const transcript = jsonl(
+      claudeApiError('API Error: fetch failed: ECONNRESET', { ts: new Date(Date.now() - 60_000).toISOString() }),
+      claudeAssistantText('recovered and continued', { ts: new Date(Date.now() - 5_000).toISOString() }),
+    );
+    plantClaudeTranscript(home, 'orc-1', transcript);
+    const { runTurn, prompts } = scriptedSession(async () => {
+      throw new Error('the SDK wrapper failed opaquely');
+    });
+    const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    expect(result).toEqual({ type: 'phase.flag' });
+    const q = loadRunState(projectDir, run.runId).pendingQuestion;
+    expect.soft(q?.cause).toBe('infra');
+    expect.soft(q?.errorClass).toBe('unknown'); // NOT 'network' inherited from the recovered error
+    expect.soft(prompts).toHaveLength(1); // unknown is never retried
   });
 });
 

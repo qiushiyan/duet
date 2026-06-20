@@ -16,7 +16,7 @@ import {
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
 import { readRoleTranscriptTail } from '../sessions.ts';
-import { RECENT_ERROR_MS, classifyError, retryDecision, scanTerminalErrors } from '../worker-health.ts';
+import { classifyError, currentTerminalError, retryDecision } from '../worker-health.ts';
 import type { ErrorClass } from '../worker-health.ts';
 import { markerToEvent } from './phase-events.ts';
 import type { PhaseEvent } from './phase-events.ts';
@@ -107,9 +107,10 @@ export async function runPhase(
   // Crash re-entry into the SAME phase: a terminal marker for this phase
   // survived from a session that decided before the machine could transition
   // (the snapshot was never saved). Re-emit that decision without re-running
-  // the session — the packet it carries was persisted atomically with it.
+  // the session — the packet it carries was persisted atomically with it. A
+  // terminal outcome ends the retry episode, so conclude it (reset retryState).
   const persisted = markerToEvent(state.terminalMarker, phase);
-  if (persisted) return persisted;
+  if (persisted) return concludeEpisode(state, persisted);
 
   // The first attempt consumes any staged human input; a retry re-enters as a
   // pure session resume (the input was already consumed), so it must not replay.
@@ -117,20 +118,23 @@ export async function runPhase(
 
   for (;;) {
     try {
-      const event = await drivePhase(state, phase, pendingMessage, runTurn);
-      // Clean phase outcome — reset the per-episode retry budget.
-      if (state.retryState) {
-        delete state.retryState;
-        saveRunState(state);
-      }
-      return event;
+      return concludeEpisode(state, await drivePhase(state, phase, pendingMessage, runTurn));
     } catch (err) {
-      // An infrastructure failure (SDK crash, spawn failure, driver bug) is
-      // classified BEFORE any flag is persisted, so opt-in auto-retry can resume
-      // a transient class in-process (the existing session-resume path) rather
-      // than parking the human. The retry policy is the single retryDecision
-      // mechanism: default-off, auth-once, login/quota/unknown never retried,
-      // exhaustion → flag.
+      // A terminal decision the orchestrator persisted before the stream threw
+      // IS the phase outcome — first-terminal-wins means a throw cannot override
+      // it into a false infra flag or a spurious retry. Honor it BEFORE the crash
+      // log/classification: within this invocation a this-phase marker can only
+      // have been written by this turn's terminal tool call (a pre-existing one
+      // was consumed at entry above), so it is the live decision, returned once.
+      const decided = markerToEvent(state.terminalMarker, phase);
+      if (decided) return concludeEpisode(state, decided);
+
+      // A genuine infrastructure failure (SDK crash, spawn failure, driver bug)
+      // is classified BEFORE any flag is persisted, so opt-in auto-retry can
+      // resume a transient class in-process (the existing session-resume path)
+      // rather than parking the human. The retry policy is the single
+      // retryDecision mechanism: default-off, auth-once, login/quota/unknown
+      // never retried, exhaustion → flag.
       const detail = err instanceof Error ? err.message : String(err);
       console.log(`[driver] ✗ ${phase} phase crashed: ${detail}`);
       const errorClass = classifyInfraError(state, detail);
@@ -162,6 +166,23 @@ export async function runPhase(
 }
 
 /**
+ * Conclude a phase's retry episode: a terminal/clean outcome ends it, so reset
+ * the per-episode retry budget (persisted across re-spawns only while an episode
+ * is live) before returning the event. The single concluding path behind all
+ * three terminal exits — entry replay, a marker honored in the catch, and a
+ * clean drivePhase outcome — so the cleanup can't drift between them. Touches
+ * only retryState, never the terminal marker (its deliver-before-clear lifecycle
+ * is the machine's, unchanged).
+ */
+function concludeEpisode(state: RunState, event: PhaseEvent): PhaseEvent {
+  if (state.retryState) {
+    delete state.retryState;
+    saveRunState(state);
+  }
+  return event;
+}
+
+/**
  * Classify a caught phase failure: the CURRENT failure (the thrown message) is
  * authoritative; only when that is opaque (`unknown`) do we consult the
  * orchestrator transcript's most recent terminal error — and only a RECENT one,
@@ -173,14 +194,12 @@ function classifyInfraError(state: RunState, detail: string): ErrorClass {
   if (fromThrow !== 'unknown') return fromThrow;
   try {
     const tail = readRoleTranscriptTail(state, 'orchestrator');
-    if (tail) {
-      const now = Date.now();
-      const recent = scanTerminalErrors(tail.jsonl, tail.schema).filter(
-        (e) => e.ts && now - Date.parse(e.ts) < RECENT_ERROR_MS,
-      );
-      const last = recent.at(-1);
-      if (last) return last.errorClass;
-    }
+    // Only a LIVE terminal error may name an opaque throw — recent AND not
+    // superseded by later activity, the same rule the `crashed` verdict uses,
+    // shared via currentTerminalError so a recovered error never hijacks the
+    // class (and so an `unknown` throw stays `unknown`, never auto-retried).
+    const cur = tail ? currentTerminalError(tail.jsonl, tail.schema, Date.now()) : undefined;
+    if (cur) return cur.errorClass;
   } catch {
     // best-effort — a transcript read failure leaves the throw's classification
   }
