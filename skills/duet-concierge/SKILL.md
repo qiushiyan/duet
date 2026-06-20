@@ -39,6 +39,7 @@ duet runs                                  # list this project's runs, newest fi
 duet status [run-id]                       # position + packet/question + the next command
 duet status --json                         # machine-readable; stop.kind drives your channel choice
 duet status --json --wait                  # blocks until the next stop — the supervision primitive
+duet doctor [run-id]                        # per-role health: working / stuck / retrying / crashed + connectivity
 duet logs [run-id]                         # orchestrator narration: replay + follow (Ctrl-C detaches)
 duet new --framing <file>                  # start a run from a framing file you drafted
 duet continue <run-id> --approve           # cross the current gate

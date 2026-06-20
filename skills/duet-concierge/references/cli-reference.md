@@ -20,6 +20,8 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | `duet status [run-id]` | Human-readable status: phase, stop, packet or question, rounds, costs, next command. |
 | `duet status --json` | The machine-readable status model (schema below). The concierge's read surface. |
 | `duet status --json --wait` | Blocks until the run reaches its next stop, then prints the model and exits. Read-only and safe to interrupt — the supervision primitive: run it in the background and report when it exits. |
+| `duet doctor [run-id]` | Per-role health: working / long-inference / retrying / silent-stuck / crashed, with last-activity age, retry count, recent classified errors, and a connectivity probe. Reads the workers' own transcripts (heavier than `status`) — the answer to "is this run healthy, or stuck?" |
+| `duet doctor [run-id] --json` | The full health model, including each role's resolved transcript path, for automation. |
 | `duet runs` | List the project's runs, newest first. |
 | `duet logs [run-id]` | Stream the driver narration — replays from the start, then follows. Ctrl-C detaches; the run is unaffected. |
 | `duet view [run-id]` | Open a tmux viewer (one pane per voice). Terminal-side; not useful remotely. |

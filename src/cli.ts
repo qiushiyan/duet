@@ -22,6 +22,7 @@ import {
 import type { HumanEvent } from './harness/lifecycle.ts';
 import { duetMachine } from './harness/machine.ts';
 import { serveKernelStdio, serveRunScopedKernelStdio } from './harness/mcp-server.ts';
+import { buildDoctorModel, renderDoctor } from './doctor.ts';
 import { runOrchestrate } from './orchestrate.ts';
 import { phaseOfGateState } from './phases.ts';
 import { buildStatusModel, renderStatus, steerRefusal } from './status.ts';
@@ -734,6 +735,21 @@ program
       return;
     }
     showStatus(state, opts.json ?? false);
+  });
+
+program
+  .command('doctor')
+  .description(
+    'Per-role health: working / long-inference / retrying / silent-stuck / crashed, with last-activity age, retry count, recent classified errors, the resolved transcript path, and a connectivity probe. Reads the workers’ own transcripts and the network (heavier than status) — the answer to "is this run healthy?"',
+  )
+  .argument('[runId]', 'run id (defaults to the latest run in this project)')
+  .option('--json', 'emit the full health model (including resolved session paths) for automation')
+  .action(async (runId: string | undefined, opts: { json?: boolean }) => {
+    const cwd = process.cwd();
+    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
+    if (!state) fail('no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
+    const model = await buildDoctorModel(state, { now: Date.now() });
+    console.log(opts.json ? JSON.stringify(model, null, 2) : renderDoctor(model));
   });
 
 program
