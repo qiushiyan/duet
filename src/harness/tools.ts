@@ -539,6 +539,12 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           .string()
           .optional()
           .describe('Repo-relative path of the spec file, when this phase produced or moved it — the harness records it for later phases.'),
+        human_decisions: z
+          .array(z.object({ title: z.string(), severity: z.enum(['low', 'high']) }))
+          .optional()
+          .describe(
+            'A SIGNAL-ONLY structured echo of the genuine human decisions this gate carries — the "things for you to decide" you would otherwise leave only in the prose summary. severity: "high" = a real product/direction call the human must make; "low" = notable but not blocking. The human/concierge reads it to decide hold-vs-relay; it never affects gate-crossing (only the human’s tap crosses a gate). Omit it when the gate is a routine convergence with nothing for the human to weigh.',
+          ),
       },
       async (args) => {
         if (terminalAlreadySet()) return alreadyEnding();
@@ -555,7 +561,11 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           };
         }
         if (args.spec_path) state.specPath = args.spec_path;
-        state.phaseSummaries[phase] = { summary: args.summary, artifacts: args.artifacts };
+        state.phaseSummaries[phase] = {
+          summary: args.summary,
+          artifacts: args.artifacts,
+          ...(args.human_decisions && args.human_decisions.length > 0 ? { humanDecisions: args.human_decisions } : {}),
+        };
         state.lastActivity = `advance_phase (${phase})`;
         // The marker rides the SAME atomic write as the gate packet, so
         // first-terminal-wins and the packet are one durable record.

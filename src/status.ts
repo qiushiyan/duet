@@ -2,7 +2,7 @@ import type { RunPosition } from './harness/lifecycle.ts';
 import { PHASES, gateOf, phaseOfGateState } from './phases.ts';
 import type { GatePhase, PhaseName } from './phases.ts';
 import { contextPercent } from './run-store.ts';
-import type { RunState, Steer, Voice } from './run-store.ts';
+import type { HumanDecision, RunState, Steer, Voice } from './run-store.ts';
 import { resolveSessions } from './sessions.ts';
 import type { SessionRef } from './sessions.ts';
 
@@ -90,7 +90,7 @@ export type StopModel =
       gate: string;
       heading: string;
       hint?: string;
-      packet?: { summary: string; artifacts: string[] };
+      packet?: { summary: string; artifacts: string[]; humanDecisions?: HumanDecision[] };
       commands: { approve: string; reject: string };
     }
   | { kind: 'flag'; question: string; context?: string; command: string }
@@ -327,5 +327,88 @@ export function renderStatus(model: StatusModel): string {
     lines.push(`\ntranscripts: .duet/runs/${model.runId}/*.log (and the providers' standard session locations)`);
     lines.push(`nothing is running — merge the PR on GitHub. To remove this run's local artifacts and session transcripts: duet abandon ${model.runId} --purge`);
   }
+  return lines.join('\n');
+}
+
+/**
+ * The lean status digest (#5/#8) — a DERIVED projection of the full StatusModel
+ * carrying only the fields that drive the next action, plus a computed one-line
+ * `headline` the full model doesn't expose as a top-level field. `--brief`
+ * selects this projection; it composes orthogonally with `--json` (renderer) and
+ * `--wait` (timing). Every field but `headline` is taken straight from the full
+ * model — nothing is invented, only narrowed.
+ */
+export interface BriefModel {
+  runId: string;
+  machineState?: string;
+  stopKind: StopModel['kind'];
+  headline: string;
+  nextCommand?: string;
+  pendingSteers: number;
+  autoApprovals: Array<{ gate: string; at: string; headline: string }>;
+  humanDecisions?: HumanDecision[];
+}
+
+function briefHeadline(stop: StopModel): string {
+  switch (stop.kind) {
+    case 'gate':
+      return (stop.packet ? (stop.packet.summary.split('\n').find((l) => l.trim()) ?? stop.heading) : stop.heading).slice(0, 96);
+    case 'flag':
+      return stop.question.slice(0, 96);
+    case 'running':
+      return `phase ${stop.phase} running`;
+    case 'interactive':
+      return `interactive orchestrator driving ${stop.phase}`;
+    case 'crashed':
+      return `phase ${stop.phase} crashed mid-flight`;
+    case 'abandoned':
+      return 'run abandoned';
+    case 'done':
+      return 'run complete — the PR is open';
+  }
+}
+
+function briefNextCommand(stop: StopModel): string | undefined {
+  switch (stop.kind) {
+    case 'gate':
+      return stop.commands.approve;
+    case 'flag':
+    case 'crashed':
+      return stop.command;
+    case 'abandoned':
+      return stop.revive;
+    default:
+      return undefined; // running / interactive / done — nothing to type
+  }
+}
+
+export function buildBrief(model: StatusModel): BriefModel {
+  const stop = model.stop;
+  const nextCommand = briefNextCommand(stop);
+  return {
+    runId: model.runId,
+    ...(model.machineState ? { machineState: model.machineState } : {}),
+    stopKind: stop.kind,
+    headline: briefHeadline(stop),
+    ...(nextCommand ? { nextCommand } : {}),
+    pendingSteers: model.pendingSteers.length,
+    autoApprovals: model.autoApprovals,
+    ...(stop.kind === 'gate' && stop.packet?.humanDecisions ? { humanDecisions: stop.packet.humanDecisions } : {}),
+  };
+}
+
+/** The lean human render of the digest — a few lines, not the full packet. */
+export function renderBrief(brief: BriefModel): string {
+  const lines: string[] = [];
+  lines.push(`duet ${brief.runId} — ${brief.machineState ?? '(not started)'} [${brief.stopKind}]`);
+  lines.push(brief.headline);
+  if (brief.humanDecisions && brief.humanDecisions.length > 0) {
+    const anyHigh = brief.humanDecisions.some((d) => d.severity === 'high');
+    const list = brief.humanDecisions.map((d) => `${d.severity === 'high' ? '●' : '○'} ${d.title}`).join(' · ');
+    lines.push(`decisions: ${list}${anyHigh ? '  (hold — a high decision is the human’s to make)' : ''}`);
+  }
+  if (brief.pendingSteers > 0) lines.push(`pending steers: ${brief.pendingSteers}`);
+  if (brief.autoApprovals.length > 0) lines.push(`auto-approved: ${brief.autoApprovals.map((a) => a.gate).join(', ')}`);
+  if (brief.nextCommand) lines.push(`next: ${brief.nextCommand}`);
   return lines.join('\n');
 }

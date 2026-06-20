@@ -25,7 +25,7 @@ import { serveKernelStdio, serveRunScopedKernelStdio } from './harness/mcp-serve
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
 import { runOrchestrate } from './orchestrate.ts';
 import { phaseOfGateState } from './phases.ts';
-import { buildStatusModel, renderStatus, steerRefusal } from './status.ts';
+import { buildBrief, buildStatusModel, renderBrief, renderStatus, steerRefusal } from './status.ts';
 import { openTmuxView } from './tmux-view.ts';
 import {
   createRun,
@@ -52,8 +52,15 @@ import type { RunState, Voice } from './run-store.ts';
  * immediately — phases run in the detached `_drive` child.
  */
 
-function showStatus(state: RunState, json = false): void {
+function showStatus(state: RunState, json = false, brief = false): void {
   const model = buildStatusModel(state, probeRunPosition(state), listPendingSteers(state));
+  // Three orthogonal axes: --brief = projection (lean vs full), --json =
+  // renderer (machine vs text), --wait = timing (handled by the caller).
+  if (brief) {
+    const lean = buildBrief(model);
+    console.log(json ? JSON.stringify(lean, null, 2) : renderBrief(lean));
+    return;
+  }
   console.log(json ? JSON.stringify(model, null, 2) : renderStatus(model));
 }
 
@@ -724,17 +731,18 @@ program
   .description('Show a run’s position, the gate packet or queued question, rounds, costs, and the next command.')
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
   .option('--json', 'machine-readable status: the StatusModel, with a discriminated "stop" naming the channel that acts there (the schema the concierge skill reads; additive-only)')
+  .option('--brief', 'lean digest: position, stop kind, a one-line headline, the next command, pending-steer count, auto-approvals, and any human-decision flags — the fields that drive the next action, without the full packet. Composes with --json (lean JSON) and --wait')
   .option('--wait', 'block until the run reaches its next stop — gate, question, crash, or done — then print; read-only and safe to interrupt. With --json this is the supervision primitive: run it in the background and report when it exits')
-  .action(async (runId: string | undefined, opts: { json?: boolean; wait?: boolean }) => {
+  .action(async (runId: string | undefined, opts: { json?: boolean; wait?: boolean; brief?: boolean }) => {
     const cwd = process.cwd();
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
     if (!state) fail('no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
     if (opts.wait) {
       await waitForRunStop(cwd, state.runId);
-      showStatus(loadRunState(cwd, state.runId), opts.json ?? false);
+      showStatus(loadRunState(cwd, state.runId), opts.json ?? false, opts.brief ?? false);
       return;
     }
-    showStatus(state, opts.json ?? false);
+    showStatus(state, opts.json ?? false, opts.brief ?? false);
   });
 
 program

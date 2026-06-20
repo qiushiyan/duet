@@ -29,6 +29,18 @@ import { locateSessionTranscripts } from './sessions.ts';
 export type Voice = 'orchestrator' | 'implementer' | 'reviewer';
 
 /**
+ * A structured echo of a genuine human decision a gate carries (#3) — what the
+ * orchestrator would otherwise write only in prose. SIGNAL-ONLY: the human /
+ * concierge reads it to decide hold-vs-relay; duet never reads it in the
+ * gate-crossing path (gates cross only on the human's tap). `high` = a real
+ * product/direction call the human must make; `low` = notable, not blocking.
+ */
+export interface HumanDecision {
+  title: string;
+  severity: 'low' | 'high';
+}
+
+/**
  * Human input staged by the CLI for the next driver invocation to consume.
  * `answer` resolves a queued question; `feedback` rides a gate rejection
  * back into the same phase; `approval` is a rider on a gate approval —
@@ -122,7 +134,7 @@ export interface RunState {
    */
   sentSnippets?: Partial<Record<PhaseName, Partial<Record<'implementer' | 'reviewer', string[]>>>>;
   /** advance_phase outputs, shown at gates. */
-  phaseSummaries: Partial<Record<PhaseName, { summary: string; artifacts: string[] }>>;
+  phaseSummaries: Partial<Record<PhaseName, { summary: string; artifacts: string[]; humanDecisions?: HumanDecision[] }>>;
 
   /**
    * Persisted hint: which worker has a turn in flight right now, set at a

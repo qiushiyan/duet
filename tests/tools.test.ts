@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, vi } from 'vitest';
+import { z } from 'zod';
 import { buildPhaseBrief } from '../src/harness/orchestrator-prompts.ts';
 import { createPhaseTools } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
@@ -456,6 +457,38 @@ describe('ask_human (the cooperative pause)', () => {
     expect.soft(second.isError).toBe(true);
     expect.soft(text(second)).toContain('already ending');
     expect.soft(run.terminalMarker).toEqual({ phase: 'frame', kind: 'advance' });
+  });
+});
+
+describe('advance_phase human_decisions (signal-only gate-decision echo, #3)', () => {
+  test('persists the decisions onto the gate packet', async ({ projectDir, run }) => {
+    const { call } = harness(run, { phase: 'frame' });
+    await call('advance_phase', { summary: 's', artifacts: [], human_decisions: [{ title: 'pick the backend', severity: 'low' }] });
+    expect(loadRunState(projectDir, run.runId).phaseSummaries.frame?.humanDecisions).toEqual([
+      { title: 'pick the backend', severity: 'low' },
+    ]);
+  });
+
+  test('omits the field when no decisions are passed (additive)', async ({ projectDir, run }) => {
+    const { call } = harness(run, { phase: 'frame' });
+    await call('advance_phase', { summary: 's', artifacts: [] });
+    expect(loadRunState(projectDir, run.runId).phaseSummaries.frame).not.toHaveProperty('humanDecisions');
+  });
+
+  test('is signal-only: a high decision does not change the terminal decision (gate-crossing unaffected)', async ({ run }) => {
+    const { call } = harness(run, { phase: 'frame' });
+    const result = await call('advance_phase', { summary: 's', artifacts: [], human_decisions: [{ title: 'storage backend', severity: 'high' }] });
+    expect.soft(result.isError).toBeUndefined();
+    // The terminal marker is the normal advance — a high decision neither holds
+    // nor crosses; only the human's tap crosses, and the marker is unchanged.
+    expect.soft(run.terminalMarker).toEqual({ phase: 'frame', kind: 'advance' });
+  });
+
+  test('the schema rejects a severity outside low|high', ({ run }) => {
+    const { tools } = createPhaseTools({ state: run, phase: 'frame', providers: { implementer: new FakeWorker('claude'), reviewer: new FakeWorker('codex') }, log: () => {} });
+    const schema = z.object(tools.find((t) => t.name === 'advance_phase')!.inputSchema);
+    expect.soft(schema.safeParse({ summary: 's', artifacts: [], human_decisions: [{ title: 't', severity: 'urgent' }] }).success).toBe(false);
+    expect.soft(schema.safeParse({ summary: 's', artifacts: [], human_decisions: [{ title: 't', severity: 'high' }] }).success).toBe(true);
   });
 });
 
