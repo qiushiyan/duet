@@ -1,5 +1,7 @@
 # Plan — Concierge run-operations
 
+**Status:** Implemented (test-verified — 418 tests; live end-to-end + environment smoke tests pending; codex error-envelope classification validated synthetically only). **Date:** 2026-06-19. Spec: `docs/specs/2026-06-19-concierge-run-operations.md`.
+
 Implements `docs/specs/2026-06-19-concierge-run-operations.md`. This plan is written to be **workable end-to-end by an AFK implementer** off this file alone: every tactical open question the spec recorded is decided here, with concrete constants, field shapes, file/line anchors, fixtures, and per-slice tests. Where the spec and the commit-spec **rider** differ, the rider wins (it relaxes the doc-deferral narrowly — see "Docs" below).
 
 If a genuinely *blocking product/direction* question surfaces mid-implementation (not a tactical one), stop and flag it — do not guess. None is expected; the rider settled the two that mattered (`humanDecisions` signal-only; auto-retry opt-in/default-off).

@@ -1,5 +1,7 @@
 # Concierge run-operations
 
+**Status:** Implemented (test-verified — 418 tests; live end-to-end + environment smoke tests pending; the codex `error` / `stream_error` / `turn_aborted` classification branch validated synthetically only — no real codex error transcript yet). **Date:** 2026-06-19. Plan: `docs/plans/2026-06-19-concierge-run-operations.md`. The surviving design is folded, present tense, into `docs/automation-design.md` and `docs/engineering.md`; this spec is kept as the dated proposal record.
+
 ## Summary
 
 duet runs are supervised from *outside* the run — by a Claude Code concierge today, by the interactive `/duet` orchestrator tomorrow, and by the human at a terminal. Supervising is mostly answering one recurring question: **is this run healthy, waiting on my decision, or recoverably broken — and if it's waiting, what exactly do I type?** duet answers the *"what is it waiting on"* half well (the discriminated `stop` model with its next-command strings) and the *"is it healthy"* half almost not at all — so a supervisor leaves duet to hand-parse raw agent transcripts, which has already produced wrong answers in real dogfooding (a midnight time-sort bug that read stale transcripts; a "can't read the codex reviewer" claim that was false; a "retry loop" call that was actually one long reasoning turn). On top of that, the command used to *act* on a decision can hang a headless supervisor outright.
