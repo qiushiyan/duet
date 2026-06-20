@@ -266,7 +266,18 @@ function computeVerdict(args: {
   recentErrors: TerminalError[];
 }): Verdict {
   const newestErr = newestErrorMs(args.recentErrors);
-  if (newestErr !== undefined && args.now - newestErr < RECENT_ERROR_MS) return 'crashed';
+  const lastMs = args.lastActivityAgeMs !== undefined ? args.now - args.lastActivityAgeMs : undefined;
+  // `crashed` only when the terminal error is the LATEST event — later activity
+  // (a write the worker made after recovering, still inside the recent-error
+  // window) supersedes it, so the run is working/idle, not crashed. The error
+  // stays in `recentErrors` either way; only the verdict reflects the recovery.
+  if (
+    newestErr !== undefined &&
+    args.now - newestErr < RECENT_ERROR_MS &&
+    (lastMs === undefined || lastMs <= newestErr)
+  ) {
+    return 'crashed';
+  }
   if (args.inFlightSince === undefined) return 'idle';
   if (args.retriesSince !== undefined && args.retries >= 1) return 'retrying';
   // Quiet = time since the most recent of {last write, turn start}: a brand-new

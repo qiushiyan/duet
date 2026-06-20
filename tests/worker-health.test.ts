@@ -14,6 +14,7 @@ import {
   claudeMetadata,
   claudeResultError,
   claudeUserToolResult,
+  codexErrorEvent,
   codexFunctionOutput,
   jsonl,
 } from './helpers/transcripts.ts';
@@ -79,6 +80,19 @@ describe('scanTerminalErrors — error-bearing records only (the honesty guarant
     const hits = scanTerminalErrors(jsonl(codexFunctionOutput('npm error: getaddrinfo ENOTFOUND registry.npmjs.org')), 'codex');
     expect(hits[0]?.errorClass).toBe('dns');
   });
+
+  test('an explicit codex error event is flagged and classified from its payload', () => {
+    // The error-event branch classifies on the whole payload, so the signature
+    // is matched wherever it sits in the record — not just a fixed field.
+    const hits = scanTerminalErrors(jsonl(codexErrorEvent('stream error: 500 Internal server error')), 'codex');
+    expect.soft(hits).toHaveLength(1);
+    expect.soft(hits[0]?.errorClass).toBe('server');
+  });
+
+  test('a codex error event carrying a transient network signature classifies as network', () => {
+    const hits = scanTerminalErrors(jsonl(codexErrorEvent('disconnected before completion: ECONNRESET')), 'codex');
+    expect(hits[0]?.errorClass).toBe('network');
+  });
 });
 
 describe('probeRole — verdict precedence', () => {
@@ -134,6 +148,27 @@ describe('probeRole — verdict precedence', () => {
     },
   ])('$name', ({ jsonl: j, opts, verdict }) => {
     expect(probeRole(j, opts).verdict).toBe(verdict);
+  });
+
+  test('a recent terminal error SUPERSEDED by later activity is not crashed (recovered, #1)', () => {
+    // Error at -60s, then a normal write at -20s: the worker recovered inside
+    // the 3-min window. The error stays visible, but the verdict is not crashed.
+    const t = jsonl(
+      claudeApiError('API Error: 500 Internal server error', { ts: ago(60 * SEC) }),
+      claudeAssistantText('recovered — continuing', { ts: ago(20 * SEC) }),
+    );
+    expect.soft(probeRole(t, { schema: 'claude', now: NOW }).verdict).toBe('idle'); // not in flight
+    expect.soft(probeRole(t, { schema: 'claude', now: NOW, inFlightSince: NOW - 90 * SEC }).verdict).toBe('working'); // in flight, wrote 20s ago
+    // The error is still reported either way (only the verdict reflects recovery).
+    expect.soft(probeRole(t, { schema: 'claude', now: NOW }).recentErrors).toHaveLength(1);
+  });
+
+  test('a terminal error that IS the latest event is still crashed', () => {
+    const t = jsonl(
+      claudeAssistantText('working', { ts: ago(60 * SEC) }),
+      claudeApiError('API Error: 500 Internal server error', { ts: ago(20 * SEC) }),
+    );
+    expect(probeRole(t, { schema: 'claude', now: NOW }).verdict).toBe('crashed');
   });
 
   test('last-activity skips trailing metadata records (the 494961h bug)', () => {
