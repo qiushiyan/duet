@@ -272,6 +272,16 @@ export async function stageContinueText(
 ): Promise<void> {
   const env = { isTTY: io.isTTY ?? Boolean(process.stdin.isTTY), readStdin: io.readStdin ?? readAllStdin };
 
+  // One source per intent — mixing the inline flag with its file form is almost
+  // always a mistake, so fail fast rather than silently pick one (consistent
+  // with the mutually-exclusive --approve/--reject/--answer guard).
+  if (opts.reject !== undefined && opts.rejectFile !== undefined) {
+    fail('choose one rejection source — inline --reject "<text>" or --reject-file <path> (or "-" for stdin), not both.');
+  }
+  if (opts.answer !== undefined && opts.answerFile !== undefined) {
+    fail('choose one answer source — inline --answer "<text>" or --answer-file <path> (or "-" for stdin), not both.');
+  }
+
   if (opts.reject !== undefined || opts.rejectFile !== undefined) {
     const feedback = await resolveDecisionText(
       opts.reject,

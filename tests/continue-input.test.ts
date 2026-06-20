@@ -89,4 +89,30 @@ describe('stageContinueText — file and stdin forms relay verbatim', () => {
     await expect(stageContinueText(run, { answerFile: path }, { isTTY: false })).rejects.toThrow(/aborted/);
     expect(staged(run)).toBeUndefined();
   });
+
+  test('mixing an inline flag with its file form fails fast (one source per intent)', async ({ run }) => {
+    await expect.soft(stageContinueText(run, { reject: 'x', rejectFile: '/tmp/f' }, { isTTY: false })).rejects.toThrow(/not both/);
+    await expect.soft(stageContinueText(run, { answer: 'x', answerFile: '/tmp/f' }, { isTTY: false })).rejects.toThrow(/not both/);
+    expect(staged(run)).toBeUndefined();
+  });
+});
+
+describe('duet steer — non-TTY fail-fast (command level)', () => {
+  test('a bare steer off a TTY fails fast naming the inline form', async ({ run, projectDir }) => {
+    // Drive the real command: a fresh run probes to a crashed position, so steer
+    // reaches resolveHumanText, which off a TTY (vitest is non-interactive)
+    // returns the sentinel instead of opening an editor — the command must fail.
+    const cwd = process.cwd();
+    process.chdir(projectDir);
+    try {
+      // Bare steer (no positionals): `steer [text] [runId]` — passing a runId
+      // would land as the note text, so target the fixture run via latestRun.
+      expect.soft(run.runId).toBeTruthy();
+      await expect(program.parseAsync(['node', 'duet', 'steer'])).rejects.toThrow(
+        /non-interactive shell — pass it inline/,
+      );
+    } finally {
+      process.chdir(cwd);
+    }
+  });
 });
