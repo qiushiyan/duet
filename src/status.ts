@@ -3,6 +3,8 @@ import { PHASES, gateOf, phaseOfGateState } from './phases.ts';
 import type { GatePhase, PhaseName } from './phases.ts';
 import { contextPercent } from './run-store.ts';
 import type { RunState, Steer, Voice } from './run-store.ts';
+import { resolveSessions } from './sessions.ts';
+import type { SessionRef } from './sessions.ts';
 
 /**
  * Status — one derivation, two renderers. `buildStatusModel` joins the run
@@ -104,6 +106,13 @@ export interface StatusModel {
   /** The last quiescent stop's machine state — a display hint, not resume truth. */
   machineState?: string;
   stop: StopModel;
+  /**
+   * The cheap exact session map (#1): each known voice's `{ role, provider,
+   * sessionId }`, a state-only read (no transcript scan, even under --wait).
+   * Always present ([] when no session yet); the resolved path + verdicts are
+   * `duet doctor`'s job, off this hot path. Known sessions only.
+   */
+  sessions: SessionRef[];
   gatesAt?: GatePhase[];
   autoApprovals: Array<{ gate: string; at: string; headline: string }>;
   rounds: Array<{ phase: PhaseName; used: number; cap: number }>;
@@ -125,6 +134,7 @@ export function buildStatusModel(state: RunState, position: RunPosition, pending
     ...(state.specPath ? { specPath: state.specPath } : {}),
     ...(state.machineState ? { machineState: state.machineState } : {}),
     stop: stopModel(state, position),
+    sessions: resolveSessions(state),
     ...(state.gatesAt ? { gatesAt: state.gatesAt } : {}),
     autoApprovals: (state.autoApprovals ?? []).map((a) => ({ ...a, headline: packetHeadline(state, a.gate) })),
     rounds: PHASES.filter((p) => p.name !== 'open' && ((state.rounds[p.name] ?? 0) > 0 || p.reviewLoop)).map(

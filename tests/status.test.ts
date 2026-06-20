@@ -131,9 +131,20 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
       'pendingSteers',
       'rounds',
       'runId',
+      'sessions',
       'snippetProposals',
       'specPath',
       'stop',
+    ]);
+  });
+
+  test('sessions[] surfaces the known voices and is [] on a fresh run', ({ run }) => {
+    expect.soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions).toEqual([]);
+    run.orchestratorSessionId = 'orch-1';
+    run.workerSessions = { reviewer: 'rev-1' };
+    expect.soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions).toEqual([
+      { role: 'orchestrator', provider: 'claude', sessionId: 'orch-1' },
+      { role: 'reviewer', provider: 'codex', sessionId: 'rev-1' },
     ]);
   });
 
