@@ -88,20 +88,16 @@ describe('the duet-concierge skill coheres with the CLI', () => {
 });
 
 const duetSkillDir = new URL('../skills/duet/', import.meta.url);
-const duetSkillMd = readFileSync(new URL('SKILL.md', duetSkillDir), 'utf8');
 const duetIdentityMd = readFileSync(new URL('identity.md', duetSkillDir), 'utf8');
 
-describe('the duet orchestrator skill coheres with the CLI', () => {
-  test('SKILL.md frontmatter names the skill and is explicit-invocation only', () => {
-    const fm = frontmatterOf(duetSkillMd);
-    expect.soft(fm['name']).toBe('duet');
-    expect.soft(fm['description']).toBeTruthy();
-    // Explicit invocation only — a session developing duet never inherits the
-    // orchestrator role (mirrors the concierge).
-    expect.soft(fm['disable-model-invocation']).toBe('true');
-  });
-
-  test('orchestrate is a public command — the launcher the skill names', () => {
+// skills/duet/ is identity-only: the launcher feeds identity.md as the session's
+// system prompt (--append-system-prompt-file). There is no `/duet` slash command —
+// the orchestrator role is brought up by `duet orchestrate` / `duet new
+// --interactive`, never a manual invocation (which would load the role with no
+// kernel tools). So this block guards the identity file and the launcher command,
+// not a SKILL.md.
+describe('the duet orchestrator identity coheres with the CLI', () => {
+  test('orchestrate is a public command — the launcher that feeds the identity', () => {
     expect(publicCommands.has('orchestrate')).toBe(true);
   });
 
@@ -122,15 +118,46 @@ describe('the duet orchestrator skill coheres with the CLI', () => {
     expect.soft(shipped, `${rel} is not covered by package.json files: ${files.join(', ')}`).toBe(true);
   });
 
-  test.for([
-    ['SKILL.md', duetSkillMd],
-    ['identity.md', duetIdentityMd],
-  ] as const)('every duet verb and flag named in %s exists on the CLI', ([, markdown]) => {
+  test('every duet verb and flag named in identity.md exists on the CLI', () => {
     expect.hasAssertions();
-    for (const line of codeLines(markdown)) {
+    for (const line of codeLines(duetIdentityMd)) {
       // Only `duet <verb>` spans are CLI verbs; kernel tool names (get_task,
       // send_prompt, advance_phase, …) appear in spans too but are never
       // preceded by "duet ", so the extractor skips them.
+      const verbs = [...line.matchAll(/\bduet\s+([a-z_]+)/g)].map((m) => m[1]!);
+      if (verbs.length === 0) continue;
+
+      for (const verb of verbs) {
+        expect.soft(publicCommands.has(verb), `"duet ${verb}" in: ${line.trim()}`).toBe(true);
+      }
+
+      const command = publicCommands.get(verbs[0]!);
+      if (!command) continue;
+      const longs = new Set(command.options.map((o) => o.long));
+      longs.add('--help');
+      for (const [flag] of line.matchAll(/--[a-z][a-z-]*/g)) {
+        expect.soft(longs.has(flag), `"${flag}" is not a flag of "duet ${verbs[0]}" in: ${line.trim()}`).toBe(true);
+      }
+    }
+  });
+});
+
+const duetFrameDir = new URL('../skills/duet-frame/', import.meta.url);
+const duetFrameMd = readFileSync(new URL('SKILL.md', duetFrameDir), 'utf8');
+
+describe('the duet-frame skill coheres with the CLI', () => {
+  test('SKILL.md frontmatter names the skill and is explicit-invocation only', () => {
+    const fm = frontmatterOf(duetFrameMd);
+    expect.soft(fm['name']).toBe('duet-frame');
+    expect.soft(fm['description']).toBeTruthy();
+    // Explicit invocation only — a session shouldn't auto-adopt the framing-author
+    // role (mirrors the concierge and the orchestrator identity).
+    expect.soft(fm['disable-model-invocation']).toBe('true');
+  });
+
+  test('every duet verb and flag named in SKILL.md exists on the CLI', () => {
+    expect.hasAssertions();
+    for (const line of codeLines(duetFrameMd)) {
       const verbs = [...line.matchAll(/\bduet\s+([a-z_]+)/g)].map((m) => m[1]!);
       if (verbs.length === 0) continue;
 

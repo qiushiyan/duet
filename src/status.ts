@@ -65,9 +65,9 @@ export function steerRefusal(position: RunPosition, runId: string): string | und
       );
     case 'interactive':
       // The behaviour is correct — there is no headless driver to deliver a
-      // staged steer to — but the channel is the /duet chat, not duet steer.
+      // staged steer to — but the channel is the interactive orchestrator session (chat), not duet steer.
       return (
-        `run ${runId} is orchestrated in your /duet session — steer it there in chat, ` +
+        `run ${runId} is orchestrated in your interactive orchestrator session — steer it there in chat, ` +
         `as your editor-in-chief voice (the conversation is the channel, no relay). ` +
         `duet steer is for the headless phases.`
       );
@@ -264,7 +264,7 @@ export function renderStatus(model: StatusModel): string {
 
   const stop = model.stop;
   if (stop.kind === 'interactive') {
-    lines.push(`\nthe interactive orchestrator is driving the ${stop.phase} phase — steer it in your /duet session.`);
+    lines.push(`\nthe interactive orchestrator is driving the ${stop.phase} phase — steer it in your interactive orchestrator session.`);
     return lines.join('\n');
   }
 

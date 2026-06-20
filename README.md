@@ -143,6 +143,8 @@ The `docs/` folder is the real design record. Suggested reading order:
 
 `skills/duet-concierge/` is a Claude Code skill that lets you drive a run from your phone — duet's "remote control" without duet building any remote infrastructure of its own.
 
+`skills/duet-frame/` is a companion skill for the other end of a run: it helps you author the framing — turning a rough problem into a clean framing document (the project's real names, structure, gate posture), without changing what you asked for or proposing how to build it — then hands you the `duet new --interactive` command to launch.
+
 ## License
 
 [MIT](LICENSE)
