@@ -32,8 +32,8 @@ if (!existsSync(destDir)) {
 }
 
 // A skill is any subdir of ./skills that carries a SKILL.md (auto-discovered, so
-// new skills are picked up without editing this script). Subdirs without one
-// (e.g. skills/duet, the orchestrator identity) are deliberately not linked.
+// new skills are picked up without editing this script). Subdirs without one are
+// deliberately not linked.
 const skills = readdirSync(srcDir, { withFileTypes: true })
   .filter((e) => e.isDirectory() && isSkill(path.join(srcDir, e.name)))
   .map((e) => e.name);

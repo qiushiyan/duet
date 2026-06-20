@@ -4,6 +4,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { fromCallback } from 'xstate';
 import type { EventObject } from 'xstate';
 import { loadRunState, saveRunState } from '../run-store.ts';
+import { classifyError } from '../worker-health.ts';
 import type { DriverInput } from './driver.ts';
 import { duetMachine } from './machine.ts';
 import { markerToEvent } from './phase-events.ts';
@@ -107,6 +108,8 @@ export async function runPhaseOverStdio(
     if (!state.pendingQuestion) {
       state.pendingQuestion = {
         question: `The ${phase} phase's orchestrator twice ended its turn over the MCP boundary without advancing the phase or asking a question — the run is stuck. Check the logs and answer with how to proceed.`,
+        cause: 'infra',
+        errorClass: 'unknown',
       };
       saveRunState(state);
     }
@@ -114,11 +117,16 @@ export async function runPhaseOverStdio(
   } catch (err) {
     // Boundary failure (dead peer, transport error) is this runner's crash=flag:
     // convert it to an actionable persisted question, never a silent state.
+    // CLASSIFY ONLY — this is the interactive host (a human is present), so it
+    // gets cause:'infra' + errorClass for the supervisor's read, but NEVER the
+    // headless driver's auto-retry; the human resumes.
     const detail = err instanceof Error ? err.message : String(err);
     const state = loadRunState(cwd, runId);
     if (!state.pendingQuestion) {
       state.pendingQuestion = {
         question: `The ${phase} phase's orchestrator boundary failed (${detail}). The kernel or the orchestrator client died mid-turn; check driver.log and the orchestrator log, then answer with how to proceed — the session resumes from its last completed turn.`,
+        cause: 'infra',
+        errorClass: classifyError(detail),
       };
       saveRunState(state);
     }

@@ -8,16 +8,20 @@ import { getSnippet, renderSnippetLibrary } from '../snippets.ts';
 import {
   appendNote,
   appendVoiceLog,
+  clearTurnActive,
   consumeHumanInput,
   contextPercent,
   gateAttended,
   listPendingSteers,
   loadRunState,
   markSteersDelivered,
+  markTurnActive,
   recordContextUsage,
   saveRunState,
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
+import { readRoleTranscriptTail } from '../sessions.ts';
+import { formatAge, probeRole } from '../worker-health.ts';
 import {
   answerResumePrompt,
   approvalRiderBlock,
@@ -97,6 +101,12 @@ export interface PhaseToolsDeps {
    * phase invocation and so own a fresh pair.
    */
   rails?: { turnsInFlight: Set<WorkerRole>; resendWarned: Set<string> };
+  /**
+   * Home dir for the heartbeat's transcript tail read (the environment seam,
+   * like `sessions.ts`/`purgeRun`). Omitted in production → `homedir()`; tests
+   * point it at a planted fake home.
+   */
+  home?: string;
 }
 
 export interface PhaseTools {
@@ -104,7 +114,30 @@ export interface PhaseTools {
   tools: Array<KernelTool<any>>;
 }
 
-export function createPhaseTools({ state, phase, providers, log, stagedAnswer: initialAnswer, rails }: PhaseToolsDeps): PhaseTools {
+/**
+ * The best-effort health suffix for a heartbeat line: ` · last activity <age>
+ * ago · <N> retries`, or ` · RETRYING (<N> retries)` when this turn has retried
+ * (the COUNT, never a fabricated class — api_retry carries no usable status).
+ * Reads the worker's own transcript tail and probes it scoped to THIS turn (the
+ * turn start anchors both in-flight and retry attribution). Returns '' on the
+ * first turn (no session id yet) or on ANY read/probe failure — telemetry never
+ * throws into a worker turn.
+ */
+function heartbeatHealth(state: RunState, role: WorkerRole, startedAt: number, now: number, home?: string): string {
+  try {
+    if (!state.workerSessions[role]) return ''; // first turn — session id learned only on return
+    const tail = readRoleTranscriptTail(state, role, home !== undefined ? { home } : {});
+    if (!tail) return '';
+    const h = probeRole(tail.jsonl, { schema: tail.schema, now, inFlightSince: startedAt, retriesSince: startedAt });
+    const activity = h.lastActivityAgeMs !== undefined ? ` · last activity ${formatAge(h.lastActivityAgeMs)} ago` : '';
+    const retries = h.retries > 0 ? ` · RETRYING (${h.retries} retries)` : ` · ${h.retries} retries`;
+    return `${activity}${retries}`;
+  } catch {
+    return ''; // best-effort: degrade to elapsed-only
+  }
+}
+
+export function createPhaseTools({ state, phase, providers, log, stagedAnswer: initialAnswer, rails, home }: PhaseToolsDeps): PhaseTools {
   let stagedAnswer = initialAnswer ?? null;
 
   // First-terminal-wins: advance_phase and ask_human each end the phase, so the
@@ -286,13 +319,23 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         log(`[send_prompt] → ${args.role} (${provider.name})  tag=${args.tag}  body=${args.body.length} chars`);
         appendVoiceLog(state, args.role, `◀ prompt (tag=${args.tag}, from orchestrator)`, args.body);
 
+        // Persist the in-flight hint (a separate doctor process reads it to tell
+        // long-inference from idle). Best-effort like all of state.json.
+        markTurnActive(state, args.role, args.tag);
+
         // Worker turns are non-streaming and can run 30+ minutes; heartbeat
-        // lines keep the voice log (and its tmux pane) visibly alive.
+        // lines keep the voice log (and its tmux pane) visibly alive. Once a
+        // session id exists (every turn after the first), each heartbeat enriches
+        // the elapsed line with the worker's own transcript recency + retry count
+        // (probeRole), so "is it stuck?" usually needs no command. Best-effort:
+        // the first turn (no session id yet) and any read/probe failure fall back
+        // to elapsed-only, never throwing into the turn.
         const startedAt = Date.now();
         const heartbeat = setInterval(() => {
           const mins = Math.round((Date.now() - startedAt) / 60_000);
-          log(`[send_prompt] ⏳ ${args.role} turn running — ${mins}m elapsed (tag=${args.tag})`);
-          appendVoiceLog(state, args.role, `⏳ turn running — ${mins}m elapsed (tag=${args.tag})`);
+          const health = heartbeatHealth(state, args.role, startedAt, Date.now(), home);
+          log(`[send_prompt] ⏳ ${args.role} turn running — ${mins}m elapsed (tag=${args.tag})${health}`);
+          appendVoiceLog(state, args.role, `⏳ turn running — ${mins}m elapsed (tag=${args.tag})${health}`);
         }, 5 * 60_000);
 
         try {
@@ -374,6 +417,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           };
         } finally {
           turnsInFlight.delete(args.role);
+          clearTurnActive(state, args.role);
           clearInterval(heartbeat);
         }
       },
@@ -409,7 +453,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           return { content: [{ type: 'text' as const, text: `The human answered: ${answer}` }] };
         }
         if (terminalAlreadySet()) return alreadyEnding();
-        state.pendingQuestion = { question: args.question, ...(args.context ? { context: args.context } : {}) };
+        state.pendingQuestion = { question: args.question, ...(args.context ? { context: args.context } : {}), cause: 'human' };
         state.lastActivity = 'ask_human (queued)';
         // The marker rides the SAME atomic write as the question it carries, so
         // first-terminal-wins and the flag packet land together — never a
@@ -495,6 +539,12 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           .string()
           .optional()
           .describe('Repo-relative path of the spec file, when this phase produced or moved it — the harness records it for later phases.'),
+        human_decisions: z
+          .array(z.object({ title: z.string(), severity: z.enum(['low', 'high']) }))
+          .optional()
+          .describe(
+            'A SIGNAL-ONLY structured echo of the genuine human decisions this gate carries — the "things for you to decide" you would otherwise leave only in the prose summary. severity: "high" = a real product/direction call the human must make; "low" = notable but not blocking. The human/concierge reads it to decide hold-vs-relay; it never affects gate-crossing (only the human’s tap crosses a gate). Omit it when the gate is a routine convergence with nothing for the human to weigh.',
+          ),
       },
       async (args) => {
         if (terminalAlreadySet()) return alreadyEnding();
@@ -511,7 +561,11 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           };
         }
         if (args.spec_path) state.specPath = args.spec_path;
-        state.phaseSummaries[phase] = { summary: args.summary, artifacts: args.artifacts };
+        state.phaseSummaries[phase] = {
+          summary: args.summary,
+          artifacts: args.artifacts,
+          ...(args.human_decisions && args.human_decisions.length > 0 ? { humanDecisions: args.human_decisions } : {}),
+        };
         state.lastActivity = `advance_phase (${phase})`;
         // The marker rides the SAME atomic write as the gate packet, so
         // first-terminal-wins and the packet are one durable record.

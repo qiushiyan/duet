@@ -5,8 +5,9 @@ import { randomBytes } from 'node:crypto';
 import type { Snapshot } from 'xstate';
 import type { RoleBindings } from './config.ts';
 import type { GatePhase, PhaseName } from './phases.ts';
-import type { ContextUsage } from './providers/types.ts';
+import type { ContextUsage, WorkerRole } from './providers/types.ts';
 import { locateSessionTranscripts } from './sessions.ts';
+import type { ErrorClass, RetryState } from './worker-health.ts';
 
 /**
  * Per-run working data under `.duet/runs/<run_id>/` in the target project —
@@ -27,6 +28,18 @@ import { locateSessionTranscripts } from './sessions.ts';
  */
 
 export type Voice = 'orchestrator' | 'implementer' | 'reviewer';
+
+/**
+ * A structured echo of a genuine human decision a gate carries (#3) — what the
+ * orchestrator would otherwise write only in prose. SIGNAL-ONLY: the human /
+ * concierge reads it to decide hold-vs-relay; duet never reads it in the
+ * gate-crossing path (gates cross only on the human's tap). `high` = a real
+ * product/direction call the human must make; `low` = notable, not blocking.
+ */
+export interface HumanDecision {
+  title: string;
+  severity: 'low' | 'high';
+}
 
 /**
  * Human input staged by the CLI for the next driver invocation to consume.
@@ -122,10 +135,35 @@ export interface RunState {
    */
   sentSnippets?: Partial<Record<PhaseName, Partial<Record<'implementer' | 'reviewer', string[]>>>>;
   /** advance_phase outputs, shown at gates. */
-  phaseSummaries: Partial<Record<PhaseName, { summary: string; artifacts: string[] }>>;
+  phaseSummaries: Partial<Record<PhaseName, { summary: string; artifacts: string[]; humanDecisions?: HumanDecision[] }>>;
 
-  /** A queued ask_human flag awaiting `duet continue --answer`. */
-  pendingQuestion?: { question: string; context?: string };
+  /**
+   * Persisted hint: which worker has a turn in flight right now, set at a
+   * send_prompt turn's start and cleared in its `finally`. A SEPARATE process
+   * (`duet doctor`) reads it to tell `long-inference` from `idle`, reconciled
+   * against driver liveness — an entry under a dead driver is an interrupted
+   * turn, not a live one. Distinct from the in-memory `turnsInFlight`
+   * concurrency guard, which never persists. A hint like everything here:
+   * stale-after-crash is acceptable because doctor cross-checks it.
+   */
+  activeTurns?: Partial<Record<WorkerRole, { tag: string; startedAt: string }>>;
+  /**
+   * A queued flag awaiting `duet continue --answer`. `cause` distinguishes the
+   * supervisor's actual decision — escalate vs resume/retry: `human` (an
+   * ask_human-originated question — product, environment, blocker, or
+   * "asked twice" escalation, all human-owned) vs `infra` (a caught
+   * infrastructure failure), with `errorClass` (taxonomy class, infra only)
+   * naming what failed. Absent cause = pre-feature flags (read as human-owned).
+   */
+  pendingQuestion?: { question: string; context?: string; cause?: 'human' | 'infra'; errorClass?: ErrorClass };
+  /**
+   * Opt-in bounded auto-retry of transient infra failures (#4b) — the attempt
+   * budget. 0/absent ⇒ off (the default; behavior is byte-for-byte as before).
+   * Set from `--retry-infra <n>` or framing `retry_infra:`.
+   */
+  retryInfra?: number;
+  /** The per-episode retry budget state — persisted so the cap holds across a driver re-spawn; reset on a clean phase outcome. */
+  retryState?: RetryState;
   /** Staged human input — written via stageHumanInput, read via consumeHumanInput. */
   pendingMessage?: HumanMessage;
   /**
@@ -225,6 +263,7 @@ export function createRun(opts: {
   branch?: string;
   bindings: RoleBindings;
   gatesAt?: GatePhase[];
+  retryInfra?: number;
 }): RunState {
   const now = new Date();
   const stamp = now.toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
@@ -238,6 +277,7 @@ export function createRun(opts: {
     ...(opts.branch ? { branch: opts.branch } : {}),
     bindings: opts.bindings,
     ...(opts.gatesAt ? { gatesAt: opts.gatesAt } : {}),
+    ...(opts.retryInfra ? { retryInfra: opts.retryInfra } : {}),
     workerSessions: {},
     phaseStarted: {},
     rounds: {},
@@ -290,6 +330,30 @@ export function consumeHumanInput(state: RunState): HumanMessage | undefined {
   if (message?.kind === 'answer') delete state.pendingQuestion;
   saveRunState(state);
   return message;
+}
+
+/**
+ * Mark a worker's turn in flight (the `activeTurns` hint), and clear it — each
+ * via fresh load → mutate THIS role's entry → save, the same result-merge
+ * discipline `send_prompt` uses, so a concurrent cross-role send can never
+ * clobber the sibling role's entry with a stale full-object save. The passed
+ * copy is updated too, so in-process reads after the call stay consistent.
+ */
+export function markTurnActive(state: RunState, role: WorkerRole, tag: string): void {
+  const entry = { tag, startedAt: new Date().toISOString() };
+  const fresh = loadRunState(state.cwd, state.runId);
+  (fresh.activeTurns ??= {})[role] = entry;
+  saveRunState(fresh);
+  (state.activeTurns ??= {})[role] = entry;
+}
+
+export function clearTurnActive(state: RunState, role: WorkerRole): void {
+  const fresh = loadRunState(state.cwd, state.runId);
+  if (fresh.activeTurns?.[role]) {
+    delete fresh.activeTurns[role];
+    saveRunState(fresh);
+  }
+  if (state.activeTurns) delete state.activeTurns[role];
 }
 
 /**

@@ -38,7 +38,7 @@ Four ideas shape every design choice:
 
 ## Status
 
-Early and experimental. The full arc is implemented; the framing-through-ship path has been driven end-to-end on real features. The later phases (docs, PR) and overnight gate pre-authorization are built but not yet battle-tested. An opt-in interactive-Claude transport for the implementer (which bills the flat subscription quota) is built as a spike, pending one live-auth check — [`docs/interactive-transport.md`](docs/interactive-transport.md). Running Claude Code itself as the orchestrator — your own interactive session driving a run over framing, spec, and planning while you steer in chat, before it hands off to the headless driver for implementation — is now built (`duet orchestrate` / `duet new --interactive`) and verified by the test suite, but no real Claude Code session has driven a live run yet (that end-to-end check is deferred to its auth gate) and the environment smoke tests are still pending ([`docs/future-directions.md`](docs/future-directions.md) §A). Expect rough edges. See [`docs/open-questions.md`](docs/open-questions.md) for what's verified versus still open.
+Early and experimental. The full arc is implemented; the framing-through-ship path has been driven end-to-end on real features. The later phases (docs, PR) and overnight gate pre-authorization are built but not yet battle-tested. An opt-in interactive-Claude transport for the implementer (which bills the flat subscription quota) is built as a spike, pending one live-auth check — [`docs/interactive-transport.md`](docs/interactive-transport.md). Running Claude Code itself as the orchestrator — your own interactive session driving a run over framing, spec, and planning while you steer in chat, before it hands off to the headless driver for implementation — is now built (`duet orchestrate` / `duet new --interactive`) and verified by the test suite, but no real Claude Code session has driven a live run yet (that end-to-end check is deferred to its auth gate) and the environment smoke tests are still pending ([`docs/future-directions.md`](docs/future-directions.md) §A). Supervising a run from outside it — a `duet doctor` health view, machine-readable triage signals, a lean `status --brief`, a hardened headless write path, and opt-in bounded retry of transient infra failures — is implemented and test-verified, its first live end-to-end run and the environment smoke tests still pending (one residual gap: the codex error-envelope classification is checked synthetically only, with no real codex error transcript yet). Expect rough edges. See [`docs/open-questions.md`](docs/open-questions.md) for what's verified versus still open.
 
 ## Requirements
 
@@ -109,6 +109,7 @@ From there you mostly watch and decide:
 ```bash
 duet status                    # where the run is, and the exact command to act next
 duet status --json --wait      # block until the next stop, then print (good for scripting/supervision)
+duet doctor                    # per-role health: working / thinking / retrying / stuck / crashed, + connectivity
 
 duet continue --approve        # cross the current gate (optionally: --approve "a rider with tweaks")
 duet continue --reject "..."   # send the artifact back; your words reach the orchestrator verbatim

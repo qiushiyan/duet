@@ -1,7 +1,9 @@
-import { describe, expect } from 'vitest';
+import { join } from 'node:path';
+import { describe, expect, onTestFinished, vi } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { runPhase } from '../src/harness/driver.ts';
 import type { RunOrchestratorTurn } from '../src/harness/driver.ts';
+import { claudeApiError, claudeAssistantText, jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
 import {
   buildPhaseBrief,
   framePhaseEntryPrompt,
@@ -246,9 +248,11 @@ describe('infrastructure failure', () => {
 
     const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
     expect(result).toEqual({ type: 'phase.flag' });
-    expect(loadRunState(projectDir, run.runId).pendingQuestion?.question).toContain(
-      'crashed at the infrastructure layer (ECONNRESET mid-stream)',
-    );
+    const q = loadRunState(projectDir, run.runId).pendingQuestion;
+    expect.soft(q?.question).toContain('failed at the infrastructure layer (ECONNRESET mid-stream)');
+    // With retry off (the default), the flag is classified infra (#4a) but behaves as before.
+    expect.soft(q?.cause).toBe('infra');
+    expect.soft(q?.errorClass).toBe('network');
   });
 
   test('a crash never overwrites a question the orchestrator already queued', async ({ projectDir, run }) => {
@@ -259,7 +263,184 @@ describe('infrastructure failure', () => {
 
     const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
     expect(result).toEqual({ type: 'phase.flag' });
-    expect(loadRunState(projectDir, run.runId).pendingQuestion?.question).toBe('the real question');
+    const q = loadRunState(projectDir, run.runId).pendingQuestion;
+    expect.soft(q?.question).toBe('the real question');
+    expect.soft(q?.cause).toBe('human'); // the orchestrator's question wins and stays human-owned
+  });
+
+  test('an abnormal orchestrator result is an infra flag, errorClass unknown (never retried)', async ({ projectDir, run }) => {
+    run.retryInfra = 5;
+    saveRunState(run);
+    const runTurn: RunOrchestratorTurn = async function* () {
+      yield success({ subtype: 'error_max_turns' });
+    };
+    const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    expect(result).toEqual({ type: 'phase.flag' });
+    const q = loadRunState(projectDir, run.runId).pendingQuestion;
+    expect.soft(q?.cause).toBe('infra');
+    expect.soft(q?.errorClass).toBe('unknown'); // a budget/turn cap is not a taxonomy class
+  });
+});
+
+describe('opt-in infra auto-retry (#4b)', () => {
+  const network = () => {
+    throw new Error('fetch failed: ECONNRESET');
+  };
+
+  test('with retry OFF (default), a transient failure flags immediately — behavior unchanged', async ({ projectDir, run }) => {
+    const { runTurn } = scriptedSession(async () => network());
+    const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    expect(result).toEqual({ type: 'phase.flag' });
+    expect(loadRunState(projectDir, run.runId).retryState).toBeUndefined();
+  });
+
+  test('with retry ON, a recoverable failure then success completes with no flag, retryState reset', async ({ projectDir, run }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    run.retryInfra = 2;
+    saveRunState(run);
+    const { runTurn } = scriptedSession(
+      async () => network(),
+      async (ctx) => {
+        await callTool(ctx, 'advance_phase', { summary: 'done', artifacts: [] });
+        return [success()];
+      },
+    );
+    const p = runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    await vi.advanceTimersByTimeAsync(5_000); // let the backoff elapse → retry
+    expect(await p).toEqual({ type: 'phase.advance' });
+    expect(loadRunState(projectDir, run.runId).retryState).toBeUndefined(); // reset on clean outcome
+  });
+
+  test('exhaustion flags after the cap', async ({ projectDir, run }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    run.retryInfra = 2;
+    saveRunState(run);
+    const { runTurn } = scriptedSession(async () => network(), async () => network(), async () => network());
+    const p = runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    await vi.advanceTimersByTimeAsync(60_000); // cascade through both retries
+    expect(await p).toEqual({ type: 'phase.flag' });
+    expect(loadRunState(projectDir, run.runId).pendingQuestion?.cause).toBe('infra');
+  });
+
+  test('login-required is never retried even with budget', async ({ projectDir, run }) => {
+    run.retryInfra = 5;
+    saveRunState(run);
+    const { runTurn } = scriptedSession(async () => {
+      throw new Error('API Error: 403 Request not allowed. Please run /login');
+    });
+    const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    expect(result).toEqual({ type: 'phase.flag' });
+    expect(loadRunState(projectDir, run.runId).pendingQuestion?.errorClass).toBe('login-required');
+  });
+
+  test('auth retries once, then a second consecutive auth escalates as login-required', async ({ projectDir, run }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    run.retryInfra = 5;
+    saveRunState(run);
+    const { runTurn } = scriptedSession(
+      async () => {
+        throw new Error('403 Request not allowed');
+      },
+      async () => {
+        throw new Error('403 Request not allowed');
+      },
+    );
+    const p = runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    await vi.advanceTimersByTimeAsync(5_000); // one retry elapses
+    expect(await p).toEqual({ type: 'phase.flag' });
+    // Escalated after EXACTLY one retry — persistent auth becomes login-required.
+    expect(loadRunState(projectDir, run.runId).pendingQuestion?.errorClass).toBe('login-required');
+  });
+});
+
+describe('a terminal decision survives a post-call stream throw (#1 — first-terminal-wins)', () => {
+  test('advance_phase then the stream throws → phase.advance, never a false infra flag (retry off)', async ({ projectDir, run }) => {
+    const { runTurn } = scriptedSession(async (ctx) => {
+      await callTool(ctx, 'advance_phase', { summary: 'done', artifacts: [] });
+      throw new Error('fetch failed: ECONNRESET'); // recoverable class, but the decision already exists
+    });
+    const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    expect(result).toEqual({ type: 'phase.advance' });
+    const s = loadRunState(projectDir, run.runId);
+    expect.soft(s.pendingQuestion).toBeUndefined(); // not turned into an infra stop
+    expect.soft(s.terminalMarker).toEqual({ phase: 'frame', kind: 'advance' });
+  });
+
+  test('advance_phase then a recoverable throw → phase.advance, never retried (retry on)', async ({ projectDir, run }) => {
+    run.retryInfra = 5;
+    saveRunState(run);
+    // Only ONE turn is scripted: were the marker ignored, the recoverable class
+    // would retry and re-enter drivePhase, exhausting the script (a thrown error).
+    const { runTurn, prompts } = scriptedSession(async (ctx) => {
+      await callTool(ctx, 'advance_phase', { summary: 'done', artifacts: [] });
+      throw new Error('fetch failed: ECONNRESET');
+    });
+    const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    expect(result).toEqual({ type: 'phase.advance' });
+    expect.soft(prompts).toHaveLength(1); // no retry turn ran
+    expect.soft(loadRunState(projectDir, run.runId).retryState).toBeUndefined(); // episode concluded
+  });
+
+  test('ask_human then a recoverable throw → phase.flag, stays cause:human, never retried (retry on)', async ({ projectDir, run }) => {
+    run.retryInfra = 5;
+    saveRunState(run);
+    const { runTurn, prompts } = scriptedSession(async (ctx) => {
+      await callTool(ctx, 'ask_human', { question: 'the real question' });
+      throw new Error('fetch failed: ECONNRESET');
+    });
+    const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    expect(result).toEqual({ type: 'phase.flag' });
+    const q = loadRunState(projectDir, run.runId).pendingQuestion;
+    expect.soft(q?.question).toBe('the real question');
+    expect.soft(q?.cause).toBe('human'); // not reclassified to infra by the throw
+    expect.soft(prompts).toHaveLength(1); // no retry turn ran
+  });
+
+  test('the entry replay concludes the retry episode — a stale retryState is cleared', async ({ projectDir, run }) => {
+    const staged = loadRunState(projectDir, run.runId);
+    staged.terminalMarker = { phase: 'frame', kind: 'advance' };
+    staged.retryState = { attempts: 2, lastClass: 'network' };
+    saveRunState(staged);
+    const event = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, async function* () {
+      throw new Error('the session must not run on a same-phase marker re-entry');
+    });
+    expect(event).toEqual({ type: 'phase.advance' });
+    expect(loadRunState(projectDir, run.runId).retryState).toBeUndefined();
+  });
+});
+
+describe('classifyInfraError — a recovered transcript error never names an opaque throw (#2)', () => {
+  test('opaque throw + a recent-but-superseded transcript error → flags unknown, never retries (retry on)', async ({ projectDir, run }) => {
+    const home = join(projectDir, 'home');
+    vi.stubEnv('HOME', home); // classifyInfraError reads the orchestrator tail via homedir()
+    run.retryInfra = 5;
+    run.orchestratorSessionId = 'orc-1';
+    saveRunState(run);
+    // A recent terminal ECONNRESET, THEN later normal activity (recovered): the
+    // error is recent but superseded, so it must not be read as the live cause.
+    const transcript = jsonl(
+      claudeApiError('API Error: fetch failed: ECONNRESET', { ts: new Date(Date.now() - 60_000).toISOString() }),
+      claudeAssistantText('recovered and continued', { ts: new Date(Date.now() - 5_000).toISOString() }),
+    );
+    plantClaudeTranscript(home, 'orc-1', transcript);
+    const { runTurn, prompts } = scriptedSession(async () => {
+      throw new Error('the SDK wrapper failed opaquely');
+    });
+    const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    expect(result).toEqual({ type: 'phase.flag' });
+    const q = loadRunState(projectDir, run.runId).pendingQuestion;
+    expect.soft(q?.cause).toBe('infra');
+    expect.soft(q?.errorClass).toBe('unknown'); // NOT 'network' inherited from the recovered error
+    expect.soft(prompts).toHaveLength(1); // unknown is never retried
   });
 });
 

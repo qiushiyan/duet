@@ -21,7 +21,8 @@
   "files": [
     "dist",
     "snippets.toml",
-    "skills"
+    "skills",
+    "prompts"
   ],
   "scripts": {
     "duet": "node src/cli.ts",

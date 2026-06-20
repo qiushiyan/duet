@@ -60,7 +60,7 @@ The human can steer the run mid-phase: a note staged from outside arrives append
 Call write_note when you notice friction worth remembering — a snippet that didn't fit, a triage call you were unsure about, a worker that needed unusual hand-holding. These notes are how the workflow improves between runs.
 </recording>
 
-When a phase's exit criteria are met, call advance_phase with an honest summary — it always lands on a human gate, so the summary is what the human decides from.`;
+When a phase's exit criteria are met, call advance_phase with an honest summary — it always lands on a human gate, so the summary is what the human decides from. When the gate carries genuine decisions for the human — a product or direction call you deliberately did not make yourself — also pass them as advance_phase's structured human_decisions (each a short title plus severity: high for a real call the human must make, low for notable-but-not-blocking). It is a signal that helps whoever relays the gate decide whether to hold for the human or relay an approval; it never changes the gate and does not replace the prose summary, which still carries the full picture. A routine convergence with nothing for the human to weigh needs no decisions list.`;
 
 /**
  * Few-shot example blocks for the phases with genuine judgment latitude. Each

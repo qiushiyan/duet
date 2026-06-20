@@ -1,7 +1,10 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { RoleBinding } from './config.ts';
+// Type-only — run-store.ts value-imports THIS module, so a value import back
+// would close a runtime cycle. RunState/Voice are erased at build.
+import type { RunState, Voice } from './run-store.ts';
 
 /**
  * Locating the providers' standard-location session transcripts for a run.
@@ -56,4 +59,74 @@ function codexRollouts(sessionId: string, home: string): string[] {
 /** The on-disk transcript(s) for one (provider, session id), if present. */
 export function locateSessionTranscripts(provider: Provider, sessionId: string, home: string = homedir()): string[] {
   return provider === 'claude' ? claudeTranscripts(sessionId, home) : codexRollouts(sessionId, home);
+}
+
+export interface SessionRef {
+  role: Voice;
+  provider: Provider;
+  sessionId: string;
+}
+
+/**
+ * The cheap exact session map — the enabler (#1), a pure state-only read joining
+ * each voice's persisted session id with its bound provider. NO fs, NO scan: it
+ * is the field `status --json` exposes on the hot path (`sessions[]`), so the
+ * polled path never touches a transcript. KNOWN sessions only — a role whose id
+ * is still absent (optional until its first turn completes) is OMITTED, never a
+ * null-id entry. The resolved *path* and any transcript reads live below /in
+ * `worker-health.ts`, off the hot path.
+ */
+export function resolveSessions(state: RunState): SessionRef[] {
+  const out: SessionRef[] = [];
+  if (state.orchestratorSessionId) {
+    out.push({ role: 'orchestrator', provider: state.bindings.orchestrator.provider, sessionId: state.orchestratorSessionId });
+  }
+  for (const role of ['implementer', 'reviewer'] as const) {
+    const sessionId = state.workerSessions[role];
+    if (sessionId) out.push({ role, provider: state.bindings[role].provider, sessionId });
+  }
+  return out;
+}
+
+/**
+ * Read the TAIL of a role's transcript — the thin fs wrapper over
+ * `locateSessionTranscripts` that `doctor`/the heartbeat read through (never
+ * `status`). It returns the chosen `path` so `doctor` doesn't locate twice.
+ *
+ * Reads the last `maxBytes` (default 256 KiB) so a multi-MB JSONL is never read
+ * whole. The partial leading line is discarded ONLY when the read seeked past
+ * the file start (a file ≤ maxBytes is read from offset 0 with NO discard — so a
+ * small transcript keeps its first record). On multiple located paths it picks
+ * the NEWEST by mtime; a missing/unlocatable transcript returns undefined.
+ */
+export function readRoleTranscriptTail(
+  state: RunState,
+  role: Voice,
+  opts: { home?: string; maxBytes?: number } = {},
+): { jsonl: string; schema: Provider; path: string } | undefined {
+  const home = opts.home ?? homedir();
+  const maxBytes = opts.maxBytes ?? 262_144;
+  const session = resolveSessions(state).find((s) => s.role === role);
+  if (!session) return undefined;
+
+  const paths = locateSessionTranscripts(session.provider, session.sessionId, home);
+  const chosen = paths.map((p) => ({ p, mtime: statSync(p).mtimeMs })).sort((a, b) => b.mtime - a.mtime)[0];
+  if (!chosen) return undefined;
+  const path = chosen.p;
+
+  const size = statSync(path).size;
+  const start = size > maxBytes ? size - maxBytes : 0;
+  const fd = openSync(path, 'r');
+  try {
+    const buf = Buffer.alloc(size - start);
+    if (buf.length > 0) readSync(fd, buf, 0, buf.length, start);
+    let jsonl = buf.toString('utf8');
+    if (start > 0) {
+      const nl = jsonl.indexOf('\n');
+      jsonl = nl === -1 ? '' : jsonl.slice(nl + 1);
+    }
+    return { jsonl, schema: session.provider, path };
+  } finally {
+    closeSync(fd);
+  }
 }

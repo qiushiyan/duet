@@ -24,7 +24,7 @@ Map `$ARGUMENTS` to a focus. The doc map in `CLAUDE.md` §Docs is the source of 
 | statechart, machine, phases, gates, lifecycle, driver, crash / resume | `harness`   |
 | providers, workers, claude, codex, transport, interactive, pane       | `providers` |
 | prompts, tools, snippets, orchestrator prompt, tool results, errors   | `prompts`   |
-| framing, templates, CLI, status, run-store, steers, persistence       | `surface`   |
+| framing, templates, CLI, status, run-store, steers, persistence, health, doctor, supervision | `surface`   |
 | design, product, scope, what-to-build, gate policy, direction         | `design`    |
 
 Ambiguous (no confident match, or several)? Ask one short clarifying question first. Empty `$ARGUMENTS` → step 4.
@@ -83,7 +83,9 @@ src/harness/
 ```
 src/framing.ts              framing seed / parse, the machine/prose boundary
 src/run-store.ts            run-dir persistence, input staging, the steer store
-src/status.ts               the status model + its two renderers
+src/status.ts               the status model + its two renderers, --brief, the new signal fields
+src/worker-health.ts        the pure health substrate: taxonomy, probeRole, the currentTerminalError rule, retryDecision
+src/doctor.ts               duet doctor's composer/renderer + connectivity (only cli.ts imports lifecycle via it)
 src/cli.ts                  command wiring (parses under import.meta.main)
 ```
 

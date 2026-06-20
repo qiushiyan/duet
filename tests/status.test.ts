@@ -1,5 +1,5 @@
 import { describe, expect } from 'vitest';
-import { buildStatusModel, describeStop, renderStatus, steerRefusal } from '../src/status.ts';
+import { buildBrief, buildStatusModel, describeStop, renderBrief, renderStatus, steerRefusal } from '../src/status.ts';
 import type { RunState } from '../src/run-store.ts';
 import type { RunPosition } from '../src/harness/lifecycle.ts';
 import { test } from './helpers/fixtures.ts';
@@ -131,9 +131,75 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
       'pendingSteers',
       'rounds',
       'runId',
+      'sessions',
       'snippetProposals',
       'specPath',
       'stop',
+    ]);
+  });
+
+  test('a flag stop surfaces cause/errorClass when set, absent otherwise (additive, #4a)', ({ run }) => {
+    run.pendingQuestion = { question: 'down?', cause: 'infra', errorClass: 'network' };
+    const infra = buildStatusModel(run, { kind: 'flag', phase: 'impl' }, []).stop;
+    if (infra.kind === 'flag') {
+      expect.soft(infra.cause).toBe('infra');
+      expect.soft(infra.errorClass).toBe('network');
+    }
+    run.pendingQuestion = { question: 'plain?' };
+    const plain = buildStatusModel(run, { kind: 'flag', phase: 'impl' }, []).stop;
+    if (plain.kind === 'flag') {
+      expect.soft(plain.cause).toBeUndefined();
+      expect.soft(plain.errorClass).toBeUndefined();
+    }
+  });
+
+  test('the gate packet carries humanDecisions only when present (additive)', ({ run }) => {
+    run.phaseSummaries.impl = { summary: 's', artifacts: [] };
+    const without = buildStatusModel(run, { kind: 'gate', phase: 'impl' }, []).stop;
+    if (without.kind === 'gate') expect.soft(without.packet?.humanDecisions).toBeUndefined();
+
+    run.phaseSummaries.impl = { summary: 's', artifacts: [], humanDecisions: [{ title: 't', severity: 'low' }] };
+    const withD = buildStatusModel(run, { kind: 'gate', phase: 'impl' }, []).stop;
+    if (withD.kind === 'gate') expect.soft(withD.packet?.humanDecisions).toEqual([{ title: 't', severity: 'low' }]);
+  });
+
+  test('status --brief is a derived lean projection with a computed headline', ({ run }) => {
+    run.machineState = 'shipGate';
+    run.phaseSummaries.impl = {
+      summary: 'Shipped the queue.\nDetails follow…',
+      artifacts: ['src/x.ts'],
+      humanDecisions: [{ title: 'keep the flag default-off?', severity: 'high' }],
+    };
+    const model = buildStatusModel(run, { kind: 'gate', phase: 'impl' }, [{ file: 'f', text: 'note', stagedAt: 't' }]);
+    const brief = buildBrief(model);
+
+    expect.soft(brief.stopKind).toBe('gate');
+    // headline = the gate packet's first non-empty line — a derived field the
+    // full model does NOT expose top-level.
+    expect.soft(brief.headline).toBe('Shipped the queue.');
+    expect.soft(brief.humanDecisions).toEqual([{ title: 'keep the flag default-off?', severity: 'high' }]);
+    expect.soft(brief.pendingSteers).toBe(1);
+    expect.soft(brief.nextCommand).toContain('--approve');
+    // The lean human render flags the high decision as a hold signal.
+    expect.soft(renderBrief(brief)).toContain('hold — a high decision');
+  });
+
+  test('the brief of a flag stop has no humanDecisions and a question headline', ({ run }) => {
+    run.pendingQuestion = { question: 'run the migration first?' };
+    const brief = buildBrief(buildStatusModel(run, { kind: 'flag', phase: 'impl' }, []));
+    expect.soft(brief.stopKind).toBe('flag');
+    expect.soft(brief.headline).toBe('run the migration first?');
+    expect.soft(brief.humanDecisions).toBeUndefined();
+    expect.soft(brief.nextCommand).toContain('--answer');
+  });
+
+  test('sessions[] surfaces the known voices and is [] on a fresh run', ({ run }) => {
+    expect.soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions).toEqual([]);
+    run.orchestratorSessionId = 'orch-1';
+    run.workerSessions = { reviewer: 'rev-1' };
+    expect.soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions).toEqual([
+      { role: 'orchestrator', provider: 'claude', sessionId: 'orch-1' },
+      { role: 'reviewer', provider: 'codex', sessionId: 'rev-1' },
     ]);
   });
 
