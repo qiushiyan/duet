@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import type { Snapshot } from 'xstate';
 import type { RoleBindings } from './config.ts';
 import type { GatePhase, PhaseName } from './phases.ts';
-import type { ContextUsage } from './providers/types.ts';
+import type { ContextUsage, WorkerRole } from './providers/types.ts';
 import { locateSessionTranscripts } from './sessions.ts';
 
 /**
@@ -124,6 +124,16 @@ export interface RunState {
   /** advance_phase outputs, shown at gates. */
   phaseSummaries: Partial<Record<PhaseName, { summary: string; artifacts: string[] }>>;
 
+  /**
+   * Persisted hint: which worker has a turn in flight right now, set at a
+   * send_prompt turn's start and cleared in its `finally`. A SEPARATE process
+   * (`duet doctor`) reads it to tell `long-inference` from `idle`, reconciled
+   * against driver liveness — an entry under a dead driver is an interrupted
+   * turn, not a live one. Distinct from the in-memory `turnsInFlight`
+   * concurrency guard, which never persists. A hint like everything here:
+   * stale-after-crash is acceptable because doctor cross-checks it.
+   */
+  activeTurns?: Partial<Record<WorkerRole, { tag: string; startedAt: string }>>;
   /** A queued ask_human flag awaiting `duet continue --answer`. */
   pendingQuestion?: { question: string; context?: string };
   /** Staged human input — written via stageHumanInput, read via consumeHumanInput. */
@@ -290,6 +300,30 @@ export function consumeHumanInput(state: RunState): HumanMessage | undefined {
   if (message?.kind === 'answer') delete state.pendingQuestion;
   saveRunState(state);
   return message;
+}
+
+/**
+ * Mark a worker's turn in flight (the `activeTurns` hint), and clear it — each
+ * via fresh load → mutate THIS role's entry → save, the same result-merge
+ * discipline `send_prompt` uses, so a concurrent cross-role send can never
+ * clobber the sibling role's entry with a stale full-object save. The passed
+ * copy is updated too, so in-process reads after the call stay consistent.
+ */
+export function markTurnActive(state: RunState, role: WorkerRole, tag: string): void {
+  const entry = { tag, startedAt: new Date().toISOString() };
+  const fresh = loadRunState(state.cwd, state.runId);
+  (fresh.activeTurns ??= {})[role] = entry;
+  saveRunState(fresh);
+  (state.activeTurns ??= {})[role] = entry;
+}
+
+export function clearTurnActive(state: RunState, role: WorkerRole): void {
+  const fresh = loadRunState(state.cwd, state.runId);
+  if (fresh.activeTurns?.[role]) {
+    delete fresh.activeTurns[role];
+    saveRunState(fresh);
+  }
+  if (state.activeTurns) delete state.activeTurns[role];
 }
 
 /**

@@ -6,9 +6,10 @@ import { buildPhaseBrief } from '../src/harness/orchestrator-prompts.ts';
 import { createPhaseTools } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
 import type { PhaseName } from '../src/phases.ts';
-import { listPendingSteers, loadRunState, runDirOf, stageHumanInput, stageSteer } from '../src/run-store.ts';
+import { listPendingSteers, loadRunState, runDirOf, saveRunState, stageHumanInput, stageSteer } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import { FakeWorker, test } from './helpers/fixtures.ts';
+import { claudeApiRetry, claudeUserToolResult, jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
 
 /**
  * The protocol rails, tested through the orchestrator's real interface: the
@@ -20,7 +21,7 @@ type ToolResult = Awaited<ReturnType<KernelTool['handler']>>;
 
 function harness(
   run: RunState,
-  opts: { phase?: PhaseName; stagedAnswer?: string; implementer?: FakeWorker; reviewer?: FakeWorker } = {},
+  opts: { phase?: PhaseName; stagedAnswer?: string; implementer?: FakeWorker; reviewer?: FakeWorker; home?: string } = {},
 ) {
   const implementer = opts.implementer ?? new FakeWorker('claude');
   const reviewer = opts.reviewer ?? new FakeWorker('codex');
@@ -31,6 +32,7 @@ function harness(
     providers: { implementer, reviewer },
     log: (line) => lines.push(line),
     ...(opts.stagedAnswer !== undefined ? { stagedAnswer: opts.stagedAnswer } : {}),
+    ...(opts.home !== undefined ? { home: opts.home } : {}),
   });
   const call = (name: string, args: Record<string, unknown> = {}): Promise<ToolResult> => {
     const tool = tools.find((t) => t.name === name);
@@ -151,6 +153,132 @@ describe('send_prompt', () => {
 
     finish({ text: 'done', sessionId: 's' });
     await pending;
+  });
+});
+
+describe('send_prompt activeTurns hint (the persisted in-flight signal, #2)', () => {
+  test('sets activeTurns at turn start and clears it in finally', async ({ run, projectDir }) => {
+    let finish!: (t: { text: string; sessionId: string }) => void;
+    const slow = new FakeWorker('claude');
+    slow.runTurn = () => new Promise((r) => (finish = r));
+    const { call } = harness(run, { implementer: slow });
+
+    const pending = call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+    // Mid-turn: a separate doctor process can read the in-flight role off disk.
+    expect.soft(loadRunState(projectDir, run.runId).activeTurns?.implementer).toMatchObject({ tag: 'write-spec' });
+
+    finish({ text: 'done', sessionId: 's' });
+    await pending;
+    expect.soft(loadRunState(projectDir, run.runId).activeTurns?.implementer).toBeUndefined();
+  });
+
+  test('clears activeTurns even when the turn fails', async ({ run, projectDir }) => {
+    const boom = new FakeWorker('claude', [new Error('spawn claude ENOENT')]);
+    const { call } = harness(run, { implementer: boom });
+    await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+    expect(loadRunState(projectDir, run.runId).activeTurns?.implementer).toBeUndefined();
+  });
+
+  test('parallel cross-role sends each set their own entry without clobbering (fresh-merge)', async ({ run, projectDir }) => {
+    let finishImpl!: (t: { text: string; sessionId: string }) => void;
+    let finishRev!: (t: { text: string; sessionId: string }) => void;
+    const impl = new FakeWorker('claude');
+    impl.runTurn = () => new Promise((r) => (finishImpl = r));
+    const rev = new FakeWorker('codex');
+    rev.runTurn = () => new Promise((r) => (finishRev = r));
+    const { call } = harness(run, { implementer: impl, reviewer: rev });
+
+    const a = call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'x' });
+    const b = call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'y' });
+    const mid = loadRunState(projectDir, run.runId).activeTurns;
+    expect.soft(mid?.implementer).toMatchObject({ tag: 'write-spec' });
+    expect.soft(mid?.reviewer).toMatchObject({ tag: 'review-spec' });
+
+    finishImpl({ text: 'i', sessionId: 'si' });
+    finishRev({ text: 'r', sessionId: 'sr' });
+    await Promise.all([a, b]);
+    const after = loadRunState(projectDir, run.runId).activeTurns ?? {};
+    expect.soft(after.implementer).toBeUndefined();
+    expect.soft(after.reviewer).toBeUndefined();
+  });
+});
+
+describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
+  test('once a session exists, the heartbeat carries transcript recency + retry count', async ({ run, projectDir, onTestFinished }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const base = Date.parse('2026-06-20T12:00:00.000Z');
+    vi.setSystemTime(base);
+    const home = join(projectDir, 'home');
+    run.workerSessions = { implementer: 'impl-1' }; // not the first turn
+    saveRunState(run);
+    plantClaudeTranscript(
+      home,
+      'impl-1',
+      jsonl(claudeUserToolResult({ ts: new Date(base).toISOString() }), claudeApiRetry({ ts: new Date(base + 10_000).toISOString() })),
+    );
+
+    let finish!: (t: { text: string; sessionId: string }) => void;
+    const slow = new FakeWorker('claude');
+    slow.runTurn = () => new Promise((r) => (finish = r));
+    const { call, lines } = harness(run, { implementer: slow, home });
+    const pending = call('send_prompt', { role: 'implementer', tag: 'tdd-plan', body: 'plan' });
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    const hb = lines.find((l) => l.includes('⏳ implementer turn running — 5m elapsed'));
+    expect.soft(hb).toContain('last activity');
+    expect.soft(hb).toContain('RETRYING (1 retries)'); // the count, never a fabricated class
+
+    finish({ text: 'done', sessionId: 'impl-1' });
+    await pending;
+  });
+
+  test('the first turn (no session id yet) stays elapsed-only', async ({ run, onTestFinished }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    let finish!: (t: { text: string; sessionId: string }) => void;
+    const slow = new FakeWorker('claude');
+    slow.runTurn = () => new Promise((r) => (finish = r));
+    const { call, lines } = harness(run, { implementer: slow }); // fresh run: no workerSessions
+    const pending = call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    const hb = lines.find((l) => l.includes('⏳ implementer turn running — 5m elapsed'));
+    expect.soft(hb).toBeDefined();
+    expect.soft(hb).not.toContain('last activity');
+    expect.soft(hb).not.toContain('retries');
+
+    finish({ text: 'done', sessionId: 'impl-1' });
+    await pending;
+  });
+
+  test('a missing transcript degrades to elapsed-only and the turn still succeeds', async ({ run, projectDir, onTestFinished }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const home = join(projectDir, 'home'); // nothing planted
+    run.workerSessions = { implementer: 'missing-id' };
+    saveRunState(run);
+
+    let finish!: (t: { text: string; sessionId: string }) => void;
+    const slow = new FakeWorker('claude');
+    slow.runTurn = () => new Promise((r) => (finish = r));
+    const { call, lines } = harness(run, { implementer: slow, home });
+    const pending = call('send_prompt', { role: 'implementer', tag: 'tdd-plan', body: 'x' });
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    const hb = lines.find((l) => l.includes('⏳ implementer turn running — 5m elapsed'));
+    expect.soft(hb).toBeDefined();
+    expect.soft(hb).not.toContain('last activity'); // no readable transcript → no suffix, no throw
+
+    finish({ text: 'done', sessionId: 'impl-1' });
+    const result = await pending;
+    expect.soft(result.isError).toBeFalsy();
   });
 });
 

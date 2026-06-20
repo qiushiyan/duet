@@ -80,6 +80,15 @@ const TAXONOMY: ReadonlyArray<{ cls: ErrorClass; patterns: RegExp[] }> = [
 const CODEX_HARD =
   /(ENOTFOUND|ECONNREFUSED|ECONNRESET|API Error|Failed to authenticate|403 Request not allowed|Please run \/login|fetch failed|Internal server error)/;
 
+/** A compact human age for a millisecond duration (mirrors `doctor.py:age`):
+ *  `<90s` → `Ns`, `<90m` → `Nm`, else `NhMm`. Pure — for the heartbeat + doctor. */
+export function formatAge(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 90) return `${s}s`;
+  if (s < 5400) return `${Math.floor(s / 60)}m`;
+  return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`;
+}
+
 /** Classify an error string by the taxonomy; unmatched text is `unknown`. */
 export function classifyError(text: string): ErrorClass {
   for (const { cls, patterns } of TAXONOMY) {
