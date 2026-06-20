@@ -11,7 +11,7 @@ import type { RunState } from './run-store.ts';
  * FRAME → PLAN, and the one place that applies the single gate-safety
  * permission rule. The orchestrator role can't be installed by a slash command
  * (a skill can't do launch-time wiring — the runId is dynamic), so the launcher
- * feeds `skills/duet/identity.md` to the session as a system prompt
+ * feeds `prompts/orchestrator-identity.md` to the session as a system prompt
  * (`--append-system-prompt-file`) instead — there is no `/duet` command.
  *
  * The process spawn is the Environment seam (modeled on providers/pane.ts'
@@ -20,13 +20,15 @@ import type { RunState } from './run-store.ts';
  */
 
 // The orchestrator identity fed to the session as system-prompt-strength text
-// (durable across compaction, unlike a skill body). Resolved package-relative
-// from this module like snippets.ts resolves snippets.toml — and, like
-// snippets.toml, shipped only because the `skills/` entry is in package.json
-// `files` (tests/skill.test.ts pins this target into the publish surface). Drop
-// `skills/` from `files` and a packed build points --append-system-prompt-file
-// at a missing file. (docs/engineering.md §Build.)
-export const IDENTITY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'duet', 'identity.md');
+// (durable across compaction, unlike a skill body). It is a prompt asset, not a
+// skill — no SKILL.md, fed as a file by the launcher — so it lives under
+// prompts/, not skills/. Resolved package-relative from this module like
+// snippets.ts resolves snippets.toml — and, like snippets.toml, shipped only
+// because the `prompts` entry is in package.json `files` (tests/skill.test.ts
+// pins this target into the publish surface). Drop `prompts` from `files` and a
+// packed build points --append-system-prompt-file at a missing file.
+// (docs/engineering.md §Build.)
+export const IDENTITY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'prompts', 'orchestrator-identity.md');
 
 /**
  * The single gate-safety rule: an `ask` prompt on `duet continue`. It survives
@@ -143,7 +145,7 @@ export function gateAskRuleLive(spec: LaunchSpec): boolean {
  * claiming a phantom interactive owner:
  *
  *  - PREFLIGHT, before marking: the identity file the launcher feeds
- *    --append-system-prompt-file must exist (a packed build missing skills/, or
+ *    --append-system-prompt-file must exist (a packed build missing prompts/, or
  *    a corrupt checkout, would otherwise bring up a session with no orchestrator
  *    role). Refuse without touching the run.
  *  - LAUNCH error, after marking: an immediate spawn failure (ENOENT etc.) means
@@ -179,7 +181,7 @@ export function runOrchestrate(
   if (!existsSync(identityPath)) {
     return {
       error: new Error(
-        `the orchestrator identity file is missing (${identityPath}) — the interactive orchestrator session would launch without its role. This is a broken install: confirm duet's skills/ shipped (it is in package.json "files"), then retry: duet orchestrate ${state.runId}. The run is unchanged.`,
+        `the orchestrator identity file is missing (${identityPath}) — the interactive orchestrator session would launch without its role. This is a broken install: confirm duet's prompts/ shipped (it is in package.json "files"), then retry: duet orchestrate ${state.runId}. The run is unchanged.`,
       ),
     };
   }

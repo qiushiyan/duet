@@ -54,7 +54,7 @@ describe('buildLaunchSpec — the wired claude argv', () => {
     expect.soft(args).toContain('--strict-mcp-config'); // MCP-surface hygiene
 
     // The identity file fed as system-prompt-strength text.
-    expect.soft(args[args.indexOf('--append-system-prompt-file') + 1]).toMatch(/skills[/\\]duet[/\\]identity\.md$/);
+    expect.soft(args[args.indexOf('--append-system-prompt-file') + 1]).toMatch(/prompts[/\\]orchestrator-identity\.md$/);
 
     // The single gate-safety ask rule, colon prefix form.
     expect.soft(gateAskRuleLive(spec)).toBe(true);

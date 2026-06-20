@@ -87,12 +87,12 @@ describe('the duet-concierge skill coheres with the CLI', () => {
   });
 });
 
-const duetSkillDir = new URL('../skills/duet/', import.meta.url);
-const duetIdentityMd = readFileSync(new URL('identity.md', duetSkillDir), 'utf8');
+const duetIdentityMd = readFileSync(new URL('../prompts/orchestrator-identity.md', import.meta.url), 'utf8');
 
-// skills/duet/ is identity-only: the launcher feeds identity.md as the session's
-// system prompt (--append-system-prompt-file). There is no `/duet` slash command —
-// the orchestrator role is brought up by `duet orchestrate` / `duet new
+// The orchestrator identity is a prompt asset, not a skill: the launcher feeds
+// prompts/orchestrator-identity.md as the session's system prompt
+// (--append-system-prompt-file). There is no `/duet` slash command — the
+// orchestrator role is brought up by `duet orchestrate` / `duet new
 // --interactive`, never a manual invocation (which would load the role with no
 // kernel tools). So this block guards the identity file and the launcher command,
 // not a SKILL.md.
@@ -102,10 +102,10 @@ describe('the duet orchestrator identity coheres with the CLI', () => {
   });
 
   test('the launcher identity target is inside the publish surface (package.json files)', () => {
-    // M2: --append-system-prompt-file <pkg>/skills/duet/identity.md must be a
-    // SHIPPED file. With no .npmignore, the `files` allowlist is the whole
+    // M2: --append-system-prompt-file <pkg>/prompts/orchestrator-identity.md must
+    // be a SHIPPED file. With no .npmignore, the `files` allowlist is the whole
     // publish surface, so the launcher's IDENTITY_PATH must fall under one of its
-    // entries — drop `skills/` and a packed build feeds claude a missing file.
+    // entries — drop `prompts` and a packed build feeds claude a missing file.
     const pkgUrl = new URL('../package.json', import.meta.url);
     const packageRoot = dirname(fileURLToPath(pkgUrl));
     const files: string[] = JSON.parse(readFileSync(pkgUrl, 'utf8')).files;
@@ -114,7 +114,7 @@ describe('the duet orchestrator identity coheres with the CLI', () => {
       const base = entry.replace(/\/$/, '');
       return rel === base || rel.startsWith(`${base}/`);
     });
-    expect.soft(rel, 'IDENTITY_PATH resolves under the package root').toBe('skills/duet/identity.md');
+    expect.soft(rel, 'IDENTITY_PATH resolves under the package root').toBe('prompts/orchestrator-identity.md');
     expect.soft(shipped, `${rel} is not covered by package.json files: ${files.join(', ')}`).toBe(true);
   });
 
