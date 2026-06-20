@@ -9,10 +9,13 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | `duet new --framing <file>` | Start a run from a framing file (the project briefing — the only place project knowledge enters). Returns immediately; the first phase runs in a detached driver. |
 | `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates (`frame, spec, plan, impl, docs, pr` — or a preset: `skip-plan` = walk away at spec approval, return at the Ship gate; `overnight` = frame,spec). The rest are pre-authorized and auto-cross with their packets recorded. `pr` is always attended. |
 | `duet new --spec <path>` | Start at the spec review loop from a draft spec (skips the FRAME phase). |
+| `duet new --framing <file> --retry-infra <n>` | Opt the headless run into bounded auto-retry of transient infra failures (network/server/rate-limit), default-off; or set `retry_infra:` in the framing frontmatter (the flag wins). `auth` retries once then escalates; login/quota/dns/unknown never retry; exhaustion flags. |
 | `duet continue <run-id> --approve` | Approve the current gate. |
 | `duet continue <run-id> --approve "<rider>"` | Approve with a rider: agreement with the direction plus adjustments, delivered into the next phase as gate feedback in approving form. The human's "yes, but…" in one command. |
 | `duet continue <run-id> --reject "<feedback>"` | Send the gated artifact back; the feedback reaches the orchestrator verbatim, as editor-in-chief input. |
 | `duet continue <run-id> --answer "<answer>"` | Answer the queued question; the run resumes with it. |
+| `duet continue <run-id> --reject-file <path>` | Reject with feedback read from a file (or `-` for stdin), byte-for-byte — apostrophes, newlines, em-dashes survive shell quoting. Off a TTY a bare `--reject` fails fast naming this form; a bare `--approve` approves with no rider. |
+| `duet continue <run-id> --answer-file <path>` | Answer from a file (or `-` for stdin), verbatim — for multi-line or punctuated answers. |
 | `duet continue <run-id>` | No flags: status if waiting, crash recovery if the phase died mid-flight. Also revives an abandoned run, re-entering from where it last stopped. |
 | `duet steer "<note>" [run-id]` | Stage a mid-phase note for the orchestrator — delivered on its next tool result (minutes, typically). Legal only while a phase is live or down mid-flight; at a gate or flag it refuses and names that stop's channel. |
 | `duet abandon <run-id>` | Stop a run for good: kills its live driver if one is running, and marks it abandoned. Destructive and **not** pre-approved — like `continue` it needs the human's permission prompt, never the concierge alone. The session transcripts are kept, so the run stays revivable with `duet continue`. |
@@ -20,6 +23,7 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | `duet status [run-id]` | Human-readable status: phase, stop, packet or question, rounds, costs, next command. |
 | `duet status --json` | The machine-readable status model (schema below). The concierge's read surface. |
 | `duet status --json --wait` | Blocks until the run reaches its next stop, then prints the model and exits. Read-only and safe to interrupt — the supervision primitive: run it in the background and report when it exits. |
+| `duet status --brief` | A lean digest — position, a one-line headline, the next command, pending steers, auto-approvals, and the gate's `humanDecisions` — for fast polling. Composes with `--json` (lean JSON) and `--wait` (block, then print). |
 | `duet doctor [run-id]` | Per-role health: working / long-inference / retrying / silent-stuck / crashed, with last-activity age, retry count, recent classified errors, and a connectivity probe. Reads the workers' own transcripts (heavier than `status`) — the answer to "is this run healthy, or stuck?" |
 | `duet doctor [run-id] --json` | The full health model, including each role's resolved transcript path, for automation. |
 | `duet runs` | List the project's runs, newest first. |
@@ -46,6 +50,7 @@ Top-level fields:
 | `rounds` | Review rounds per phase against their backstop caps: `{ phase, used, cap }`. |
 | `costs` | `{ orchestratorUsd, claudeWorkersUsd, codexTokens: { input, output } }`. |
 | `context` | Context-window fill per voice, captured at turn boundaries: `{ role, usedTokens, windowTokens, percent, at }`. Surface high percentages when the human asks how the run is doing — a worker near its window is worth mentioning. |
+| `sessions` | Each voice's transcript identity: `{ role, provider, sessionId }`, known sessions only (a role is omitted until its first turn completes). The cheap state-only map; the resolved path and the health verdicts live in `duet doctor`. |
 | `pendingSteers` | Staged steers not yet delivered: `{ stagedAt, stagedDuring?, text }`. |
 | `snippetProposals` | Queued snippet-library edits awaiting the human's end-of-run review: `{ snippetKey, rationale, at }`. |
 | `lastActivity` | The orchestrator's most recent recorded action. |
@@ -58,7 +63,7 @@ Top-level fields:
 { "kind": "running", "pid": 4242, "phase": "impl" }
 ```
 
-**`gate`** — a decision is waiting. Present `packet.summary` (it is written to be decided from), then act with one of `commands`.
+**`gate`** — a decision is waiting. Present `packet.summary` (it is written to be decided from), then act with one of `commands`. When `packet.humanDecisions` is present, scan it first: empty or all-`severity:"low"` is safe to relay an approve; any `"high"` is a genuine product decision — hold and put it to the human. It is **signal-only**; nothing crosses the gate but the human's command.
 
 ```json
 {
@@ -67,7 +72,11 @@ Top-level fields:
   "gate": "shipGate",
   "heading": "SHIP gate — the orchestrator's packet (CEO summary first)",
   "hint": "(verify in your environment before deciding — …)",
-  "packet": { "summary": "…", "artifacts": ["docs/plans/feature.md"] },
+  "packet": {
+    "summary": "…",
+    "artifacts": ["docs/plans/feature.md"],
+    "humanDecisions": [{ "title": "Billing-gate the export?", "severity": "high" }]
+  },
   "commands": {
     "approve": "duet continue <run-id> --approve",
     "reject": "duet continue <run-id> --reject \"<feedback>\""
@@ -75,13 +84,14 @@ Top-level fields:
 }
 ```
 
-**`flag`** — the orchestrator queued a question and the run is paused on it. Present `question` and `context` whole.
+**`flag`** — the orchestrator queued a question and the run is paused on it. Present `question` and `context` whole. `cause` distinguishes a `human` question (a real product/environment call — relay it) from an `infra` failure (`cause:"infra"` plus an `errorClass` such as `network` / `auth` / `quota-billing` — report it as broken, not a question; `duet doctor` shows what broke). The `crashed` stop below is the separate driver-death signal.
 
 ```json
 {
   "kind": "flag",
   "question": "Should the export be billing-gated?",
   "context": "The reviewer flagged it as a product call.",
+  "cause": "human",
   "command": "duet continue <run-id> --answer \"<your answer>\""
 }
 ```
