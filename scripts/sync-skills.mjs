@@ -14,6 +14,8 @@ import { existsSync, lstatSync, readdirSync, readlinkSync, rmSync, symlinkSync }
 import { homedir } from "node:os";
 import path from "node:path";
 
+const isSkill = (dir) => existsSync(path.join(dir, "SKILL.md"));
+
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const srcDir = path.join(repoRoot, "skills");
 const destDir =
@@ -30,9 +32,10 @@ if (!existsSync(destDir)) {
 }
 
 // A skill is any subdir of ./skills that carries a SKILL.md (auto-discovered, so
-// new skills are picked up without editing this script).
+// new skills are picked up without editing this script). Subdirs without one
+// (e.g. skills/duet, the orchestrator identity) are deliberately not linked.
 const skills = readdirSync(srcDir, { withFileTypes: true })
-  .filter((e) => e.isDirectory() && existsSync(path.join(srcDir, e.name, "SKILL.md")))
+  .filter((e) => e.isDirectory() && isSkill(path.join(srcDir, e.name)))
   .map((e) => e.name);
 
 if (skills.length === 0) {
@@ -73,6 +76,27 @@ for (const name of skills) {
 
   if (state !== "create") rmSync(link, { recursive: true, force: true });
   symlinkSync(target, link);
+}
+
+// Prune stale skill links: a skill we used to link that has since been renamed or
+// retired (e.g. /duet -> /duet-frame) leaves a dangling-or-wrong symlink behind.
+// Only touch links inside our own namespace — a symlink whose target lives in a
+// `dev/duet*/skills/` worktree — and only when its target is no longer a valid
+// skill (missing SKILL.md). Real skills and unrelated links are never considered.
+for (const entry of readdirSync(destDir)) {
+  if (skills.includes(entry)) continue; // a link we just (re)created this run
+  const link = path.join(destDir, entry);
+  if (!isSymlink(link)) continue;
+
+  const resolved = path.resolve(destDir, readlinkSync(link));
+  const skillsDir = path.dirname(resolved);
+  const ours =
+    path.basename(skillsDir) === "skills" && path.basename(path.dirname(skillsDir)).startsWith("duet");
+  if (!ours || isSkill(resolved)) continue; // not ours, or still a valid skill
+
+  console.log(`  ${dryRun ? "would " : ""}${"prune".padEnd(7)} ${entry} (retired skill)`);
+  changed++;
+  if (!dryRun) rmSync(link, { recursive: true, force: true });
 }
 
 console.log(
