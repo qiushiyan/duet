@@ -453,7 +453,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           return { content: [{ type: 'text' as const, text: `The human answered: ${answer}` }] };
         }
         if (terminalAlreadySet()) return alreadyEnding();
-        state.pendingQuestion = { question: args.question, ...(args.context ? { context: args.context } : {}) };
+        state.pendingQuestion = { question: args.question, ...(args.context ? { context: args.context } : {}), cause: 'human' };
         state.lastActivity = 'ask_human (queued)';
         // The marker rides the SAME atomic write as the question it carries, so
         // first-terminal-wins and the flag packet land together — never a

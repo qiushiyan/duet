@@ -5,6 +5,7 @@ import { contextPercent } from './run-store.ts';
 import type { HumanDecision, RunState, Steer, Voice } from './run-store.ts';
 import { resolveSessions } from './sessions.ts';
 import type { SessionRef } from './sessions.ts';
+import type { ErrorClass } from './worker-health.ts';
 
 /**
  * Status — one derivation, two renderers. `buildStatusModel` joins the run
@@ -93,7 +94,7 @@ export type StopModel =
       packet?: { summary: string; artifacts: string[]; humanDecisions?: HumanDecision[] };
       commands: { approve: string; reject: string };
     }
-  | { kind: 'flag'; question: string; context?: string; command: string }
+  | { kind: 'flag'; question: string; context?: string; command: string; cause?: 'human' | 'infra'; errorClass?: ErrorClass }
   | { kind: 'crashed'; phase: PhaseName; command: string }
   | { kind: 'abandoned'; at: string; revive: string; purge: string }
   | { kind: 'done'; summary?: string };
@@ -182,6 +183,8 @@ function stopModel(state: RunState, position: RunPosition): StopModel {
         question: state.pendingQuestion?.question ?? '(question missing — check the orchestrator log)',
         ...(state.pendingQuestion?.context ? { context: state.pendingQuestion.context } : {}),
         command: continueCommand.answer(state.runId),
+        ...(state.pendingQuestion?.cause ? { cause: state.pendingQuestion.cause } : {}),
+        ...(state.pendingQuestion?.errorClass ? { errorClass: state.pendingQuestion.errorClass } : {}),
       };
     case 'crashed':
       return { kind: 'crashed', phase: position.phase, command: continueCommand.resume(state.runId) };

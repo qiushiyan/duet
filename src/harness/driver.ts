@@ -15,6 +15,9 @@ import {
   saveRunState,
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
+import { readRoleTranscriptTail } from '../sessions.ts';
+import { RECENT_ERROR_MS, classifyError, retryDecision, scanTerminalErrors } from '../worker-health.ts';
+import type { ErrorClass } from '../worker-health.ts';
 import { markerToEvent } from './phase-events.ts';
 import type { PhaseEvent } from './phase-events.ts';
 import { createPhaseTools } from './tools.ts';
@@ -108,25 +111,80 @@ export async function runPhase(
   const persisted = markerToEvent(state.terminalMarker, phase);
   if (persisted) return persisted;
 
-  const pendingMessage = consumeHumanInput(state);
+  // The first attempt consumes any staged human input; a retry re-enters as a
+  // pure session resume (the input was already consumed), so it must not replay.
+  let pendingMessage = consumeHumanInput(state);
 
-  try {
-    return await drivePhase(state, phase, pendingMessage, runTurn);
-  } catch (err) {
-    // An infrastructure failure (SDK crash, spawn failure, driver bug) must
-    // land the human on an actionable question, not a silent flag-wait. A
-    // question the orchestrator already queued this invocation wins — it is
-    // the more meaningful one; the crash detail is in driver.log either way.
-    const detail = err instanceof Error ? err.message : String(err);
-    console.log(`[driver] ✗ ${phase} phase crashed: ${detail}`);
-    if (!state.pendingQuestion) {
-      state.pendingQuestion = {
-        question: `The ${phase} phase crashed at the infrastructure layer (${detail}). Check driver.log and the orchestrator log; answer with how to proceed — the orchestrator session resumes from its last completed turn.`,
-      };
-      saveRunState(state);
+  for (;;) {
+    try {
+      const event = await drivePhase(state, phase, pendingMessage, runTurn);
+      // Clean phase outcome — reset the per-episode retry budget.
+      if (state.retryState) {
+        delete state.retryState;
+        saveRunState(state);
+      }
+      return event;
+    } catch (err) {
+      // An infrastructure failure (SDK crash, spawn failure, driver bug) is
+      // classified BEFORE any flag is persisted, so opt-in auto-retry can resume
+      // a transient class in-process (the existing session-resume path) rather
+      // than parking the human. The retry policy is the single retryDecision
+      // mechanism: default-off, auth-once, login/quota/unknown never retried,
+      // exhaustion → flag.
+      const detail = err instanceof Error ? err.message : String(err);
+      console.log(`[driver] ✗ ${phase} phase crashed: ${detail}`);
+      const errorClass = classifyInfraError(state, detail);
+      const decision = retryDecision(errorClass, state.retryState, state.retryInfra ?? 0);
+      if (decision.action === 'retry') {
+        state.retryState = decision.nextRetryState;
+        saveRunState(state);
+        console.log(
+          `[driver] infra ${errorClass} — auto-retry ${decision.nextRetryState.attempts}/${state.retryInfra} after ${Math.round(decision.delayMs / 1000)}s`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, decision.delayMs));
+        pendingMessage = undefined; // retry = resume; never replay consumed input
+        continue;
+      }
+      // Escalate: a question the orchestrator already queued this invocation
+      // wins (it is the more meaningful one, and stays cause:'human'); otherwise
+      // queue the infra question with its classified cause/class.
+      if (!state.pendingQuestion) {
+        state.pendingQuestion = {
+          question: `The ${phase} phase failed at the infrastructure layer (${detail}). Check driver.log and the orchestrator log; answer with how to proceed — the orchestrator session resumes from its last completed turn.`,
+          cause: 'infra',
+          errorClass: decision.errorClass,
+        };
+        saveRunState(state);
+      }
+      return { type: 'phase.flag' };
     }
-    return { type: 'phase.flag' };
   }
+}
+
+/**
+ * Classify a caught phase failure: the CURRENT failure (the thrown message) is
+ * authoritative; only when that is opaque (`unknown`) do we consult the
+ * orchestrator transcript's most recent terminal error — and only a RECENT one,
+ * so a stale error a later turn already recovered from is never read as the
+ * current cause (the #1 staleness lesson, applied to classification).
+ */
+function classifyInfraError(state: RunState, detail: string): ErrorClass {
+  const fromThrow = classifyError(detail);
+  if (fromThrow !== 'unknown') return fromThrow;
+  try {
+    const tail = readRoleTranscriptTail(state, 'orchestrator');
+    if (tail) {
+      const now = Date.now();
+      const recent = scanTerminalErrors(tail.jsonl, tail.schema).filter(
+        (e) => e.ts && now - Date.parse(e.ts) < RECENT_ERROR_MS,
+      );
+      const last = recent.at(-1);
+      if (last) return last.errorClass;
+    }
+  } catch {
+    // best-effort — a transcript read failure leaves the throw's classification
+  }
+  return 'unknown';
 }
 
 async function drivePhase(
@@ -185,6 +243,8 @@ async function drivePhase(
       state.pendingQuestion = {
         question:
           'The orchestrator twice ended its turn without advancing the phase or asking a question — the run is stuck. Check the orchestrator log and answer with how to proceed.',
+        cause: 'infra',
+        errorClass: 'unknown',
       };
       saveRunState(state);
       result = 'flagged';
@@ -225,9 +285,13 @@ async function drivePhase(
         saveRunState(state);
         if (message.subtype !== 'success') {
           // Budget/turn caps and execution errors become flags, not crashes —
-          // the human decides whether to top up and continue.
+          // the human decides whether to top up and continue. Infra-caused, but
+          // not a taxonomy class (a budget cap is not network/auth), so it is
+          // never auto-retried — errorClass:'unknown'.
           state.pendingQuestion = {
             question: `The orchestrator run ended abnormally (${message.subtype}). Check the orchestrator log; answer with how to proceed (the session resumes from where it stopped).`,
+            cause: 'infra',
+            errorClass: 'unknown',
           };
           saveRunState(state);
           return 'flagged';

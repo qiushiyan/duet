@@ -138,6 +138,21 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     ]);
   });
 
+  test('a flag stop surfaces cause/errorClass when set, absent otherwise (additive, #4a)', ({ run }) => {
+    run.pendingQuestion = { question: 'down?', cause: 'infra', errorClass: 'network' };
+    const infra = buildStatusModel(run, { kind: 'flag', phase: 'impl' }, []).stop;
+    if (infra.kind === 'flag') {
+      expect.soft(infra.cause).toBe('infra');
+      expect.soft(infra.errorClass).toBe('network');
+    }
+    run.pendingQuestion = { question: 'plain?' };
+    const plain = buildStatusModel(run, { kind: 'flag', phase: 'impl' }, []).stop;
+    if (plain.kind === 'flag') {
+      expect.soft(plain.cause).toBeUndefined();
+      expect.soft(plain.errorClass).toBeUndefined();
+    }
+  });
+
   test('the gate packet carries humanDecisions only when present (additive)', ({ run }) => {
     run.phaseSummaries.impl = { summary: 's', artifacts: [] };
     const without = buildStatusModel(run, { kind: 'gate', phase: 'impl' }, []).stop;

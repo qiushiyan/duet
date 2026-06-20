@@ -123,12 +123,16 @@ program
     '--gates-at <phases>',
     'phases whose gates you attend (from: frame, spec, plan, impl, docs, pr — or a preset: "skip-plan" = walk away at spec approval, return at the Ship gate; "overnight" = frame,spec); the rest are pre-authorized and auto-cross with their packets recorded; pr is always attended; default: every gate',
   )
+  .option(
+    '--retry-infra <n>',
+    'opt-in bounded auto-retry of TRANSIENT infra failures (network/server/rate-limit, and auth once) before flagging — n attempts. login/quota/persistent-auth are never retried; exhaustion always falls back to a flag. Default: off (every infra failure flags, as today)',
+  )
   .option('--orchestrator <provider[:model]>', 'role binding override (claude[:model] only in v1)')
   .option('--impl <provider[:model]>', 'implementer binding override')
   .option('--reviewer <provider[:model]>', 'reviewer binding override')
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
   .option('--interactive', 'orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over FRAME → PLAN; impl onward still runs headless after the plan-gate handoff')
-  .action(async (opts: { spec?: string; framing?: string; template?: string; gatesAt?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean; interactive?: boolean }) => {
+  .action(async (opts: { spec?: string; framing?: string; template?: string; gatesAt?: string; retryInfra?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean; interactive?: boolean }) => {
     const cwd = process.cwd();
 
     // The framing's frontmatter is the machine/prose boundary: parsed
@@ -141,6 +145,7 @@ program
         ...(opts.framing ? { framing: opts.framing } : {}),
         ...(opts.template ? { template: opts.template } : {}),
         ...(opts.gatesAt ? { gatesAt: opts.gatesAt } : {}),
+        ...(opts.retryInfra !== undefined ? { retryInfra: opts.retryInfra } : {}),
       });
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));

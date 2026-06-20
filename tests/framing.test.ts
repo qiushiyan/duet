@@ -69,6 +69,12 @@ describe('parseFramingFile (the machine/prose boundary)', () => {
   plain('a non key:value line in the block is rejected', () => {
     expect(() => parseFramingFile('---\njust some words\n---\nbody')).toThrow(/is not "key: value"/);
   });
+
+  plain('retry_infra parses to a non-negative int; a bad value fails', () => {
+    expect.soft(parseFramingFile('---\nretry_infra: 2\n---\nbody').meta.retryInfra).toBe(2);
+    expect.soft(() => parseFramingFile('---\nretry_infra: -1\n---\nbody')).toThrow(/non-negative integer/);
+    expect.soft(() => parseFramingFile('---\nretry_infra: lots\n---\nbody')).toThrow(/non-negative integer/);
+  });
 });
 
 describe('composeInEditor (the no-inline-text path for riders and feedback)', () => {
@@ -260,6 +266,12 @@ describe('resolveRunInputs', () => {
     const flagWins = await resolveRunInputs(projectDir, { framing: 'brief.md', gatesAt: 'impl', spec: 'docs/draft.md' });
     expect.soft(flagWins.gatesAt).toEqual(['impl', 'pr']);
     expect.soft(flagWins.specPath).toBe('docs/draft.md');
+  });
+
+  test('--retry-infra overrides frontmatter retry_infra (flag wins)', async ({ projectDir }) => {
+    writeFileSync(join(projectDir, 'brief.md'), '---\nretry_infra: 2\n---\nbody');
+    expect.soft((await resolveRunInputs(projectDir, { framing: 'brief.md' })).retryInfra).toBe(2);
+    expect.soft((await resolveRunInputs(projectDir, { framing: 'brief.md', retryInfra: '5' })).retryInfra).toBe(5);
   });
 
   test('a missing spec file fails by name', async ({ projectDir }) => {

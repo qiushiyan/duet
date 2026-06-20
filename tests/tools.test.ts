@@ -429,6 +429,7 @@ describe('ask_human (the cooperative pause)', () => {
     expect.soft(persisted.pendingQuestion).toEqual({
       question: 'ship behind a flag?',
       context: 'billing implications',
+      cause: 'human', // ask_human flags are human-owned (#4a)
     });
     expect.soft(persisted.terminalMarker).toEqual({ phase: 'spec', kind: 'flag' });
   });

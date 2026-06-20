@@ -97,9 +97,46 @@ export function classifyError(text: string): ErrorClass {
   return 'unknown';
 }
 
-/** Whether a class can be auto-retried (the retry policy's recoverable set, #4b). */
-export function isRecoverable(cls: ErrorClass): boolean {
-  return cls === 'network' || cls === 'server' || cls === 'rate-limit';
+/** The persisted, per-episode retry budget state (#4b) — survives a driver re-spawn. */
+export interface RetryState {
+  attempts: number;
+  lastClass?: ErrorClass;
+}
+
+export type RetryDecision =
+  | { action: 'retry'; delayMs: number; nextRetryState: RetryState }
+  | { action: 'flag'; errorClass: ErrorClass };
+
+/** Exponential backoff with a 30s cap. */
+function backoffMs(attempt: number): number {
+  return Math.min(30_000, 2_000 * 2 ** attempt);
+}
+
+/**
+ * The ONE retry policy (#4b) — the single mechanism the driver consults, so the
+ * default-off / auth-once / never-retry / exhaustion-to-flag rules live in one
+ * place, not scattered conditionals. `retryInfra` is the attempt budget (0 or
+ * absent ⇒ off). Returns either a retry (with backoff and the next RetryState to
+ * persist) or a flag (with the class to surface).
+ *
+ *  - default-off / exhausted ⇒ flag.
+ *  - network / server / rate-limit ⇒ retry (always-recoverable transient set).
+ *  - auth ⇒ retry exactly ONCE: a first auth retries; a second CONSECUTIVE auth
+ *    is persistent ⇒ flag as `login-required`, never retried even with budget.
+ *  - login-required / quota-billing / dns / unknown ⇒ flag (never auto-retried).
+ */
+export function retryDecision(errorClass: ErrorClass, retryState: RetryState | undefined, retryInfra: number): RetryDecision {
+  const attempts = retryState?.attempts ?? 0;
+  if (retryInfra < 1 || attempts >= retryInfra) return { action: 'flag', errorClass };
+
+  if (errorClass === 'auth') {
+    if (retryState?.lastClass === 'auth') return { action: 'flag', errorClass: 'login-required' }; // persistent
+    return { action: 'retry', delayMs: backoffMs(attempts), nextRetryState: { attempts: attempts + 1, lastClass: 'auth' } };
+  }
+  if (errorClass === 'network' || errorClass === 'server' || errorClass === 'rate-limit') {
+    return { action: 'retry', delayMs: backoffMs(attempts), nextRetryState: { attempts: attempts + 1, lastClass: errorClass } };
+  }
+  return { action: 'flag', errorClass };
 }
 
 export interface TerminalError {

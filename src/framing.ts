@@ -277,12 +277,27 @@ const GATES_AT_PRESETS: Record<string, GatePhase[]> = {
 export interface FramingFrontmatter {
   gatesAt?: GatePhase[];
   spec?: string;
+  retryInfra?: number;
 }
 
 const frontmatterSchema = z.object({
   gates_at: z.string().optional(),
   spec: z.string().optional(),
+  retry_infra: z.string().optional(),
 });
+
+/**
+ * Parse a `retry_infra` value: a non-negative integer attempt budget (0 ⇒ off).
+ * A fixed value with a deterministic harness consumer, so it qualifies under the
+ * frontmatter boundary rule, paralleling `gates_at`.
+ */
+export function parseRetryInfra(value: string): number {
+  const n = Number(value.trim());
+  if (!Number.isInteger(n) || n < 0) {
+    throw new Error(`retry_infra: "${value}" is not a non-negative integer — it is the auto-retry attempt budget (0 or omit to disable).`);
+  }
+  return n;
+}
 
 /**
  * Parse a `--gates-at` value: a preset name or a comma/space-separated list
@@ -349,7 +364,7 @@ export function parseFramingFile(content: string): { meta: FramingFrontmatter; b
     const unknown = Object.keys(raw).filter((k) => !(k in frontmatterSchema.shape));
     throw new Error(
       unknown.length > 0
-        ? `framing frontmatter has unknown key(s): ${unknown.join(", ")} — valid keys are gates_at and spec. Everything the orchestrator should weigh with judgment belongs in the prose body, not here.`
+        ? `framing frontmatter has unknown key(s): ${unknown.join(", ")} — valid keys are gates_at, spec, and retry_infra. Everything the orchestrator should weigh with judgment belongs in the prose body, not here.`
         : `framing frontmatter is invalid: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
     );
   }
@@ -357,6 +372,7 @@ export function parseFramingFile(content: string): { meta: FramingFrontmatter; b
   const meta: FramingFrontmatter = {};
   if (parsed.data.gates_at) meta.gatesAt = parseGatesAt(parsed.data.gates_at);
   if (parsed.data.spec) meta.spec = parsed.data.spec;
+  if (parsed.data.retry_infra !== undefined) meta.retryInfra = parseRetryInfra(parsed.data.retry_infra);
   return { meta, body };
 }
 
@@ -369,6 +385,8 @@ export interface RunInputs {
   gatesAt?: GatePhase[];
   /** Validated spec path, relative to cwd. */
   specPath?: string;
+  /** Opt-in infra auto-retry budget (0/absent ⇒ off). */
+  retryInfra?: number;
   /** The framing file used, when one was (the CLI consumes the editor draft after archiving). */
   framingFile?: string;
 }
@@ -382,7 +400,7 @@ export interface RunInputs {
  */
 export async function resolveRunInputs(
   cwd: string,
-  opts: { spec?: string; framing?: string; gatesAt?: string; template?: string },
+  opts: { spec?: string; framing?: string; gatesAt?: string; template?: string; retryInfra?: string },
 ): Promise<RunInputs> {
   if (opts.template !== undefined && (opts.spec || opts.framing)) {
     throw new Error(
@@ -409,6 +427,7 @@ export async function resolveRunInputs(
   }
 
   const gatesAt = opts.gatesAt ? parseGatesAt(opts.gatesAt) : meta.gatesAt; // flag wins over frontmatter
+  const retryInfra = opts.retryInfra !== undefined ? parseRetryInfra(opts.retryInfra) : meta.retryInfra; // flag wins
 
   let specPath: string | undefined;
   const specInput = opts.spec ?? meta.spec; // flag wins over frontmatter
@@ -424,6 +443,7 @@ export async function resolveRunInputs(
     ...(framingRaw !== undefined ? { framingRaw } : {}),
     ...(gatesAt ? { gatesAt } : {}),
     ...(specPath ? { specPath } : {}),
+    ...(retryInfra !== undefined ? { retryInfra } : {}),
     ...(framingFile ? { framingFile } : {}),
   };
 }
