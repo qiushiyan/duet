@@ -2,9 +2,12 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
 import {
   classifyError,
+  currentTerminalError,
   probeRole,
+  retryDecision,
   scanTerminalErrors,
   type ErrorClass,
+  type RetryState,
   type Verdict,
 } from '../src/worker-health.ts';
 import {
@@ -92,6 +95,17 @@ describe('scanTerminalErrors — error-bearing records only (the honesty guarant
   test('a codex error event carrying a transient network signature classifies as network', () => {
     const hits = scanTerminalErrors(jsonl(codexErrorEvent('disconnected before completion: ECONNRESET')), 'codex');
     expect(hits[0]?.errorClass).toBe('network');
+  });
+
+  test('a codex error event with the signature PAST 200 chars still classifies (#4 — whole payload)', () => {
+    // A long prefix pushes the signature past any fixed slice; classification
+    // must run over the full serialized payload, not a truncated head, or this
+    // reports `unknown`. The display text is still truncated by normalize.
+    const longPrefix = `request ${'x'.repeat(300)} failed: `;
+    const hits = scanTerminalErrors(jsonl(codexErrorEvent(`${longPrefix}500 Internal server error`)), 'codex');
+    expect.soft(hits).toHaveLength(1);
+    expect.soft(hits[0]?.errorClass).toBe('server'); // not 'unknown'
+    expect.soft(hits[0]?.text.length).toBeLessThanOrEqual(200); // display still normalized
   });
 });
 
@@ -190,6 +204,97 @@ describe('probeRole — verdict precedence', () => {
     const t = jsonl(claudeApiRetry({ ts: ago(5 * MIN) }), claudeApiRetry({ ts: ago(10 * SEC) }), claudeApiRetry({ ts: ago(5 * SEC) }));
     // Only the two newer than retriesSince (1 min ago) count.
     expect(probeRole(t, { schema: 'claude', now: NOW, inFlightSince: NOW - MIN, retriesSince: NOW - MIN }).retries).toBe(2);
+  });
+});
+
+describe('currentTerminalError — the live error shared with the crashed verdict (#2)', () => {
+  test('a recent, unsuperseded terminal error is live (named, with its class)', () => {
+    const t = jsonl(claudeApiError('API Error: 500 Internal server error', { ts: ago(30 * SEC) }));
+    expect(currentTerminalError(t, 'claude', NOW)?.errorClass).toBe('server');
+  });
+
+  test('a recent error SUPERSEDED by later activity is NOT live (undefined)', () => {
+    const t = jsonl(
+      claudeApiError('API Error: fetch failed: ECONNRESET', { ts: ago(60 * SEC) }),
+      claudeAssistantText('recovered — continuing', { ts: ago(10 * SEC) }),
+    );
+    expect(currentTerminalError(t, 'claude', NOW)).toBeUndefined();
+  });
+
+  test('a STALE terminal error (beyond the recent window) is not live', () => {
+    const t = jsonl(claudeApiError('API Error: 500 Internal server error', { ts: ago(5 * MIN) }));
+    expect(currentTerminalError(t, 'claude', NOW)).toBeUndefined();
+  });
+
+  test('no terminal error → undefined', () => {
+    expect(currentTerminalError(jsonl(claudeAssistantText('all good', { ts: ago(5 * SEC) })), 'claude', NOW)).toBeUndefined();
+  });
+
+  test('agrees with the crashed verdict on the same transcript (one rule, two consumers)', () => {
+    const live = jsonl(claudeApiError('API Error: 500 Internal server error', { ts: ago(30 * SEC) }));
+    const recovered = jsonl(
+      claudeApiError('API Error: 500 Internal server error', { ts: ago(60 * SEC) }),
+      claudeAssistantText('recovered', { ts: ago(10 * SEC) }),
+    );
+    expect.soft(probeRole(live, { schema: 'claude', now: NOW }).verdict).toBe('crashed');
+    expect.soft(currentTerminalError(live, 'claude', NOW)).toBeDefined();
+    expect.soft(probeRole(recovered, { schema: 'claude', now: NOW }).verdict).not.toBe('crashed');
+    expect.soft(currentTerminalError(recovered, 'claude', NOW)).toBeUndefined();
+  });
+});
+
+describe('retryDecision — the one retry policy (#5, pure)', () => {
+  const transient: ErrorClass[] = ['network', 'server', 'rate-limit'];
+  const neverRetried: ErrorClass[] = ['login-required', 'quota-billing', 'dns', 'unknown'];
+
+  test('default-off (retryInfra 0) flags every class, never retries', () => {
+    for (const cls of [...transient, 'auth', ...neverRetried] as ErrorClass[]) {
+      expect.soft(retryDecision(cls, undefined, 0)).toEqual({ action: 'flag', errorClass: cls });
+    }
+  });
+
+  test.for<ErrorClass>(['network', 'server', 'rate-limit'])('a transient %s with budget retries, carrying its class forward', (cls) => {
+    const d = retryDecision(cls, undefined, 2);
+    expect.soft(d.action).toBe('retry');
+    if (d.action === 'retry') {
+      expect.soft(d.nextRetryState).toEqual({ attempts: 1, lastClass: cls });
+      expect.soft(d.delayMs).toBe(2_000); // first backoff
+    }
+  });
+
+  test.for<ErrorClass>(['login-required', 'quota-billing', 'dns', 'unknown'])('a non-transient %s flags even with budget', (cls) => {
+    expect(retryDecision(cls, undefined, 5)).toEqual({ action: 'flag', errorClass: cls });
+  });
+
+  test('auth retries once', () => {
+    expect(retryDecision('auth', undefined, 5)).toEqual({ action: 'retry', delayMs: 2_000, nextRetryState: { attempts: 1, lastClass: 'auth' } });
+  });
+
+  test('a second CONSECUTIVE auth escalates as login-required — even at retryInfra=1 (#3)', () => {
+    const afterFirstAuth: RetryState = { attempts: 1, lastClass: 'auth' };
+    // Escalation precedes the exhaustion check, so budget 1 (already exhausted) still escalates.
+    expect.soft(retryDecision('auth', afterFirstAuth, 1)).toEqual({ action: 'flag', errorClass: 'login-required' });
+    // And with budget to spare it still escalates — a second auth is never retried.
+    expect.soft(retryDecision('auth', afterFirstAuth, 5)).toEqual({ action: 'flag', errorClass: 'login-required' });
+  });
+
+  test('a non-auth class after an auth retry is NOT an escalation (only consecutive auth escalates)', () => {
+    expect(retryDecision('network', { attempts: 1, lastClass: 'auth' }, 5).action).toBe('retry');
+  });
+
+  test('exhaustion (attempts ≥ budget) flags with the class', () => {
+    expect(retryDecision('network', { attempts: 2, lastClass: 'network' }, 2)).toEqual({ action: 'flag', errorClass: 'network' });
+  });
+
+  test('backoff grows exponentially and caps at 30s', () => {
+    const delayAt = (attempts: number) => {
+      const d = retryDecision('network', { attempts, lastClass: 'network' }, 100);
+      return d.action === 'retry' ? d.delayMs : -1;
+    };
+    expect.soft(delayAt(0)).toBe(2_000);
+    expect.soft(delayAt(1)).toBe(4_000);
+    expect.soft(delayAt(2)).toBe(8_000);
+    expect.soft(delayAt(5)).toBe(30_000); // 2_000 * 2**5 = 64_000, capped
   });
 });
 

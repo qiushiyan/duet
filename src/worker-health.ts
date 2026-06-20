@@ -127,10 +127,15 @@ function backoffMs(attempt: number): number {
  */
 export function retryDecision(errorClass: ErrorClass, retryState: RetryState | undefined, retryInfra: number): RetryDecision {
   const attempts = retryState?.attempts ?? 0;
+  // Persistent auth escalates BEFORE the budget check — a second consecutive
+  // auth is login-required regardless of remaining budget. Ordered after
+  // exhaustion, `--retry-infra 1` would exhaust on the first retry and lose the
+  // escalation signal. Unreachable at default-off: no retry ever runs, so
+  // `lastClass` is never 'auth'.
+  if (errorClass === 'auth' && retryState?.lastClass === 'auth') return { action: 'flag', errorClass: 'login-required' };
   if (retryInfra < 1 || attempts >= retryInfra) return { action: 'flag', errorClass };
 
   if (errorClass === 'auth') {
-    if (retryState?.lastClass === 'auth') return { action: 'flag', errorClass: 'login-required' }; // persistent
     return { action: 'retry', delayMs: backoffMs(attempts), nextRetryState: { attempts: attempts + 1, lastClass: 'auth' } };
   }
   if (errorClass === 'network' || errorClass === 'server' || errorClass === 'rate-limit') {
@@ -212,7 +217,11 @@ function codexErrors(records: JsonRecord[]): TerminalError[] {
     const ptype = payload['type'];
     let text: string | undefined;
     if (ptype === 'error' || ptype === 'stream_error' || ptype === 'turn_aborted') {
-      text = JSON.stringify(payload).slice(0, 200);
+      // Classify over the WHOLE serialized payload — a real envelope can carry a
+      // long prefix with the failure signature past any fixed offset, so slicing
+      // before classifyError would misreport it as `unknown`. `normalize` does
+      // the display-only truncation below.
+      text = JSON.stringify(payload);
     } else if (ptype === 'function_call_output') {
       const out = str(payload['output']);
       if (out.includes('exited with code 0')) continue; // explicit tool SUCCESS — never an error
@@ -284,6 +293,35 @@ function newestErrorMs(errors: TerminalError[]): number | undefined {
 }
 
 /**
+ * The LIVE terminal error right now, or undefined: the newest terminal error,
+ * but ONLY when it is recent (within RECENT_ERROR_MS of `now`) AND not superseded
+ * by later activity (`lastMs <= newestErr`). This is the single rule behind both
+ * the `crashed` verdict (`computeVerdict`) and infra-crash classification
+ * (`driver.ts`) — they MUST share it, or a recovered error reads as live in one
+ * path but not the other (the exact drift this extraction removes). Operates on
+ * already-parsed inputs; `currentTerminalError` is the jsonl-level wrapper.
+ */
+function liveTerminalError(errors: TerminalError[], lastMs: number | undefined, now: number): TerminalError | undefined {
+  const newestErr = newestErrorMs(errors);
+  if (newestErr === undefined || now - newestErr >= RECENT_ERROR_MS) return undefined;
+  if (lastMs !== undefined && lastMs > newestErr) return undefined; // superseded by later activity
+  return errors.at(-1); // newest by append order (transcripts are append-only)
+}
+
+/**
+ * The live terminal error in a transcript tail — recent AND not superseded by
+ * later activity (NOT recency alone). `driver.ts`'s `classifyInfraError` consults
+ * this for its opaque-throw fallback, so a stale error a later turn already
+ * recovered from is never read as the current crash cause.
+ */
+export function currentTerminalError(jsonl: string, schema: Schema, now: number): TerminalError | undefined {
+  const records = parseRecords(jsonl);
+  const errors = schema === 'claude' ? claudeErrors(records) : codexErrors(records);
+  const lastMs = lastActivityMs(records, schema);
+  return liveTerminalError(errors, lastMs, now);
+}
+
+/**
  * The role's verdict by fixed precedence (highest first):
  *   crashed (terminal error newer than RECENT_ERROR_MS)
  *   → idle (not in flight — `inFlightSince` absent ⇒ no turn, or no session)
@@ -302,19 +340,12 @@ function computeVerdict(args: {
   retries: number;
   recentErrors: TerminalError[];
 }): Verdict {
-  const newestErr = newestErrorMs(args.recentErrors);
   const lastMs = args.lastActivityAgeMs !== undefined ? args.now - args.lastActivityAgeMs : undefined;
-  // `crashed` only when the terminal error is the LATEST event — later activity
-  // (a write the worker made after recovering, still inside the recent-error
-  // window) supersedes it, so the run is working/idle, not crashed. The error
-  // stays in `recentErrors` either way; only the verdict reflects the recovery.
-  if (
-    newestErr !== undefined &&
-    args.now - newestErr < RECENT_ERROR_MS &&
-    (lastMs === undefined || lastMs <= newestErr)
-  ) {
-    return 'crashed';
-  }
+  // `crashed` only when there is a LIVE terminal error — recent AND not superseded
+  // by later activity (a write the worker made after recovering). The error stays
+  // in `recentErrors` either way; only the verdict reflects the recovery. Same
+  // rule `classifyInfraError` reads via `currentTerminalError`, shared here.
+  if (liveTerminalError(args.recentErrors, lastMs, args.now)) return 'crashed';
   if (args.inFlightSince === undefined) return 'idle';
   if (args.retriesSince !== undefined && args.retries >= 1) return 'retrying';
   // Quiet = time since the most recent of {last write, turn start}: a brand-new
