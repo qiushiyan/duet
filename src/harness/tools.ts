@@ -518,7 +518,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             content: [
               {
                 type: 'text' as const,
-                text: `Dispatched to the ${args.role} — the turn runs in the background and this session stays live: keep talking with the human, steer, check status, or fire the other role meanwhile. Pull the result with check_turns once it lands (it returns the moment the turn settles; a phase can't advance while a turn is uncollected). A turn to the other role can run in parallel.`,
+                text: `Dispatched to the ${args.role} — the turn runs in the background and this session stays live: keep talking with the human, steer, or fire the other role meanwhile, then pull the result with check_turns once it lands (it returns the moment the turn settles; a phase can't advance while a turn is uncollected). If you have nothing more for the human right now, arm \`duet status --wait\` in the background before you stop — its settling brings you back to collect this turn, where ending without it leaves the run idle until the human messages you. A turn to the other role can run in parallel.`,
               },
             ],
           };
@@ -778,7 +778,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     tools.push(
       kernelTool(
         'check_turns',
-        'Collect the results of worker turns dispatched with send_prompt. On the interactive host send_prompt returns immediately and the turn runs in the background; check_turns is how you pull a finished turn’s response back into the conversation — the worker’s text (or, if its turn failed at the infrastructure layer, the prescribed recovery), with the same bookkeeping a blocking turn would have done already committed. It is instant: it delivers whatever has settled, names any role whose turn is still running (call it again later — or let `duet status --wait` wake you on completion), and never waits. Collecting a role’s result re-opens it for the next send_prompt; a phase cannot advance while any dispatched turn is still uncollected.',
+        'Collect the results of worker turns dispatched with send_prompt. On the interactive host send_prompt returns immediately and the turn runs in the background; check_turns is how you pull a finished turn’s response back into the conversation — the worker’s text (or, if its turn failed at the infrastructure layer, the prescribed recovery), with the same bookkeeping a blocking turn would have done already committed. It is instant: it delivers whatever has settled, names any role whose turn is still running (call it again later — or background `duet status --wait` so its settling re-invokes you), and never waits. Collecting a role’s result re-opens it for the next send_prompt; a phase cannot advance while any dispatched turn is still uncollected.',
         {},
         async () => {
           const ready = dispatcher.collectReady();
@@ -795,7 +795,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             if (dispatcher.statusOf(role) === 'running') {
               content.push({
                 type: 'text' as const,
-                text: `The ${role} turn is still running — keep the conversation going and call check_turns again later, or run \`duet status --wait\` (it wakes the moment the turn settles).`,
+                text: `The ${role} turn is still running — keep the conversation going and call check_turns again later, or, with nothing more to do meanwhile, arm \`duet status --wait\` in the background so its settling brings you back.`,
               });
             }
           }
