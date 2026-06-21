@@ -24,7 +24,7 @@ import { machineFor } from './harness/machine.ts';
 import { serveKernelStdio, serveRunScopedKernelStdio } from './harness/mcp-server.ts';
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
 import { runOrchestrate } from './orchestrate.ts';
-import { phaseOfGateState } from './phases.ts';
+import { entryOf, phaseOfGateState } from './phases.ts';
 import { buildBrief, buildStatusModel, renderBrief, renderStatus, steerRefusal } from './status.ts';
 import { openTmuxView } from './tmux-view.ts';
 import {
@@ -120,6 +120,7 @@ program
   .option('--spec <path>', 'path to a draft spec file; omit to start from the framing alone (the FRAME phase drafts it)')
   .option('--framing <file>', 'project briefing file — the only place project knowledge enters; omit both flags to write it in your editor')
   .option('--template <name>', 'seed the editor draft from .duet/templates/<name>.md (bare `duet new` uses .duet/templates/default.md when present); conflicts with --spec/--framing')
+  .option('--workflow <name>', 'which arc to run: full (spec → plan → implement → ship → docs → PR) or rir (research → implement → review); default full. Also settable via a workflow: framing key (flag wins)')
   .option(
     '--gates-at <phases>',
     'phases whose gates you attend (from: frame, spec, plan, impl, docs, pr — or a preset: "skip-plan" = walk away at spec approval, return at the Ship gate; "overnight" = frame,spec); the rest are pre-authorized and auto-cross with their packets recorded; pr is always attended; default: every gate',
@@ -133,7 +134,7 @@ program
   .option('--reviewer <provider[:model]>', 'reviewer binding override')
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
   .option('--interactive', 'orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over FRAME → PLAN; impl onward still runs headless after the plan-gate handoff')
-  .action(async (opts: { spec?: string; framing?: string; template?: string; gatesAt?: string; retryInfra?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean; interactive?: boolean }) => {
+  .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean; interactive?: boolean }) => {
     const cwd = process.cwd();
 
     // The framing's frontmatter is the machine/prose boundary: parsed
@@ -145,6 +146,7 @@ program
         ...(opts.spec ? { spec: opts.spec } : {}),
         ...(opts.framing ? { framing: opts.framing } : {}),
         ...(opts.template ? { template: opts.template } : {}),
+        ...(opts.workflow ? { workflow: opts.workflow } : {}),
         ...(opts.gatesAt ? { gatesAt: opts.gatesAt } : {}),
         ...(opts.retryInfra !== undefined ? { retryInfra: opts.retryInfra } : {}),
       });
@@ -194,7 +196,7 @@ program
       return;
     }
     const pid = spawnDrive(state);
-    printWatchHints(state, pid, state.specPath ? 'SPEC review loop' : 'FRAME phase');
+    printWatchHints(state, pid, state.specPath ? 'SPEC review loop' : `${entryOf(workflowOf(state)).firstPhase.toUpperCase()} phase`);
   });
 
 program
