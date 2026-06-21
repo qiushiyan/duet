@@ -24,7 +24,7 @@ import { machineFor } from './harness/machine.ts';
 import { serveKernelStdio, serveRunScopedKernelStdio } from './harness/mcp-server.ts';
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
 import { runOrchestrate } from './orchestrate.ts';
-import { entryOf, phaseOfGateState } from './phases.ts';
+import { entryOf, handoffWatchLabel, phaseOfGateState } from './phases.ts';
 import { buildBrief, buildStatusModel, renderBrief, renderStatus, steerRefusal } from './status.ts';
 import { openTmuxView } from './tmux-view.ts';
 import {
@@ -88,15 +88,16 @@ function fail(message: string): never {
 program
   .name('duet')
   .description(
-    'Semi-AFK orchestrator for a two-agent AI engineering workflow: an LLM orchestrator routes an implementer and a reviewer through spec → plan → implementation → PR, pausing at human gates.',
+    'Semi-AFK orchestrator for a two-agent AI engineering workflow: an LLM orchestrator routes an implementer and a reviewer through a multi-phase arc, pausing at human gates.',
   )
   .version('0.1.0')
   .addHelpText(
     'after',
     `
-The shape of a run:
-  frame → DIRECTION gate → spec → COMMIT-SPEC gate → plan → PLAN gate (walk away)
-  → impl (AFK, often hours) → SHIP gate → docs → DOCS-PLAN gate → pr → OPEN-PR gate → done
+The shape of a run (pick the arc with --workflow on duet new):
+  full:  frame → DIRECTION gate → spec → COMMIT-SPEC gate → plan → PLAN gate (walk away)
+         → impl (AFK, often hours) → SHIP gate → docs → DOCS-PLAN gate → pr → OPEN-PR gate → done
+  rir:   research → DIRECTION gate (walk away) → implement (AFK) → SHIP gate → done
 
 Each phase runs in a detached background driver; every command above returns
 immediately, and nothing runs between stops. A stop is a gate (decision), a
@@ -116,7 +117,7 @@ Run state: .duet/runs/<id>/ — state.json is a hint; the JSONL transcripts are 
 
 program
   .command('new')
-  .description('Start a run: [FRAME →] SPEC → PLAN (walk away) → AFK IMPLEMENTATION → DOCS → PR → opened PR.')
+  .description('Start a run on the chosen arc (--workflow): full (spec → plan → implement → ship → docs → PR) or rir (research → implement → review → ship).')
   .option('--spec <path>', 'path to a draft spec file; omit to start from the framing alone (the FRAME phase drafts it)')
   .option('--framing <file>', 'project briefing file — the only place project knowledge enters; omit both flags to write it in your editor')
   .option('--template <name>', 'seed the editor draft from .duet/templates/<name>.md (bare `duet new` uses .duet/templates/default.md when present); conflicts with --spec/--framing')
@@ -182,7 +183,13 @@ program
     console.log(
       `roles: orchestrator=${bindings.orchestrator.provider}:${bindings.orchestrator.model ?? ''} implementer=${bindings.implementer.provider}${bindings.implementer.model ? ':' + bindings.implementer.model : ''} reviewer=${bindings.reviewer.provider}${bindings.reviewer.model ? ':' + bindings.reviewer.model : ''}`,
     );
-    if (state.gatesAt) console.log(`gates: attending ${state.gatesAt.join(', ')} — other gates pre-authorized (auto-cross, packets recorded)`);
+    // gatesAt: [] is the afk "attend none" posture — explicit copy, not an empty join.
+    if (state.gatesAt)
+      console.log(
+        state.gatesAt.length > 0
+          ? `gates: attending ${state.gatesAt.join(', ')} — other gates pre-authorized (auto-cross, packets recorded)`
+          : `gates: attending none — all gates pre-authorized (auto-cross, packets recorded)`,
+      );
     console.log('');
     if (opts.interactive) {
       // Stage 1: orchestrate from the human's interactive orchestrator session instead
@@ -470,7 +477,7 @@ program
         delete handed.orchestrationHost;
         saveRunState(handed);
         const pid = spawnDrive(handed);
-        printWatchHints(handed, pid, opts.headless ? 'handed off to headless' : 'plan approved — AFK impl');
+        printWatchHints(handed, pid, opts.headless ? 'handed off to headless' : handoffWatchLabel(workflowOf(handed)));
         return;
       }
       const rest = probeRunPosition(loadRunState(cwd, state.runId));

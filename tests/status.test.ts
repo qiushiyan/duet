@@ -47,6 +47,22 @@ describe('workflow-neutral status surfaces (RIR)', () => {
     const brief = buildBrief(buildStatusModel(rirRun(projectDir), { kind: 'done' }, []));
     expect(brief.headline).toBe('run complete');
   });
+
+  test('an empty gatesAt (afk: attend none) renders explicit copy and survives in the JSON model', ({
+    projectDir,
+  }) => {
+    const rir = rirRun(projectDir);
+    rir.gatesAt = []; // the afk posture: every gate pre-authorized
+    rir.machineState = 'shipGate';
+    const model = buildStatusModel(rir, { kind: 'gate', phase: 'implement' }, []);
+    // The JSON model MUST keep [] — it is the "attend none" signal, distinct
+    // from absent (= attend every gate). A future change must not drop it.
+    expect.soft(model.gatesAt).toEqual([]);
+    const text = renderStatus(model);
+    expect.soft(text).toContain('gates:    attending none — all gates pre-authorized');
+    // No empty `attending  — …` join leaks through.
+    expect.soft(text).not.toContain('attending  —');
+  });
 });
 
 describe('describeStop (the notification body)', () => {

@@ -3,6 +3,7 @@ import {
   PHASE,
   gateOf,
   gatePhasesOf,
+  handoffWatchLabel,
   phaseOfGateState,
   phasesOf,
   validateRegistry,
@@ -145,5 +146,17 @@ describe('the RIR workflow', () => {
     const implement = phasesOf('rir').find((p) => p.name === 'implement')!;
     expect.soft(implement.reviewLoop).toBe(true);
     expect.soft(implement.roundCap).toBe(1);
+  });
+});
+
+describe('handoffWatchLabel — the interactive→headless handoff hint, per arc', () => {
+  // The label is derived from the registry (handoff gate + next phase), not
+  // hardcoded — so a RIR handoff reads "research approved", never "plan approved".
+  test('full hands off at the plan gate into impl', () => {
+    expect(handoffWatchLabel('full')).toBe('plan approved — AFK impl');
+  });
+
+  test('rir hands off at the Direction (research) gate into implement', () => {
+    expect(handoffWatchLabel('rir')).toBe('research approved — AFK implement');
   });
 });

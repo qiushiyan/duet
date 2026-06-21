@@ -406,6 +406,21 @@ export function entryOf(workflow: WorkflowName): { firstPhase: PhaseName; specSk
 }
 
 /**
+ * The watch-hint printed when an interactive run hands off to the headless
+ * driver at its handoff gate: "<handoff gate> approved — AFK <next phase>".
+ * Derived from the registry so each arc reads correctly — Full: "plan approved
+ * — AFK impl"; RIR: "research approved — AFK implement" — rather than the old
+ * hardcoded "plan approved" that mislabeled a RIR handoff (Q: no plan exists).
+ */
+export function handoffWatchLabel(workflow: WorkflowName): string {
+  const phases = phasesOf(workflow);
+  const handoff = WORKFLOWS[workflow].handoffGate;
+  const i = phases.findIndex((p) => p.name === handoff);
+  const next = phases[i + 1]?.name ?? 'the next phase';
+  return `${handoff} approved — AFK ${next}`;
+}
+
+/**
  * The workflow a phase belongs to — unambiguous because phase names are
  * globally unique (validateRegistry enforces it). Lets a phase-scoped surface
  * resolve its arc without being handed the workflow explicitly.

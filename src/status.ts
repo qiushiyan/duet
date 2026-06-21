@@ -262,7 +262,15 @@ export function renderStatus(model: StatusModel): string {
   if (model.specPath) lines.push(`spec:     ${model.specPath}`);
   else if (hasSpecPhase(model.workflow)) lines.push(`spec:     (not yet drafted — framing-only entry)`);
   if (model.branch) lines.push(`branch:   ${model.branch}`);
-  if (model.gatesAt) lines.push(`gates:    attending ${model.gatesAt.join(', ')} — other gates pre-authorized`);
+  // gatesAt: [] is the afk "attend none" signal (kept in the JSON model) — it
+  // renders as explicit copy rather than an empty `attending  — …` join.
+  if (model.gatesAt) {
+    lines.push(
+      model.gatesAt.length > 0
+        ? `gates:    attending ${model.gatesAt.join(', ')} — other gates pre-authorized`
+        : `gates:    attending none — all gates pre-authorized`,
+    );
+  }
   if (model.lastActivity) lines.push(`last:     ${model.lastActivity}`);
   lines.push(`rounds:   ${model.rounds.map((r) => `${r.phase} ${r.used}/${r.cap}`).join(', ')}`);
   // The claude-workers figure is the KNOWN cost; when a claude turn reported no
