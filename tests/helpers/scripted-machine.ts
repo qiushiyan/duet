@@ -2,18 +2,22 @@ import { fromCallback } from 'xstate';
 import type { EventObject } from 'xstate';
 import type { DriverInput } from '../../src/harness/driver.ts';
 import type { PhaseEvent } from '../../src/harness/phase-events.ts';
-import { duetMachine } from '../../src/harness/machine.ts';
+import { duetMachine, machineFor } from '../../src/harness/machine.ts';
+import type { WorkflowName } from '../../src/phases.ts';
 
 /**
- * The duetMachine with its phase driver scripted instead of running an LLM
+ * A workflow's machine with its phase driver scripted instead of running an LLM
  * session: each phase (re-)entry records the phase name and sends back the next
  * scripted phase.* event. Same statechart, same handlers — the seam is
  * machine.provide, exactly how the real driver (a callback actor that sendBacks
- * the phase's terminal event) is plugged in.
+ * the phase's terminal event) is plugged in. Defaults to the Full arc.
  */
-export function scriptedMachine(script: PhaseEvent[]): { machine: typeof duetMachine; calls: string[] } {
+export function scriptedMachine(
+  script: PhaseEvent[],
+  workflow: WorkflowName = 'full',
+): { machine: typeof duetMachine; calls: string[] } {
   const calls: string[] = [];
-  const machine = duetMachine.provide({
+  const machine = machineFor(workflow).provide({
     actors: {
       phaseDriver: fromCallback<EventObject, DriverInput>(({ input, sendBack }) => {
         calls.push(input.phase);

@@ -19,6 +19,7 @@ import {
   saveRunState,
   stageHumanInput,
   stageSteer,
+  workflowOf,
 } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
 
@@ -193,6 +194,30 @@ describe('gate attendance', () => {
 
     run.gatesAt = ['frame'];
     expect(gateAttended(run, 'pr')).toBe(true);
+  });
+
+  test('pr stays force-attended through forceAttend even when gates_at excludes it', ({ run }) => {
+    // The pr unconditional above now flows through WORKFLOWS.full.forceAttend,
+    // not a hardcoded phase check — a gates_at that omits pr still attends it.
+    run.gatesAt = ['frame', 'spec'];
+    expect(gateAttended(run, 'pr')).toBe(true);
+  });
+});
+
+describe('workflow identity', () => {
+  test('a created run defaults to the full workflow', ({ run }) => {
+    expect(workflowOf(run)).toBe('full');
+  });
+
+  test('a state with no workflow field (pre-feature) resolves to full', ({ run }) => {
+    delete run.workflow;
+    expect(workflowOf(run)).toBe('full');
+  });
+
+  test('createRun persists an explicit workflow', ({ projectDir }) => {
+    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'full', framing: 'f' });
+    expect(created.workflow).toBe('full');
+    expect(loadRunState(projectDir, created.runId).workflow).toBe('full');
   });
 });
 

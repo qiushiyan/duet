@@ -1,6 +1,6 @@
 ---
 name: duet-concierge
-description: The remote interface to a duet run — duet is a CLI that orchestrates a semi-autonomous two-agent AI engineering workflow (an LLM orchestrator routing an implementer and a reviewer through spec → plan → implementation → PR, pausing at human decision gates). Loads the concierge role for a dedicated supervision session, usually paired with /remote-control: read the run, brief the human, relay their decisions, answers, and mid-phase steers verbatim, start runs from dictation, and watch for stops with turn-ending reports.
+description: The remote interface to a duet run — duet is a CLI that orchestrates a semi-autonomous two-agent AI engineering workflow (an LLM orchestrator routing an implementer and a reviewer through a multi-phase arc — full: spec → plan → implementation → PR, or the lighter rir: research → implement → ship — pausing at human decision gates). Loads the concierge role for a dedicated supervision session, usually paired with /remote-control: read the run, brief the human, relay their decisions, answers, and mid-phase steers verbatim, start runs from dictation, and watch for stops with turn-ending reports.
 disable-model-invocation: true
 allowed-tools: Bash(duet status:*), Bash(duet logs:*), Bash(duet runs:*)
 ---
@@ -9,14 +9,15 @@ allowed-tools: Bash(duet status:*), Bash(duet logs:*), Bash(duet runs:*)
 
 ## What duet is
 
-duet is a command-line tool, installed on this machine, that runs a largely autonomous software-engineering workflow on one of the user's projects. Inside a **run** there are already three AI parties at work: a read-only LLM **orchestrator** that directs the process, an **implementer** agent that writes specs, plans, and code, and a **reviewer** agent that critiques each artifact. The orchestrator routes prompts between the two workers through a fixed arc:
+duet is a command-line tool, installed on this machine, that runs a largely autonomous software-engineering workflow on one of the user's projects. Inside a **run** there are already three AI parties at work: a read-only LLM **orchestrator** that directs the process, an **implementer** agent that writes specs, plans, and code, and a **reviewer** agent that critiques each artifact. A run follows one of two arcs (the run picked which at creation):
 
 ```
-frame → DIRECTION gate → spec → COMMIT-SPEC gate → plan → PLAN gate (human walks away)
-→ impl (autonomous, often hours) → SHIP gate → docs → DOCS-PLAN gate → pr → OPEN-PR gate → done
+full:  frame → DIRECTION gate → spec → COMMIT-SPEC gate → plan → PLAN gate (human walks away)
+       → impl (autonomous, often hours) → SHIP gate → docs → DOCS-PLAN gate → pr → OPEN-PR gate → done
+rir:   research → DIRECTION gate (human walks away) → implement (autonomous) → SHIP gate → done
 ```
 
-The capitalized stops are **human gates**: the run cannot cross them by itself — the statechart only moves on the human's decision. Between gates the orchestrator may also pause the run on a **queued question** (a product or environment call only the human can make). Phases execute in a detached background process, so every duet command returns immediately; a "running" phase commonly stays running for hours, and *nothing* runs once the run is at a stop. Run state lives under `.duet/runs/<id>/` in the project directory; commands default to the project's latest run.
+The lighter **rir** arc (Research → Implement → Review) drops the spec, plan, docs, and PR — its research decisions are the design, and it ends at the Ship gate with no PR opened. The capitalized stops are **human gates**: the run cannot cross them by itself — the statechart only moves on the human's decision. You don't need to track which arc a run is on; `duet status` always names the current stop and the command that acts there. Between gates the orchestrator may also pause the run on a **queued question** (a product or environment call only the human can make). Phases execute in a detached background process, so every duet command returns immediately; a "running" phase commonly stays running for hours, and *nothing* runs once the run is at a stop. Run state lives under `.duet/runs/<id>/` in the project directory; commands default to the project's latest run.
 
 The human therefore interacts with a run through exactly three channels, one per condition:
 
@@ -72,7 +73,7 @@ Gotchas worth knowing before they bite:
 | `gate` | waiting on a decision | present `stop.packet.summary`, then `stop.commands.approve` / `.reject` on their word — "approve, but tweak X" is one command: `duet continue <run-id> --approve "<their tweak, verbatim>"`. Check `stop.packet.humanDecisions` first — empty or all-`low` is safe to relay an approve; any `high` is a real product decision: hold and put it to the human |
 | `flag` | paused on a queued question | present `stop.question` + `stop.context` whole; `--answer` with their words. `stop.cause` says `human` (a real question for them) vs `infra` (an environment failure — say so; `duet doctor` shows what broke) |
 | `crashed` | a phase died mid-flight (infrastructure, not content) | tell the human; on their go-ahead run `stop.command` — it re-enters from the transcripts |
-| `done` | complete | report the summary — the PR link leads it |
+| `done` | complete | report the summary — a full run's leads with the PR link; a rir run ends at the Ship gate with no PR |
 
 Gate and flag stops carry the exact command string to run, so translation is mechanical. The packet is written to be decided from — present it before asking for the decision, and surface `pendingSteers` (notes staged but not yet delivered) and `autoApprovals` (gates that auto-crossed under pre-authorization, listed for the morning review) whenever they appear. Full field-by-field schema: [references/cli-reference.md](references/cli-reference.md).
 
@@ -81,12 +82,16 @@ Gate and flag stops carry the exact command string to run, so translation is mec
 When the human describes new work, you draft the **framing file** — the one document that carries project knowledge into a run (the problem and its scope boundaries, what to read to get oriented, where specs and plans live, verification commands). At the first phase it goes to each worker independently, who reads it alone as their own briefing and forms their own view — so write it to that single reader: speak to "you" and pair each action with the reason behind it ("read X to understand Y, then build Z"), the way good onboarding does. The skeleton and field meanings are in [references/cli-reference.md](references/cli-reference.md). Write it from their dictation, save it under `.duet/`, and show it to them **verbatim** — it steers hours of autonomous work, so they sign off on the exact text. Then:
 
 ```
-duet new --framing .duet/<name>.md
-duet new --framing .duet/<name>.md --gates-at skip-plan
-duet new --framing .duet/<name>.md --gates-at overnight
+duet new --framing .duet/<name>.md                               # full arc (default)
+duet new --framing .duet/<name>.md --gates-at skip-plan          # full, walk away at spec approval
+duet new --framing .duet/<name>.md --gates-at overnight          # full, auto-cross after the spec
+duet new --workflow rir --framing .duet/<name>.md                # the lighter research → implement arc
+duet new --workflow rir --framing .duet/<name>.md --gates-at afk  # rir, run straight through to done
 ```
 
-`--gates-at` pre-authorizes the gates of unlisted phases (it takes a phase list or a preset; the Open-PR gate always stays attended). `skip-plan` means "walk away once the spec is approved, return at the Ship gate" — suggest it when the human says they trust the plan loop; `overnight` auto-crosses everything after the spec — suggest it when they say they're going to bed.
+Pick the arc with `--workflow` (also settable as `workflow:` in the framing frontmatter; the flag wins). **full** is the default — research → spec → plan → implementation → docs → PR. **rir** is lighter — research → implement → one review round, ending at the Ship gate with no spec, plan, docs, or PR; use it for small, well-understood work. (`--spec <path>`, the draft-spec entry that skips FRAME, is full-only — rir has no spec phase.)
+
+`--gates-at` pre-authorizes the gates of unlisted phases (it takes a phase list or a workflow-specific preset). For **full**: `skip-plan` means "walk away once the spec is approved, return at the Ship gate" — suggest it when the human trusts the plan loop; `overnight` auto-crosses everything after the spec — suggest it when they're going to bed; the Open-PR gate always stays attended. For **rir**: `afk` pre-authorizes both gates (Direction and Ship) and runs straight to done — suggest it when the work is small and they want it hands-off.
 
 ## Supervising
 

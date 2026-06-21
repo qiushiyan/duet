@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'vitest';
 import { createActor, fromCallback, waitFor } from 'xstate';
 import type { AnyMachineSnapshot } from 'xstate';
-import { duetMachine, interactiveMachine } from '../src/harness/machine.ts';
-import { PHASES } from '../src/phases.ts';
+import { duetMachine, interactiveMachine, machineFor } from '../src/harness/machine.ts';
+import { phasesOf } from '../src/phases.ts';
+import type { WorkflowName } from '../src/phases.ts';
 import { scriptedMachine } from './helpers/scripted-machine.ts';
 
 /**
@@ -21,32 +22,56 @@ function startActor(machine: ReturnType<typeof scriptedMachine>['machine'], hasS
   return actor;
 }
 
-describe('phase table ⇄ machine coherence', () => {
-  test('every phase contributes its loop, flag-wait, and gate, with the right tags', () => {
-    for (const spec of PHASES) {
-      expect.soft(duetMachine.states[`${spec.name}Loop`]?.tags, `${spec.name}Loop`).toEqual(['phase']);
+// The arcs under test. The coherence + spine-walk assertions derive from
+// `phasesOf(workflow)`, so every workflow's machine is checked against its own
+// registry entry, not a single hardcoded arc.
+const ARCS: WorkflowName[] = ['full', 'rir'];
+
+describe('phase table ⇄ machine coherence (per workflow)', () => {
+  test.each(ARCS)('%s: every phase contributes its loop, flag-wait, and gate, with the right tags', (wf) => {
+    const machine = machineFor(wf);
+    for (const spec of phasesOf(wf)) {
+      expect.soft(machine.states[`${spec.name}Loop`]?.tags, `${spec.name}Loop`).toEqual(['phase']);
       expect
-        .soft(duetMachine.states[`${spec.name}FlagWait`]?.tags, `${spec.name}FlagWait`)
+        .soft(machine.states[`${spec.name}FlagWait`]?.tags, `${spec.name}FlagWait`)
         .toEqual(['quiescent', 'flag-wait']);
       if (spec.gate) {
-        expect.soft(duetMachine.states[spec.gate.state]?.tags, spec.gate.state).toEqual(['quiescent', 'gate']);
+        expect.soft(machine.states[spec.gate.state]?.tags, spec.gate.state).toEqual(['quiescent', 'gate']);
       }
     }
   });
 
-  test('quiescent states are exactly the gates, flag-waits, and done — nothing else ever persists', () => {
+  test.each(ARCS)('%s: quiescent states are exactly the gates, flag-waits, and done', (wf) => {
     // The lifecycle loop persists snapshots wherever this tag appears; a
     // state tagged quiescent by mistake would persist a snapshot with a live
     // actor, which restore cannot resume (the persistence guardrail).
-    const quiescent = Object.entries(duetMachine.states)
+    const quiescent = Object.entries(machineFor(wf).states)
       .filter(([, node]) => node.tags.includes('quiescent'))
       .map(([name]) => name)
       .sort();
     const expected = [
-      ...PHASES.flatMap((p) => [`${p.name}FlagWait`, ...(p.gate ? [p.gate.state] : [])]),
+      ...phasesOf(wf).flatMap((p) => [`${p.name}FlagWait`, ...(p.gate ? [p.gate.state] : [])]),
       'done',
     ].sort();
     expect(quiescent).toEqual(expected);
+  });
+
+  test.each(ARCS)('%s: the clean advance→approve spine visits each gate in order, ending done', async (wf) => {
+    const phases = phasesOf(wf);
+    const { machine, calls } = scriptedMachine(
+      phases.map(() => ({ type: 'phase.advance' as const })),
+      wf,
+    );
+    const actor = startActor(machine);
+    const gates: string[] = [];
+    for (;;) {
+      const snap = await waitFor(actor, quiescent);
+      if (snap.status === 'done') break;
+      gates.push(String(snap.value));
+      actor.send({ type: 'human.approve' });
+    }
+    expect.soft(gates).toEqual(phases.filter((p) => p.gate).map((p) => p.gate!.state));
+    expect.soft(calls).toEqual(phases.map((p) => p.name));
   });
 });
 
@@ -280,5 +305,39 @@ describe('the full arc', () => {
     expect(snap.value).toBe('done');
 
     expect(calls).toEqual(['frame', 'frame', 'frame', 'spec', 'plan', 'impl', 'impl', 'docs', 'pr', 'pr', 'open']);
+  });
+});
+
+describe('the RIR arc', () => {
+  test('research → Direction → implement → Ship → done, exactly two gates, no full-only states', async () => {
+    const { machine, calls } = scriptedMachine([{ type: 'phase.advance' }, { type: 'phase.advance' }], 'rir');
+    const actor = startActor(machine);
+
+    let snap = await waitFor(actor, quiescent);
+    expect.soft(snap.value).toBe('directionGate');
+
+    actor.send({ type: 'human.approve' });
+    snap = await waitFor(actor, quiescent);
+    expect.soft(snap.value).toBe('shipGate');
+
+    actor.send({ type: 'human.approve' });
+    snap = await waitFor(actor, (s) => s.status === 'done');
+    expect.soft(snap.value).toBe('done');
+
+    expect.soft(calls).toEqual(['research', 'implement']);
+    // No Full-only state leaks into the RIR machine.
+    for (const s of [
+      'specLoop',
+      'planLoop',
+      'docsLoop',
+      'prLoop',
+      'openLoop',
+      'commitSpecGate',
+      'planApprovalGate',
+      'docsPlanGate',
+      'openPrGate',
+    ]) {
+      expect.soft(machine.states[s], s).toBeUndefined();
+    }
   });
 });

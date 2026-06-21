@@ -540,3 +540,91 @@ Start non-technical, in this order:
 Then the technical side at a very high level — the approach and the one or two decisions a CTO would care about. No file paths, no function names, no implementation play-by-play.
 
 This is CEO/CTO altitude: outcomes first, technology last. Drop any section that's empty. Tight prose beats exhaustive sections.'''
+
+# ── RIR arc (research → implement → review) ─────────────────────────────────
+# The lighter second workflow: independent cross-framing, then a direct build
+# with one writable review round. These snippets reference the research
+# decisions (not a spec/plan, which RIR has none of). review-direct keeps the
+# `review-` prefix — the review-round counter recognizes a round by it.
+
+[[snippets]]
+key = "use-latest-docs"
+expand = '''
+When the work leans on an external library, framework, or SDK, check its current docs before committing to an approach — use your web-search / doc-fetch tools to confirm the latest APIs, defaults, and recommended patterns. Training data lags real releases, so a plausible-looking call can be deprecated or wrong, and that error compounds straight into the build.
+
+Skip this for the repo's own code and stable language/runtime facts — read those from the source here. It's for the moving parts you don't control.'''
+
+[[snippets]]
+key = "implement-direct"
+expand = '''
+Build the change directly from the research decisions we settled — those decisions are the spec here; there is no separate spec or plan document.
+
+Before writing code:
+- **Re-read the research decisions and the cross-review notes**, so you build the agreed direction rather than a half-remembered version of it.
+- **Re-read the code you're about to touch** — trace the real data/control flow and the existing patterns, so the change fits what's already there.
+
+Then implement: work in small, coherent commits, and build the tests alongside the code — behavior through the public interface, at the right altitude, not internals. Run them as you go and keep them green. If a decision turns out wrong or underspecified once you're in the code, stop and flag it rather than guessing your way past it.'''
+
+[[snippets]]
+key = "handoff-direct"
+expand = '''
+Implementation finished. Write a handoff that orients the reviewer fast — **report what changed and point them at what matters.** Ground it in the actual code and commits, not memory.
+
+This is a guided map, **not a self-review** — don't grade your own work ("correct", "clean", "well-tested"); that's the reviewer's call. Do surface where the bodies are buried.
+
+- **What & why:** the problem solved, tied back to the research decisions we settled — a line or two.
+- **Change map:** the files/modules touched, with the **load-bearing** ones marked. Skip trivial churn — the reviewer can read the diff; tell them where to start.
+- **Key decisions & tradeoffs:** judgment calls made while building, especially structural ones (a boundary drawn here, a concept collapsed there), and any alternative you weighed and rejected.
+- **Where the build diverged from the decisions:** anywhere the code went a different way than we agreed, and why. **Be candid.**
+- **Tests:** what's covered and at what altitude (behavior vs. internals), plus what you deliberately left untested and why.
+- **Where to look hardest:** the riskiest, most complex, or least-certain changes — anything you're unsure about or that fought you. This is the part that earns its keep.'''
+
+[[snippets]]
+key = "review-direct"
+expand = '''
+Code-review this implementation. **Read the actual code, not just commit messages.**
+
+There's no spec or plan for this arc — the bar is the **research decisions we settled and the actual goal behind them.** Review against those, not a document.
+
+**Lens:**
+- Everything is fair game — correctness, structure, test quality, performance, readability, edge cases, pattern consistency.
+- Decisions ↔ code mismatches → flag where the build drifted from what we agreed. If a decision turns out wrong now that it's real code, say so explicitly; don't smuggle it in as a "small fix."
+
+**Evaluate:**
+- **Correctness** — bugs, edge cases, failure modes.
+- **Solves the problem** — does this achieve the goal behind the decisions, not just run?
+- **Test quality** — right altitude (behavior, not internals), covers the real cases, survives plausible refactors, uses project patterns.
+- **UX & performance** — user-facing impact, performance characteristics.
+- **Structural quality — be ambitious, not just local:** look for a reframing that deletes whole branches/helpers/modes, not just rearranges them; push ad-hoc conditionals and special cases behind their own abstraction; flag thin pass-through wrappers and casts/`any`/`unknown` papering over unclear invariants; keep logic in its canonical module rather than leaking across boundaries.
+
+**Per issue:** severity — **critical** (blocks ship) / **moderate** (fix before ship) / **minor** (nice-to-have); a concrete fix with file/function references; no "this could be cleaner" without a concrete alternative.
+
+**Approval bar:** don't pass because it works — structural regressions and missed reframings are presumptive blockers, flag them **critical**.
+
+Implementation handoff below — a starting map, not the boundary of your review. Review the whole change against its actual goal, and actively look for what the handoff leaves out; if you only check what was surfaced, it isn't an independent review.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "apply-review"
+expand = '''
+Reviewer feedback below. This is the one review round for this arc — there's no second pass — so resolve it here: apply the fixes directly, don't just analyze.
+
+**For each point:**
+1. **Assess validity** — honestly; don't agree just to agree.
+2. **If valid:** fix it directly in the code (your fix may be better than the one suggested — explain why if so). Simple structural improvements count — make them, don't defer them as "minor."
+3. **If you disagree:** explain from first principles why the current code is right, and leave it.
+
+**Structural feedback** — engage with the reframing the reviewer proposed; don't counter a deletion path with a narrower local patch.
+
+**Tests** — when a fix changes behavior, move the tests with it: add a test for the corrected behavior, strengthen a weak one, or delete a test the fix makes obsolete. Keep the suite green.
+
+When you're done, **report what you changed in response to the review** — the fixes you applied and any points you pushed back on, grounded in the actual commits. This review-and-fix summary rides to the Ship gate alongside your handoff, so it must reflect the final state of the code, not your plan for it.
+
+If a point needs my input to resolve — a real product or direction call — flag it and stop rather than guessing.
+
+---
+
+$0'''

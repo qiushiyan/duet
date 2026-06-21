@@ -2,11 +2,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { PHASE, PHASES } from '../phases.ts';
+import { PHASE, phasesOf } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
 import { createWorkers } from '../providers/index.ts';
 import type { WorkerProvider, WorkerRole } from '../providers/types.ts';
-import { acquireMcpOwner, holdsMcpOwner, loadRunState } from '../run-store.ts';
+import { acquireMcpOwner, holdsMcpOwner, loadRunState, workflowOf } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
 import { probeRunPosition } from './lifecycle.ts';
 import type { RunPosition } from './lifecycle.ts';
@@ -27,23 +27,27 @@ import type { TurnDispatcher } from './turn-dispatcher.ts';
  * has no live phase, so inferring it would be guesswork.
  */
 
-const VALID_PHASES = new Set<string>(PHASES.map((p) => p.name));
-
 /**
  * Build the kernel tool surface for a run + explicit phase, or throw a
  * prescribed-recovery error (convention 4) for a run/phase it can't host. The
  * narration `log` goes to STDERR, never stdout: under the stdio transport
  * stdout is the JSON-RPC channel, and a stray write there corrupts the stream.
+ *
+ * The phase is validated against THIS run's workflow, not a global phase set:
+ * the run is loaded first, then the phase must be a member of its workflow's
+ * arc — so a RIR run can't be asked to host a Full-only phase's tools.
  */
 export function buildKernelTools(cwd: string, runId: string, phaseRaw: string): { tools: Array<KernelTool<any>>; phase: PhaseName } {
-  if (!VALID_PHASES.has(phaseRaw)) {
+  // Throws a clear "no run state at … — is <id> a run of this project?" when unknown.
+  const state = loadRunState(cwd, runId);
+  const workflow = workflowOf(state);
+  const legal = phasesOf(workflow).map((p) => p.name);
+  if (!(legal as string[]).includes(phaseRaw)) {
     throw new Error(
-      `cannot host phase "${phaseRaw}": not a duet phase. Pass an explicit phase — one of ${PHASES.map((p) => p.name).join(', ')} — because a quiescent run has no live phase context for _mcp to infer.`,
+      `cannot host phase "${phaseRaw}" for run ${runId}: it is not a phase of the "${workflow}" workflow. Pass an explicit phase — one of ${legal.join(', ')} — because a quiescent run has no live phase context for _mcp to infer.`,
     );
   }
   const phase = phaseRaw as PhaseName;
-  // Throws a clear "no run state at … — is <id> a run of this project?" when unknown.
-  const state = loadRunState(cwd, runId);
   const tools = createPhaseTools({
     state,
     phase,

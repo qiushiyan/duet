@@ -6,9 +6,10 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 
 | Command | What it does |
 |---|---|
-| `duet new --framing <file>` | Start a run from a framing file (the project briefing — the only place project knowledge enters). Returns immediately; the first phase runs in a detached driver. |
-| `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates (`frame, spec, plan, impl, docs, pr` — or a preset: `skip-plan` = walk away at spec approval, return at the Ship gate; `overnight` = frame,spec). The rest are pre-authorized and auto-cross with their packets recorded. `pr` is always attended. |
-| `duet new --spec <path>` | Start at the spec review loop from a draft spec (skips the FRAME phase). |
+| `duet new --framing <file>` | Start a run from a framing file (the project briefing — the only place project knowledge enters). Returns immediately; the first phase runs in a detached driver. Runs the **full** arc unless `--workflow` says otherwise. |
+| `duet new --workflow <full\|rir> --framing <file>` | Pick the arc. **full** (default): frame → spec → plan → implementation → docs → PR. **rir**: research → implement → one review round → Ship, with no spec, plan, docs, or PR — for small, well-understood work. Also settable as `workflow:` in the framing frontmatter; the flag wins. |
+| `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates; the rest are pre-authorized and auto-cross with their packets recorded. Phases and presets are **workflow-specific**. full: gates `frame, spec, plan, impl, docs, pr` — or a preset `skip-plan` (= walk away at spec approval, return at the Ship gate) / `overnight` (= frame,spec); `pr` is always attended. rir: gates `research, implement` — or the preset `afk` (= attend none, run straight to done). |
+| `duet new --spec <path>` | Start at the spec review loop from a draft spec (skips the FRAME phase). **full-only** — rir has no spec phase and rejects `--spec`. |
 | `duet new --framing <file> --retry-infra <n>` | Opt the headless run into bounded auto-retry of transient infra failures (network/server/rate-limit), default-off; or set `retry_infra:` in the framing frontmatter (the flag wins). `auth` retries once then escalates; login/quota/dns/unknown never retry; exhaustion flags. |
 | `duet continue <run-id> --approve` | Approve the current gate. |
 | `duet continue <run-id> --approve "<rider>"` | Approve with a rider: agreement with the direction plus adjustments, delivered into the next phase as gate feedback in approving form. The human's "yes, but…" in one command. |
@@ -30,7 +31,7 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | `duet logs [run-id]` | Stream the driver narration — replays from the start, then follows. Ctrl-C detaches; the run is unaffected. |
 | `duet view [run-id]` | Open a tmux viewer (one pane per voice). Terminal-side; not useful remotely. |
 | `duet takeover <role> [run-id]` | Hand a role's session to the human in the provider's own interactive CLI. Terminal-only by nature — never the concierge's verb. |
-| `duet orchestrate [run-id]` | Bring up the human's local interactive `/duet` orchestrator for a run (FRAME → PLAN). Terminal-only — never the concierge's verb. Relevant to know about: a run started with `duet new --interactive` is driven by that local session until the plan-gate handoff, after which AFK implementation runs headless and the concierge supervises it exactly as any other run. |
+| `duet orchestrate [run-id]` | Bring up the human's local interactive `/duet` orchestrator for a run over its attended arc (full: FRAME → PLAN; rir: RESEARCH). Terminal-only — never the concierge's verb. Relevant to know about: a run started with `duet new --interactive` is driven by that local session until the handoff gate (full: plan-approval; rir: Direction), after which AFK implementation runs headless and the concierge supervises it exactly as any other run. |
 
 Every command defaults to the latest run in the project when `[run-id]` is omitted.
 
@@ -45,7 +46,7 @@ Top-level fields:
 | `specPath` | The spec file, once one exists (absent on framing-only entry until the spec phase reports it). |
 | `machineState` | The last quiescent stop's statechart state — a display hint; `stop` is what you act on. |
 | `stop` | The discriminated stop (below): what the run is waiting on, with the command that acts there. |
-| `gatesAt` | Phases whose gates the human attends, when gate pre-authorization is active. Absent = every gate attended. |
+| `gatesAt` | Phases whose gates the human attends, when gate pre-authorization is active. Absent = every gate attended; `[]` = attend none (the rir `afk` posture — all gates pre-authorized). |
 | `autoApprovals` | Gates auto-crossed under pre-authorization: `{ gate, at, headline }` — surface these as "while you were away". |
 | `rounds` | Review rounds per phase against their backstop caps: `{ phase, used, cap }`. |
 | `costs` | `{ orchestratorUsd, claudeWorkersUsd, codexTokens: { input, output } }`. |
@@ -113,7 +114,7 @@ Top-level fields:
 }
 ```
 
-**`done`** — the run is complete; `summary` leads with the PR URL.
+**`done`** — the run is complete. A **full** run's `summary` leads with the PR URL; a **rir** run ends at the Ship gate with no PR, so its summary leads with what shipped.
 
 ```json
 { "kind": "done", "summary": "PR: https://github.com/…" }
@@ -121,15 +122,19 @@ Top-level fields:
 
 ## The framing file (for run starts from dictation)
 
-A markdown file: an optional `---`-fenced frontmatter block holding only fixed machine-parsed values (`gates_at`, `spec`), then prose that, at the first phase, each worker reads independently as its own briefing. Everything judgment-weighed belongs in the prose, never the frontmatter. Write that prose as the briefing it is: speak to the reader as "you" and pair each action with the knowledge behind it ("read X to understand Y, then build Z; verify with W"), so whoever opens the file reads it as onboarding written for them. Draft from this skeleton, filling what the human's dictation gives you and asking for what it doesn't — a thin framing produces hours of misdirected autonomous work:
+A markdown file: an optional `---`-fenced frontmatter block holding only fixed machine-parsed values (`workflow`, `gates_at`, `spec`), then prose that, at the first phase, each worker reads independently as its own briefing. Everything judgment-weighed belongs in the prose, never the frontmatter. Write that prose as the briefing it is: speak to the reader as "you" and pair each action with the knowledge behind it ("read X to understand Y, then build Z; verify with W"), so whoever opens the file reads it as onboarding written for them. Draft from this skeleton, filling what the human's dictation gives you and asking for what it doesn't — a thin framing produces hours of misdirected autonomous work:
 
 ```markdown
 ---
+# workflow: full           — full (default) or rir. full: spec → plan → impl →
+#                             docs → PR. rir: research → implement → review →
+#                             ship (no spec/plan/docs/PR), for small work.
 # gates_at: skip-plan       — phases whose gates the human attends; the rest
-#                             auto-cross. Presets: skip-plan (walk away at spec
-#                             approval, return at the Ship gate), overnight
-#                             (= frame,spec). Or a list, e.g. "frame, spec".
-# spec: path/to/draft.md    — enter at the spec review loop (skips FRAME).
+#                             auto-cross. Presets are workflow-specific:
+#                             full → skip-plan (walk away at spec approval,
+#                             return at the Ship gate) / overnight (= frame,spec);
+#                             rir → afk (attend none). Or a list, e.g. "frame, spec".
+# spec: path/to/draft.md    — enter at the spec review loop (skips FRAME). full-only.
 ---
 
 # Problem

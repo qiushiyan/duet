@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { Command } from 'commander';
 import { describe, expect, test } from 'vitest';
 import { program } from '../src/cli.ts';
+import { FRAMING_TEMPLATE } from '../src/framing.ts';
 import { IDENTITY_PATH } from '../src/orchestrate.ts';
 
 /**
@@ -85,6 +87,19 @@ describe('the duet-concierge skill coheres with the CLI', () => {
       expect.soft(referenceMd, `duet ${name} is missing from the reference`).toContain(`duet ${name}`);
     }
   });
+
+  test.for([
+    ['SKILL.md', skillMd],
+    ['references/cli-reference.md', referenceMd],
+  ] as const)('%s documents the run-start workflow surface (both arcs)', ([, markdown]) => {
+    // The concierge starts runs from dictation, so its run-start surface must
+    // name the arc selector and RIR — not just the Full arc. --workflow is also
+    // pinned to exist on `duet new` by the per-file verb/flag guard above.
+    expect.soft(markdown).toContain('--workflow');
+    expect.soft(markdown).toContain('workflow:'); // the framing frontmatter key
+    expect.soft(markdown.toLowerCase()).toContain('rir');
+    expect.soft(markdown).toContain('afk'); // RIR's pre-authorization preset
+  });
 });
 
 const duetIdentityMd = readFileSync(new URL('../prompts/orchestrator-identity.md', import.meta.url), 'utf8');
@@ -140,6 +155,16 @@ describe('the duet orchestrator identity coheres with the CLI', () => {
       }
     }
   });
+
+  test('the identity is workflow-neutral — no hardcoded single-arc, anchored on get_task', () => {
+    // Slice 4 made it arc-neutral: it must not name a fixed phase arc (the old
+    // "FRAME → SPEC → PLAN") and must point the session at get_task + a generic
+    // handoff gate, so a RIR session isn't told it's in the Full arc.
+    expect.soft(duetIdentityMd).not.toMatch(/FRAME\s*→\s*SPEC\s*→\s*PLAN/);
+    expect.soft(duetIdentityMd).not.toContain('plan-approval gate, the human');
+    expect.soft(duetIdentityMd).toContain('get_task');
+    expect.soft(duetIdentityMd).toContain('handoff gate');
+  });
 });
 
 const duetFrameDir = new URL('../skills/duet-frame/', import.meta.url);
@@ -171,6 +196,83 @@ describe('the duet-frame skill coheres with the CLI', () => {
       longs.add('--help');
       for (const [flag] of line.matchAll(/--[a-z][a-z-]*/g)) {
         expect.soft(longs.has(flag), `"${flag}" is not a flag of "duet ${verbs[0]}" in: ${line.trim()}`).toBe(true);
+      }
+    }
+  });
+
+  test('the framing author picks the workflow and emits the --workflow selector', () => {
+    // Slice 7: duet-frame settles the arc and emits it; --workflow must be a
+    // real flag of `duet new`, and the skill must name both arcs so the author
+    // can choose between them.
+    expect.soft(duetFrameMd).toContain('--workflow');
+    expect.soft(publicCommands.get('new')?.options.some((o) => o.long === '--workflow')).toBe(true);
+    expect.soft(duetFrameMd.toLowerCase()).toContain('rir');
+    expect.soft(duetFrameMd).toContain('afk'); // RIR's pre-authorization preset
+  });
+});
+
+describe('no CLI help / template copy carries a Full-only-arc claim', () => {
+  // Every user-facing copy string: each command's description, each option's
+  // description (the altitude the broad earlier test missed), and the rendered
+  // help (which includes the addHelpText run-shape blocks).
+  function cliCopyStrings(): { label: string; text: string }[] {
+    const out: { label: string; text: string }[] = [];
+    const walk = (cmd: Command): void => {
+      out.push({ label: `${cmd.name()} description`, text: cmd.description() ?? '' });
+      for (const o of cmd.options) out.push({ label: `${cmd.name()} ${o.long ?? o.flags}`, text: o.description ?? '' });
+      for (const sub of cmd.commands) walk(sub);
+    };
+    walk(program);
+    // Capture the rendered top-level help (addHelpText 'after' included).
+    const prev = program.configureOutput();
+    let rendered = '';
+    program.configureOutput({ writeOut: (s) => void (rendered += s) });
+    program.outputHelp();
+    program.configureOutput(prev);
+    out.push({ label: 'rendered --help', text: rendered });
+    return out;
+  }
+
+  // Phrases that are Full-arc-specific: legal only inside an explicitly two-arc
+  // string (one that also names rir). A refactor-survivable guard — it bans the
+  // bad pattern, not a particular wording.
+  const FULL_ONLY_MARKERS = [
+    'pr is always attended',
+    'spec → plan → implementation → PR',
+    'FRAME → PLAN',
+    'plan-gate handoff',
+  ];
+
+  test('no command/option/help string names a Full-only marker without also naming rir', () => {
+    for (const { label, text } of cliCopyStrings()) {
+      const lower = text.toLowerCase();
+      for (const marker of FULL_ONLY_MARKERS) {
+        if (lower.includes(marker.toLowerCase())) {
+          expect.soft(lower, `"${label}" carries Full-only copy "${marker}" without naming rir`).toContain('rir');
+        }
+      }
+    }
+  });
+
+  test('the arc-bearing surfaces name both arcs (the finding-1 residual sites)', () => {
+    const opt = (cmd: string, long: string) =>
+      (publicCommands.get(cmd)?.options.find((o) => o.long === long)?.description ?? '').toLowerCase();
+    // --gates-at: both arcs' presets, including rir's afk.
+    expect.soft(opt('new', '--gates-at')).toContain('rir');
+    expect.soft(opt('new', '--gates-at')).toContain('afk');
+    // --interactive and orchestrate: the handoff gate per arc.
+    expect.soft(opt('new', '--interactive')).toContain('rir');
+    expect.soft(publicCommands.get('orchestrate')?.description().toLowerCase()).toContain('rir');
+  });
+
+  test('the framing template seed names both arcs (workflow:, rir, afk)', () => {
+    expect.soft(FRAMING_TEMPLATE).toContain('workflow:');
+    expect.soft(FRAMING_TEMPLATE.toLowerCase()).toContain('rir');
+    expect.soft(FRAMING_TEMPLATE).toContain('afk');
+    // No Full-only-arc claim survives in the seed.
+    for (const marker of FULL_ONLY_MARKERS) {
+      if (FRAMING_TEMPLATE.toLowerCase().includes(marker.toLowerCase())) {
+        expect.soft(FRAMING_TEMPLATE.toLowerCase(), `template carries "${marker}" without rir`).toContain('rir');
       }
     }
   });
