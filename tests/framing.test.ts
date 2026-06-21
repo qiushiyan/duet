@@ -353,6 +353,15 @@ describe('resolveRunInputs', () => {
     expect((await resolveRunInputs(projectDir, { framing: 'r.md' })).gatesAt).toEqual([]);
   });
 
+  test('an explicit empty --gates-at "" is rejected, matching frontmatter key-present semantics', async ({
+    projectDir,
+  }) => {
+    writeFileSync(join(projectDir, 'b.md'), 'body');
+    // A literal empty flag value reaches parseGatesAt and fails, rather than
+    // being silently dropped to attend-all the way a truthiness check would.
+    await expect(resolveRunInputs(projectDir, { framing: 'b.md', gatesAt: '' })).rejects.toThrow(/gates_at is empty/);
+  });
+
   test('--retry-infra overrides frontmatter retry_infra (flag wins)', async ({ projectDir }) => {
     writeFileSync(join(projectDir, 'brief.md'), '---\nretry_infra: 2\n---\nbody');
     expect.soft((await resolveRunInputs(projectDir, { framing: 'brief.md' })).retryInfra).toBe(2);

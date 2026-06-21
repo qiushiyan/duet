@@ -300,8 +300,9 @@ export function parseRetryInfra(value: string): number {
 
 /**
  * Parse a `--gates-at` value: a preset name or a comma/space-separated list
- * of gate-bearing phase names. `pr` is force-appended — the Open-PR gate is
- * never pre-authorizable. Throws with the full vocabulary on bad input.
+ * of gate-bearing phase names. The workflow's forceAttend gates are appended
+ * (Full: the Open-PR gate, never pre-authorizable; RIR: none). Throws with the
+ * full vocabulary on bad input.
  */
 export function parseGatesAt(value: string, workflow: WorkflowName = "full"): GatePhase[] {
   const gatePhases = gatePhasesOf(workflow);
@@ -449,7 +450,10 @@ export async function resolveRunInputs(
   // frontmatter workflow is re-validated against the final one (the flag may
   // have overridden it), so a Full-shaped gates_at can't ride into a RIR run.
   let gatesAt: GatePhase[] | undefined;
-  if (opts.gatesAt) gatesAt = parseGatesAt(opts.gatesAt, workflow);
+  // Key-present, not truthy — matching parseFramingFile: a literal `--gates-at ""`
+  // reaches parseGatesAt and is rejected as empty, rather than silently ignored
+  // (defaulting to attend-all) the way a truthiness check would drop it.
+  if (opts.gatesAt !== undefined) gatesAt = parseGatesAt(opts.gatesAt, workflow);
   else if (meta.gatesAt) gatesAt = workflow === (meta.workflow ?? "full") ? meta.gatesAt : parseGatesAt(meta.gatesAt.join(","), workflow);
 
   let specPath: string | undefined;
