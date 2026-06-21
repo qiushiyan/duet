@@ -113,6 +113,34 @@ export function parseClaudeTurn(stdout: string, prompt: string): WorkerTurn {
   };
 }
 
+/**
+ * The execa options for a `claude -p` turn, extracted as a pure builder so the
+ * one named-but-unverified-by-test risk can be pinned: execa's `cleanup`
+ * (default `true`) kills the worker child when this parent process exits, so a
+ * killed or superseded `_mcp` host takes its in-flight worker down with it —
+ * the orphan/reconnect safety the async interactive host leans on. Setting it
+ * `false` would silently break that, so the tripwire test asserts this builder
+ * never does. Left ABSENT here (execa's default `true` stands) — the live
+ * SIGTERM-the-parent confirmation is the human's verify-phase run. On timeout
+ * execa sends SIGTERM, then SIGKILL after forceKillAfterDelay.
+ */
+export interface ClaudeExecaOptions {
+  cwd: string | undefined;
+  input: string;
+  timeout: number;
+  forceKillAfterDelay: number;
+  cleanup?: boolean;
+}
+
+export function claudeExecaOptions(opts: { cwd?: string; prompt: string }, config: { timeoutMs?: number }): ClaudeExecaOptions {
+  return {
+    cwd: opts.cwd,
+    input: opts.prompt,
+    timeout: config.timeoutMs ?? 15 * 60_000,
+    forceKillAfterDelay: 10_000,
+  };
+}
+
 export class ClaudeWorker implements WorkerProvider {
   readonly name = 'claude' as const;
 
@@ -147,14 +175,9 @@ export class ClaudeWorker implements WorkerProvider {
     }
 
     // Prompt goes through stdin (argv has length limits; snippet bodies wrapping
-    // whole artifacts can be long). On timeout execa sends SIGTERM, then
-    // SIGKILL after the grace period — the proc.kill() sandcastle forgot.
-    const { stdout } = await execa('claude', args, {
-      cwd: opts.cwd,
-      input: opts.prompt,
-      timeout: this.config.timeoutMs ?? 15 * 60_000,
-      forceKillAfterDelay: 10_000,
-    });
+    // whole artifacts can be long). execa options (incl. the load-bearing
+    // `cleanup` default) come from the pinned claudeExecaOptions builder.
+    const { stdout } = await execa('claude', args, claudeExecaOptions(opts, this.config));
 
     return parseClaudeTurn(stdout, opts.prompt);
   }
