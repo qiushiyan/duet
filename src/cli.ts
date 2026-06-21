@@ -12,7 +12,7 @@ import {
   aliveDriverPid,
   crossInteractive,
   driveToQuiescence,
-  interactiveContinuePlan,
+  interactiveContinueAction,
   killDriver,
   probeRunPosition,
   spawnDrive,
@@ -20,11 +20,11 @@ import {
   waitForTurnOrStop,
 } from './harness/lifecycle.ts';
 import type { HumanEvent } from './harness/lifecycle.ts';
-import { duetMachine } from './harness/machine.ts';
+import { machineFor } from './harness/machine.ts';
 import { serveKernelStdio, serveRunScopedKernelStdio } from './harness/mcp-server.ts';
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
 import { runOrchestrate } from './orchestrate.ts';
-import { phaseOfGateState } from './phases.ts';
+import { entryOf, handoffWatchLabel, phaseOfGateState } from './phases.ts';
 import { buildBrief, buildStatusModel, renderBrief, renderStatus, steerRefusal } from './status.ts';
 import { openTmuxView } from './tmux-view.ts';
 import {
@@ -42,6 +42,7 @@ import {
   saveRunState,
   stageHumanInput,
   stageSteer,
+  workflowOf,
 } from './run-store.ts';
 import type { RunState, Voice } from './run-store.ts';
 
@@ -88,15 +89,16 @@ function fail(message: string): never {
 program
   .name('duet')
   .description(
-    'Semi-AFK orchestrator for a two-agent AI engineering workflow: an LLM orchestrator routes an implementer and a reviewer through spec → plan → implementation → PR, pausing at human gates.',
+    'Semi-AFK orchestrator for a two-agent AI engineering workflow: an LLM orchestrator routes an implementer and a reviewer through a multi-phase arc, pausing at human gates.',
   )
   .version('0.1.0')
   .addHelpText(
     'after',
     `
-The shape of a run:
-  frame → DIRECTION gate → spec → COMMIT-SPEC gate → plan → PLAN gate (walk away)
-  → impl (AFK, often hours) → SHIP gate → docs → DOCS-PLAN gate → pr → OPEN-PR gate → done
+The shape of a run (pick the arc with --workflow on duet new):
+  full:  frame → DIRECTION gate → spec → COMMIT-SPEC gate → plan → PLAN gate (walk away)
+         → impl (AFK, often hours) → SHIP gate → docs → DOCS-PLAN gate → pr → OPEN-PR gate → done
+  rir:   research → DIRECTION gate (walk away) → implement (AFK) → SHIP gate → done
 
 Each phase runs in a detached background driver; every command above returns
 immediately, and nothing runs between stops. A stop is a gate (decision), a
@@ -116,13 +118,14 @@ Run state: .duet/runs/<id>/ — state.json is a hint; the JSONL transcripts are 
 
 program
   .command('new')
-  .description('Start a run: [FRAME →] SPEC → PLAN (walk away) → AFK IMPLEMENTATION → DOCS → PR → opened PR.')
+  .description('Start a run on the chosen arc (--workflow): full (spec → plan → implement → ship → docs → PR) or rir (research → implement → review → ship).')
   .option('--spec <path>', 'path to a draft spec file; omit to start from the framing alone (the FRAME phase drafts it)')
   .option('--framing <file>', 'project briefing file — the only place project knowledge enters; omit both flags to write it in your editor')
   .option('--template <name>', 'seed the editor draft from .duet/templates/<name>.md (bare `duet new` uses .duet/templates/default.md when present); conflicts with --spec/--framing')
+  .option('--workflow <name>', 'which arc to run: full (spec → plan → implement → ship → docs → PR) or rir (research → implement → review); default full. Also settable via a workflow: framing key (flag wins)')
   .option(
     '--gates-at <phases>',
-    'phases whose gates you attend (from: frame, spec, plan, impl, docs, pr — or a preset: "skip-plan" = walk away at spec approval, return at the Ship gate; "overnight" = frame,spec); the rest are pre-authorized and auto-cross with their packets recorded; pr is always attended; default: every gate',
+    'phases whose gates you attend — the set and presets are workflow-specific (full gates: frame, spec, plan, impl, docs, pr; presets "skip-plan" = walk away at spec approval, return at the Ship gate, "overnight" = frame,spec, and full\'s Open-PR gate is always attended. rir gates: research, implement; preset "afk" = attend none). The rest are pre-authorized and auto-cross with their packets recorded; default: every gate',
   )
   .option(
     '--retry-infra <n>',
@@ -132,8 +135,8 @@ program
   .option('--impl <provider[:model]>', 'implementer binding override')
   .option('--reviewer <provider[:model]>', 'reviewer binding override')
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
-  .option('--interactive', 'orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over FRAME → PLAN; impl onward still runs headless after the plan-gate handoff')
-  .action(async (opts: { spec?: string; framing?: string; template?: string; gatesAt?: string; retryInfra?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean; interactive?: boolean }) => {
+  .option('--interactive', "orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over the attended arc up to the workflow's handoff gate (full: through the plan gate; rir: through the Direction gate); implementation onward runs headless after that handoff")
+  .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean; interactive?: boolean }) => {
     const cwd = process.cwd();
 
     // The framing's frontmatter is the machine/prose boundary: parsed
@@ -145,6 +148,7 @@ program
         ...(opts.spec ? { spec: opts.spec } : {}),
         ...(opts.framing ? { framing: opts.framing } : {}),
         ...(opts.template ? { template: opts.template } : {}),
+        ...(opts.workflow ? { workflow: opts.workflow } : {}),
         ...(opts.gatesAt ? { gatesAt: opts.gatesAt } : {}),
         ...(opts.retryInfra !== undefined ? { retryInfra: opts.retryInfra } : {}),
       });
@@ -180,27 +184,33 @@ program
     console.log(
       `roles: orchestrator=${bindings.orchestrator.provider}:${bindings.orchestrator.model ?? ''} implementer=${bindings.implementer.provider}${bindings.implementer.model ? ':' + bindings.implementer.model : ''} reviewer=${bindings.reviewer.provider}${bindings.reviewer.model ? ':' + bindings.reviewer.model : ''}`,
     );
-    if (state.gatesAt) console.log(`gates: attending ${state.gatesAt.join(', ')} — other gates pre-authorized (auto-cross, packets recorded)`);
+    // gatesAt: [] is the afk "attend none" posture — explicit copy, not an empty join.
+    if (state.gatesAt)
+      console.log(
+        state.gatesAt.length > 0
+          ? `gates: attending ${state.gatesAt.join(', ')} — other gates pre-authorized (auto-cross, packets recorded)`
+          : `gates: attending none — all gates pre-authorized (auto-cross, packets recorded)`,
+      );
     console.log('');
     if (opts.interactive) {
       // Stage 1: orchestrate from the human's interactive orchestrator session instead
       // of the headless driver — no auto-spawnDrive. runOrchestrate marks the run
       // interactive and launches the wired claude session (it blocks until that
       // session ends). --gates-at still applies to the headless tail after the
-      // plan-gate handoff.
+      // workflow's handoff gate (full: plan; rir: Direction).
       console.log(`bringing up the interactive orchestrator for run ${state.runId} …`);
       const launched = runOrchestrate(state);
       if (launched.error) fail(launched.error.message);
       return;
     }
     const pid = spawnDrive(state);
-    printWatchHints(state, pid, state.specPath ? 'SPEC review loop' : 'FRAME phase');
+    printWatchHints(state, pid, state.specPath ? 'SPEC review loop' : `${entryOf(workflowOf(state)).firstPhase.toUpperCase()} phase`);
   });
 
 program
   .command('orchestrate')
   .description(
-    'Bring up the interactive orchestrator for a run: a Claude Code session wired to drive it over FRAME → PLAN, with the single gate-safety ask rule applied. Relaunch to reconnect after a dropped session (it re-anchors on disk via get_task).',
+    'Bring up the interactive orchestrator for a run: a Claude Code session wired to drive it over the attended arc up to the handoff gate (full: FRAME → PLAN; rir: RESEARCH → Direction), with the single gate-safety ask rule applied. Relaunch to reconnect after a dropped session (it re-anchors on disk via get_task).',
   )
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
   .action((runId: string | undefined) => {
@@ -426,10 +436,10 @@ program
 
     // Stage 1: the human's interactive session is the orchestrator.
     // `duet continue` advances the machine inline (crossInteractive, no _drive)
-    // until the plan-gate handoff. Runs BEFORE the snapshot-based validation
-    // below, because the first FRAME gate has no machine snapshot until
-    // crossInteractive persists one — the headless path's "no snapshot ⇒ crash"
-    // would misfire on it.
+    // until the workflow's handoff gate. Runs BEFORE the snapshot-based
+    // validation below, because the run's first gate has no machine snapshot
+    // until crossInteractive persists one — the headless path's "no snapshot ⇒
+    // crash" would misfire on it.
     if (state.orchestrationHost === 'interactive') {
       const position = probeRunPosition(state);
 
@@ -460,7 +470,7 @@ program
 
       // Validation passed, so the position is a gate or flag — both carry a phase.
       if (position.kind !== 'gate' && position.kind !== 'flag') return;
-      const action = interactiveContinuePlan(position.phase, eventType, Boolean(opts.headless));
+      const action = interactiveContinueAction(workflowOf(state), position.phase, eventType, Boolean(opts.headless));
       crossInteractive(state, { type: `human.${eventType}` });
 
       if (action === 'handoff') {
@@ -468,7 +478,7 @@ program
         delete handed.orchestrationHost;
         saveRunState(handed);
         const pid = spawnDrive(handed);
-        printWatchHints(handed, pid, opts.headless ? 'handed off to headless' : 'plan approved — AFK impl');
+        printWatchHints(handed, pid, opts.headless ? 'handed off to headless' : handoffWatchLabel(workflowOf(handed)));
         return;
       }
       const rest = probeRunPosition(loadRunState(cwd, state.runId));
@@ -503,7 +513,7 @@ program
       );
     }
 
-    const probe = createActor(duetMachine, {
+    const probe = createActor(machineFor(workflowOf(state)), {
       input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
       snapshot,
     });
@@ -512,7 +522,7 @@ program
     // A snapshot parked at a pre-authorized gate means the driver died after
     // reaching it but before the next attended stop — re-enter; the driver
     // crosses it again on the standing authorization.
-    const restoredGatePhase = typeof restored.value === 'string' ? phaseOfGateState(restored.value) : undefined;
+    const restoredGatePhase = typeof restored.value === 'string' ? phaseOfGateState(workflowOf(state), restored.value) : undefined;
     if (chosen.length === 0 && restoredGatePhase && !gateAttended(state, restoredGatePhase) && restored.status !== 'done') {
       console.log(
         `run ${state.runId}: stopped at the pre-authorized ${String(restored.value)} — re-entering (it auto-crosses)`,

@@ -22,13 +22,13 @@ Three parties answer three kinds of questions, and keeping them separate is what
 </division_of_labor>
 
 <protocol>
-The workflow's substance is a snippet library (read it with list_snippets). Snippets encode hard-won conventions — altitude lenses that keep reviews at the right level of detail, reflect-before-change gates, round-2 discipline — so prefer them as the basis for every worker prompt.
+The workflow's substance is a snippet library (read it with list_snippets). Snippets encode hard-won conventions — altitude lenses that keep reviews at the right level of detail, and the review discipline each phase calls for — so prefer them as the basis for every worker prompt. Which snippets a phase uses, and how many review rounds it runs, come from that phase's brief and its snippet set; don't carry another phase's ceremony into one whose brief doesn't name it.
 
 A snippet template is two layers. Its discipline — the lens, the ordering, the guardrails — is the hard-won part, durable across runs. Its generality — either/or hedges like "the feature added or bug fixed", generic examples, formats left open — is deliberate, letting one template cover many runs; but your turn faces exactly one. Adapting a snippet means collapsing that generality onto the run at hand: name the actual bug or feature where the template hedges, swap its examples for this project's modules and vocabulary, drop branches that don't apply, fold in what the human already decided at gates (a template with nothing left to collapse goes as-is). A worker reading a concretized template starts at the task; a verbatim-generic one spends part of a slow turn deriving the template-to-task mapping itself. Two boundaries hold. Specialize the discipline, never subtract it: a guardrail that genuinely doesn't fit this project is a library problem — propose_snippet_edit queues it for the human's end-of-run review (never mid-run; a silently changed prompt would compound across every later run) — not a quiet per-turn drop. And concretize the task, never the solution: naming which bug the spec addresses is routing; hinting at what its fix should look like is an artifact opinion, and division_of_labor applies to your prompts too. Treat send_prompt as a commit: the body lands in the worker's session permanently and steers every turn after it — there is no unsend. Compose the full body first, then read it once against the template (discipline all there?) and against the run (generality all collapsed?) before calling. Pass the source snippet key as \`tag\` so each adaptation is auditable; compose from scratch (tag "custom") when nothing fits.
 
-A review loop runs: artifact → reviewer critique (review-*) → implementer revision or pushback (update-* for documents, respond-* for code) → your judgment: another round, or converged? Use the -again snippet variants for round 2+ — they verify earlier feedback was actually integrated rather than relitigating. Exit the loop when the remaining open points are minor (wording, small caveats, settled disagreements with recorded rationale) rather than structural. A disagreement that persists across two rounds with substantive arguments on both sides is the human's call — flag it.
+A review loop runs: artifact → reviewer critique → implementer revision or pushback → your judgment: another round, or converged? The snippets that carry each step are the phase's own: the spec and plan loops critique with review-* and revise with update-*, code revises with respond-*, and the RIR arc's single implement round critiques with review-direct and revises with the writable apply-review — the phase brief names which. Where a phase provides -again variants, use them for round 2+, since they verify earlier feedback was integrated rather than relitigating; a single-round phase (RIR's implement) has none and converges within that round. Exit the loop when the remaining open points are minor (wording, small caveats, settled disagreements with recorded rationale) rather than structural. A disagreement that persists with substantive arguments on both sides is the human's call — flag it.
 
-Across turns, a snippet splits a different way: a behavioral frame (the discipline plus your collapsed specifics — durable) and a per-turn payload (the artifact, the feedback — ephemeral). Worker sessions are persistent, so a frame stays in force after one send: send a full template to a given worker once per phase, and steer every later turn with the delta. The -again variants are the canonical delta for review loops ("recheck what changed" inherits the frame); for other templates, a short follow-up that references the established frame ("same holistic lens — the scope is now X; what changes?") beats re-running it. Re-sending a full template makes the worker restart the exercise instead of continuing it, spends a minutes-long turn re-covering ground, and drifts the loop out of the library's round discipline.
+Across turns, a snippet splits a different way: a behavioral frame (the discipline plus your collapsed specifics — durable) and a per-turn payload (the artifact, the feedback — ephemeral). Worker sessions are persistent, so a frame stays in force after one send: send a full template to a given worker once per phase, and steer every later turn with the delta. The -again variants, in the phases that have them, are the canonical delta for review loops ("recheck what changed" inherits the frame); for other templates and single-round phases, a short follow-up that references the established frame ("same holistic lens — the scope is now X; what changes?") beats re-running it. Re-sending a full template makes the worker restart the exercise instead of continuing it, spends a minutes-long turn re-covering ground, and drifts the loop out of the library's round discipline.
 </protocol>
 
 <judgment_examples>
@@ -112,6 +112,26 @@ A plan whose first slice defines a typed contract every later slice produces or 
 </example>
 <example type="avoid" name="chunking a small plan">
 Driving a three-slice plan as "do slice 1, hold; slice 2 next turn" with no structural reason. A turn boundary forced by the budget or time cap is fine; a planned hold is not — it spends an orchestrator round-trip and a slow worker turn re-establishing the context the single pass would have kept.
+</example>`;
+
+const RESEARCH_EXAMPLES = `## Research phase examples
+
+This phase's call is turning two analyses into one direction the build runs on — apply the signal (the stronger spine plus the other's best insight), not a surface compromise.
+<example name="synthesize, don't average">
+The reviewer's analysis favors a thin adapter; the implementer's favors a deeper refactor. Synthesis is not splitting the difference — it is naming the stronger approach and grafting the other's best insight (recommend the refactor, but adopt the reviewer's staging so it ships incrementally). The advance_phase summary recommends one direction, says why the other lost, and carries enough that the implementer can build from it — there is no spec to fill the gaps later.
+</example>
+<example type="avoid" name="capitulating to the reviewer">
+Routing the reviewer's critique to the implementer as a verdict to comply with. compare-notes asks the implementer to weigh both views and keep its own where it has reasons — a second opinion informs the synthesis, it does not overwrite the first; don't let the later voice win by default.
+</example>`;
+
+const IMPLEMENT_EXAMPLES = `## Implement phase examples
+
+This phase's call is running the one review round to convergence — the RIR arc has a single writable round, not the spec/plan arc's reflect-then-round-2 loop. Apply that: the reviewer critiques once, the implementer fixes directly.
+<example name="one writable round, then ship">
+review-direct surfaces three issues; apply-review has the implementer fix the two valid ones in place and push back on the third with a reason, then report what changed. That is the whole loop — no read-only respond-review reflect step, no -again second round. Advance to the Ship gate with the handoff plus that review-and-fix summary.
+</example>
+<example type="avoid" name="importing the Full arc's review ceremony">
+Running review-direct, then a read-only respond-review, then a second -again round. That is the spec/plan arc's discipline; the RIR arc deliberately drops it, and a second round here just burns a slow worker turn. If a genuine product disagreement surfaces in the round, that is ask_human, not another review pass.
 </example>`;
 
 /**
@@ -347,6 +367,60 @@ If the push or PR creation fails for an environment reason (auth, remote, permis
 }
 
 /**
+ * RIR's research phase — the analogue of FRAME for the lighter arc. Both
+ * workers analyze independently, the implementer synthesizes, and the direction
+ * lands on the Direction gate. The difference from FRAME: the synthesized
+ * decisions ARE the design (no spec or plan follows), and this gate is the
+ * walk-away → headless handoff.
+ */
+export function researchPhaseEntryPrompt(state: RunState, roundCap: number): string {
+  return `${documentsBlock(state)}
+
+<task>
+Run the RESEARCH phase of the RIR arc: both workers build an independent understanding of the problem, then the implementer synthesizes, and the direction lands on the Direction gate. This is the lighter arc — the research decisions ARE the design; there is no spec or plan to draft, and approving the gate hands the run off to AFK implementation.
+${branchPolicyParagraph(state)}${attendancePosture(state, 'research')}
+The shape of the phase:
+1. Read the snippet library (list_snippets) — think-holistic, compare-notes, and use-latest-docs are this phase's templates.
+2. Onboard each worker in your first prompt to it: the framing says how (a project skill to invoke — include its /name in the worker's prompt and the CLI expands it — or files to read). Fold the onboarding, the working branch, and the problem statement from the framing into that first prompt.
+3. Send think-holistic to each worker independently — same problem, two unshared analyses. Issue both send_prompt calls in one message: turns to different workers run concurrently, and these two share no inputs, so there is nothing to wait for. When the work leans on an external library or SDK, fold use-latest-docs into the prompt so the analysis is grounded in current APIs rather than stale memory.
+4. Send the reviewer's analysis to the implementer with compare-notes: critique, synthesize, don't capitulate.
+5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The implementer builds directly from these decisions, so the summary must carry enough that the build can proceed without a spec. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
+
+Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
+
+${RESEARCH_EXAMPLES}
+</task>`;
+}
+
+/**
+ * RIR's implement phase — the AFK build, lighter than Full's impl: no plan to
+ * commit, no compaction ceremony, no midpoint, and one writable review round
+ * (review-direct → apply-review) instead of the reflect-then-round-2 loop. The
+ * Ship packet is the handoff plus the review-and-fix summary — no CEO summary.
+ */
+export function implementPhaseEntryPrompt(state: RunState, roundCap: number): string {
+  return `<task>
+${approvalClause(
+    state,
+    'research',
+    'The human approved the direction and walked away —',
+    'The Direction gate was pre-authorized at run start and auto-crossed; the human is away —',
+  )} this is the AFK IMPLEMENTATION phase of the RIR arc. You drive it end to end; ask_human still works but now queues the question and pauses the whole run until the human returns, so a flag is a real stop, not a quick check-in. Make each one self-contained, and let everything that can wait for the Ship gate wait.
+${attendancePosture(state, 'implement')}
+The arc — there is no spec or plan here; the research decisions are the source of truth, and the build runs directly from them with one review round:
+
+1. Send the implementer the implement-direct prompt: build the change directly from the research decisions, rereading the decisions and the code it touches first, working in coherent commits and keeping tests green as it goes. There is no plan file to commit — the decisions carry the design. Never descope or thin tests to fit a turn: a fresh prompt carries a fresh budget ceiling, so trimming scope for budget is a product decision that needs work-content reasons and an honest line in the Ship packet. Have the implementer keep ephemeral verification harnesses (throwaway tsconfigs, scratch scripts) under .duet/scratch/ or delete them before handoff, so they don't ride the worktree as untracked strays. (Gotcha: a worker can't watch its own budget — a turn that hits the per-turn cap or time limit is cut off mechanically, surfacing as a failed or short response, not a graceful "I'm low" report. Its committed work is on disk, so just resume that session with a short continue prompt for the rest; that's resumption, not a content failure, so don't re-send the original prompt.)
+2. When the build is in: handoff-direct from the implementer — it orients the reviewer fast (what changed, where to look hardest), tied to the research decisions rather than a spec/plan.
+3. One writable review round — this arc has exactly one, no second pass: review-direct to the reviewer (it reviews against the research decisions and the actual goal, not a document), then apply-review to the implementer. apply-review is writable: the implementer assesses each point, fixes the valid ones in place, pushes back on the rest with reasons, and reports what it changed. The backstop cap for this phase is ${roundCap} review round.
+4. Call advance_phase with a lean Ship packet: the implementation handoff, plus the review-and-fix summary (what the reviewer raised, what was fixed, anything disputed) and the test state. There is no CEO summary in this arc — the human reads what shipped and the review outcome. The human returns from away and decides to ship from this packet, so it must reflect the final state of the code.
+
+Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
+
+${IMPLEMENT_EXAMPLES}
+</task>`;
+}
+
+/**
  * A phase's entry brief — the *PhaseEntryPrompt body for `phase`, with the
  * phase table's round cap folded in. The one place the phase→entry-prompt
  * dispatch lives, shared by two callers: the headless driver's basePrompt
@@ -354,25 +428,25 @@ If the push or PR creation fails for an environment reason (auth, remote, permis
  * interactive get_task tool (which returns this idempotently and folds any
  * staged human input as a separate appended block). Pure — no side effects —
  * so each caller owns its own phaseStarted/consume bookkeeping.
+ *
+ * The dispatch is an exhaustive `satisfies Record<PhaseName, …>` — adding a
+ * phase to the registry without a builder here is a compile error, the real
+ * guard (the totality test is belt-and-braces).
  */
+const phaseBriefBuilders = {
+  frame: framePhaseEntryPrompt,
+  spec: specPhaseEntryPrompt,
+  plan: planPhaseEntryPrompt,
+  impl: implPhaseEntryPrompt,
+  docs: docsPhaseEntryPrompt,
+  pr: prPhaseEntryPrompt,
+  open: (_state: RunState, _cap: number) => openPhaseEntryPrompt(),
+  research: researchPhaseEntryPrompt,
+  implement: implementPhaseEntryPrompt,
+} satisfies Record<PhaseName, (state: RunState, cap: number) => string>;
+
 export function buildPhaseBrief(state: RunState, phase: PhaseName): string {
-  const cap = PHASE[phase].roundCap;
-  switch (phase) {
-    case 'frame':
-      return framePhaseEntryPrompt(state, cap);
-    case 'spec':
-      return specPhaseEntryPrompt(state, cap);
-    case 'plan':
-      return planPhaseEntryPrompt(state, cap);
-    case 'impl':
-      return implPhaseEntryPrompt(state, cap);
-    case 'docs':
-      return docsPhaseEntryPrompt(state, cap);
-    case 'pr':
-      return prPhaseEntryPrompt(state, cap);
-    case 'open':
-      return openPhaseEntryPrompt();
-  }
+  return phaseBriefBuilders[phase](state, PHASE[phase].roundCap);
 }
 
 /**
@@ -414,9 +488,21 @@ export function answerResumePrompt(answer: string): string {
 
 export function feedbackResumePrompt(phase: PhaseName, feedback: string): string {
   const artifact = PHASE[phase].artifactLabel;
+  // A gate rejection is the editor-in-chief returning the artifact — always to
+  // the implementer. Whether the *reviewer* re-engages is a phase property, not
+  // a default: only the multi-round review-loop phases (reviewLoop && cap > 1 —
+  // Full's spec/plan/impl) re-run a verifying round, and they have the -again
+  // variants and cap headroom for it. A single-writable-round phase (RIR's
+  // implement, cap 1) and the non-loop phases (frame/research/docs/pr) route the
+  // human's feedback straight into the revision — instructing a fresh reviewer
+  // round there is both wrong for the arc and, at cap 1, blocked by send_prompt.
+  const reRunsReviewLoop = PHASE[phase].reviewLoop && PHASE[phase].roundCap > 1;
+  const reviseClause = reRunsReviewLoop
+    ? 'run whatever review rounds the changes warrant (with the -again variants), and advance the phase again when converged'
+    : "have the implementer apply the changes directly and advance the phase again — this phase doesn't re-run a reviewer round on re-entry, so the human's feedback is the revision itself, not the trigger for a new review pass";
   return `At the gate, the human sent the ${artifact} back with this feedback: ${JSON.stringify(
     feedback,
-  )}. Re-enter the phase to address it — route the feedback to the implementer (the human is the editor-in-chief; their feedback outranks reviewer opinions), run whatever review rounds the changes warrant, and advance the phase again when converged. Your workers kept their full context from before the gate: steer them with deltas to the frames they already hold (what changed and why), not by re-running templates they've already received.`;
+  )}. Re-enter the phase to address it — route the feedback to the implementer (the human is the editor-in-chief; their feedback outranks reviewer opinions), ${reviseClause}. Your workers kept their full context from before the gate: steer them with deltas to the frames they already hold (what changed and why), not by re-running templates they've already received.`;
 }
 
 export function nudgeContinuePrompt(): string {

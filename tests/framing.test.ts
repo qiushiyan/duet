@@ -8,6 +8,7 @@ import {
   composeInEditor,
   parseFramingFile,
   parseGatesAt,
+  parseWorkflow,
   resolveHumanText,
   resolveRunInputs,
   resolveTemplateSeed,
@@ -32,6 +33,37 @@ describe('parseGatesAt', () => {
 
   plain('an empty list fails with how to fix it', () => {
     expect(() => parseGatesAt('  ,  ')).toThrow(/gates_at is empty/);
+  });
+
+  plain('validates against the chosen workflow — a Full-only phase is rejected for RIR', () => {
+    expect(() => parseGatesAt('plan', 'rir')).toThrow(/"plan" is not a gate-bearing phase of the "rir" workflow.*research, implement/);
+  });
+
+  plain('RIR force-appends nothing — pr is Full-only', () => {
+    // research is a RIR gate phase; no pr is appended (RIR's forceAttend is []).
+    expect(parseGatesAt('research', 'rir')).toEqual(['research']);
+  });
+
+  plain('a matched preset may resolve to an empty attended-gates list (RIR afk = attend nothing)', () => {
+    expect(parseGatesAt('afk', 'rir')).toEqual([]);
+  });
+
+  plain('a literal empty list is still rejected for RIR (only a matched preset may be empty)', () => {
+    expect(() => parseGatesAt('  ,  ', 'rir')).toThrow(/gates_at is empty/);
+  });
+});
+
+describe('parseWorkflow', () => {
+  plain.for([
+    { input: 'full', expected: 'full' },
+    { input: 'rir', expected: 'rir' },
+    { input: '  rir  ', expected: 'rir' },
+  ])('"$input" → $expected', ({ input, expected }) => {
+    expect(parseWorkflow(input)).toBe(expected);
+  });
+
+  plain('an unknown workflow fails with the valid set', () => {
+    expect(() => parseWorkflow('xyz')).toThrow(/"xyz" is not a duet workflow.*full, rir/);
   });
 });
 
@@ -74,6 +106,20 @@ describe('parseFramingFile (the machine/prose boundary)', () => {
     expect.soft(parseFramingFile('---\nretry_infra: 2\n---\nbody').meta.retryInfra).toBe(2);
     expect.soft(() => parseFramingFile('---\nretry_infra: -1\n---\nbody')).toThrow(/non-negative integer/);
     expect.soft(() => parseFramingFile('---\nretry_infra: lots\n---\nbody')).toThrow(/non-negative integer/);
+  });
+
+  plain('a workflow key parses, and gates_at validates against it', () => {
+    const { meta } = parseFramingFile('---\nworkflow: rir\ngates_at: afk\n---\nbody');
+    expect.soft(meta.workflow).toBe('rir');
+    expect.soft(meta.gatesAt).toEqual([]); // afk against rir → attend nothing
+  });
+
+  plain('an unknown workflow value fails with the valid set', () => {
+    expect(() => parseFramingFile('---\nworkflow: turbo\n---\nbody')).toThrow(/"turbo" is not a duet workflow/);
+  });
+
+  plain('a literal empty gates_at is rejected (key-present, not silently ignored)', () => {
+    expect(() => parseFramingFile('---\ngates_at:\n---\nbody')).toThrow(/gates_at is empty/);
   });
 });
 
@@ -266,6 +312,54 @@ describe('resolveRunInputs', () => {
     const flagWins = await resolveRunInputs(projectDir, { framing: 'brief.md', gatesAt: 'impl', spec: 'docs/draft.md' });
     expect.soft(flagWins.gatesAt).toEqual(['impl', 'pr']);
     expect.soft(flagWins.specPath).toBe('docs/draft.md');
+  });
+
+  test('workflow precedence: flag > frontmatter > full default', async ({ projectDir }) => {
+    writeFileSync(join(projectDir, 'full.md'), '---\nworkflow: full\n---\nbody');
+    writeFileSync(join(projectDir, 'rir.md'), '---\nworkflow: rir\n---\nbody');
+    writeFileSync(join(projectDir, 'plain.md'), 'no frontmatter body');
+
+    expect.soft((await resolveRunInputs(projectDir, { framing: 'plain.md' })).workflow).toBe('full'); // neither → full
+    expect.soft((await resolveRunInputs(projectDir, { framing: 'rir.md' })).workflow).toBe('rir'); // frontmatter
+    expect.soft((await resolveRunInputs(projectDir, { framing: 'full.md', workflow: 'rir' })).workflow).toBe('rir'); // flag wins
+  });
+
+  test('an unknown --workflow fails with the valid set', async ({ projectDir }) => {
+    writeFileSync(join(projectDir, 'b.md'), 'body');
+    await expect(resolveRunInputs(projectDir, { framing: 'b.md', workflow: 'turbo' })).rejects.toThrow(
+      /"turbo" is not a duet workflow/,
+    );
+  });
+
+  test('--workflow rir rejects --spec with an actionable message', async ({ projectDir }) => {
+    mkdirSync(join(projectDir, 'docs'));
+    writeFileSync(join(projectDir, 'docs', 'draft.md'), 'a draft spec');
+    await expect(resolveRunInputs(projectDir, { workflow: 'rir', spec: 'docs/draft.md' })).rejects.toThrow(
+      /--workflow rir takes no --spec/,
+    );
+  });
+
+  test('gates_at re-validates against a flag-overridden workflow (a Full list can’t ride into a RIR run)', async ({
+    projectDir,
+  }) => {
+    // frontmatter declares full + a Full gates_at; the flag overrides to rir,
+    // so the Full-shaped list must be rejected against rir.
+    writeFileSync(join(projectDir, 'b.md'), '---\nworkflow: full\ngates_at: frame, spec\n---\nbody');
+    await expect(resolveRunInputs(projectDir, { framing: 'b.md', workflow: 'rir' })).rejects.toThrow(
+      /not a gate-bearing phase of the "rir" workflow/,
+    );
+    // The afk preset, parsed against rir, resolves to attend-nothing.
+    writeFileSync(join(projectDir, 'r.md'), '---\nworkflow: rir\ngates_at: afk\n---\nbody');
+    expect((await resolveRunInputs(projectDir, { framing: 'r.md' })).gatesAt).toEqual([]);
+  });
+
+  test('an explicit empty --gates-at "" is rejected, matching frontmatter key-present semantics', async ({
+    projectDir,
+  }) => {
+    writeFileSync(join(projectDir, 'b.md'), 'body');
+    // A literal empty flag value reaches parseGatesAt and fails, rather than
+    // being silently dropped to attend-all the way a truthiness check would.
+    await expect(resolveRunInputs(projectDir, { framing: 'b.md', gatesAt: '' })).rejects.toThrow(/gates_at is empty/);
   });
 
   test('--retry-infra overrides frontmatter retry_infra (flag wins)', async ({ projectDir }) => {

@@ -15,8 +15,9 @@ import { createPhaseTools } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
 import { renderSnippetLibrary } from '../src/snippets.ts';
 import { FakeWorker, test } from './helpers/fixtures.ts';
-import { loadRunState, markAbandoned, runDirOf, saveMachineSnapshot, saveRunState, stageHumanInput } from '../src/run-store.ts';
+import { createRun, loadRunState, markAbandoned, runDirOf, saveMachineSnapshot, saveRunState, stageHumanInput } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
+import { DEFAULT_BINDINGS } from '../src/config.ts';
 
 const CLI_ENTRY = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 
@@ -118,8 +119,22 @@ describe('the stdio-MCP adapter over the kernel registry', () => {
 });
 
 describe('duet _mcp refuses a run/phase it cannot host', () => {
-  test('an unknown phase is refused with a prescribed-recovery error', ({ projectDir, run }) => {
-    expect(() => buildKernelTools(projectDir, run.runId, 'fraem')).toThrow(/not a duet phase.*Pass an explicit phase/s);
+  test('a phase not in the run’s workflow is refused with a prescribed-recovery error', ({ projectDir, run }) => {
+    // Validated against THIS run's workflow (full), naming its legal phases.
+    expect(() => buildKernelTools(projectDir, run.runId, 'fraem')).toThrow(
+      /not a phase of the "full" workflow.*Pass an explicit phase — one of frame, spec/s,
+    );
+  });
+
+  test('a Full-only phase is refused for a RIR run; RIR’s own phases build', ({ projectDir }) => {
+    const rir = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'x' });
+    // plan/docs are Full-only — a RIR run must not host their tools.
+    expect.soft(() => buildKernelTools(projectDir, rir.runId, 'plan')).toThrow(
+      /not a phase of the "rir" workflow.*one of research, implement/s,
+    );
+    // research/implement build fine.
+    expect.soft(buildKernelTools(projectDir, rir.runId, 'research').phase).toBe('research');
+    expect.soft(buildKernelTools(projectDir, rir.runId, 'implement').phase).toBe('implement');
   });
 
   test('an unknown run is refused with a prescribed-recovery error', ({ projectDir }) => {

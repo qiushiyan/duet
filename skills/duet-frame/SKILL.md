@@ -43,15 +43,23 @@ Asking interrupts the user, so each question must earn its place. The test is va
 
 Surface a conflict as an observation and a question, never a redesign — naming what exists is your job; deciding what to do about it is the user's, and how to do it is the implementer's.
 
+## Pick the workflow
+
+duet runs one of two arcs; settle which before gate posture, because the gates differ between them. Choose by how much ceremony the problem warrants, and record it as `workflow:` in the frontmatter (default `full`):
+
+- **`full`** — the thorough arc: research → spec → plan → implementation → docs → PR. Use it when the work is epic-shaped, the design needs settling on paper before code, or an opened PR is the deliverable.
+- **`rir`** (Research → Implement → Review) — the fast arc: research → implement → one review round, ending at a Ship gate. No spec, no plan, no docs or PR tail; the research decisions are the design. Use it for quick, well-understood iteration where the spec-and-plan ceremony would cost more than it returns.
+
+If the user hasn't said: suggest `rir` when the problem is small and clearly understood, otherwise default to `full`, and confirm. The choice decides which gates exist, so settle it before gate posture.
+
 ## Gate posture
 
-A framing can pre-authorize gates so the user can walk away. Before finalizing, ask how hands-off they want the run, unless they've already said:
+A framing can pre-authorize gates so the user can walk away. Before finalizing, ask how hands-off they want the run unless they've already said — the gates depend on the workflow you picked:
 
-- **attend every gate** (default) — they return at each gate;
-- **`skip-plan`** — walk away at spec approval, return at the Ship gate;
-- **`overnight`** — auto-cross everything after the spec.
+- **full** has five attendable gates (Direction, Commit-spec, Plan-approval, Ship, Docs-plan; the Open-PR gate is always attended). Postures: **attend every gate** (default); **`skip-plan`** — walk away at spec approval, return at the Ship gate; **`overnight`** — auto-cross everything after the spec.
+- **rir** has just two gates — **Direction** (the walk-away / headless-handoff point) and **Ship** (the return). Postures: **attend both** (default), or **`afk`** — pre-authorize both and run straight through to done.
 
-Record their choice as `gates_at:` in the framing frontmatter (the Open-PR gate is always attended regardless).
+Record their choice as `gates_at:` in the framing frontmatter. A preset must belong to the chosen workflow (`overnight` / `skip-plan` are full's; `afk` is rir's), so duet rejects a mismatch.
 
 ## The framing schema
 
@@ -59,7 +67,8 @@ Frontmatter is optional and machine-parsed; everything else is prose sent to the
 
 ```
 ---
-gates_at: overnight        # optional: attend every gate (omit), or skip-plan / overnight / a phase list
+workflow: rir              # optional: full (default) or rir
+gates_at: afk              # optional: attend every gate (omit); presets are workflow-specific (full: skip-plan / overnight; rir: afk) or a phase list
 ---
 
 # Problem
@@ -109,7 +118,7 @@ User: "requests sometimes time out on a slow network." AVOID writing "add a boun
 Before showing the framing, check it against the user's original words: is every piece of their intent and scope present, with nothing you invented and no solution smuggled in? Then show it verbatim, fold in their edits, and emit:
 
 ```
-duet new --interactive --framing .duet/<slug>.md
+duet new --interactive --workflow <full|rir> --framing .duet/<slug>.md
 ```
 
-Tell them to run it in their own terminal — `--interactive` hands the terminal to a live orchestrator session, so it can't be launched for them from a non-interactive session.
+Use the workflow you settled on (omit `--workflow` to take the default `full`). Tell them to run it in their own terminal — `--interactive` hands the terminal to a live orchestrator session, so it can't be launched for them from a non-interactive session.

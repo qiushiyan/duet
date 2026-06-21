@@ -3,8 +3,8 @@ import type { EventObject } from 'xstate';
 import { runPhase } from './driver.ts';
 import type { DriverInput } from './driver.ts';
 import type { PhaseEvent } from './phase-events.ts';
-import { PHASES } from '../phases.ts';
-import type { PhaseName } from '../phases.ts';
+import { WORKFLOWS } from '../phases.ts';
+import type { PhaseName, WorkflowName, WorkflowSpecInput } from '../phases.ts';
 
 /**
  * The harness statechart — Layer 1 of the three-layer architecture
@@ -20,11 +20,12 @@ import type { PhaseName } from '../phases.ts';
  * handler, so `advance_phase` parks but cannot cross — a property of the
  * vocabulary, not a prompt (src/harness/phase-events.ts).
  *
- * The states are built from the phase table (src/phases.ts) — the arc is a
- * linear chain, so each phase contributes `<name>Loop` + `<name>FlagWait` +
- * its gate state; a gate's approve targets the next phase's loop, its reject
- * re-enters the loop it gates. `open` has no gate and advances straight to
- * done. The full arc:
+ * The states are built from a workflow's phases (`machineFor(workflow)`, over
+ * the registry in src/phases.ts) — the arc is a linear chain, so each phase
+ * contributes `<name>Loop` + `<name>FlagWait` + its gate state; a gate's approve
+ * targets the next phase's loop, its reject re-enters the loop it gates. A
+ * gate-less phase (Full's `open`) advances straight to done. `machineFor('full')`
+ * is topology-identical to the original single-arc machine. The full arc:
  *
  * ```
  * route ─(no spec)─▶ frameLoop ──▶ directionGate ─approve─▶ specLoop ──▶ commitSpecGate
@@ -106,29 +107,43 @@ function gateState(targets: { approve: string; reject: string }): object {
   };
 }
 
-function buildStates(): Record<string, object> {
+/**
+ * Build the chart's states for one workflow's arc. The entry `route` is a
+ * transient choice — `specSkipsTo` (when the workflow admits a draft-spec
+ * entry) gives a `hasSpec`-guarded shortcut to that phase, else the route wires
+ * straight to the first phase's loop.
+ */
+function buildStates(spec: WorkflowSpecInput): Record<string, object> {
+  const phases = spec.phases;
   const states: Record<string, object> = {
     // Transient entry choice — never persisted (not quiescent-tagged), the
     // machine moves through it immediately.
     route: {
-      always: [{ guard: 'hasSpec', target: 'specLoop' }, { target: 'frameLoop' }],
+      always: spec.entry.specSkipsTo
+        ? [
+            { guard: 'hasSpec', target: `${spec.entry.specSkipsTo}Loop` },
+            { target: `${spec.entry.firstPhase}Loop` },
+          ]
+        : [{ target: `${spec.entry.firstPhase}Loop` }],
     },
   };
-  PHASES.forEach((spec, i) => {
-    const loop = `${spec.name}Loop`;
-    const flagWait = flagWaitStateOf(spec.name);
-    const next = PHASES[i + 1];
-    states[loop] = phaseState(spec.name, { advanced: spec.gate?.state ?? 'done', flagWait });
+  phases.forEach((p, i) => {
+    const name = p.name as PhaseName;
+    const loop = `${name}Loop`;
+    const flagWait = flagWaitStateOf(name);
+    const next = phases[i + 1];
+    states[loop] = phaseState(name, { advanced: p.gate?.state ?? 'done', flagWait });
     states[flagWait] = flagWaitState(loop);
-    if (spec.gate) {
-      states[spec.gate.state] = gateState({ approve: next ? `${next.name}Loop` : 'done', reject: loop });
+    if (p.gate) {
+      states[p.gate.state] = gateState({ approve: next ? `${next.name}Loop` : 'done', reject: loop });
     }
   });
   states['done'] = { type: 'final', tags: ['quiescent'] };
   return states;
 }
 
-export const duetMachine = setup({
+/** The shared machine setup — types, the hasSpec guard, the real phase driver. */
+const duetSetup = setup({
   types: {} as {
     context: MachineInput;
     input: MachineInput;
@@ -153,12 +168,29 @@ export const duetMachine = setup({
         .catch(() => sendBack({ type: 'phase.flag' }));
     }),
   },
-}).createMachine({
-  id: 'duet',
-  context: ({ input }) => input,
-  initial: 'route',
-  states: buildStates(),
 });
+
+/**
+ * The statechart for a given workflow's arc. `buildStates` returns a
+ * `Record<string, object>`, so every workflow's machine shares one type (state
+ * values are `string`, not a literal union) — the lifecycle hydrates any run
+ * through `machineFor(workflowOf(state))` with no per-workflow typing.
+ */
+export function machineFor(workflow: WorkflowName): ReturnType<typeof createDuetMachine> {
+  return createDuetMachine(WORKFLOWS[workflow]);
+}
+
+function createDuetMachine(spec: WorkflowSpecInput) {
+  return duetSetup.createMachine({
+    id: 'duet',
+    context: ({ input }) => input,
+    initial: 'route',
+    states: buildStates(spec),
+  });
+}
+
+/** The Full arc's machine — the canonical type for `LifecycleDeps.machine` etc. */
+export const duetMachine = machineFor('full');
 
 /**
  * The interactive variant — Stage 1's host, where the human's Claude Code
@@ -177,11 +209,16 @@ export const duetMachine = setup({
  * phase loop a legitimate RESTING state for an interactive run (for the real
  * driver the same snapshot would be mid-flight, hence never persisted).
  */
-export const interactiveMachine: typeof duetMachine = duetMachine.provide({
-  actors: {
-    phaseDriver: fromCallback<EventObject, DriverInput>(() => {
-      // Inert by design: the interactive session is the driver. No runPhase, no
-      // sendBack — the machine waits for the events crossInteractive applies.
-    }),
-  },
-});
+export function interactiveMachineFor(workflow: WorkflowName): typeof duetMachine {
+  return machineFor(workflow).provide({
+    actors: {
+      phaseDriver: fromCallback<EventObject, DriverInput>(() => {
+        // Inert by design: the interactive session is the driver. No runPhase, no
+        // sendBack — the machine waits for the events crossInteractive applies.
+      }),
+    },
+  });
+}
+
+/** The Full arc's interactive machine — kept as a named export. */
+export const interactiveMachine: typeof duetMachine = interactiveMachineFor('full');

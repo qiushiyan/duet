@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { createActor, waitFor } from 'xstate';
 import type { AnyMachineSnapshot, Snapshot } from 'xstate';
 import { notify as desktopNotify } from '../notify.ts';
-import { PHASE, PHASES, phaseOfGateState } from '../phases.ts';
-import type { GatePhase, PhaseName } from '../phases.ts';
+import { PHASE, WORKFLOWS, entryOf, phaseOfGateState, phasesOf } from '../phases.ts';
+import type { GatePhase, PhaseName, WorkflowName } from '../phases.ts';
 import type { WorkerRole } from '../providers/types.ts';
 import {
   gateAttended,
@@ -14,10 +14,11 @@ import {
   runDirOf,
   saveMachineSnapshot,
   saveRunState,
+  workflowOf,
 } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
 import { describeStop } from '../status.ts';
-import { duetMachine, flagWaitStateOf, interactiveMachine } from './machine.ts';
+import { duetMachine, flagWaitStateOf, interactiveMachineFor, machineFor } from './machine.ts';
 import { markerToEvent } from './phase-events.ts';
 
 /**
@@ -156,8 +157,11 @@ export function probeRunPosition(state: RunState): RunPosition {
 
 /** The position assuming no live driver — also the running phase's identity. */
 function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running' | 'abandoned' }> {
-  // The phase a snapshot-less machine starts in (spec-entry runs skip frame).
-  const entryPhase: PhaseName = state.specPath ? 'spec' : 'frame';
+  const wf = workflowOf(state);
+  const entry = entryOf(wf);
+  // The phase a snapshot-less machine starts in (a draft-spec run skips ahead
+  // to the workflow's specSkipsTo, when it has one).
+  const entryPhase = (state.specPath && entry.specSkipsTo ? entry.specSkipsTo : entry.firstPhase) as PhaseName;
   const snapshot = loadMachineSnapshot(state);
 
   // The interactive resting model (Stage 1): the human's session drives each
@@ -188,7 +192,7 @@ function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running
     // The driver died (or was killed) before the first quiescent stop.
     return { kind: 'crashed', phase: entryPhase };
   }
-  const restored = createActor(duetMachine, {
+  const restored = createActor(machineFor(wf), {
     input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
     snapshot,
   }).getSnapshot();
@@ -196,19 +200,20 @@ function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running
   const value = typeof restored.value === 'string' ? restored.value : JSON.stringify(restored.value);
 
   if (restored.hasTag('flag-wait')) {
-    const phase = PHASES.find((p) => flagWaitStateOf(p.name) === value)?.name ?? entryPhase;
+    const phase = phasesOf(wf).find((p) => flagWaitStateOf(p.name) === value)?.name ?? entryPhase;
     // A flag-wait stop always has its queued question; a missing one means
     // the answer was consumed and the driver died mid-phase.
     return state.pendingQuestion ? { kind: 'flag', phase } : { kind: 'crashed', phase, resumeEvent: 'answer' };
   }
 
-  const gatePhase = phaseOfGateState(value);
+  const gatePhase = phaseOfGateState(wf, value);
   if (gatePhase) {
     // The entry prompt of the NEXT phase was built — the gate was crossed,
     // then the driver died mid-phase. (A crash during gate-reject rework is
     // indistinguishable from waiting at the gate; the human re-decides there,
     // which recovers either way.)
-    const next = PHASES[PHASES.findIndex((p) => p.name === gatePhase) + 1];
+    const phases = phasesOf(wf);
+    const next = phases[phases.findIndex((p) => p.name === gatePhase) + 1];
     if (next && state.phaseStarted[next.name]) {
       return { kind: 'crashed', phase: next.name, resumeEvent: 'approve' };
     }
@@ -229,12 +234,13 @@ function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running
  * caller fall back to the entry phase.
  */
 function interactiveRestPhase(state: RunState, snapshot: Snapshot<unknown>): PhaseName | undefined {
-  const restored = createActor(duetMachine, {
+  const wf = workflowOf(state);
+  const restored = createActor(machineFor(wf), {
     input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
     snapshot,
   }).getSnapshot();
   const value = typeof restored.value === 'string' ? restored.value : JSON.stringify(restored.value);
-  return PHASES.find((p) => `${p.name}Loop` === value)?.name;
+  return phasesOf(wf).find((p) => `${p.name}Loop` === value)?.name;
 }
 
 /**
@@ -317,7 +323,7 @@ export async function driveToQuiescence(
   options?: { snapshot?: Snapshot<unknown>; event?: HumanEvent },
   deps: LifecycleDeps = {},
 ): Promise<{ snapshot: AnyMachineSnapshot; state: RunState }> {
-  const machine = deps.machine ?? duetMachine;
+  const machine = deps.machine ?? machineFor(workflowOf(state));
   const notify = deps.notify ?? desktopNotify;
 
   const actor = createActor(machine, {
@@ -347,7 +353,7 @@ export async function driveToQuiescence(
   if (
     restoredMarker &&
     typeof restoredValue === 'string' &&
-    (phaseOfGateState(restoredValue) === restoredMarker.phase ||
+    (phaseOfGateState(workflowOf(state), restoredValue) === restoredMarker.phase ||
       restoredValue === flagWaitStateOf(restoredMarker.phase))
   ) {
     delete state.terminalMarker;
@@ -382,7 +388,7 @@ export async function driveToQuiescence(
       saveRunState(fresh);
     }
 
-    const gatePhase = snapshot.status !== 'done' ? phaseOfGateState(fresh.machineState) : undefined;
+    const gatePhase = snapshot.status !== 'done' ? phaseOfGateState(workflowOf(fresh), fresh.machineState) : undefined;
     if (gatePhase && !gateAttended(fresh, gatePhase)) {
       // Dedupe on crash-recovery re-entry at the same gate.
       if (fresh.autoApprovals?.at(-1)?.gate !== fresh.machineState) {
@@ -419,8 +425,9 @@ export async function driveToQuiescence(
  * through driveToQuiescence, which sends its event before the marker replays.)
  */
 export function crossInteractive(state: RunState, humanEvent: HumanEvent): void {
+  const wf = workflowOf(state);
   const snapshot = loadMachineSnapshot(state);
-  const actor = createActor(interactiveMachine, {
+  const actor = createActor(interactiveMachineFor(wf), {
     input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
     ...(snapshot ? { snapshot } : {}),
   });
@@ -430,7 +437,7 @@ export function crossInteractive(state: RunState, humanEvent: HumanEvent): void 
   // resting phase, so a stale marker can't drive a foreign phase's decision.
   const restValue = actor.getSnapshot().value;
   const restPhase =
-    typeof restValue === 'string' ? PHASES.find((p) => `${p.name}Loop` === restValue)?.name : undefined;
+    typeof restValue === 'string' ? phasesOf(wf).find((p) => `${p.name}Loop` === restValue)?.name : undefined;
   const markerEvent = restPhase ? markerToEvent(state.terminalMarker, restPhase) : null;
   if (markerEvent) actor.send(markerEvent);
   actor.send(humanEvent);
@@ -448,15 +455,19 @@ export function crossInteractive(state: RunState, humanEvent: HumanEvent): void 
 /**
  * Whether an interactive crossing rests inline (the connected session drives the
  * next phase via get_task) or hands off to a detached headless `_drive`. The
- * plan-approval gate is THE handoff — impl onward is the permanent AFK
- * substrate — as is any explicit `--headless` fallback.
+ * workflow's `handoffGate` is THE handoff — approving it enters the permanent
+ * AFK substrate (Full: plan-approval → impl; RIR: Direction → implement) — as is
+ * any explicit `--headless` fallback.
  */
-export function interactiveContinuePlan(
+export function interactiveContinueAction(
+  workflow: WorkflowName,
   gatePhase: PhaseName,
   eventType: 'approve' | 'reject' | 'answer',
   headless: boolean,
 ): 'inline' | 'handoff' {
-  return (gatePhase === 'plan' && eventType === 'approve') || headless ? 'handoff' : 'inline';
+  return (gatePhase === WORKFLOWS[workflow].handoffGate && eventType === 'approve') || headless
+    ? 'handoff'
+    : 'inline';
 }
 
 /**

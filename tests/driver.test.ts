@@ -5,13 +5,19 @@ import { runPhase } from '../src/harness/driver.ts';
 import type { RunOrchestratorTurn } from '../src/harness/driver.ts';
 import { claudeApiError, claudeAssistantText, jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
 import {
+  ORCHESTRATOR_SYSTEM_PROMPT,
   buildPhaseBrief,
+  feedbackResumePrompt,
   framePhaseEntryPrompt,
+  implementPhaseEntryPrompt,
   planPhaseEntryPrompt,
+  researchPhaseEntryPrompt,
   specPhaseEntryPrompt,
 } from '../src/harness/orchestrator-prompts.ts';
 import { PHASE } from '../src/phases.ts';
-import { listPendingSteers, loadRunState, saveRunState, stageSteer } from '../src/run-store.ts';
+import type { PhaseName } from '../src/phases.ts';
+import { DEFAULT_BINDINGS } from '../src/config.ts';
+import { createRun, listPendingSteers, loadRunState, saveRunState, stageSteer } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**
@@ -74,6 +80,95 @@ describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)
     expect.soft(buildPhaseBrief(run, 'frame')).toBe(framePhaseEntryPrompt(run, PHASE.frame.roundCap));
     expect.soft(buildPhaseBrief(run, 'spec')).toBe(specPhaseEntryPrompt(run, PHASE.spec.roundCap));
     expect.soft(buildPhaseBrief(run, 'plan')).toBe(planPhaseEntryPrompt(run, PHASE.plan.roundCap));
+    expect.soft(buildPhaseBrief(run, 'research')).toBe(researchPhaseEntryPrompt(run, PHASE.research.roundCap));
+    expect.soft(buildPhaseBrief(run, 'implement')).toBe(implementPhaseEntryPrompt(run, PHASE.implement.roundCap));
+  });
+
+  // Belt-and-braces for the exhaustive `satisfies Record<PhaseName, …>` — the
+  // compiler is the real guard, but a phase with a stub/throwing builder would
+  // still surface here.
+  test.for(Object.keys(PHASE) as PhaseName[])('%s builds a non-empty brief', (phase, { run }) => {
+    expect(buildPhaseBrief(run, phase).trim().length).toBeGreaterThan(0);
+  });
+});
+
+describe('the RIR entry prompts', () => {
+  test('research names the Direction gate and the cross-framing pair, and drafts no spec', ({ projectDir }) => {
+    const rir = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'build a thing' });
+    const brief = researchPhaseEntryPrompt(rir, PHASE.research.roundCap);
+    expect.soft(brief).toContain('Direction gate');
+    expect.soft(brief).toContain('think-holistic');
+    expect.soft(brief).toContain('compare-notes');
+    expect.soft(brief).toContain('use-latest-docs');
+    // RIR has no spec phase — research must not instruct drafting one.
+    expect.soft(brief).not.toContain('write-spec');
+    expect.soft(brief.toLowerCase()).not.toContain('draft the spec');
+  });
+
+  test('implement sequences kickoff → handoff → review → apply, names the lean packet, and drops Full ceremony', ({
+    projectDir,
+  }) => {
+    const rir = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'build a thing' });
+    const brief = implementPhaseEntryPrompt(rir, PHASE.implement.roundCap);
+    const at = (s: string) => brief.indexOf(s);
+    // Spine order: implement-direct, then handoff-direct, then review-direct, then apply-review.
+    expect.soft(at('implement-direct')).toBeGreaterThanOrEqual(0);
+    expect.soft(at('implement-direct')).toBeLessThan(at('handoff-direct'));
+    expect.soft(at('handoff-direct')).toBeLessThan(at('review-direct')); // handoff orients the reviewer, before review
+    expect.soft(at('review-direct')).toBeLessThan(at('apply-review'));
+    // The lean Ship packet — handoff + review-and-fix, no CEO summary.
+    expect.soft(brief.toLowerCase()).toContain('ship');
+    // Full-arc ceremony the RIR implement phase deliberately drops — checked
+    // against the instructional spine, not the anti-example (which names the
+    // Full ceremony precisely to warn against importing it).
+    const spine = brief.slice(0, brief.indexOf('## Implement phase examples'));
+    expect.soft(spine.length).toBeGreaterThan(0);
+    for (const absent of ['midpoint', 'ceo-summary', 'respond-review', 'compact-for-impl', '/compact']) {
+      expect.soft(spine, `implement spine should not mention "${absent}"`).not.toContain(absent);
+    }
+  });
+});
+
+describe('feedbackResumePrompt routes a gate rejection per the phase', () => {
+  // A gate rejection always routes to the implementer; whether the reviewer
+  // re-engages is a phase property. Multi-round review-loop phases (Full's
+  // spec/plan/impl) re-run a verifying round; a single-writable-round phase
+  // (RIR's implement, cap 1) and the non-loop phases route the human's feedback
+  // straight into the revision — instructing a fresh round there would be wrong
+  // for the arc and, at cap 1, blocked by send_prompt's cap check.
+  test('a multi-round review-loop phase (full spec) re-runs review rounds', () => {
+    const prompt = feedbackResumePrompt('spec', 'tighten the error path');
+    expect.soft(prompt).toContain('route the feedback to the implementer');
+    expect.soft(prompt).toContain('review rounds');
+    expect.soft(prompt).toContain('-again');
+  });
+
+  test('a single-writable-round phase (rir implement) applies directly, no fresh review round', () => {
+    const prompt = feedbackResumePrompt('implement', 'tighten the error path');
+    expect.soft(prompt).toContain('route the feedback to the implementer');
+    expect.soft(prompt).toContain("doesn't re-run a reviewer round");
+    // The Full multi-round language must not leak into the single-round arc.
+    expect.soft(prompt).not.toContain('review rounds');
+    expect.soft(prompt).not.toContain('-again');
+  });
+
+  test('a non-loop gate phase (rir research) also routes directly, no review round', () => {
+    const prompt = feedbackResumePrompt('research', 'pick the other direction');
+    expect.soft(prompt).toContain("doesn't re-run a reviewer round");
+    expect.soft(prompt).not.toContain('review rounds');
+  });
+});
+
+describe('the orchestrator system prompt is arc-neutral', () => {
+  test('the review-loop language defers to the phase rather than universalizing -again/round-2', () => {
+    // It still names Full's mechanisms (discipline preserved) but scopes them to
+    // the phase, and names RIR's single writable round alongside.
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('the phase brief names which');
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('apply-review');
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('single-round phase');
+    // Full's discipline is not weakened — review-*/update-*/respond-*/-again still taught.
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('update-*');
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('-again');
   });
 });
 

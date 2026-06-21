@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 import { execa } from "execa";
 import { z } from "zod";
-import { GATE_PHASES } from "./phases.ts";
-import type { GatePhase } from "./phases.ts";
+import { WORKFLOWS, gatePhasesOf } from "./phases.ts";
+import type { GatePhase, WorkflowName } from "./phases.ts";
 import { ensureDuetDir } from "./run-store.ts";
 
 /**
@@ -51,13 +51,17 @@ export const TEMPLATES_DIR = join(".duet", "templates");
 export const FRAMING_TEMPLATE = `---
 # Machine-parsed options (fixed values the harness acts on; judgment-weighed
 # detail belongs in the prose below). Uncomment to use.
+# workflow: full          — full (default): frame → spec → plan → impl → docs →
+#                           PR. rir: research → implement → review → ship (no
+#                           spec/plan/docs/PR), for small, well-understood work.
 # gates_at: skip-plan     — phases whose gates you attend; the rest are
 #                           pre-authorized and auto-cross with packets
-#                           recorded. Presets: skip-plan (walk away at spec
-#                           approval, return at the Ship gate) and overnight
-#                           (= frame,spec). Or a list, e.g. "frame, spec".
-#                           pr is always attended. Default: every gate.
-# spec: path/to/draft.md  — enter at the spec review loop (skips FRAME).
+#                           recorded. Presets are workflow-specific: full →
+#                           skip-plan (walk away at spec approval, return at the
+#                           Ship gate) / overnight (= frame,spec); rir → afk
+#                           (attend none). Or a list, e.g. "frame, spec".
+#                           full's Open-PR gate is always attended. Default: every gate.
+# spec: path/to/draft.md  — enter at the spec review loop (skips FRAME). full-only.
 ---
 
 # Problem
@@ -262,29 +266,28 @@ export async function resolveHumanText(
   return composeInEditor(instructions);
 }
 
-/** Named presets — pure aliases for gate lists, never a separate vocabulary. */
-const GATES_AT_PRESETS: Record<string, GatePhase[]> = {
-  /** Attend nothing after the spec — the full sleep posture. */
-  overnight: ["frame", "spec"],
-  /**
-   * Walk away at spec approval, return at the Ship gate — the plan loop runs
-   * unattended. Born from run evidence (the human reports rubber-stamping
-   * plan gates); whether this earns default status is Q20's evidence stream.
-   */
-  "skip-plan": ["frame", "spec", "impl", "docs"],
-};
-
 export interface FramingFrontmatter {
   gatesAt?: GatePhase[];
   spec?: string;
   retryInfra?: number;
+  workflow?: WorkflowName;
 }
 
 const frontmatterSchema = z.object({
   gates_at: z.string().optional(),
   spec: z.string().optional(),
   retry_infra: z.string().optional(),
+  workflow: z.string().optional(),
 });
+
+/** Validate a workflow name against the registry; throws with the valid set. */
+export function parseWorkflow(value: string): WorkflowName {
+  const names = Object.keys(WORKFLOWS) as WorkflowName[];
+  if (!(names as string[]).includes(value.trim())) {
+    throw new Error(`workflow: "${value}" is not a duet workflow — choose one of {${names.join(", ")}}.`);
+  }
+  return value.trim() as WorkflowName;
+}
 
 /**
  * Parse a `retry_infra` value: a non-negative integer attempt budget (0 ⇒ off).
@@ -301,27 +304,37 @@ export function parseRetryInfra(value: string): number {
 
 /**
  * Parse a `--gates-at` value: a preset name or a comma/space-separated list
- * of gate-bearing phase names. `pr` is force-appended — the Open-PR gate is
- * never pre-authorizable. Throws with the full vocabulary on bad input.
+ * of gate-bearing phase names. The workflow's forceAttend gates are appended
+ * (Full: the Open-PR gate, never pre-authorizable; RIR: none). Throws with the
+ * full vocabulary on bad input.
  */
-export function parseGatesAt(value: string): GatePhase[] {
-  const preset = GATES_AT_PRESETS[value.trim()];
+export function parseGatesAt(value: string, workflow: WorkflowName = "full"): GatePhase[] {
+  const gatePhases = gatePhasesOf(workflow);
+  const presets: Record<string, readonly string[]> = WORKFLOWS[workflow].presets;
+  const presetNames = Object.keys(presets);
+  const preset = presets[value.trim()];
+  const matchedPreset = preset !== undefined;
   const names = preset ?? value.split(/[,\s]+/).filter(Boolean);
   const gates: GatePhase[] = [];
   for (const name of names) {
-    if (!(GATE_PHASES as readonly string[]).includes(name)) {
+    if (!(gatePhases as readonly string[]).includes(name)) {
+      const presetHint = presetNames.length > 0 ? ` or a preset: ${presetNames.join(", ")}` : "";
       throw new Error(
-        `gates_at: "${name}" is not a gate-bearing phase — use a list from {${GATE_PHASES.join(", ")}} or a preset: "overnight" (= frame,spec) or "skip-plan" (= frame,spec,impl,docs — walk away at spec approval, return at the Ship gate). The open phase has no gate; pr is always attended.`,
+        `gates_at: "${name}" is not a gate-bearing phase of the "${workflow}" workflow — use a list from {${gatePhases.join(", ")}}${presetHint}.`,
       );
     }
     if (!gates.includes(name as GatePhase)) gates.push(name as GatePhase);
   }
-  if (gates.length === 0) {
+  // A matched preset may legally resolve to an empty attended-gates list
+  // (RIR's afk = [] ⇒ attend nothing); only a user-typed empty list is invalid.
+  if (!matchedPreset && gates.length === 0) {
     throw new Error(
-      `gates_at is empty — list the phases whose gates you will attend (from {${GATE_PHASES.join(", ")}}), or omit it to attend every gate.`,
+      `gates_at is empty — list the phases whose gates you will attend (from {${gatePhases.join(", ")}}), or omit it to attend every gate.`,
     );
   }
-  if (!gates.includes("pr")) gates.push("pr");
+  for (const forced of WORKFLOWS[workflow].forceAttend) {
+    if (!gates.includes(forced as GatePhase)) gates.push(forced as GatePhase);
+  }
   return gates;
 }
 
@@ -364,13 +377,18 @@ export function parseFramingFile(content: string): { meta: FramingFrontmatter; b
     const unknown = Object.keys(raw).filter((k) => !(k in frontmatterSchema.shape));
     throw new Error(
       unknown.length > 0
-        ? `framing frontmatter has unknown key(s): ${unknown.join(", ")} — valid keys are gates_at, spec, and retry_infra. Everything the orchestrator should weigh with judgment belongs in the prose body, not here.`
+        ? `framing frontmatter has unknown key(s): ${unknown.join(", ")} — valid keys are gates_at, spec, retry_infra, and workflow. Everything the orchestrator should weigh with judgment belongs in the prose body, not here.`
         : `framing frontmatter is invalid: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
     );
   }
 
   const meta: FramingFrontmatter = {};
-  if (parsed.data.gates_at) meta.gatesAt = parseGatesAt(parsed.data.gates_at);
+  if (parsed.data.workflow !== undefined) meta.workflow = parseWorkflow(parsed.data.workflow);
+  // gates_at validates against the frontmatter's own workflow (default full);
+  // resolveRunInputs re-validates if the --workflow flag overrides it. Guard is
+  // key-present, not truthy, so a literal empty `gates_at:` reaches parseGatesAt
+  // and is rejected rather than silently ignored.
+  if (parsed.data.gates_at !== undefined) meta.gatesAt = parseGatesAt(parsed.data.gates_at, meta.workflow ?? "full");
   if (parsed.data.spec) meta.spec = parsed.data.spec;
   if (parsed.data.retry_infra !== undefined) meta.retryInfra = parseRetryInfra(parsed.data.retry_infra);
   return { meta, body };
@@ -383,6 +401,8 @@ export interface RunInputs {
   /** The verbatim framing file, for the run-dir archive. */
   framingRaw?: string;
   gatesAt?: GatePhase[];
+  /** The resolved workflow arc (flag > frontmatter > 'full'). */
+  workflow: WorkflowName;
   /** Validated spec path, relative to cwd. */
   specPath?: string;
   /** Opt-in infra auto-retry budget (0/absent ⇒ off). */
@@ -400,7 +420,7 @@ export interface RunInputs {
  */
 export async function resolveRunInputs(
   cwd: string,
-  opts: { spec?: string; framing?: string; gatesAt?: string; template?: string; retryInfra?: string },
+  opts: { spec?: string; framing?: string; gatesAt?: string; template?: string; retryInfra?: string; workflow?: string },
 ): Promise<RunInputs> {
   if (opts.template !== undefined && (opts.spec || opts.framing)) {
     throw new Error(
@@ -426,12 +446,28 @@ export async function resolveRunInputs(
     }
   }
 
-  const gatesAt = opts.gatesAt ? parseGatesAt(opts.gatesAt) : meta.gatesAt; // flag wins over frontmatter
+  const workflow = opts.workflow !== undefined ? parseWorkflow(opts.workflow) : (meta.workflow ?? "full"); // flag wins
   const retryInfra = opts.retryInfra !== undefined ? parseRetryInfra(opts.retryInfra) : meta.retryInfra; // flag wins
+
+  // gates_at resolves against the final workflow: the --gates-at flag parses
+  // directly against it; a frontmatter list parsed against a different
+  // frontmatter workflow is re-validated against the final one (the flag may
+  // have overridden it), so a Full-shaped gates_at can't ride into a RIR run.
+  let gatesAt: GatePhase[] | undefined;
+  // Key-present, not truthy — matching parseFramingFile: a literal `--gates-at ""`
+  // reaches parseGatesAt and is rejected as empty, rather than silently ignored
+  // (defaulting to attend-all) the way a truthiness check would drop it.
+  if (opts.gatesAt !== undefined) gatesAt = parseGatesAt(opts.gatesAt, workflow);
+  else if (meta.gatesAt) gatesAt = workflow === (meta.workflow ?? "full") ? meta.gatesAt : parseGatesAt(meta.gatesAt.join(","), workflow);
 
   let specPath: string | undefined;
   const specInput = opts.spec ?? meta.spec; // flag wins over frontmatter
   if (specInput) {
+    if (workflow === "rir") {
+      throw new Error(
+        "--workflow rir takes no --spec: the RIR arc has no spec phase — its research decisions are the design. Use the default (full) workflow for a spec-entry run.",
+      );
+    }
     specPath = relative(cwd, resolve(cwd, specInput));
     if (!existsSync(resolve(cwd, specPath))) {
       throw new Error(`spec file not found: ${specInput}`);
@@ -442,6 +478,7 @@ export async function resolveRunInputs(
     ...(framing !== undefined ? { framing } : {}),
     ...(framingRaw !== undefined ? { framingRaw } : {}),
     ...(gatesAt ? { gatesAt } : {}),
+    workflow,
     ...(specPath ? { specPath } : {}),
     ...(retryInfra !== undefined ? { retryInfra } : {}),
     ...(framingFile ? { framingFile } : {}),
