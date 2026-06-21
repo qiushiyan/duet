@@ -1079,7 +1079,7 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
   // injected holdsLease thunk (the harness already parameterizes it); the
   // failSafe arm uses the same wrapper, and the synchronous-setup-fault arm is a
   // run-store fault (not a seam) — both design-guaranteed, not fault-injected.
-  test('a throwing lease check stays total: the settle reads as inert (writes nothing), no unhandled rejection', async ({
+  test('a throwing lease check stays total: no disk write, no unhandled rejection, and the live record drains off running (never stranded)', async ({
     projectDir,
     run,
   }) => {
@@ -1090,7 +1090,7 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     process.on('unhandledRejection', onRejection);
     try {
       const reviewer = new DeferredWorker('codex');
-      const { call } = harness(run, {
+      const { call, dispatcher } = harness(run, {
         reviewer,
         async: true,
         holdsLease: () => {
@@ -1102,10 +1102,25 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
       await flush();
       await flush(); // let any stray rejection surface
 
-      // Unverifiable lease → inert settle (same as a lost lease): nothing committed.
+      // Unverifiable lease → no durable settle bookkeeping: a genuinely
+      // superseded server must leave its disk record `running` for the new owner
+      // to orphan-handle, so the settle writes nothing here either.
       const disk = loadRunState(projectDir, run.runId);
       expect.soft(disk.rounds.spec ?? 0).toBe(0);
       expect.soft(disk.workerSessions.reviewer).toBeUndefined();
+      expect.soft(disk.pendingTurns?.reviewer?.status).toBe('running'); // disk untouched
+      // …but on a LIVE server whose check merely faulted, the in-memory record is
+      // NOT stranded `running` — it flipped failed, so check_turns can drain it.
+      expect.soft(dispatcher!.statusOf('reviewer')).toBe('failed');
+
+      const collected = await call('check_turns');
+      expect.soft(allText(collected)).toContain('infrastructure layer'); // drained as a failed turn
+      expect.soft(dispatcher!.statusOf('reviewer')).toBeUndefined(); // collected → role re-opened
+      // The drain cleared the pending record but committed NO settle bookkeeping.
+      const after = loadRunState(projectDir, run.runId);
+      expect.soft(after.rounds.spec ?? 0).toBe(0);
+      expect.soft(after.workerSessions.reviewer).toBeUndefined();
+      expect.soft(after.pendingTurns?.reviewer).toBeUndefined();
     } finally {
       process.off('unhandledRejection', onRejection);
     }

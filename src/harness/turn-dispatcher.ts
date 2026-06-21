@@ -106,23 +106,32 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
     }
   };
 
+  // Flip the live in-memory record off `running` to `failed` — a Map write, so
+  // it cannot throw. This is the ONE step that unsticks a role no matter what
+  // faulted (disk, lease check), so statusOf/collectReady stop reporting
+  // `running` and check_turns can drain it. Disk writes are a SEPARATE,
+  // lease-gated concern (the caller decides); this touches only memory.
+  const markRecordFailed = (role: WorkerRole, err: Error): void => {
+    const rec = records.get(role);
+    if (rec) {
+      rec.status = 'failed';
+      rec.outcome = rec.outcome ?? err;
+    }
+  };
+
   // The lifecycle's terminal backstop: the launch, the synchronous dispatch
   // setup, or a finalize step threw — a disk fault, say. A role must NEVER be
   // left stranded `running`: check_turns and `duet status --wait` both read
   // `running` as "still going", so a stuck record hangs them forever under AFK.
-  // The in-memory flip cannot throw (a Map write), so it unsticks the role even
-  // if disk writes keep faulting; the disk flip + activeTurns clear are
-  // best-effort and lease-gated through the non-throwing leaseHeld (a superseded
-  // server still writes nothing). Logs rather than rethrowing, so nothing
-  // escapes as an unhandled rejection — failSafe is itself total.
+  // The in-memory flip cannot throw, so it unsticks the role even if disk writes
+  // keep faulting; the disk flip + activeTurns clear are best-effort and
+  // lease-gated through the non-throwing leaseHeld (a superseded server still
+  // writes nothing). Logs rather than rethrowing, so nothing escapes as an
+  // unhandled rejection — failSafe is itself total.
   const failSafe = (role: WorkerRole, err: unknown): void => {
     const detail = err instanceof Error ? err.message : String(err);
     log(`[check_turns] ${role} turn lifecycle failed (${detail}) — marking it failed so the role is not stranded`);
-    const rec = records.get(role);
-    if (rec) {
-      rec.status = 'failed';
-      rec.outcome = rec.outcome ?? (err instanceof Error ? err : new Error(detail));
-    }
+    markRecordFailed(role, err instanceof Error ? err : new Error(detail));
     if (!leaseHeld()) return; // superseded (or unverifiable) — write nothing; the in-memory flip already unstuck us
     try {
       settlePendingTurn(state, role, 'failed');
@@ -166,11 +175,19 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
         const stop = stopHeartbeat;
         // The settled half: durable bookkeeping (success) or infra-failure log
         // (failure), then flip the in-memory record. The SECOND lease boundary
-        // (see deps.holdsLease, via the non-throwing leaseHeld): a superseded
-        // server's settle is inert. The early return is a CLEAN exit — it never
-        // throws, so the failsafe does not fire for a lost lease.
+        // (see deps.holdsLease, via the non-throwing leaseHeld): when the lease
+        // is not held, the settle writes NOTHING to disk — a genuinely
+        // superseded server must leave its disk record `running` for the new
+        // owner to orphan-handle. But it still flips the IN-MEMORY record off
+        // `running`, so a LIVE server whose lease check merely faulted does not
+        // strand the role (statusOf/collectReady can then drain it via
+        // check_turns). Harmless on a truly superseded server: its tool calls are
+        // SUPERSEDED-refused, so this in-memory record is never read there.
         const finalize = (outcome: WorkerTurn | Error): void => {
-          if (!leaseHeld()) return;
+          if (!leaseHeld()) {
+            markRecordFailed(role, outcome instanceof Error ? outcome : new Error('lease not held before settle'));
+            return;
+          }
           settleTurn({ state: loadRunState(state.cwd, state.runId), phase, providers, log }, meta, outcome);
           settlePendingTurn(state, role, outcome instanceof Error ? 'failed' : 'ready');
           const rec = records.get(role);
