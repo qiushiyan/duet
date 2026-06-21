@@ -17,7 +17,7 @@ import {
   probeRunPosition,
   spawnDrive,
   validateInteractiveCrossing,
-  waitForRunStop,
+  waitForTurnOrStop,
 } from './harness/lifecycle.ts';
 import type { HumanEvent } from './harness/lifecycle.ts';
 import { duetMachine } from './harness/machine.ts';
@@ -773,7 +773,12 @@ program
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
     if (!state) fail('no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
     if (opts.wait) {
-      await waitForRunStop(cwd, state.runId);
+      // Turn-aware: wakes on a worker turn settling (interactive host) as well as
+      // a run stop. When a turn woke it, foreground WHY before the status block.
+      const woke = await waitForTurnOrStop(cwd, state.runId);
+      if (woke.kind === 'turn-ready') {
+        console.log(`worker turn ready (${woke.roles.join(', ')}) — have the orchestrator collect it with check_turns.`);
+      }
       showStatus(loadRunState(cwd, state.runId), opts.json ?? false, opts.brief ?? false);
       return;
     }
