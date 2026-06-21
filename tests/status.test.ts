@@ -223,6 +223,39 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     expect(model.pendingSteers).toEqual([{ stagedAt: 't1', stagedDuring: 'impl', text: 'drop the retry tests' }]);
   });
 
+  test('pendingTurns surfaces the interactive in-flight/settled turns, and the text names check_turns', ({ run }) => {
+    run.pendingTurns = {
+      implementer: { tag: 'write-spec', startedAt: 't1', status: 'running' },
+      reviewer: { tag: 'review-spec', startedAt: 't2', status: 'ready' },
+    };
+    const model = buildStatusModel(run, { kind: 'interactive', phase: 'spec' }, []);
+    expect.soft(model.pendingTurns).toEqual([
+      { role: 'implementer', tag: 'write-spec', status: 'running', startedAt: 't1' },
+      { role: 'reviewer', tag: 'review-spec', status: 'ready', startedAt: 't2' },
+    ]);
+    const out = renderStatus(model);
+    expect.soft(out).toContain('implementer (write-spec): running in the background');
+    expect.soft(out).toContain('reviewer (review-spec): ready — collect with check_turns');
+
+    // The lean --brief path surfaces them too (review finding 2): narrowed to
+    // role/tag/status (startedAt dropped), with a concise role/status render —
+    // so the remote/concierge supervisor sees the turn to collect.
+    const brief = buildBrief(model);
+    expect.soft(brief.pendingTurns).toEqual([
+      { role: 'implementer', tag: 'write-spec', status: 'running' },
+      { role: 'reviewer', tag: 'review-spec', status: 'ready' },
+    ]);
+    expect.soft(renderBrief(brief)).toContain('pending turns: implementer running · reviewer ready');
+  });
+
+  test('pendingTurns is absent when no turn is in flight, in both the full model and the brief (additive — omitted, not empty)', ({
+    run,
+  }) => {
+    const model = buildStatusModel(run, { kind: 'interactive', phase: 'spec' }, []);
+    expect.soft(model).not.toHaveProperty('pendingTurns');
+    expect.soft(buildBrief(model)).not.toHaveProperty('pendingTurns');
+  });
+
   test('rounds run against their caps; auto-approvals carry packet headlines', ({ run }) => {
     run.rounds = { spec: 2, frame: 1 };
     run.autoApprovals = [{ gate: 'directionGate', at: '2026-06-12T03:14:00.000Z' }];
