@@ -1,11 +1,53 @@
 import { describe, expect } from 'vitest';
 import { buildBrief, buildStatusModel, describeStop, renderBrief, renderStatus, steerRefusal } from '../src/status.ts';
+import { createRun } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import type { RunPosition } from '../src/harness/lifecycle.ts';
+import { DEFAULT_BINDINGS } from '../src/config.ts';
 import { test } from './helpers/fixtures.ts';
 
 const render = (run: RunState, position: RunPosition): string =>
   renderStatus(buildStatusModel(run, position, []));
+
+describe('workflow-neutral status surfaces (RIR)', () => {
+  const rirRun = (projectDir: string): RunState =>
+    createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'x' });
+
+  test('describeStop completion makes no PR claim for a non-PR arc', ({ projectDir }) => {
+    const rir = rirRun(projectDir);
+    expect.soft(describeStop(rir, true)).toBe('run complete');
+    // Full still claims the PR.
+    expect.soft(describeStop({ ...rir, workflow: 'full' }, true)).toBe('run complete — the PR is open');
+  });
+
+  test('the model carries the workflow and scopes rounds to the RIR arc', ({ projectDir }) => {
+    const model = buildStatusModel(rirRun(projectDir), { kind: 'gate', phase: 'implement' }, []);
+    expect.soft(model.workflow).toBe('rir');
+    expect.soft(model.workflowDisplayName).toBe('Research → Implement → Review');
+    // Only RIR phases appear in rounds — no Full phases leak in.
+    expect.soft(model.rounds.map((r) => r.phase)).toEqual(['implement']);
+  });
+
+  test('the done summary reads the run’s last phase (implement), and the render makes no PR/spec claim', ({
+    projectDir,
+  }) => {
+    const rir = rirRun(projectDir);
+    rir.phaseSummaries.implement = { summary: 'shipped the thing', artifacts: [] };
+    const model = buildStatusModel(rir, { kind: 'done' }, []);
+    expect.soft(model.stop.kind === 'done' && model.stop.summary).toBe('shipped the thing');
+    const text = renderStatus(model);
+    expect.soft(text).toContain('run complete');
+    expect.soft(text).not.toContain('the PR is open');
+    expect.soft(text).not.toContain('merge the PR');
+    expect.soft(text).not.toContain('spec:'); // RIR has no spec phase
+    expect.soft(text).toContain('workflow: Research → Implement → Review');
+  });
+
+  test('the brief headline is workflow-neutral on completion', ({ projectDir }) => {
+    const brief = buildBrief(buildStatusModel(rirRun(projectDir), { kind: 'done' }, []));
+    expect(brief.headline).toBe('run complete');
+  });
+});
 
 describe('describeStop (the notification body)', () => {
   test('names the gate that is ready', ({ run }) => {
@@ -135,6 +177,8 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
       'snippetProposals',
       'specPath',
       'stop',
+      'workflow',
+      'workflowDisplayName',
     ]);
   });
 

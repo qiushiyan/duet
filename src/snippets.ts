@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'smol-toml';
 import { z } from 'zod';
-import { ANYTIME_SNIPPETS, phasesOf } from './phases.ts';
+import { ANYTIME_SNIPPETS, phasesOf, workflowOfPhase } from './phases.ts';
 import type { PhaseName, WorkflowName } from './phases.ts';
 
 /**
@@ -58,7 +58,10 @@ export interface SnippetRenderOpts {
    * `all`) renders the flat full library.
    */
   phase?: PhaseName;
-  /** The run's workflow — scopes the coming-next / already-done arc slicing. Defaults to `full`. */
+  /**
+   * The run's workflow — scopes the coming-next / already-done arc slicing.
+   * Omitted, it is inferred from `phase` (phase names are globally unique).
+   */
   workflow?: WorkflowName;
   /** snippet key → roles already sent that template this phase; annotated in the view. */
   sentTo?: Record<string, string[]>;
@@ -78,7 +81,7 @@ export interface SnippetRenderOpts {
  */
 export function renderSnippetLibrary(opts: SnippetRenderOpts = {}): string {
   if (opts.all || !opts.phase) return renderFlat(opts.sentTo, opts.all);
-  return renderForPhase(opts.phase, opts.workflow ?? 'full', opts.sentTo);
+  return renderForPhase(opts.phase, opts.workflow ?? workflowOfPhase(opts.phase), opts.sentTo);
 }
 
 function snippetBlock(s: Snippet, sentTo?: Record<string, string[]>): string {

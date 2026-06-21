@@ -111,6 +111,16 @@ describe('the snippet library', () => {
     expect('review-direct'.startsWith('review')).toBe(true);
   });
 
+  test('a phase given without a workflow infers its owning arc (no Full default crash)', () => {
+    // Finding #3: renderSnippetLibrary({phase}) used to default to Full and
+    // dereference undefined for a RIR-only phase. It now infers the workflow
+    // from the globally-unique phase name.
+    const rendered = renderSnippetLibrary({ phase: 'research' });
+    expect.soft(rendered.startsWith('<snippet_library phase="research">')).toBe(true);
+    expect.soft(rendered).toContain('<snippet key="use-latest-docs">');
+    expect.soft(rendered).toContain('<phase name="implement">');
+  });
+
   test('the phase-grouped view renders a RIR phase against the RIR arc', () => {
     const rendered = renderSnippetLibrary({ phase: 'research', workflow: 'rir' });
     expect.soft(rendered.startsWith('<snippet_library phase="research">')).toBe(true);

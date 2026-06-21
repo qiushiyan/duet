@@ -1,7 +1,7 @@
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { execa } from 'execa';
 import { z } from 'zod';
-import { PHASE } from '../phases.ts';
+import { PHASE, isGatePhase } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
 import type { WorkerProvider, WorkerRole } from '../providers/types.ts';
 import { getSnippet, renderSnippetLibrary } from '../snippets.ts';
@@ -529,7 +529,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         summary: z
           .string()
           .describe(
-            'The gate packet the human decides from: what the reviewer flagged, what changed, rejections with rationale, open points. For the implementation phase, lead with the CEO summary verbatim, then review history, deviations from the plan, and test state.',
+            'The gate packet the human decides from: what the reviewer flagged, what changed, rejections with rationale, and any open points. Follow the packet shape your phase’s brief specifies — it names what that phase’s gate packet should lead with (e.g. an implementation/ship packet’s review history, deviations, and test state).',
           ),
         artifacts: z
           .array(z.string())
@@ -578,7 +578,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         // say what actually happens next — a live gate decision, an
         // auto-crossed pre-authorized gate, or (open phase) run completion.
         const next =
-          phase === 'open'
+          !isGatePhase(phase)
             ? 'the run is complete. End your turn with a one-line status.'
             : gateAttended(state, phase)
               ? 'the run moves to the human gate. End your turn with a one-line status; the gate decision arrives as your next message.'

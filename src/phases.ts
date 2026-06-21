@@ -405,6 +405,19 @@ export function entryOf(workflow: WorkflowName): { firstPhase: PhaseName; specSk
   return WORKFLOWS[workflow].entry;
 }
 
+/**
+ * The workflow a phase belongs to — unambiguous because phase names are
+ * globally unique (validateRegistry enforces it). Lets a phase-scoped surface
+ * resolve its arc without being handed the workflow explicitly.
+ */
+export function workflowOfPhase(phase: PhaseName): WorkflowName {
+  const owner = (Object.keys(WORKFLOWS) as WorkflowName[]).find((w) =>
+    WORKFLOWS[w].phases.some((p) => p.name === phase),
+  );
+  if (!owner) throw new Error(`no workflow owns phase "${phase}" — the registry and PhaseName disagree`);
+  return owner;
+}
+
 /** Every phase across all workflows, widened to the consumer-facing view. */
 const ALL_PHASES: readonly PhaseSpec[] = Object.values(WORKFLOWS).flatMap(
   (w): readonly PhaseSpec[] => w.phases,
@@ -414,13 +427,6 @@ const ALL_PHASES: readonly PhaseSpec[] = Object.values(WORKFLOWS).flatMap(
 export const PHASE: Record<PhaseName, PhaseSpec> = Object.fromEntries(
   ALL_PHASES.map((p) => [p.name, p]),
 ) as Record<PhaseName, PhaseSpec>;
-
-/**
- * Transitional alias = Full's phases, kept so consumers not yet migrated to
- * `phasesOf(workflow)` still compile. Removed in Slice 5 once the last consumer
- * is workflow-scoped.
- */
-export const PHASES: readonly PhaseSpec[] = WORKFLOWS.full.phases;
 
 /** A workflow's gate-bearing phase names, in arc order — its `gates_at` vocabulary. */
 export function gatePhasesOf(workflow: WorkflowName): readonly GatePhase[] {
@@ -435,6 +441,11 @@ export function gatePhasesOf(workflow: WorkflowName): readonly GatePhase[] {
  */
 export function phaseOfGateState(workflow: WorkflowName, stateName: string): GatePhase | undefined {
   return WORKFLOWS[workflow].phases.find((p) => p.gate?.state === stateName)?.name as GatePhase | undefined;
+}
+
+/** Whether a phase ends at a human gate (vs running straight to done). */
+export function isGatePhase(phase: PhaseName): phase is GatePhase {
+  return PHASE[phase].gate !== null;
 }
 
 /** A gate phase's gate spec — non-null by construction (every GatePhase row has one). */
