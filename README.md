@@ -2,7 +2,7 @@
 
 **A semi-AFK orchestrator for a two-agent AI coding workflow — one agent implements, another reviews, and an LLM routes between them while you stay the editor-in-chief.**
 
-If you already run two coding agents in parallel — one writing specs/plans/code, one critiquing them — and you spend your day copy-pasting between them and nudging each one along, that's the workflow duet automates. A read-only **orchestrator** drives the hand-offs (picks the right prompt, routes each agent's output to the other, decides when a review loop has converged) and pauses at **human gates** that no agent can cross. You approve the direction, walk away at plan approval, and come back to a finished pull request — or a well-formed question waiting for you.
+If you already run two coding agents in parallel — one writing specs/plans/code, one critiquing them — and you spend your day copy-pasting between them and nudging each one along, that's the workflow duet automates. A read-only **orchestrator** drives the hand-offs (picks the right prompt, routes each agent's output to the other, decides when a review loop has converged) and pauses at **human gates** that no agent can cross. You approve the direction, walk away at the handoff gate (plan approval on the full arc, the Direction gate on the lighter rir arc), and come back to a finished pull request or a verified ship — or a well-formed question waiting for you.
 
 It's a personal tool, built for one developer's workflow across their own projects. It's published in case the shape is useful to you, not as a polished product.
 
@@ -16,12 +16,16 @@ Three roles, each bound to a provider (`claude` or `codex`):
 | **Implementer** | Writes specs, plans, code, the PR | `claude` (Opus) |
 | **Reviewer** | Critiques each artifact, read-only | `codex` |
 
-A run moves through a fixed arc. Each `→` is a phase the agents work through; each **GATE** is a stop where the run waits for you:
+A run moves through an arc you pick at the start (`--workflow`). Each `→` is a phase the agents work through; each **GATE** is a stop where the run waits for you:
 
 ```
-frame → DIRECTION → spec → COMMIT-SPEC → plan → PLAN (walk away)
-  → implementation (AFK, often hours) → SHIP → docs → DOCS-PLAN → pr → OPEN-PR → done
+full  frame → DIRECTION → spec → COMMIT-SPEC → plan → PLAN (walk away)
+        → implementation (AFK, often hours) → SHIP → docs → DOCS-PLAN → pr → OPEN-PR → done
+
+rir   research → DIRECTION (walk away) → implementation (AFK) → SHIP → done
 ```
+
+**full** is the thorough arc — settle the design on paper, end in a pull request. **rir** (Research → Implement → Review) is lighter: the research decisions are the design, so it skips the spec, plan, docs, and PR and ends at a verified Ship. Use full when the work is epic-shaped; rir for small, well-understood changes.
 
 The gates are enforced in code (an XState statechart) — they aren't a prompt the orchestrator could be talked out of. Between stops a detached background process drives the phase; nothing runs while a run is parked, and you get a desktop notification at every stop.
 
@@ -38,7 +42,7 @@ Four ideas shape every design choice:
 
 ## Status
 
-Early and experimental. The full arc is implemented; the framing-through-ship path has been driven end-to-end on real features. The later phases (docs, PR) and overnight gate pre-authorization are built but not yet battle-tested. An opt-in interactive-Claude transport for the implementer (which bills the flat subscription quota) is built as a spike, pending one live-auth check — [`docs/interactive-transport.md`](docs/interactive-transport.md). Running Claude Code itself as the orchestrator — your own interactive session driving a run over framing, spec, and planning while you steer in chat, before it hands off to the headless driver for implementation — is now built (`duet orchestrate` / `duet new --interactive`) and verified by the test suite, but no real Claude Code session has driven a live run yet (that end-to-end check is deferred to its auth gate) and the environment smoke tests are still pending ([`docs/future-directions.md`](docs/future-directions.md) §A). Supervising a run from outside it — a `duet doctor` health view, machine-readable triage signals, a lean `status --brief`, a hardened headless write path, and opt-in bounded retry of transient infra failures — is implemented and test-verified, its first live end-to-end run and the environment smoke tests still pending (one residual gap: the codex error-envelope classification is checked synthetically only, with no real codex error transcript yet). Expect rough edges. See [`docs/open-questions.md`](docs/open-questions.md) for what's verified versus still open.
+Early and experimental. The full arc is implemented; the framing-through-ship path has been driven end-to-end on real features. The later phases (docs, PR) and overnight gate pre-authorization are built but not yet battle-tested. A second, lighter arc — **rir** (research → implement → ship, no spec/plan/docs/PR), selectable with `--workflow rir` — is implemented and unit/integration-verified (494 tests), but has not had a live end-to-end run (deferred to the same auth gate as the interactive orchestrator) and the environment smoke tests are still pending. An opt-in interactive-Claude transport for the implementer (which bills the flat subscription quota) is built as a spike, pending one live-auth check — [`docs/interactive-transport.md`](docs/interactive-transport.md). Running Claude Code itself as the orchestrator — your own interactive session driving a run over framing, spec, and planning while you steer in chat, before it hands off to the headless driver for implementation — is now built (`duet orchestrate` / `duet new --interactive`) and verified by the test suite, but no real Claude Code session has driven a live run yet (that end-to-end check is deferred to its auth gate) and the environment smoke tests are still pending ([`docs/future-directions.md`](docs/future-directions.md) §A). Supervising a run from outside it — a `duet doctor` health view, machine-readable triage signals, a lean `status --brief`, a hardened headless write path, and opt-in bounded retry of transient infra failures — is implemented and test-verified, its first live end-to-end run and the environment smoke tests still pending (one residual gap: the codex error-envelope classification is checked synthetically only, with no real codex error transcript yet). Expect rough edges. See [`docs/open-questions.md`](docs/open-questions.md) for what's verified versus still open.
 
 ## Requirements
 
@@ -85,8 +89,9 @@ Start a run from inside your project repo:
 ```bash
 duet new                       # opens your editor on a framing draft (the issue, context, scope)
 duet new --template bug        # seed that draft from .duet/templates/bug.md, then fill in the problem
-duet new --spec spec.md        # start from a spec you already wrote
+duet new --spec spec.md        # start from a spec you already wrote (full arc)
 duet new --gates-at overnight  # pre-authorize later gates: approve the spec, then walk away
+duet new --workflow rir        # the lighter arc: research → implement → ship (--gates-at afk to run unattended)
 ```
 
 The framing you write is duet's only briefing — the issue text, product context, which skills to invoke, where artifacts go. Save it and the run kicks off in the background.
@@ -128,7 +133,7 @@ duet view                      # tmux panes, one per voice (or pass --tmux to ne
 duet runs                      # list runs in this project
 ```
 
-A typical session: `duet new`, approve the direction, refine the spec and plan over a round or two of review, approve the plan — then walk away. Implementation runs AFK for an hour or more. You come back to a Ship-gate packet (a CEO-style summary on top), verify it in your environment, approve through docs and the PR description, and duet opens the pull request.
+A typical full-arc session: `duet new`, approve the direction, refine the spec and plan over a round or two of review, approve the plan — then walk away. Implementation runs AFK for an hour or more. You come back to a Ship-gate packet (a CEO-style summary on top), verify it in your environment, approve through docs and the PR description, and duet opens the pull request. A rir session is the same shape, shorter: approve the direction, walk away, return at Ship — no plan loop, no docs or PR tail.
 
 Run state lives under `.duet/runs/<id>/` (self-ignored from git). `state.json` is a convenience hint; the three agent transcripts are the source of truth.
 

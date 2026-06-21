@@ -36,7 +36,7 @@ The foundation (the host-neutral kernel) was proven first: the event-driven `pha
 ## Considered, not pursued
 
 - **Local browser dashboard.** The original candidate; the interview removed its rationale — packet text reads fine (no rendering need), remote must not be hand-built (no act-from-anywhere), and the comfortable-input need is met by the concierge's chat box. What remains (buttons in a local browser) doesn't beat tmux + CLI. Recorded so it isn't re-proposed on the same grounds.
-- **Arc presets** (lighter arcs for small fixes). Structurally cheap after the phase-table refactor, but not wanted — duet stays epic-shaped; small tasks stay manual.
+- **Arc presets** (lighter arcs for small fixes) — *shipped 2026-06-21 as the RIR arc*, reversing the earlier "duet stays epic-shaped" stance. A run now picks its arc; the lighter `research → implement` arc lives beside the full one (`docs/automation-design.md` §"Phases and gates").
 - **Environment-proxy ergonomics** (pre-composed command requests at flags). Generic `ask_human` suffices at current run volume.
 - **Third specialist worker role.** Cuts against two-role legibility; specialization belongs in snippets, not roles.
 - **Multi-PR pivots inside one run.** Observed in the corpus, but "finish the run, start a new one" is cheaper than machine support.

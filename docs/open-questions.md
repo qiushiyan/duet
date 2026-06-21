@@ -121,4 +121,4 @@ Numbering note: Q1–Q10 predate the 2026-06-11 pivot to an intelligent orchestr
 
 ## What remains
 
-Q13 (triage precision), Q16 (worker schema), Q19 (run-level budget), and Q20 (pre-authorization) all await evidence from more runs — review each run's `notes.md` against them. Q17 (codex-as-orchestrator) waits for someone to actually want the configuration. New questions land here when runs produce them.
+Q13 (triage precision), Q16 (worker schema), Q19 (run-level budget), and Q20 (pre-authorization) all await evidence from more runs — review each run's `notes.md` against them. Q17 (codex-as-orchestrator) waits for someone to actually want the configuration. The **rir arc** is implemented and unit/integration-verified (494 tests) but has not had a live end-to-end run (deferred to the same auth gate as the interactive orchestrator) or the human's environment smoke tests; whether the lighter arc earns its place — the single writable review round and the `afk` posture producing shippable results — awaits that first real run. New questions land here when runs produce them.

@@ -151,7 +151,9 @@ The orchestrator never supplies a technical opinion of its own — answering wou
 
 ## Phases and gates
 
-Three top-level phases (the old nine-phase machine survives as nested steps inside them):
+duet is **workflow-aware**: a run picks one arc at start (`--workflow`, default `full`; a `workflow:` framing key by another door), and every arc-shaped fact lives in one registry — the single source of truth (`docs/engineering.md` §"the workflow registry"). Two arcs exist by design.
+
+The **full** arc — the thorough path, three top-level phases (the old nine-phase machine survives as nested steps inside them):
 
 ```
 PLANNING (attended)
@@ -186,6 +188,20 @@ FINAL REVIEW (attended)
 
 Plus **in-phase exception gates** whenever the orchestrator calls `ask_human`. The machinery is identical in every phase — the question is persisted, the process exits at quiescence, `duet continue --answer` resumes. What differs is the human: attended means they're at the terminal and the pause lasts minutes; AFK means the question waits hours until they return (with a desktop notification fired either way).
 
+The **rir** arc (Research → Implement → Review) — the lighter path, for small, well-understood work where the spec-and-plan ceremony costs more than it returns:
+
+```
+research (attended)
+  onboard → think-holistic (both, parallel) → compare-notes synthesis
+    ── GATE: Direction ──                  ← the research decisions ARE the design; human walks away / hands off here
+implement (AFK)
+  build directly from the decisions → implementation-handoff
+  → ONE writable review round (review-direct → apply-review, fixes applied in place)
+    ── GATE: Ship ──                       ← human returns; run complete, no PR opened
+```
+
+It drops spec, plan, docs, and PR: the synthesized research decisions stand in for the spec, so the implementer builds from them directly. Its review loop is a single **writable** round (the reviewer critiques once, the implementer fixes in place) rather than the full arc's reflect-then-`-again` loop, and its Ship gate ends the run — there is no Open-PR gate to be non-negotiable about. Pre-authorizing both its gates is the `afk` preset (below). The two arcs share their machinery: the same gate/flag/steer idiom, the same statechart skeleton built per-arc, the same registry-derived per-phase facts.
+
 Inside a phase the orchestrator drives; the human's channels in are the gates, the `ask_human` flags, and — into a live phase — the steer channel below.
 
 ### The steer channel
@@ -196,19 +212,19 @@ Two boundaries keep the channel honest. Results that end the orchestrator's turn
 
 Storage is file-per-steer under `.duet/runs/<id>/steers/`, consumed by rename into `delivered/` — steers arrive while a live driver holds and continuously saves its in-memory state, so they can never live in `state.json`. The crash trade is deliberate: deliver-then-consume, so a crash redelivers a steer rather than losing one (a repeated instruction is benign where a lost one is not). Staging and delivery both land in the voice logs, and `duet status` lists what is still pending — the channel is auditable end to end.
 
-In the harness, the three top-level phases decompose into machine sub-phases, each on the same loop/flag-wait/gate idiom: PLANNING is `frame` (onboard → think-holistic in both workers → compare-notes synthesis → Direction gate; runs only on framing-only entry) then `spec` (draft on framing-only entry, then review rounds → Commit-spec gate) then `plan` (→ Plan-approval gate); IMPLEMENTATION is `impl` (→ Ship gate); FINAL REVIEW is `docs` (drive the docs update to its proposal → Docs-plan gate) then `pr` (execute the approved docs plan, draft `pr-description` → Open-PR gate) then `open` (push + `gh pr create` → done, no further gate). The review-loop sub-phases (`spec`, `plan`, `impl`) must run at least one review round before `advance_phase`; the others (`frame`, `docs`, `pr`, `open`) may advance without one — their substance is synthesis or mechanics, and the reviewer is available but optional. Backstop caps: spec 6, plan 4, impl 6, frame/docs/pr 2, open 1.
+In the harness, the three top-level phases decompose into machine sub-phases, each on the same loop/flag-wait/gate idiom: PLANNING is `frame` (onboard → think-holistic in both workers → compare-notes synthesis → Direction gate; runs only on framing-only entry) then `spec` (draft on framing-only entry, then review rounds → Commit-spec gate) then `plan` (→ Plan-approval gate); IMPLEMENTATION is `impl` (→ Ship gate); FINAL REVIEW is `docs` (drive the docs update to its proposal → Docs-plan gate) then `pr` (execute the approved docs plan, draft `pr-description` → Open-PR gate) then `open` (push + `gh pr create` → done, no further gate). The rir arc decomposes the same way into two sub-phases: `research` (→ Direction gate, the walk-away/handoff) then `implement` (→ Ship gate). The review-loop sub-phases (`spec`, `plan`, `impl`, and rir's `implement`) must run at least one review round before `advance_phase`; the others (`frame`, `research`, `docs`, `pr`, `open`) may advance without one — their substance is synthesis or mechanics, and the reviewer is available but optional. Backstop caps: spec 6, plan 4, impl 6, frame/research/docs/pr 2, open 1; rir's `implement` is 1 — its single writable round is the loop, not a runaway backstop.
 
 ### Gate pre-authorization (`gates_at`)
 
 Added 2026-06-12, after the first real run. A gate bundles three functions — the human's **authority**, **steering** (early-correction leverage), and a **quiescent stop** — and pre-authorization gives up only the steering: the authority is granted in advance, the stop still happens and is recorded.
 
-By default every gate is attended. A run may pre-authorize a subset at `duet new`: `--gates-at <list|preset>` or a `gates_at:` key in the framing file's frontmatter (the flag wins) names the phases whose gates the human will attend — the rest auto-cross. Two presets, named for the human's posture: `overnight` (= `frame,spec` — attend nothing after the spec) and `skip-plan` (= `frame,spec,impl,docs` — walk away at spec approval, return at the Ship gate; born from the second run's observation that plan-gate approvals were rubber stamps, with whether it earns *default* status tracked as Q20 evidence). At an auto-crossed gate the harness persists the gate packet, fires the notification, sends `human.approve` on the standing authority, and records the crossing in `state.json` (`autoApprovals`); `duet status` lists the crossings in a "while you were away" section for the morning review. The Open-PR gate is never pre-authorizable (`pr` is force-appended). The statechart is untouched — gates still transition only on `human.*` events; pre-authorization changes *when* the approval is uttered, never *who* may utter it.
+By default every gate is attended. A run may pre-authorize a subset at `duet new`: `--gates-at <list|preset>` or a `gates_at:` key in the framing file's frontmatter (the flag wins) names the phases whose gates the human will attend — the rest auto-cross. The gate set, the presets, and the force-attended gates are all **workflow-scoped** (they live in the registry per arc). The full arc's presets, named for the human's posture: `overnight` (= `frame,spec` — attend nothing after the spec) and `skip-plan` (= `frame,spec,impl,docs` — walk away at spec approval, return at the Ship gate; born from the second run's observation that plan-gate approvals were rubber stamps, with whether it earns *default* status tracked as Q20 evidence). The rir arc has one preset, `afk` (= attend nothing — both its gates auto-cross, straight to done). At an auto-crossed gate the harness persists the gate packet, fires the notification, sends `human.approve` on the standing authority, and records the crossing in `state.json` (`autoApprovals`); `duet status` lists the crossings in a "while you were away" section for the morning review. Force-attended gates can never be pre-authorized — the full arc force-attends Open-PR (`pr`), the rir arc force-attends nothing (it has no outward-facing action). The statechart is untouched — gates still transition only on `human.*` events; pre-authorization changes *when* the approval is uttered, never *who* may utter it.
 
 The orchestrator never interprets gate posture from prose. Frontmatter is parsed deterministically by the CLI, stripped from the framing body, and rendered into the phase entry prompts and the `advance_phase` result as harness-authored instructions — including the escape hatch: product calls that would have waited for a live gate are encoded as recommendations and carried forward, *unless* proceeding unanswered would make most downstream work throwaway, in which case `ask_human` (which still pauses the run; pre-authorized ≠ uninterruptible).
 
 The rework path deliberately compresses: a deep error discovered at the next attended gate is handled by reject-with-feedback there (the orchestrator routes the rework) or by abandoning the run — no re-open-an-earlier-phase machinery. Whether overnight runs' encoded recommendations hold up is Q20.
 
-**The frontmatter boundary rule** (also at `src/framing.ts`): a key earns frontmatter only when its practical expression is a **fixed value** and the **harness consumes it without judgment** — if either side is soft, it stays prose. Current keys: `gates_at` and `spec` (a draft-spec path; `--spec` by another door). Pre-approved if Q19 lands a run-level budget model: `budget_usd`. Spec/plan locations, verification posture, skills: prose, always — the planlab run's framing gave a spec dir that was wrong relative to the worktree root and judgment resolved it; a deterministic consumer would have enforced the error.
+**The frontmatter boundary rule** (also at `src/framing.ts`): a key earns frontmatter only when its practical expression is a **fixed value** and the **harness consumes it without judgment** — if either side is soft, it stays prose. Current keys: `gates_at`, `spec` (a draft-spec path; `--spec` by another door), and `workflow` (the arc name — a fixed value from a closed set, consumed without judgment; `--workflow` by another door). Pre-approved if Q19 lands a run-level budget model: `budget_usd`. Spec/plan locations, verification posture, skills: prose, always — the planlab run's framing gave a spec dir that was wrong relative to the worktree root and judgment resolved it; a deterministic consumer would have enforced the error.
 
 ### Branch policy
 
