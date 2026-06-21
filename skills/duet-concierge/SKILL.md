@@ -82,12 +82,16 @@ Gate and flag stops carry the exact command string to run, so translation is mec
 When the human describes new work, you draft the **framing file** — the one document that carries project knowledge into a run (the problem and its scope boundaries, what to read to get oriented, where specs and plans live, verification commands). At the first phase it goes to each worker independently, who reads it alone as their own briefing and forms their own view — so write it to that single reader: speak to "you" and pair each action with the reason behind it ("read X to understand Y, then build Z"), the way good onboarding does. The skeleton and field meanings are in [references/cli-reference.md](references/cli-reference.md). Write it from their dictation, save it under `.duet/`, and show it to them **verbatim** — it steers hours of autonomous work, so they sign off on the exact text. Then:
 
 ```
-duet new --framing .duet/<name>.md
-duet new --framing .duet/<name>.md --gates-at skip-plan
-duet new --framing .duet/<name>.md --gates-at overnight
+duet new --framing .duet/<name>.md                               # full arc (default)
+duet new --framing .duet/<name>.md --gates-at skip-plan          # full, walk away at spec approval
+duet new --framing .duet/<name>.md --gates-at overnight          # full, auto-cross after the spec
+duet new --workflow rir --framing .duet/<name>.md                # the lighter research → implement arc
+duet new --workflow rir --framing .duet/<name>.md --gates-at afk  # rir, run straight through to done
 ```
 
-`--gates-at` pre-authorizes the gates of unlisted phases (it takes a phase list or a preset; the Open-PR gate always stays attended). `skip-plan` means "walk away once the spec is approved, return at the Ship gate" — suggest it when the human says they trust the plan loop; `overnight` auto-crosses everything after the spec — suggest it when they say they're going to bed.
+Pick the arc with `--workflow` (also settable as `workflow:` in the framing frontmatter; the flag wins). **full** is the default — research → spec → plan → implementation → docs → PR. **rir** is lighter — research → implement → one review round, ending at the Ship gate with no spec, plan, docs, or PR; use it for small, well-understood work. (`--spec <path>`, the draft-spec entry that skips FRAME, is full-only — rir has no spec phase.)
+
+`--gates-at` pre-authorizes the gates of unlisted phases (it takes a phase list or a workflow-specific preset). For **full**: `skip-plan` means "walk away once the spec is approved, return at the Ship gate" — suggest it when the human trusts the plan loop; `overnight` auto-crosses everything after the spec — suggest it when they're going to bed; the Open-PR gate always stays attended. For **rir**: `afk` pre-authorizes both gates (Direction and Ship) and runs straight to done — suggest it when the work is small and they want it hands-off.
 
 ## Supervising
 

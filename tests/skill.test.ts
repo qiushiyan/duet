@@ -85,6 +85,19 @@ describe('the duet-concierge skill coheres with the CLI', () => {
       expect.soft(referenceMd, `duet ${name} is missing from the reference`).toContain(`duet ${name}`);
     }
   });
+
+  test.for([
+    ['SKILL.md', skillMd],
+    ['references/cli-reference.md', referenceMd],
+  ] as const)('%s documents the run-start workflow surface (both arcs)', ([, markdown]) => {
+    // The concierge starts runs from dictation, so its run-start surface must
+    // name the arc selector and RIR — not just the Full arc. --workflow is also
+    // pinned to exist on `duet new` by the per-file verb/flag guard above.
+    expect.soft(markdown).toContain('--workflow');
+    expect.soft(markdown).toContain('workflow:'); // the framing frontmatter key
+    expect.soft(markdown.toLowerCase()).toContain('rir');
+    expect.soft(markdown).toContain('afk'); // RIR's pre-authorization preset
+  });
 });
 
 const duetIdentityMd = readFileSync(new URL('../prompts/orchestrator-identity.md', import.meta.url), 'utf8');
@@ -193,5 +206,23 @@ describe('the duet-frame skill coheres with the CLI', () => {
     expect.soft(publicCommands.get('new')?.options.some((o) => o.long === '--workflow')).toBe(true);
     expect.soft(duetFrameMd.toLowerCase()).toContain('rir');
     expect.soft(duetFrameMd).toContain('afk'); // RIR's pre-authorization preset
+  });
+});
+
+describe('the CLI help is workflow-neutral (names both arcs, not one hardcoded)', () => {
+  test('the top-level summary is neutral and the rendered help surfaces the rir arc', () => {
+    const help = program.helpInformation();
+    // The old single-arc summary must be gone from the top-level description.
+    expect.soft(help).not.toContain('through spec → plan → implementation → PR');
+    // Both arcs are reachable from the help (the new command summary names them).
+    expect.soft(help.toLowerCase()).toContain('rir');
+    expect.soft(help.toLowerCase()).toContain('full');
+  });
+
+  test('the new command description names both arcs, not just Full', () => {
+    const desc = publicCommands.get('new')?.description() ?? '';
+    expect.soft(desc.toLowerCase()).toContain('rir');
+    expect.soft(desc.toLowerCase()).toContain('full');
+    expect.soft(desc).not.toBe('Start a run: [FRAME →] SPEC → PLAN (walk away) → AFK IMPLEMENTATION → DOCS → PR → opened PR.');
   });
 });
