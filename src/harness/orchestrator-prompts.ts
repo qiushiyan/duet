@@ -488,9 +488,21 @@ export function answerResumePrompt(answer: string): string {
 
 export function feedbackResumePrompt(phase: PhaseName, feedback: string): string {
   const artifact = PHASE[phase].artifactLabel;
+  // A gate rejection is the editor-in-chief returning the artifact — always to
+  // the implementer. Whether the *reviewer* re-engages is a phase property, not
+  // a default: only the multi-round review-loop phases (reviewLoop && cap > 1 —
+  // Full's spec/plan/impl) re-run a verifying round, and they have the -again
+  // variants and cap headroom for it. A single-writable-round phase (RIR's
+  // implement, cap 1) and the non-loop phases (frame/research/docs/pr) route the
+  // human's feedback straight into the revision — instructing a fresh reviewer
+  // round there is both wrong for the arc and, at cap 1, blocked by send_prompt.
+  const reRunsReviewLoop = PHASE[phase].reviewLoop && PHASE[phase].roundCap > 1;
+  const reviseClause = reRunsReviewLoop
+    ? 'run whatever review rounds the changes warrant (with the -again variants), and advance the phase again when converged'
+    : "have the implementer apply the changes directly and advance the phase again — this phase doesn't re-run a reviewer round on re-entry, so the human's feedback is the revision itself, not the trigger for a new review pass";
   return `At the gate, the human sent the ${artifact} back with this feedback: ${JSON.stringify(
     feedback,
-  )}. Re-enter the phase to address it — route the feedback to the implementer (the human is the editor-in-chief; their feedback outranks reviewer opinions), run whatever review rounds the changes warrant, and advance the phase again when converged. Your workers kept their full context from before the gate: steer them with deltas to the frames they already hold (what changed and why), not by re-running templates they've already received.`;
+  )}. Re-enter the phase to address it — route the feedback to the implementer (the human is the editor-in-chief; their feedback outranks reviewer opinions), ${reviseClause}. Your workers kept their full context from before the gate: steer them with deltas to the frames they already hold (what changed and why), not by re-running templates they've already received.`;
 }
 
 export function nudgeContinuePrompt(): string {

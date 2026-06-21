@@ -7,6 +7,7 @@ import { claudeApiError, claudeAssistantText, jsonl, plantClaudeTranscript } fro
 import {
   ORCHESTRATOR_SYSTEM_PROMPT,
   buildPhaseBrief,
+  feedbackResumePrompt,
   framePhaseEntryPrompt,
   implementPhaseEntryPrompt,
   planPhaseEntryPrompt,
@@ -125,6 +126,36 @@ describe('the RIR entry prompts', () => {
     for (const absent of ['midpoint', 'ceo-summary', 'respond-review', 'compact-for-impl', '/compact']) {
       expect.soft(spine, `implement spine should not mention "${absent}"`).not.toContain(absent);
     }
+  });
+});
+
+describe('feedbackResumePrompt routes a gate rejection per the phase', () => {
+  // A gate rejection always routes to the implementer; whether the reviewer
+  // re-engages is a phase property. Multi-round review-loop phases (Full's
+  // spec/plan/impl) re-run a verifying round; a single-writable-round phase
+  // (RIR's implement, cap 1) and the non-loop phases route the human's feedback
+  // straight into the revision — instructing a fresh round there would be wrong
+  // for the arc and, at cap 1, blocked by send_prompt's cap check.
+  test('a multi-round review-loop phase (full spec) re-runs review rounds', () => {
+    const prompt = feedbackResumePrompt('spec', 'tighten the error path');
+    expect.soft(prompt).toContain('route the feedback to the implementer');
+    expect.soft(prompt).toContain('review rounds');
+    expect.soft(prompt).toContain('-again');
+  });
+
+  test('a single-writable-round phase (rir implement) applies directly, no fresh review round', () => {
+    const prompt = feedbackResumePrompt('implement', 'tighten the error path');
+    expect.soft(prompt).toContain('route the feedback to the implementer');
+    expect.soft(prompt).toContain("doesn't re-run a reviewer round");
+    // The Full multi-round language must not leak into the single-round arc.
+    expect.soft(prompt).not.toContain('review rounds');
+    expect.soft(prompt).not.toContain('-again');
+  });
+
+  test('a non-loop gate phase (rir research) also routes directly, no review round', () => {
+    const prompt = feedbackResumePrompt('research', 'pick the other direction');
+    expect.soft(prompt).toContain("doesn't re-run a reviewer round");
+    expect.soft(prompt).not.toContain('review rounds');
   });
 });
 
