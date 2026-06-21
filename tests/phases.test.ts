@@ -108,9 +108,9 @@ describe("the Full workflow derives today's arc", () => {
     expect(gatePhasesOf('full')).toEqual(['frame', 'spec', 'plan', 'impl', 'docs', 'pr']);
   });
 
-  test('PHASE indexes every Full phase, flat', () => {
+  test('PHASE indexes every phase across all workflows, flat', () => {
     expect(Object.keys(PHASE).sort()).toEqual(
-      ['docs', 'frame', 'impl', 'open', 'pr', 'plan', 'spec'].sort(),
+      ['docs', 'frame', 'impl', 'implement', 'open', 'pr', 'plan', 'research', 'spec'].sort(),
     );
     expect(PHASE['impl'].gate?.state).toBe('shipGate');
     expect(PHASE['open'].gate).toBeNull();
@@ -124,5 +124,26 @@ describe("the Full workflow derives today's arc", () => {
 
   test('gateOf returns the gate spec for a gate phase', () => {
     expect(gateOf('pr').state).toBe('openPrGate');
+  });
+});
+
+describe('the RIR workflow', () => {
+  test('phasesOf("rir") is research → implement', () => {
+    expect(phasesOf('rir').map((p) => p.name)).toEqual(['research', 'implement']);
+  });
+
+  test('both RIR phases are gates; reused gate-state names resolve within the workflow', () => {
+    expect(gatePhasesOf('rir')).toEqual(['research', 'implement']);
+    expect(phaseOfGateState('rir', 'directionGate')).toBe('research');
+    expect(phaseOfGateState('rir', 'shipGate')).toBe('implement');
+    // The Full-only gate states do not resolve inside RIR.
+    expect(phaseOfGateState('rir', 'commitSpecGate')).toBeUndefined();
+    expect(phaseOfGateState('rir', 'openPrGate')).toBeUndefined();
+  });
+
+  test('implement is the writable single review round (roundCap 1)', () => {
+    const implement = phasesOf('rir').find((p) => p.name === 'implement')!;
+    expect.soft(implement.reviewLoop).toBe(true);
+    expect.soft(implement.roundCap).toBe(1);
   });
 });

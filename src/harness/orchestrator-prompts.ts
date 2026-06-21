@@ -372,6 +372,11 @@ export function buildPhaseBrief(state: RunState, phase: PhaseName): string {
       return prPhaseEntryPrompt(state, cap);
     case 'open':
       return openPhaseEntryPrompt();
+    default:
+      // RIR's research/implement get their entry builders in Slice 4 (with the
+      // exhaustive Record dispatch); no RIR run reaches buildPhaseBrief before
+      // the selector lands in Slice 6.
+      throw new Error(`buildPhaseBrief: no entry prompt for phase "${phase}" yet`);
   }
 }
 

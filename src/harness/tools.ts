@@ -18,6 +18,7 @@ import {
   markTurnActive,
   recordContextUsage,
   saveRunState,
+  workflowOf,
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
 import { readRoleTranscriptTail } from '../sessions.ts';
@@ -245,7 +246,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             (sent[tag] ??= []).push(role);
           }
         }
-        return { content: [{ type: 'text' as const, text: renderSnippetLibrary({ phase, sentTo: sent, all: args.all }) }] };
+        return { content: [{ type: 'text' as const, text: renderSnippetLibrary({ phase, workflow: workflowOf(state), sentTo: sent, all: args.all }) }] };
       },
       { annotations: { readOnlyHint: true } }, // genuinely read-only; also batches with parallel sends
     ),

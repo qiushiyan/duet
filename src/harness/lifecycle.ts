@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { createActor, waitFor } from 'xstate';
 import type { AnyMachineSnapshot, Snapshot } from 'xstate';
 import { notify as desktopNotify } from '../notify.ts';
-import { PHASE, WORKFLOWS, phaseOfGateState, phasesOf } from '../phases.ts';
+import { PHASE, WORKFLOWS, entryOf, phaseOfGateState, phasesOf } from '../phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from '../phases.ts';
 import {
   gateAttended,
@@ -157,7 +157,7 @@ export function probeRunPosition(state: RunState): RunPosition {
 /** The position assuming no live driver — also the running phase's identity. */
 function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running' | 'abandoned' }> {
   const wf = workflowOf(state);
-  const entry = WORKFLOWS[wf].entry;
+  const entry = entryOf(wf);
   // The phase a snapshot-less machine starts in (a draft-spec run skips ahead
   // to the workflow's specSkipsTo, when it has one).
   const entryPhase = (state.specPath && entry.specSkipsTo ? entry.specSkipsTo : entry.firstPhase) as PhaseName;

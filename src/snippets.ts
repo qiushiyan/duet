@@ -3,8 +3,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'smol-toml';
 import { z } from 'zod';
-import { ANYTIME_SNIPPETS, PHASES } from './phases.ts';
-import type { PhaseName } from './phases.ts';
+import { ANYTIME_SNIPPETS, phasesOf } from './phases.ts';
+import type { PhaseName, WorkflowName } from './phases.ts';
 
 /**
  * Duet's snippet library — `snippets.toml` at the repo root, seeded from the
@@ -58,6 +58,8 @@ export interface SnippetRenderOpts {
    * `all`) renders the flat full library.
    */
   phase?: PhaseName;
+  /** The run's workflow — scopes the coming-next / already-done arc slicing. Defaults to `full`. */
+  workflow?: WorkflowName;
   /** snippet key → roles already sent that template this phase; annotated in the view. */
   sentTo?: Record<string, string[]>;
   /** Render every snippet's full body, ungrouped — the escape hatch for a cross-phase template. */
@@ -76,7 +78,7 @@ export interface SnippetRenderOpts {
  */
 export function renderSnippetLibrary(opts: SnippetRenderOpts = {}): string {
   if (opts.all || !opts.phase) return renderFlat(opts.sentTo, opts.all);
-  return renderForPhase(opts.phase, opts.sentTo);
+  return renderForPhase(opts.phase, opts.workflow ?? 'full', opts.sentTo);
 }
 
 function snippetBlock(s: Snippet, sentTo?: Record<string, string[]>): string {
@@ -97,9 +99,10 @@ function fullBodies(keys: readonly string[], sentTo?: Record<string, string[]>):
   return keys.map((k) => getSnippet(k)).filter((s): s is Snippet => s !== undefined).map((s) => snippetBlock(s, sentTo));
 }
 
-function renderForPhase(phase: PhaseName, sentTo?: Record<string, string[]>): string {
-  const i = PHASES.findIndex((p) => p.name === phase);
-  const current = PHASES[i]!;
+function renderForPhase(phase: PhaseName, workflow: WorkflowName, sentTo?: Record<string, string[]>): string {
+  const phases = phasesOf(workflow);
+  const i = phases.findIndex((p) => p.name === phase);
+  const current = phases[i]!;
   const lines: string[] = [
     `<snippet_library phase="${phase}">`,
     'Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in arc order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).',
@@ -113,7 +116,7 @@ function renderForPhase(phase: PhaseName, sentTo?: Record<string, string[]>): st
     '</anytime_helpers>',
   ];
 
-  const next = PHASES.slice(i + 1).filter((p) => p.snippets.length > 0);
+  const next = phases.slice(i + 1).filter((p) => p.snippets.length > 0);
   if (next.length > 0) {
     lines.push(
       '<coming_next note="the nominal arc — gate rejects loop back and pre-authorized gates skip the stop; orientation for forward-looking work, not a cue to reach ahead">',
@@ -122,7 +125,7 @@ function renderForPhase(phase: PhaseName, sentTo?: Record<string, string[]>): st
     );
   }
 
-  const done = PHASES.slice(0, i).filter((p) => p.snippets.length > 0);
+  const done = phases.slice(0, i).filter((p) => p.snippets.length > 0);
   if (done.length > 0) {
     lines.push(
       '<already_done>',

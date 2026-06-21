@@ -22,10 +22,10 @@ function startActor(machine: ReturnType<typeof scriptedMachine>['machine'], hasS
   return actor;
 }
 
-// The arcs under test — Slice 3 appends 'rir'. The coherence + spine-walk
-// assertions derive from `phasesOf(workflow)`, so every workflow's machine is
-// checked against its own registry entry, not a single hardcoded arc.
-const ARCS: WorkflowName[] = ['full'];
+// The arcs under test. The coherence + spine-walk assertions derive from
+// `phasesOf(workflow)`, so every workflow's machine is checked against its own
+// registry entry, not a single hardcoded arc.
+const ARCS: WorkflowName[] = ['full', 'rir'];
 
 describe('phase table ⇄ machine coherence (per workflow)', () => {
   test.each(ARCS)('%s: every phase contributes its loop, flag-wait, and gate, with the right tags', (wf) => {
@@ -305,5 +305,39 @@ describe('the full arc', () => {
     expect(snap.value).toBe('done');
 
     expect(calls).toEqual(['frame', 'frame', 'frame', 'spec', 'plan', 'impl', 'impl', 'docs', 'pr', 'pr', 'open']);
+  });
+});
+
+describe('the RIR arc', () => {
+  test('research → Direction → implement → Ship → done, exactly two gates, no full-only states', async () => {
+    const { machine, calls } = scriptedMachine([{ type: 'phase.advance' }, { type: 'phase.advance' }], 'rir');
+    const actor = startActor(machine);
+
+    let snap = await waitFor(actor, quiescent);
+    expect.soft(snap.value).toBe('directionGate');
+
+    actor.send({ type: 'human.approve' });
+    snap = await waitFor(actor, quiescent);
+    expect.soft(snap.value).toBe('shipGate');
+
+    actor.send({ type: 'human.approve' });
+    snap = await waitFor(actor, (s) => s.status === 'done');
+    expect.soft(snap.value).toBe('done');
+
+    expect.soft(calls).toEqual(['research', 'implement']);
+    // No Full-only state leaks into the RIR machine.
+    for (const s of [
+      'specLoop',
+      'planLoop',
+      'docsLoop',
+      'prLoop',
+      'openLoop',
+      'commitSpecGate',
+      'planApprovalGate',
+      'docsPlanGate',
+      'openPrGate',
+    ]) {
+      expect.soft(machine.states[s], s).toBeUndefined();
+    }
   });
 });

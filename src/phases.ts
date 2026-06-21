@@ -227,7 +227,56 @@ export const WORKFLOWS = {
     },
     forceAttend: ['pr'],
   },
-  // rir added in Slice 3.
+  rir: {
+    name: 'rir',
+    displayName: 'Research → Implement → Review',
+    phases: [
+      {
+        name: 'research',
+        // Shared with Full's frame; use-latest-docs is RIR-only this run.
+        snippets: ['think-holistic', 'compare-notes', 'use-latest-docs'],
+        gate: {
+          // Gate-state name reused from Full — legal because resolution is
+          // workflow-scoped (phaseOfGateState(workflow, …)).
+          state: 'directionGate',
+          heading: 'DIRECTION gate — the synthesized direction',
+          ready: 'Direction gate — synthesized direction ready',
+          hint: '(approving hands off to AFK implementation — these decisions are the spec; there is no separate spec or plan)',
+        },
+        artifactLabel: 'direction analysis',
+        reviewLoop: false,
+        roundCap: 2,
+        orchestratorBudgetUsd: 15,
+        workerBudgetUsd: 10,
+        workerTurnTimeoutMs: 30 * 60_000,
+      },
+      {
+        name: 'implement',
+        // The spine order: build, orient the reviewer, one writable review round.
+        snippets: ['implement-direct', 'handoff-direct', 'review-direct', 'apply-review'],
+        gate: {
+          state: 'shipGate',
+          heading: 'SHIP gate — the implementation packet',
+          ready: 'Ship gate — implementation packet ready',
+          hint: '(verify in your environment before deciding — migrations, smoke tests; approving completes the run)',
+        },
+        artifactLabel: 'implementation',
+        reviewLoop: true,
+        // One writable review round — the runaway backstop, not an exit gate.
+        roundCap: 1,
+        orchestratorBudgetUsd: 30,
+        workerBudgetUsd: 25,
+        workerTurnTimeoutMs: 60 * 60_000,
+      },
+    ],
+    entry: { firstPhase: 'research' },
+    handoffGate: 'research',
+    // afk attends no gates — a headless RIR run auto-crosses Direction and Ship
+    // straight to done. A matched preset may resolve to an empty list (Slice 6);
+    // forceAttend pins nothing for RIR (no outward-facing action).
+    presets: { afk: [] },
+    forceAttend: [],
+  },
 } as const satisfies Record<string, WorkflowSpecInput>;
 
 /** The workflows duet can run. */
@@ -351,8 +400,15 @@ export function phasesOf(workflow: WorkflowName): readonly PhaseSpec[] {
   return WORKFLOWS[workflow].phases;
 }
 
+/** A workflow's entry route, normalized to the optional-specSkipsTo shape. */
+export function entryOf(workflow: WorkflowName): { firstPhase: PhaseName; specSkipsTo?: PhaseName } {
+  return WORKFLOWS[workflow].entry;
+}
+
 /** Every phase across all workflows, widened to the consumer-facing view. */
-const ALL_PHASES: readonly PhaseSpec[] = Object.values(WORKFLOWS).flatMap((w) => w.phases);
+const ALL_PHASES: readonly PhaseSpec[] = Object.values(WORKFLOWS).flatMap(
+  (w): readonly PhaseSpec[] => w.phases,
+);
 
 /** Per-phase lookup, flat across all workflows (phase names are globally unique). */
 export const PHASE: Record<PhaseName, PhaseSpec> = Object.fromEntries(
