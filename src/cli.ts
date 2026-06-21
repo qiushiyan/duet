@@ -12,7 +12,7 @@ import {
   aliveDriverPid,
   crossInteractive,
   driveToQuiescence,
-  interactiveContinuePlan,
+  interactiveContinueAction,
   killDriver,
   probeRunPosition,
   spawnDrive,
@@ -20,7 +20,7 @@ import {
   waitForRunStop,
 } from './harness/lifecycle.ts';
 import type { HumanEvent } from './harness/lifecycle.ts';
-import { duetMachine } from './harness/machine.ts';
+import { machineFor } from './harness/machine.ts';
 import { serveKernelStdio, serveRunScopedKernelStdio } from './harness/mcp-server.ts';
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
 import { runOrchestrate } from './orchestrate.ts';
@@ -460,7 +460,7 @@ program
 
       // Validation passed, so the position is a gate or flag — both carry a phase.
       if (position.kind !== 'gate' && position.kind !== 'flag') return;
-      const action = interactiveContinuePlan(position.phase, eventType, Boolean(opts.headless));
+      const action = interactiveContinueAction(workflowOf(state), position.phase, eventType, Boolean(opts.headless));
       crossInteractive(state, { type: `human.${eventType}` });
 
       if (action === 'handoff') {
@@ -503,7 +503,7 @@ program
       );
     }
 
-    const probe = createActor(duetMachine, {
+    const probe = createActor(machineFor(workflowOf(state)), {
       input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
       snapshot,
     });

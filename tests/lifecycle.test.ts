@@ -13,7 +13,7 @@ import type { PhaseEvent } from '../src/harness/phase-events.ts';
 import {
   crossInteractive,
   driveToQuiescence,
-  interactiveContinuePlan,
+  interactiveContinueAction,
   probeRunPosition,
   validateInteractiveCrossing,
   waitForRunStop,
@@ -234,6 +234,24 @@ describe('probeRunPosition', () => {
 
     const specEntry = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, specPath: 'docs/spec.md' });
     expect.soft(probeRunPosition(specEntry)).toEqual({ kind: 'crashed', phase: 'spec' });
+  });
+
+  test('a pre-feature run with no workflow field restores through the full machine', async ({ projectDir, run }) => {
+    // The actual hydration path, not just workflowOf: drive to a persisted gate
+    // snapshot, strip the workflow field from the saved state (an old/hand-written
+    // state.json), and confirm probeRunPosition still resolves the same position
+    // through machineFor('full').
+    run.workflow = 'full';
+    saveRunState(run);
+    await driveToQuiescence(run, undefined, { machine: scriptedMachine([advanced]).machine, notify: quiet });
+    expect.soft(probeRunPosition(loadRunState(projectDir, run.runId))).toEqual({ kind: 'gate', phase: 'frame' });
+
+    const stripped = loadRunState(projectDir, run.runId);
+    delete stripped.workflow;
+    saveRunState(stripped);
+    const migrated = loadRunState(projectDir, run.runId);
+    expect.soft(migrated.workflow).toBeUndefined();
+    expect.soft(probeRunPosition(migrated)).toEqual({ kind: 'gate', phase: 'frame' });
   });
 
   test('a snapshot parked at a gate is the gate — unless the next phase already started (crashed past it, resumed by re-uttering the approve)', async ({
@@ -511,12 +529,12 @@ describe('crossInteractive + the interactive continue model (Slice 4)', () => {
     expect.soft(probeRunPosition(after)).toEqual({ kind: 'interactive', phase: 'impl' });
   });
 
-  test('interactiveContinuePlan: plan-approve and any --headless hand off; earlier gates rest inline', () => {
-    expect.soft(interactiveContinuePlan('plan', 'approve', false)).toBe('handoff');
-    expect.soft(interactiveContinuePlan('frame', 'approve', false)).toBe('inline');
-    expect.soft(interactiveContinuePlan('spec', 'reject', false)).toBe('inline');
-    expect.soft(interactiveContinuePlan('plan', 'reject', false)).toBe('inline'); // a plan REJECT re-enters, not handoff
-    expect.soft(interactiveContinuePlan('spec', 'approve', true)).toBe('handoff'); // --headless always hands off
+  test('interactiveContinueAction (full): handoffGate-approve and any --headless hand off; earlier gates rest inline', () => {
+    expect.soft(interactiveContinueAction('full', 'plan', 'approve', false)).toBe('handoff');
+    expect.soft(interactiveContinueAction('full', 'frame', 'approve', false)).toBe('inline');
+    expect.soft(interactiveContinueAction('full', 'spec', 'reject', false)).toBe('inline');
+    expect.soft(interactiveContinueAction('full', 'plan', 'reject', false)).toBe('inline'); // a plan REJECT re-enters, not handoff
+    expect.soft(interactiveContinueAction('full', 'spec', 'approve', true)).toBe('handoff'); // --headless always hands off
   });
 
   test('validateInteractiveCrossing: a gate admits approve/reject, a flag admits answer, a rest admits nothing', () => {
