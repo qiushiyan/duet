@@ -7,6 +7,7 @@ import type { PhaseName } from '../phases.ts';
 import { createWorkers } from '../providers/index.ts';
 import {
   appendVoiceLog,
+  budgetFor,
   consumeHumanInput,
   listPendingSteers,
   loadRunState,
@@ -218,11 +219,12 @@ async function drivePhase(
   // panes re-apply it where a human is watching).
   const log = (line: string) => console.log(colorizeDriverLine(line));
 
+  const budget = budgetFor(state, phase);
   const { tools } = createPhaseTools({
     state,
     phase,
     providers: createWorkers(state.bindings, {
-      workerBudgetUsd: PHASE[phase].workerBudgetUsd,
+      workerBudgetUsd: budget.worker,
       timeoutMs: PHASE[phase].workerTurnTimeoutMs,
     }),
     log,
@@ -238,7 +240,8 @@ async function drivePhase(
     // plugins leaking into the surface).
     tools: [],
     strictMcpConfig: true,
-    maxBudgetUsd: PHASE[phase].orchestratorBudgetUsd,
+    // Set only when defined — an undefined cap (budgets off) omits the SDK option.
+    ...(budget.orchestrator !== undefined ? { maxBudgetUsd: budget.orchestrator } : {}),
     systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
     // send_prompt calls outlive the default 60s SDK MCP stream window.
     env: { ...process.env, CLAUDE_CODE_STREAM_CLOSE_TIMEOUT: String(2 * 60 * 60_000) },

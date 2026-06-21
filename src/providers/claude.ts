@@ -141,6 +141,36 @@ export function claudeExecaOptions(opts: { cwd?: string; prompt: string }, confi
   };
 }
 
+/**
+ * The `claude -p` argv for a turn, extracted as a pure builder (mirroring
+ * claudeExecaOptions) so the budget-cap behavior is verifiable by test:
+ * `--max-budget-usd` is on the argv only when the cap is a number, and left off
+ * entirely when it is undefined (budgets off). The arg order matches the live
+ * call exactly — runTurn delegates here.
+ */
+export function claudeArgs(
+  opts: { sessionId?: string; readOnly?: boolean },
+  config: { model: string; maxBudgetUsd?: number },
+): string[] {
+  const args = ['-p', '--output-format', 'json', '--model', config.model];
+  if (opts.sessionId) args.push('--resume', opts.sessionId);
+  if (config.maxBudgetUsd !== undefined) {
+    args.push('--max-budget-usd', String(config.maxBudgetUsd));
+  }
+  if (opts.readOnly) {
+    args.push('--disallowed-tools', 'Write,Edit,NotebookEdit,Bash,Task');
+  }
+  if (!opts.readOnly) {
+    // The implementer edits, commits, and runs project commands (tests,
+    // typecheck, builds) with nobody at the keyboard — headless -p mode has
+    // no permission prompt. bypassPermissions is the user's deliberate
+    // posture for their own repos (2026-06-11 decision); the CLI still
+    // honors explicit deny rules and refuses to run as root.
+    args.push('--permission-mode', 'bypassPermissions');
+  }
+  return args;
+}
+
 export class ClaudeWorker implements WorkerProvider {
   readonly name = 'claude' as const;
 
@@ -156,27 +186,11 @@ export class ClaudeWorker implements WorkerProvider {
   }
 
   async runTurn(opts: RunTurnOptions): Promise<WorkerTurn> {
-    const args = ['-p', '--output-format', 'json', '--model', this.config.model];
-    if (opts.sessionId) args.push('--resume', opts.sessionId);
-    if (this.config.maxBudgetUsd !== undefined) {
-      args.push('--max-budget-usd', String(this.config.maxBudgetUsd));
-    }
-    if (opts.readOnly) {
-      args.push('--disallowed-tools', 'Write,Edit,NotebookEdit,Bash,Task');
-    }
-
-    if (!opts.readOnly) {
-      // The implementer edits, commits, and runs project commands (tests,
-      // typecheck, builds) with nobody at the keyboard — headless -p mode has
-      // no permission prompt. bypassPermissions is the user's deliberate
-      // posture for their own repos (2026-06-11 decision); the CLI still
-      // honors explicit deny rules and refuses to run as root.
-      args.push('--permission-mode', 'bypassPermissions');
-    }
-
     // Prompt goes through stdin (argv has length limits; snippet bodies wrapping
-    // whole artifacts can be long). execa options (incl. the load-bearing
-    // `cleanup` default) come from the pinned claudeExecaOptions builder.
+    // whole artifacts can be long). The argv comes from the pinned claudeArgs
+    // builder; execa options (incl. the load-bearing `cleanup` default) come
+    // from the pinned claudeExecaOptions builder.
+    const args = claudeArgs(opts, this.config);
     const { stdout } = await execa('claude', args, claudeExecaOptions(opts, this.config));
 
     return parseClaudeTurn(stdout, opts.prompt);

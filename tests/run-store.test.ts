@@ -5,6 +5,7 @@ import type { Snapshot } from 'xstate';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
 import {
   acquireMcpOwner,
+  budgetFor,
   consumeHumanInput,
   createRun,
   gateAttended,
@@ -215,6 +216,14 @@ describe('gate attendance', () => {
     // not a hardcoded phase check — a gates_at that omits pr still attends it.
     run.gatesAt = ['frame', 'spec'];
     expect(gateAttended(run, 'pr')).toBe(true);
+  });
+});
+
+describe('budgetFor — the effective per-turn caps', () => {
+  test("returns each phase's registry caps verbatim (the parity refactor — behavior identical)", ({ run }) => {
+    expect.soft(budgetFor(run, 'impl')).toEqual({ worker: 25, orchestrator: 30 });
+    expect.soft(budgetFor(run, 'open')).toEqual({ worker: 5, orchestrator: 5 });
+    expect.soft(budgetFor(run, 'frame')).toEqual({ worker: 10, orchestrator: 15 });
   });
 });
 

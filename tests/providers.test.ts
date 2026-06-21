@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
-import { COMPACT_CONFIRMATION, ClaudeWorker, claudeExecaOptions, parseClaudeTurn } from '../src/providers/claude.ts';
+import { COMPACT_CONFIRMATION, ClaudeWorker, claudeArgs, claudeExecaOptions, parseClaudeTurn } from '../src/providers/claude.ts';
 import { parseRolloutContext } from '../src/providers/codex.ts';
 import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn } from '../src/providers/interactive-claude.ts';
 import { createWorkers } from '../src/providers/index.ts';
@@ -479,11 +479,33 @@ describe('context-window probes (per-provider math, one shape)', () => {
   });
 });
 
+describe('claudeArgs (the budget-cap omission seam)', () => {
+  test('passes --max-budget-usd when the cap is a number', () => {
+    const args = claudeArgs({}, { model: 'claude-opus-4-8', maxBudgetUsd: 10 });
+    expect.soft(args).toContain('--max-budget-usd');
+    expect.soft(args[args.indexOf('--max-budget-usd') + 1]).toBe('10');
+  });
+
+  test('omits --max-budget-usd entirely when the cap is undefined (budgets off)', () => {
+    const args = claudeArgs({}, { model: 'claude-opus-4-8', maxBudgetUsd: undefined });
+    expect(args).not.toContain('--max-budget-usd');
+  });
+});
+
 describe('createWorkers', () => {
   test('binds each role to its provider with the phase rails applied', () => {
     const workers = createWorkers(DEFAULT_BINDINGS, { workerBudgetUsd: 10, timeoutMs: 60_000 });
     expect.soft(workers.implementer.name).toBe('claude');
     expect.soft(workers.reviewer.name).toBe('codex');
+  });
+
+  test('a workerBudgetUsd: undefined rail builds a ClaudeWorker (off → the cap is omitted downstream)', () => {
+    // The undefined cap is now a legal rail (budgets off); it flows to the
+    // ClaudeWorker's config, where claudeArgs leaves --max-budget-usd off the
+    // argv (pinned directly by the claudeArgs omission test above).
+    const workers = createWorkers(DEFAULT_BINDINGS, { workerBudgetUsd: undefined, timeoutMs: 60_000 });
+    expect.soft(workers.implementer).toBeInstanceOf(ClaudeWorker);
+    expect.soft(workers.implementer.name).toBe('claude');
   });
 
   test('an interactive claude binding builds the interactive transport; headless stays ClaudeWorker', () => {

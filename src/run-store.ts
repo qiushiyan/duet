@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { Snapshot } from 'xstate';
 import type { RoleBindings } from './config.ts';
-import { WORKFLOWS, defaultPosture, defaultPreAuthorizedOf, gatePhasesOf } from './phases.ts';
+import { PHASE, WORKFLOWS, defaultPosture, defaultPreAuthorizedOf, gatePhasesOf } from './phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
 import type { ContextUsage, WorkerRole } from './providers/types.ts';
 import { locateSessionTranscripts } from './sessions.ts';
@@ -250,6 +250,22 @@ export function workflowOf(state: RunState): WorkflowName {
 export function gateAttended(state: RunState, phase: GatePhase): boolean {
   if ((WORKFLOWS[workflowOf(state)].forceAttend as readonly string[]).includes(phase)) return true;
   return state.gatesAt === undefined || state.gatesAt.includes(phase);
+}
+
+/**
+ * The effective per-turn budget caps for a phase — the one source every
+ * worker- and orchestrator-construction site reads, replacing direct
+ * `PHASE[phase].*BudgetUsd` reads (so a later opt-in knob is a one-place
+ * change). A cap is a number, or `undefined` when off. This slice returns the
+ * registry numbers verbatim — a pure refactor, behavior identical; the knob
+ * that can return `undefined` arrives with #3a. Lives beside gateAttended:
+ * both resolve run-state policy against the phase registry.
+ */
+export function budgetFor(
+  _state: RunState,
+  phase: PhaseName,
+): { worker: number | undefined; orchestrator: number | undefined } {
+  return { worker: PHASE[phase].workerBudgetUsd, orchestrator: PHASE[phase].orchestratorBudgetUsd };
 }
 
 /**
