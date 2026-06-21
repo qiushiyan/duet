@@ -6,7 +6,7 @@ import { PHASE, PHASES } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
 import { createWorkers } from '../providers/index.ts';
 import type { WorkerProvider, WorkerRole } from '../providers/types.ts';
-import { loadRunState } from '../run-store.ts';
+import { acquireMcpOwner, holdsMcpOwner, loadRunState } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
 import { probeRunPosition } from './lifecycle.ts';
 import type { RunPosition } from './lifecycle.ts';
@@ -101,6 +101,15 @@ export async function serveKernelStdio(cwd: string, runId: string, phaseRaw: str
 const NOT_HOSTABLE_MESSAGE =
   'This run is no longer being orchestrated interactively — a headless _drive now owns it, or it has finished or been abandoned. The interactive orchestrator session has nothing left to drive here: end the session. Observe the run with `duet status`; relaunch `duet orchestrate <runId>` only if it becomes interactive again.';
 
+/**
+ * Refusal when this run-scoped server no longer holds the single-writer lease
+ * (run-store.ts acquireMcpOwner): a newer `duet orchestrate` over the same run
+ * took ownership, so this (superseded) server must write nothing — every tool
+ * call is refused, read or write, so no stale-owner mutation can ever land.
+ */
+const SUPERSEDED_MESSAGE =
+  'This interactive orchestrator server was superseded by a newer `duet orchestrate` session for the same run, so it is no longer the run’s single writer — every tool call here is refused to keep a stale session from writing over the live one. End this session; observe the run with `duet status`, and relaunch `duet orchestrate <runId>` only if it becomes interactive again.';
+
 /** The phase the run-scoped server hosts for a position, or undefined when none can be. */
 function hostablePhase(position: RunPosition): PhaseName | undefined {
   switch (position.kind) {
@@ -130,6 +139,8 @@ export interface RunScopedKernel {
   surface(): Array<KernelTool<any>>;
   /** Route a tool call through the current phase's handler, over fresh disk state. */
   callTool(name: string, args: unknown, extra: unknown): Promise<CallToolResult>;
+  /** Whether this server still holds the single-writer lease (false once superseded). */
+  holdsLease(): boolean;
 }
 
 /**
@@ -146,11 +157,26 @@ export function createRunScopedKernel(
   runId: string,
   makeWorkers: WorkerFactory = defaultWorkerFactory,
 ): RunScopedKernel {
+  // Acquire the single-writer lease at construction: the newest run-scoped
+  // server over this run becomes the sole writer (run-store.ts acquireMcpOwner).
+  // A superseded old server reads `leaseHeld()` false and refuses every call —
+  // the interactive analogue of the headless driver.pid guard. The thunk
+  // re-reads disk per check, so a takeover by a newer server is seen at once.
+  const ownerNonce = acquireMcpOwner(loadRunState(cwd, runId));
+  const leaseHeld = (): boolean => holdsMcpOwner(loadRunState(cwd, runId), ownerNonce);
+
   let ctx: { phase: PhaseName; providers: Record<WorkerRole, WorkerProvider>; rails: { turnsInFlight: Set<WorkerRole>; resendWarned: Set<string> } } | null = null;
 
   const toolsFor = (): Array<KernelTool<any>> => {
     const state = loadRunState(cwd, runId);
     if (state.orchestrationHost !== 'interactive') throw new Error(NOT_HOSTABLE_MESSAGE);
+    // The broad lease rule: a superseded server refuses EVERY tool call (read or
+    // write). Because this check runs synchronously immediately before the
+    // handler — no await between it and a tool's dispatch-time writes — it also
+    // fences slice 3's dispatch-time mutations without a redundant inner check;
+    // the one path it cannot reach is the dispatcher's background settle (no
+    // tool call to gate), which keeps its own fence.
+    if (!holdsMcpOwner(state, ownerNonce)) throw new Error(SUPERSEDED_MESSAGE);
     const phase = hostablePhase(probeRunPosition(state));
     if (!phase) throw new Error(NOT_HOSTABLE_MESSAGE);
     if (!ctx || ctx.phase !== phase) {
@@ -182,6 +208,7 @@ export function createRunScopedKernel(
       if (!tool) return errorResult(`tool "${name}" is not part of the kernel surface`);
       return tool.handler(args as never, extra);
     },
+    holdsLease: leaseHeld,
   };
 }
 

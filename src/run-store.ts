@@ -356,6 +356,41 @@ export function clearTurnActive(state: RunState, role: WorkerRole): void {
   if (state.activeTurns) delete state.activeTurns[role];
 }
 
+const OWNER_FILE = 'mcp-owner.json';
+
+/**
+ * The single-writer lease for the run-scoped interactive MCP server
+ * (mcp-server.ts) — the interactive analogue of the headless `driver.pid`
+ * guard. A run-dir file, NOT state.json, so it never races the server's own
+ * state saves (the same reason driver.pid is its own file). acquireMcpOwner
+ * stamps a fresh random nonce and returns it; the newest acquirer wins (last
+ * atomic write). holdsMcpOwner(nonce) is true only while that nonce is still
+ * the one on disk — so a superseded old server (a process that lingers after a
+ * reconnect launches a newer one) reads false and refuses to write, leaving the
+ * newest server the sole writer.
+ */
+export function acquireMcpOwner(state: RunState): string {
+  const nonce = randomBytes(8).toString('hex');
+  const dir = runDirOf(state.cwd, state.runId);
+  mkdirSync(dir, { recursive: true });
+  atomicWrite(
+    join(dir, OWNER_FILE),
+    JSON.stringify({ pid: process.pid, nonce, at: new Date().toISOString() }, null, 2) + '\n',
+  );
+  return nonce;
+}
+
+export function holdsMcpOwner(state: RunState, nonce: string): boolean {
+  const path = join(runDirOf(state.cwd, state.runId), OWNER_FILE);
+  if (!existsSync(path)) return false;
+  try {
+    const owner = JSON.parse(readFileSync(path, 'utf8')) as { nonce?: string };
+    return owner.nonce === nonce;
+  } catch {
+    return false; // half-written or foreign — treat as not-held, never throw into a tool call
+  }
+}
+
 /**
  * Mark a run as deliberately abandoned by the human (`duet abandon`). Stops
  * the position probe from reading the now-dead driver as a crash; the

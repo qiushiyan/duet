@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -13,7 +15,7 @@ import { createPhaseTools } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
 import { renderSnippetLibrary } from '../src/snippets.ts';
 import { FakeWorker, test } from './helpers/fixtures.ts';
-import { loadRunState, markAbandoned, saveMachineSnapshot, saveRunState, stageHumanInput } from '../src/run-store.ts';
+import { loadRunState, markAbandoned, runDirOf, saveMachineSnapshot, saveRunState, stageHumanInput } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
 
 const CLI_ENTRY = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
@@ -322,6 +324,35 @@ describe('the run-scoped, phase-less kernel server (Stage 1)', () => {
     const refused = await kernel.callTool('write_note', { observation: 'too late' }, {});
     expect.soft(refused.isError).toBe(true);
     expect.soft(textOf(refused)).toContain('no longer being orchestrated interactively');
+  });
+
+  test('acquires the single-writer lease on construction, and a newer server supersedes it', ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    const a = createRunScopedKernel(projectDir, interactiveRun.runId);
+    // The lease file exists and this server holds it.
+    expect.soft(existsSync(join(runDirOf(projectDir, interactiveRun.runId), 'mcp-owner.json'))).toBe(true);
+    expect.soft(a.holdsLease()).toBe(true);
+
+    // A second server over the same run takes ownership — the first is superseded.
+    const b = createRunScopedKernel(projectDir, interactiveRun.runId);
+    expect.soft(b.holdsLease()).toBe(true);
+    expect.soft(a.holdsLease()).toBe(false);
+  });
+
+  test('a superseded server refuses every tool call and mutates nothing (the broad lease gate)', async ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    const a = createRunScopedKernel(projectDir, interactiveRun.runId);
+    createRunScopedKernel(projectDir, interactiveRun.runId); // b takes the lease
+
+    // get_task would normally mark phaseStarted — under supersession it must not.
+    const refused = await a.callTool('get_task', {}, {});
+    expect.soft(refused.isError).toBe(true);
+    expect.soft(textOf(refused)).toContain('superseded by a newer');
+    expect.soft(loadRunState(projectDir, interactiveRun.runId).phaseStarted.frame).toBeUndefined();
   });
 
   test(

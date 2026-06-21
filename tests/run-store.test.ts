@@ -4,9 +4,11 @@ import { describe, expect } from 'vitest';
 import type { Snapshot } from 'xstate';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
 import {
+  acquireMcpOwner,
   consumeHumanInput,
   createRun,
   gateAttended,
+  holdsMcpOwner,
   listPendingSteers,
   listRuns,
   loadMachineSnapshot,
@@ -19,6 +21,26 @@ import {
   stageSteer,
 } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
+
+describe('the single-writer MCP lease (mcp-owner.json)', () => {
+  test('acquire writes the lease file and the returned nonce holds', ({ projectDir, run }) => {
+    const nonce = acquireMcpOwner(run);
+    expect.soft(existsSync(join(runDirOf(projectDir, run.runId), 'mcp-owner.json'))).toBe(true);
+    expect.soft(holdsMcpOwner(run, nonce)).toBe(true);
+  });
+
+  test('the newest acquirer wins — a prior nonce stops holding (last write)', ({ run }) => {
+    const first = acquireMcpOwner(run);
+    const second = acquireMcpOwner(run);
+    expect.soft(first).not.toBe(second);
+    expect.soft(holdsMcpOwner(run, second)).toBe(true);
+    expect.soft(holdsMcpOwner(run, first)).toBe(false); // superseded
+  });
+
+  test('holds is false before any acquire (no file)', ({ run }) => {
+    expect(holdsMcpOwner(run, 'never-acquired')).toBe(false);
+  });
+});
 
 describe('run creation', () => {
   test('a created run round-trips through load', ({ projectDir, run }) => {
