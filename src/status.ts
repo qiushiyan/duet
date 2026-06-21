@@ -379,6 +379,15 @@ export interface BriefModel {
   pendingSteers: number;
   autoApprovals: Array<{ gate: string; at: string; headline: string }>;
   humanDecisions?: HumanDecision[];
+  /**
+   * Interactive-host worker turns in flight or settled-uncollected — narrowed
+   * from the full model's `pendingTurns` (startAt dropped; brief renders no
+   * timestamps). Present only when there are entries, so the lean supervision
+   * path (`--brief`, what the concierge reads remotely) still surfaces the one
+   * thing async turns add: a `ready`/`failed` turn to collect with check_turns.
+   * Additive (schema-additive-only).
+   */
+  pendingTurns?: Array<{ role: WorkerRole; tag: string; status: 'running' | 'ready' | 'failed' }>;
 }
 
 function briefHeadline(stop: StopModel): string {
@@ -426,6 +435,9 @@ export function buildBrief(model: StatusModel): BriefModel {
     pendingSteers: model.pendingSteers.length,
     autoApprovals: model.autoApprovals,
     ...(stop.kind === 'gate' && stop.packet?.humanDecisions ? { humanDecisions: stop.packet.humanDecisions } : {}),
+    ...(model.pendingTurns && model.pendingTurns.length > 0
+      ? { pendingTurns: model.pendingTurns.map(({ role, tag, status }) => ({ role, tag, status })) }
+      : {}),
   };
 }
 
@@ -440,6 +452,9 @@ export function renderBrief(brief: BriefModel): string {
     lines.push(`decisions: ${list}${anyHigh ? '  (hold — a high decision is the human’s to make)' : ''}`);
   }
   if (brief.pendingSteers > 0) lines.push(`pending steers: ${brief.pendingSteers}`);
+  if (brief.pendingTurns && brief.pendingTurns.length > 0) {
+    lines.push(`pending turns: ${brief.pendingTurns.map((t) => `${t.role} ${t.status}`).join(' · ')}`);
+  }
   if (brief.autoApprovals.length > 0) lines.push(`auto-approved: ${brief.autoApprovals.map((a) => a.gate).join(', ')}`);
   if (brief.nextCommand) lines.push(`next: ${brief.nextCommand}`);
   return lines.join('\n');
