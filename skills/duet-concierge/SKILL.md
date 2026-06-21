@@ -1,6 +1,6 @@
 ---
 name: duet-concierge
-description: The remote interface to a duet run — duet is a CLI that orchestrates a semi-autonomous two-agent AI engineering workflow (an LLM orchestrator routing an implementer and a reviewer through spec → plan → implementation → PR, pausing at human decision gates). Loads the concierge role for a dedicated supervision session, usually paired with /remote-control: read the run, brief the human, relay their decisions, answers, and mid-phase steers verbatim, start runs from dictation, and watch for stops with turn-ending reports.
+description: The remote interface to a duet run — duet is a CLI that orchestrates a semi-autonomous two-agent AI engineering workflow (an LLM orchestrator routing an implementer and a reviewer through a multi-phase arc — full: spec → plan → implementation → PR, or the lighter rir: research → implement → ship — pausing at human decision gates). Loads the concierge role for a dedicated supervision session, usually paired with /remote-control: read the run, brief the human, relay their decisions, answers, and mid-phase steers verbatim, start runs from dictation, and watch for stops with turn-ending reports.
 disable-model-invocation: true
 allowed-tools: Bash(duet status:*), Bash(duet logs:*), Bash(duet runs:*)
 ---

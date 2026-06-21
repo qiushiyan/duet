@@ -124,7 +124,7 @@ program
   .option('--workflow <name>', 'which arc to run: full (spec → plan → implement → ship → docs → PR) or rir (research → implement → review); default full. Also settable via a workflow: framing key (flag wins)')
   .option(
     '--gates-at <phases>',
-    'phases whose gates you attend (from: frame, spec, plan, impl, docs, pr — or a preset: "skip-plan" = walk away at spec approval, return at the Ship gate; "overnight" = frame,spec); the rest are pre-authorized and auto-cross with their packets recorded; pr is always attended; default: every gate',
+    'phases whose gates you attend — the set and presets are workflow-specific (full gates: frame, spec, plan, impl, docs, pr; presets "skip-plan" = walk away at spec approval, return at the Ship gate, "overnight" = frame,spec, and full\'s Open-PR gate is always attended. rir gates: research, implement; preset "afk" = attend none). The rest are pre-authorized and auto-cross with their packets recorded; default: every gate',
   )
   .option(
     '--retry-infra <n>',
@@ -134,7 +134,7 @@ program
   .option('--impl <provider[:model]>', 'implementer binding override')
   .option('--reviewer <provider[:model]>', 'reviewer binding override')
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
-  .option('--interactive', 'orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over FRAME → PLAN; impl onward still runs headless after the plan-gate handoff')
+  .option('--interactive', "orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over the attended arc up to the workflow's handoff gate (full: through the plan gate; rir: through the Direction gate); implementation onward runs headless after that handoff")
   .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean; interactive?: boolean }) => {
     const cwd = process.cwd();
 
@@ -196,7 +196,7 @@ program
       // of the headless driver — no auto-spawnDrive. runOrchestrate marks the run
       // interactive and launches the wired claude session (it blocks until that
       // session ends). --gates-at still applies to the headless tail after the
-      // plan-gate handoff.
+      // workflow's handoff gate (full: plan; rir: Direction).
       console.log(`bringing up the interactive orchestrator for run ${state.runId} …`);
       const launched = runOrchestrate(state);
       if (launched.error) fail(launched.error.message);
@@ -209,7 +209,7 @@ program
 program
   .command('orchestrate')
   .description(
-    'Bring up the interactive orchestrator for a run: a Claude Code session wired to drive it over FRAME → PLAN, with the single gate-safety ask rule applied. Relaunch to reconnect after a dropped session (it re-anchors on disk via get_task).',
+    'Bring up the interactive orchestrator for a run: a Claude Code session wired to drive it over the attended arc up to the handoff gate (full: FRAME → PLAN; rir: RESEARCH → Direction), with the single gate-safety ask rule applied. Relaunch to reconnect after a dropped session (it re-anchors on disk via get_task).',
   )
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
   .action((runId: string | undefined) => {
@@ -435,10 +435,10 @@ program
 
     // Stage 1: the human's interactive session is the orchestrator.
     // `duet continue` advances the machine inline (crossInteractive, no _drive)
-    // until the plan-gate handoff. Runs BEFORE the snapshot-based validation
-    // below, because the first FRAME gate has no machine snapshot until
-    // crossInteractive persists one — the headless path's "no snapshot ⇒ crash"
-    // would misfire on it.
+    // until the workflow's handoff gate. Runs BEFORE the snapshot-based
+    // validation below, because the run's first gate has no machine snapshot
+    // until crossInteractive persists one — the headless path's "no snapshot ⇒
+    // crash" would misfire on it.
     if (state.orchestrationHost === 'interactive') {
       const position = probeRunPosition(state);
 

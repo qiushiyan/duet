@@ -51,13 +51,17 @@ export const TEMPLATES_DIR = join(".duet", "templates");
 export const FRAMING_TEMPLATE = `---
 # Machine-parsed options (fixed values the harness acts on; judgment-weighed
 # detail belongs in the prose below). Uncomment to use.
+# workflow: full          — full (default): frame → spec → plan → impl → docs →
+#                           PR. rir: research → implement → review → ship (no
+#                           spec/plan/docs/PR), for small, well-understood work.
 # gates_at: skip-plan     — phases whose gates you attend; the rest are
 #                           pre-authorized and auto-cross with packets
-#                           recorded. Presets: skip-plan (walk away at spec
-#                           approval, return at the Ship gate) and overnight
-#                           (= frame,spec). Or a list, e.g. "frame, spec".
-#                           pr is always attended. Default: every gate.
-# spec: path/to/draft.md  — enter at the spec review loop (skips FRAME).
+#                           recorded. Presets are workflow-specific: full →
+#                           skip-plan (walk away at spec approval, return at the
+#                           Ship gate) / overnight (= frame,spec); rir → afk
+#                           (attend none). Or a list, e.g. "frame, spec".
+#                           full's Open-PR gate is always attended. Default: every gate.
+# spec: path/to/draft.md  — enter at the spec review loop (skips FRAME). full-only.
 ---
 
 # Problem

@@ -7,8 +7,9 @@ import type { RunState } from './run-store.ts';
 
 /**
  * The `duet orchestrate <runId>` launcher (Stage 1) — the one place that brings
- * up the human's interactive Claude Code session wired to drive a run over
- * FRAME → PLAN, and the one place that applies the single gate-safety
+ * up the human's interactive Claude Code session wired to drive a run over its
+ * attended arc up to the workflow's handoff gate (full: FRAME → PLAN; rir:
+ * RESEARCH → Direction), and the one place that applies the single gate-safety
  * permission rule. The orchestrator role can't be installed by a slash command
  * (a skill can't do launch-time wiring — the runId is dynamic), so the launcher
  * feeds `prompts/orchestrator-identity.md` to the session as a system prompt
