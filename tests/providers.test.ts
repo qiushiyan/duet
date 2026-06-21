@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
-import { COMPACT_CONFIRMATION, ClaudeWorker, parseClaudeTurn } from '../src/providers/claude.ts';
+import { COMPACT_CONFIRMATION, ClaudeWorker, claudeExecaOptions, parseClaudeTurn } from '../src/providers/claude.ts';
 import { parseRolloutContext } from '../src/providers/codex.ts';
 import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn } from '../src/providers/interactive-claude.ts';
 import { createWorkers } from '../src/providers/index.ts';
@@ -62,6 +62,29 @@ describe('parseClaudeTurn (the CLI output boundary)', () => {
 
     // The same empty result on a normal prompt stays empty — no invented text.
     expect(parseClaudeTurn(stdout, 'normal prompt').text).toBe('');
+  });
+});
+
+describe('claudeExecaOptions (the cleanup tripwire — review finding 3)', () => {
+  // A pure-function guard on the named risk: execa's `cleanup` default (true)
+  // is what makes a killed/superseded _mcp parent take its worker child down.
+  // Pinned through the real builder, no execa fake; the live SIGTERM test is
+  // the human's verify-phase run.
+  test('never sets cleanup:false (the parent-exit child cleanup default stands)', () => {
+    const o = claudeExecaOptions({ cwd: '/repo', prompt: 'do the thing' }, { timeoutMs: 60_000 });
+    expect.soft(o.cleanup).not.toBe(false);
+  });
+
+  test('relays cwd + prompt and carries the kill rails (timeout, forceKillAfterDelay)', () => {
+    const o = claudeExecaOptions({ cwd: '/repo', prompt: 'body' }, { timeoutMs: 60_000 });
+    expect.soft(o.cwd).toBe('/repo');
+    expect.soft(o.input).toBe('body');
+    expect.soft(o.timeout).toBe(60_000);
+    expect.soft(o.forceKillAfterDelay).toBe(10_000);
+  });
+
+  test('defaults the timeout to 15 minutes when the config omits it', () => {
+    expect(claudeExecaOptions({ prompt: 'p' }, {}).timeout).toBe(15 * 60_000);
   });
 });
 
