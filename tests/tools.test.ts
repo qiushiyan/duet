@@ -137,6 +137,22 @@ describe('send_prompt', () => {
     expect.soft(run.sentSnippets?.spec?.reviewer ?? []).toEqual([]);
   });
 
+  test('the settle step persists no round and no sent tag on an infra failure (the success-only rule the async path leans on)', async ({
+    projectDir,
+    run,
+  }) => {
+    const reviewer = new FakeWorker('codex', [new Error('spawn codex ENOENT')]);
+    const { call } = harness(run, { reviewer });
+    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+
+    // Asserted against DISK, not the in-memory copy: settleTurn's failure path
+    // must commit nothing — a failed turn is no round, and its tag stays
+    // un-sent so the prescribed retry is clean (no duplicate-template warning).
+    const persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.rounds.spec ?? 0).toBe(0);
+    expect.soft(persisted.sentSnippets?.spec?.reviewer ?? []).toEqual([]);
+  });
+
   test('emits a heartbeat while a long worker turn runs', async ({ run, onTestFinished }) => {
     vi.useFakeTimers();
     onTestFinished(() => {

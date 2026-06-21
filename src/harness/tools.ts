@@ -3,7 +3,7 @@ import { execa } from 'execa';
 import { z } from 'zod';
 import { PHASE } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
-import type { WorkerProvider, WorkerRole } from '../providers/types.ts';
+import type { WorkerProvider, WorkerRole, WorkerTurn } from '../providers/types.ts';
 import { getSnippet, renderSnippetLibrary } from '../snippets.ts';
 import {
   appendNote,
@@ -199,6 +199,111 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       ? 'This phase is parked at its gate — your advance_phase packet is recorded. Present it to the human and propose the crossing (duet continue --approve "<rider>", or --reject "<feedback>"); a gate is crossed by the human’s tap, never by a tool of yours. Do not start new work — the phase is ending. Re-anchor here any time with get_task.'
       : 'This phase is parked on a queued question — your ask_human flag is recorded. Present it to the human and wait for their answer (duet continue --answer "<answer>"). Do not start new work until it arrives. Re-anchor here any time with get_task.';
 
+  // ── send_prompt, decomposed into its three lifecycle steps ──
+  // One blocking call on the headless host runs them in immediate succession
+  // (startHeartbeat → await runTurn → settleTurn → renderTurnResult); the
+  // interactive host (slice 3) splits them across send_prompt (dispatch) and
+  // check_turns (collect), with settleTurn firing when the background promise
+  // resolves. Same code, two compositions — so the rails and bookkeeping below
+  // are written exactly once.
+
+  /**
+   * The 5-minute heartbeat: worker turns are non-streaming and can run 30+
+   * minutes, so these voice-log lines keep the log (and its tmux pane) visibly
+   * alive, enriched with the worker's own transcript recency + retry count once
+   * a session id exists. Returns its own stop fn (clearInterval).
+   */
+  const startHeartbeat = (role: WorkerRole, tag: string, startedAt: number): (() => void) => {
+    const heartbeat = setInterval(() => {
+      const mins = Math.round((Date.now() - startedAt) / 60_000);
+      const health = heartbeatHealth(state, role, startedAt, Date.now(), home);
+      log(`[send_prompt] ⏳ ${role} turn running — ${mins}m elapsed (tag=${tag})${health}`);
+      appendVoiceLog(state, role, `⏳ turn running — ${mins}m elapsed (tag=${tag})${health}`);
+    }, 5 * 60_000);
+    return () => clearInterval(heartbeat);
+  };
+
+  /**
+   * The worker-settled half: commit the turn's DURABLE bookkeeping (success) or
+   * log the infra failure (no round, no sent tag), and clear the activeTurns
+   * hint either way. Persists; builds no orchestrator-facing text (that is
+   * renderTurnResult's job). The load → merge → save runs against FRESH disk
+   * state so a concurrent cross-role settle cannot clobber the sibling role's
+   * session / cost / sent-snippets / rounds / context; the closed-over `state`
+   * is re-synced afterward so same-phase reads (the warn-once / round rails,
+   * list_snippets annotations) see this turn's result.
+   */
+  const settleTurn = (role: WorkerRole, tag: string, isReviewRound: boolean, outcome: WorkerTurn | Error): void => {
+    if (outcome instanceof Error) {
+      log(`[send_prompt] ✗ ${role} turn failed: ${outcome.message}`);
+      appendVoiceLog(state, role, `✗ turn failed: ${outcome.message}`);
+      clearTurnActive(state, role);
+      return;
+    }
+    const turn = outcome;
+    const fresh = loadRunState(state.cwd, state.runId);
+    fresh.workerSessions[role] = turn.sessionId;
+    // Re-read off fresh rather than a call-start snapshot: the minutes-long
+    // await means a parallel call may have moved the round count.
+    if (isReviewRound) fresh.rounds[phase] = (fresh.rounds[phase] ?? 0) + 1;
+    if (isBaseTemplate(tag)) {
+      const sent = ((fresh.sentSnippets ??= {})[phase] ??= {});
+      const tags = (sent[role] ??= []);
+      if (!tags.includes(tag)) tags.push(tag);
+    }
+    if (turn.costUsd) fresh.costs.claudeWorkersUsd += turn.costUsd;
+    // A claude turn that reported no cost (the interactive transport, by P5)
+    // means the claudeWorkersUsd total is partial — mark it so the status never
+    // presents the known sum as the complete total.
+    if (providers[role].name === 'claude' && turn.costUsd === undefined) {
+      fresh.costs.claudeWorkersCostPartial = true;
+    }
+    if (providers[role].name === 'codex' && turn.tokens) {
+      fresh.costs.codexTokens.input += turn.tokens.input;
+      fresh.costs.codexTokens.output += turn.tokens.output;
+    }
+    if (turn.context) recordContextUsage(fresh, role, turn.context);
+    fresh.lastActivity = `send_prompt → ${role} (${tag})`;
+    saveRunState(fresh);
+    Object.assign(state, fresh);
+    const ctx = turn.context ? ` · context ${contextPercent(turn.context)}%` : '';
+    appendVoiceLog(state, role, `▶ response (session ${turn.sessionId})${ctx}`, turn.text);
+    log(`[send_prompt] ← ${role} responded (${turn.text.length} chars${ctx})`);
+    clearTurnActive(state, role);
+  };
+
+  /**
+   * The result-collected half: build the orchestrator-facing CallToolResult
+   * from the settled outcome — the worker's text plus the near-cap nudge, or the
+   * prescribed-recovery infra error. Reads `state.rounds` for the nudge, so it
+   * must run AFTER settleTurn (which lands this round's +1); persists nothing.
+   */
+  const renderTurnResult = (role: WorkerRole, isReviewRound: boolean, cap: number, outcome: WorkerTurn | Error): CallToolResult => {
+    if (outcome instanceof Error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `The ${role} worker's turn failed at the infrastructure layer (${outcome.message}). The worker never saw your prompt, so this is not a content problem. Retry this same send_prompt call once; if the retry also fails, stop routing and report the failure to the human via ask_human instead of continuing the round.`,
+          },
+        ],
+        isError: true,
+      };
+    }
+    const content: Array<{ type: 'text'; text: string }> = [{ type: 'text' as const, text: outcome.text }];
+    // Reactive state-triggered nudge (docs/prompting-and-tool-design.md
+    // §"Results nudge the next step"): when this review round leaves exactly one
+    // before the backstop cap, say so once — the cap is runaway protection, not
+    // a target, so the reminder steers toward converging or flagging.
+    if (isReviewRound && (state.rounds[phase] ?? 0) === cap - 1) {
+      content.push({
+        type: 'text' as const,
+        text: `(${state.rounds[phase]} of ${cap} review rounds used — one remains before this phase’s backstop cap. The cap is runaway protection, not a target: if the loop has converged, advance_phase now; if a substantive disagreement is still open, that is the human’s call via ask_human. Spend the last round only on a genuinely open structural point.)`,
+      });
+    }
+    return { content };
+  };
+
   const tools: Array<KernelTool<any>> = [
     kernelTool(
       'get_task',
@@ -323,21 +428,11 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         // long-inference from idle). Best-effort like all of state.json.
         markTurnActive(state, args.role, args.tag);
 
-        // Worker turns are non-streaming and can run 30+ minutes; heartbeat
-        // lines keep the voice log (and its tmux pane) visibly alive. Once a
-        // session id exists (every turn after the first), each heartbeat enriches
-        // the elapsed line with the worker's own transcript recency + retry count
-        // (probeRole), so "is it stuck?" usually needs no command. Best-effort:
-        // the first turn (no session id yet) and any read/probe failure fall back
-        // to elapsed-only, never throwing into the turn.
         const startedAt = Date.now();
-        const heartbeat = setInterval(() => {
-          const mins = Math.round((Date.now() - startedAt) / 60_000);
-          const health = heartbeatHealth(state, args.role, startedAt, Date.now(), home);
-          log(`[send_prompt] ⏳ ${args.role} turn running — ${mins}m elapsed (tag=${args.tag})${health}`);
-          appendVoiceLog(state, args.role, `⏳ turn running — ${mins}m elapsed (tag=${args.tag})${health}`);
-        }, 5 * 60_000);
-
+        const stopHeartbeat = startHeartbeat(args.role, args.tag, startedAt);
+        // settleTurn + renderTurnResult are kept INSIDE this try/catch (in both
+        // arms) so a throw during the merge renders as an infra failure exactly
+        // as the inline block did — the await and the settle share one boundary.
         try {
           const turn = await provider.runTurn({
             prompt: args.body,
@@ -345,80 +440,15 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             readOnly: args.role === 'reviewer',
             cwd: state.cwd,
           });
-          // Merge this turn's results against FRESH disk state, then save — so a
-          // concurrent cross-role send cannot clobber the other's worker session
-          // / cost / sent-snippets / rounds / context with a stale full-object
-          // save. Under the run-scoped interactive host each call loads its own
-          // RunState (mcp-server.ts), so two parallel sends would otherwise each
-          // save the call-start object and the later wins. The load→merge→save
-          // here runs synchronously (no await), so concurrent sends serialize at
-          // this point: the second loads after the first saved, and the deltas
-          // (a set session, a += cost, an appended tag, a +1 round) compose. In
-          // headless the shared `state` is already disk-fresh, so the merge is a
-          // no-op overlay. Re-sync the closed-over `state` afterward so
-          // subsequent same-phase reads — the warn-once / round rails,
-          // list_snippets annotations — see this turn's result.
-          const fresh = loadRunState(state.cwd, state.runId);
-          fresh.workerSessions[args.role] = turn.sessionId;
-          // Re-read off fresh rather than reusing `used`: the minutes-long await
-          // above means a parallel call may have moved the round count.
-          if (isReviewRound) fresh.rounds[phase] = (fresh.rounds[phase] ?? 0) + 1;
-          if (isBaseTemplate(args.tag)) {
-            const sent = ((fresh.sentSnippets ??= {})[phase] ??= {});
-            const tags = (sent[args.role] ??= []);
-            if (!tags.includes(args.tag)) tags.push(args.tag);
-          }
-          if (turn.costUsd) fresh.costs.claudeWorkersUsd += turn.costUsd;
-          // A claude turn that reported no cost (the interactive transport, by
-          // P5) means the claudeWorkersUsd total is partial — mark it so the
-          // status never presents the known sum as the complete total. The
-          // claim is about cost completeness, not transport: total_cost_usd is
-          // optional in the envelope, so anything needing "interactive"
-          // specifically reads the binding's transport, never a missing cost.
-          if (provider.name === 'claude' && turn.costUsd === undefined) {
-            fresh.costs.claudeWorkersCostPartial = true;
-          }
-          if (provider.name === 'codex' && turn.tokens) {
-            fresh.costs.codexTokens.input += turn.tokens.input;
-            fresh.costs.codexTokens.output += turn.tokens.output;
-          }
-          if (turn.context) recordContextUsage(fresh, args.role, turn.context);
-          fresh.lastActivity = `send_prompt → ${args.role} (${args.tag})`;
-          saveRunState(fresh);
-          Object.assign(state, fresh);
-          const ctx = turn.context ? ` · context ${contextPercent(turn.context)}%` : '';
-          appendVoiceLog(state, args.role, `▶ response (session ${turn.sessionId})${ctx}`, turn.text);
-          log(`[send_prompt] ← ${args.role} responded (${turn.text.length} chars${ctx})`);
-          const content: Array<{ type: 'text'; text: string }> = [{ type: 'text' as const, text: turn.text }];
-          // Reactive state-triggered nudge (docs/prompting-and-tool-design.md
-          // §"Results nudge the next step"): when this review round leaves
-          // exactly one before the backstop cap, say so once — the cap is
-          // runaway protection, not a target, so the reminder steers toward
-          // converging or flagging rather than spending the last round idly.
-          if (isReviewRound && (state.rounds[phase] ?? 0) === cap - 1) {
-            content.push({
-              type: 'text' as const,
-              text: `(${state.rounds[phase]} of ${cap} review rounds used — one remains before this phase’s backstop cap. The cap is runaway protection, not a target: if the loop has converged, advance_phase now; if a substantive disagreement is still open, that is the human’s call via ask_human. Spend the last round only on a genuinely open structural point.)`,
-            });
-          }
-          return { content };
+          settleTurn(args.role, args.tag, isReviewRound, turn);
+          return renderTurnResult(args.role, isReviewRound, cap, turn);
         } catch (err) {
-          const detail = err instanceof Error ? err.message : String(err);
-          log(`[send_prompt] ✗ ${args.role} turn failed: ${detail}`);
-          appendVoiceLog(state, args.role, `✗ turn failed: ${detail}`);
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: `The ${args.role} worker's turn failed at the infrastructure layer (${detail}). The worker never saw your prompt, so this is not a content problem. Retry this same send_prompt call once; if the retry also fails, stop routing and report the failure to the human via ask_human instead of continuing the round.`,
-              },
-            ],
-            isError: true,
-          };
+          const outcome = err instanceof Error ? err : new Error(String(err));
+          settleTurn(args.role, args.tag, isReviewRound, outcome);
+          return renderTurnResult(args.role, isReviewRound, cap, outcome);
         } finally {
           turnsInFlight.delete(args.role);
-          clearTurnActive(state, args.role);
-          clearInterval(heartbeat);
+          stopHeartbeat();
         }
       },
       // CLI quirk, load-bearing: readOnlyHint here is a CONCURRENCY HINT, not
