@@ -27,14 +27,19 @@ import { renderTurnResult, settleTurn, startHeartbeat } from './tools.ts';
  * closed-over copy would resume the wrong session or commit against an old
  * round count.
  *
- * The background lifecycle is NON-THROWING end to end: dispatch launches through
- * Promise.resolve().then (a synchronous runTurn throw joins the async rejection
- * path), any launch/finalize fault is caught into a terminal failSafe that flips
- * the in-memory record `failed` (so the role is never stranded `running` —
- * check_turns / `duet status --wait` read `running` as "still going"), the
- * heartbeat is stopped in a finally, and collect isolates each record so one
- * role's fault never aborts the batch or half-collects another. A stranded
- * record under AFK would hang supervision forever, so this boundary earns its keep.
+ * The background lifecycle is NON-THROWING end to end — literally total on every
+ * exit: the synchronous dispatch setup is fenced (a faulting durable write or
+ * heartbeat becomes a collectible `failed` turn, not a stuck live `running`
+ * record), the launch rides Promise.resolve().then (a synchronous runTurn throw
+ * joins the async rejection path), the lease gate goes through a non-throwing
+ * leaseHeld wrapper (a faulting lease check reads as "not held", so finalize and
+ * failSafe cannot throw on it), any launch/finalize fault is caught into a
+ * terminal failSafe that flips the in-memory record `failed` (so the role is
+ * never stranded `running` — check_turns / `duet status --wait` read `running`
+ * as "still going"), the heartbeat is stopped in a finally, and collect isolates
+ * each record so one role's fault never aborts the batch or half-collects
+ * another. A stranded record under AFK would hang supervision forever, so this
+ * boundary earns its keep.
  *
  * Lifetime is PHASE-scoped (rebuilt at a phase boundary by the run-scoped
  * server, mcp-server.ts), which is safe because the phase-exit gate forbids
@@ -84,23 +89,41 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
   const { state, phase, cap, providers, log, home, holdsLease } = deps;
   const records = new Map<WorkerRole, PendingRecord>();
 
-  // The lifecycle's terminal backstop: the launch or a finalize step threw — a
-  // disk fault mid-settle, say. A role must NEVER be left stranded `running`:
-  // check_turns and `duet status --wait` both read `running` as "still going",
-  // so a stuck record hangs them forever under AFK. The in-memory flip cannot
-  // throw (a Map write), so it unsticks the role even if disk writes keep
-  // faulting; the disk flip + activeTurns clear are best-effort and lease-gated
-  // (a superseded server still writes nothing). Logs rather than rethrowing, so
-  // nothing escapes as an unhandled rejection.
+  // A NON-THROWING lease check. The production thunk (mcp-server.ts) does a
+  // loadRunState, which can fault — and finalize/failSafe both gate on it, so a
+  // thrown check would re-introduce the very unhandled rejection this boundary
+  // exists to prevent. A check that throws is logged and treated as "not held",
+  // which is the safe reading: an unverifiable lease means write nothing, and a
+  // superseded server already leaves its record for the new owner to handle as
+  // an orphan. This makes finalize and failSafe literally unable to throw on the
+  // lease gate.
+  const leaseHeld = (): boolean => {
+    try {
+      return holdsLease();
+    } catch (err) {
+      log(`[check_turns] lease check faulted (${err instanceof Error ? err.message : String(err)}) — treating as not held`);
+      return false;
+    }
+  };
+
+  // The lifecycle's terminal backstop: the launch, the synchronous dispatch
+  // setup, or a finalize step threw — a disk fault, say. A role must NEVER be
+  // left stranded `running`: check_turns and `duet status --wait` both read
+  // `running` as "still going", so a stuck record hangs them forever under AFK.
+  // The in-memory flip cannot throw (a Map write), so it unsticks the role even
+  // if disk writes keep faulting; the disk flip + activeTurns clear are
+  // best-effort and lease-gated through the non-throwing leaseHeld (a superseded
+  // server still writes nothing). Logs rather than rethrowing, so nothing
+  // escapes as an unhandled rejection — failSafe is itself total.
   const failSafe = (role: WorkerRole, err: unknown): void => {
     const detail = err instanceof Error ? err.message : String(err);
-    log(`[check_turns] ${role} turn lifecycle failed after dispatch (${detail}) — marking it failed so the role is not stranded`);
+    log(`[check_turns] ${role} turn lifecycle failed (${detail}) — marking it failed so the role is not stranded`);
     const rec = records.get(role);
     if (rec) {
       rec.status = 'failed';
       rec.outcome = rec.outcome ?? (err instanceof Error ? err : new Error(detail));
     }
-    if (!holdsLease()) return; // superseded — write nothing; the in-memory flip already unstuck us
+    if (!leaseHeld()) return; // superseded (or unverifiable) — write nothing; the in-memory flip already unstuck us
     try {
       settlePendingTurn(state, role, 'failed');
     } catch {
@@ -117,49 +140,64 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
     dispatch({ role, tag, body, isReviewRound }) {
       const meta = { role, tag, isReviewRound };
       records.set(role, { meta, status: 'running' });
-      // Dispatch-time durable writes. Already lease-gated: toolsFor ran
-      // holdsLease() synchronously immediately before this handler, with no
-      // await between, so these need no inner re-check.
-      markWorkerDispatched(state); // one-way branch-fixed flag
-      markPendingTurn(state, role, tag); // pending record → running
-      markTurnActive(state, role, tag); // the doctor running/idle health hint
-      // Build RunTurnOptions from FRESH disk state: a later turn's resume session
-      // id must reflect what prior settles persisted, not a stale ctx copy.
-      const fresh = loadRunState(state.cwd, state.runId);
-      const startedAt = Date.now();
-      const stopHeartbeat = startHeartbeat(
-        { state: fresh, log, ...(home !== undefined ? { home } : {}) },
-        { role, tag, startedAt },
-      );
-      // The settled half: durable bookkeeping (success) or infra-failure log
-      // (failure), then flip the in-memory record. The SECOND lease boundary
-      // (see deps.holdsLease): a superseded server's settle is inert. The early
-      // return is a CLEAN exit — it must never throw, so the failsafe below does
-      // not fire for a lost lease.
-      const finalize = (outcome: WorkerTurn | Error): void => {
-        if (!holdsLease()) return;
-        settleTurn({ state: loadRunState(state.cwd, state.runId), phase, providers, log }, meta, outcome);
-        settlePendingTurn(state, role, outcome instanceof Error ? 'failed' : 'ready');
-        const rec = records.get(role);
-        if (rec) {
-          rec.status = outcome instanceof Error ? 'failed' : 'ready';
-          rec.outcome = outcome;
-        }
-      };
-      // The whole background lifecycle is non-throwing. Promise.resolve().then so
-      // a SYNCHRONOUS runTurn throw lands on the same rejection path as an async
-      // one; the terminal catch turns any launch- or finalize-time fault into a
-      // safe terminal state (failSafe) instead of an unhandled rejection plus a
-      // record stranded `running`. stopHeartbeat rides a finally so the 5-minute
-      // interval can never leak, on any exit.
-      Promise.resolve()
-        .then(() => providers[role].runTurn({ prompt: body, sessionId: fresh.workerSessions[role], readOnly: role === 'reviewer', cwd: fresh.cwd }))
-        .then(
-          (turn) => finalize(turn),
-          (err) => finalize(err instanceof Error ? err : new Error(String(err))),
-        )
-        .catch((err) => failSafe(role, err))
-        .finally(stopHeartbeat);
+      // The synchronous dispatch setup is itself fenced. Its durable writes and
+      // the heartbeat all touch disk/timers and can fault; if any did, the
+      // background chain below would never be installed and the live record
+      // would be left a stuck `running` — so a setup throw is caught, any
+      // heartbeat already started is stopped, and failSafe turns the role into a
+      // collectible `failed` turn instead. The noop init keeps stopHeartbeat
+      // callable whether or not startHeartbeat was reached.
+      let stopHeartbeat: () => void = () => {};
+      try {
+        // Dispatch-time durable writes. Already lease-gated: toolsFor ran
+        // holdsLease() synchronously immediately before this handler, with no
+        // await between, so these need no inner re-check.
+        markWorkerDispatched(state); // one-way branch-fixed flag
+        markPendingTurn(state, role, tag); // pending record → running
+        markTurnActive(state, role, tag); // the doctor running/idle health hint
+        // Build RunTurnOptions from FRESH disk state: a later turn's resume
+        // session id must reflect what prior settles persisted, not a stale copy.
+        const fresh = loadRunState(state.cwd, state.runId);
+        const startedAt = Date.now();
+        stopHeartbeat = startHeartbeat(
+          { state: fresh, log, ...(home !== undefined ? { home } : {}) },
+          { role, tag, startedAt },
+        );
+        const stop = stopHeartbeat;
+        // The settled half: durable bookkeeping (success) or infra-failure log
+        // (failure), then flip the in-memory record. The SECOND lease boundary
+        // (see deps.holdsLease, via the non-throwing leaseHeld): a superseded
+        // server's settle is inert. The early return is a CLEAN exit — it never
+        // throws, so the failsafe does not fire for a lost lease.
+        const finalize = (outcome: WorkerTurn | Error): void => {
+          if (!leaseHeld()) return;
+          settleTurn({ state: loadRunState(state.cwd, state.runId), phase, providers, log }, meta, outcome);
+          settlePendingTurn(state, role, outcome instanceof Error ? 'failed' : 'ready');
+          const rec = records.get(role);
+          if (rec) {
+            rec.status = outcome instanceof Error ? 'failed' : 'ready';
+            rec.outcome = outcome;
+          }
+        };
+        // The whole background lifecycle is non-throwing. Promise.resolve().then
+        // so a SYNCHRONOUS runTurn throw lands on the same rejection path as an
+        // async one; the terminal catch turns any launch- or finalize-time fault
+        // into a safe terminal state (failSafe) instead of an unhandled rejection
+        // plus a record stranded `running`. stopHeartbeat rides a finally so the
+        // 5-minute interval can never leak, on any exit.
+        Promise.resolve()
+          .then(() => providers[role].runTurn({ prompt: body, sessionId: fresh.workerSessions[role], readOnly: role === 'reviewer', cwd: fresh.cwd }))
+          .then(
+            (turn) => finalize(turn),
+            (err) => finalize(err instanceof Error ? err : new Error(String(err))),
+          )
+          .catch((err) => failSafe(role, err))
+          .finally(() => stop());
+      } catch (err) {
+        // Synchronous setup faulted before the background chain was installed.
+        stopHeartbeat();
+        failSafe(role, err);
+      }
     },
 
     statusOf(role) {

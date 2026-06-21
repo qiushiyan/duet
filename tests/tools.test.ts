@@ -1073,6 +1073,45 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     expect.soft(disk.pendingTurns?.reviewer?.status).toBe('running');
   });
 
+  // Round-2: the lease gate is non-throwing. The production holdsLease does a
+  // loadRunState that can fault; the leaseHeld wrapper reads a thrown check as
+  // "not held" so finalize and failSafe stay total. Seam-reachable via the
+  // injected holdsLease thunk (the harness already parameterizes it); the
+  // failSafe arm uses the same wrapper, and the synchronous-setup-fault arm is a
+  // run-store fault (not a seam) — both design-guaranteed, not fault-injected.
+  test('a throwing lease check stays total: the settle reads as inert (writes nothing), no unhandled rejection', async ({
+    projectDir,
+    run,
+  }) => {
+    const rejections: unknown[] = [];
+    const onRejection = (e: unknown): void => {
+      rejections.push(e);
+    };
+    process.on('unhandledRejection', onRejection);
+    try {
+      const reviewer = new DeferredWorker('codex');
+      const { call } = harness(run, {
+        reviewer,
+        async: true,
+        holdsLease: () => {
+          throw new Error('state-file fault during lease check');
+        },
+      });
+      await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+      reviewer.resolve({ sessionId: 'rev-1' });
+      await flush();
+      await flush(); // let any stray rejection surface
+
+      // Unverifiable lease → inert settle (same as a lost lease): nothing committed.
+      const disk = loadRunState(projectDir, run.runId);
+      expect.soft(disk.rounds.spec ?? 0).toBe(0);
+      expect.soft(disk.workerSessions.reviewer).toBeUndefined();
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+    expect.soft(rejections).toEqual([]); // the lease gate did not throw out of the chain
+  });
+
   test('reconnect orphan: a record on disk with no live owner is refused on send, blocks phase-exit, and is surfaced by check_turns', async ({
     projectDir,
     run,
