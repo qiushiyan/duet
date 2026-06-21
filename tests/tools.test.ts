@@ -1102,6 +1102,34 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     expect.soft(loadRunState(projectDir, run.runId).pendingTurns?.reviewer?.status).toBe('running');
   });
 
+  test('the orphan refusal is session-aware: a SESSION orphan points at takeover and names the resume race', async ({
+    run,
+  }) => {
+    run.workerSessions = { reviewer: 'rev-prev' }; // a session was captured before the crash
+    run.pendingTurns = { reviewer: { tag: 'review-spec', startedAt: 't', status: 'running' } };
+    saveRunState(run);
+    const { call } = harness(run, { async: true });
+
+    const send = await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'x' });
+    expect.soft(send.isError).toBe(true);
+    expect.soft(allText(send)).toContain('duet takeover reviewer');
+    expect.soft(allText(send)).toContain('race the orphaned worker'); // the resume-race hazard
+  });
+
+  test('a NO-SESSION orphan refusal states the race honestly (old worker may still be editing the repo; dropping abandons)', async ({
+    run,
+  }) => {
+    run.pendingTurns = { implementer: { tag: 'write-spec', startedAt: 't', status: 'running' } }; // no workerSessions.implementer
+    saveRunState(run);
+    const { call } = harness(run, { async: true });
+
+    const send = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'x' });
+    expect.soft(send.isError).toBe(true);
+    expect.soft(allText(send)).toContain('editing the repo');
+    expect.soft(allText(send)).toContain('ABANDONS');
+    expect.soft(allText(send)).toContain('duet takeover implementer');
+  });
+
   test('the heartbeat stops at settle — no further "running" lines accrue before collect', async ({ run, onTestFinished }) => {
     vi.useFakeTimers();
     onTestFinished(() => {

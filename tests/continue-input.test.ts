@@ -2,7 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, vi } from 'vitest';
 import { program, stageContinueText } from '../src/cli.ts';
-import { loadRunState } from '../src/run-store.ts';
+import { loadRunState, saveRunState } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**
@@ -110,6 +110,35 @@ describe('duet steer — non-TTY fail-fast (command level)', () => {
       expect.soft(run.runId).toBeTruthy();
       await expect(program.parseAsync(['node', 'duet', 'steer'])).rejects.toThrow(
         /non-interactive shell — pass it inline/,
+      );
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+});
+
+describe('takeover — resolving an interrupted (orphaned) turn', () => {
+  test('a no-session orphan is dropped, re-opening the role — no spawn, no fail', async ({ projectDir, run }) => {
+    const cwd = process.cwd();
+    process.chdir(projectDir);
+    try {
+      // An orphan with no captured session id (its turn died before settle).
+      run.pendingTurns = { reviewer: { tag: 'review-spec', startedAt: 't', status: 'running' } };
+      saveRunState(run);
+      await program.parseAsync(['node', 'duet', 'takeover', 'reviewer', run.runId]);
+      // The orphan is cleared (role re-opened); no provider was spawned, no fail.
+      expect(loadRunState(projectDir, run.runId).pendingTurns?.reviewer).toBeUndefined();
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
+  test('no session and no orphan still fails (unregressed "no session yet")', async ({ projectDir, run }) => {
+    const cwd = process.cwd();
+    process.chdir(projectDir);
+    try {
+      await expect(program.parseAsync(['node', 'duet', 'takeover', 'reviewer', run.runId])).rejects.toThrow(
+        /no session yet/,
       );
     } finally {
       process.chdir(cwd);

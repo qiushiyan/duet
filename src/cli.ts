@@ -28,6 +28,7 @@ import { phaseOfGateState } from './phases.ts';
 import { buildBrief, buildStatusModel, renderBrief, renderStatus, steerRefusal } from './status.ts';
 import { openTmuxView } from './tmux-view.ts';
 import {
+  clearPendingTurn,
   createRun,
   gateAttended,
   latestRun,
@@ -696,7 +697,23 @@ program
     }
 
     const sessionId = role === 'orchestrator' ? state.orchestratorSessionId : state.workerSessions[role];
-    if (!sessionId) fail(`the ${role} has no session yet in run ${state.runId}`);
+    if (!sessionId) {
+      // No session captured. A worker role may still have an ORPHANED pending
+      // turn — its interactive session died before settle persisted an id. There
+      // is nothing to resume, but the old worker process may still be running and
+      // editing the repo, so dropping the orphan ABANDONS that in-flight turn.
+      // takeover is the single resolution affordance: say so honestly, clear the
+      // orphan, and re-open the role.
+      if (role !== 'orchestrator' && state.pendingTurns?.[role]) {
+        console.log(
+          `no session was captured for the ${role}'s interrupted turn — the old worker process may still be running and touching the repo. Dropping the orphan abandons that in-flight turn so you can re-send.`,
+        );
+        clearPendingTurn(state, role);
+        console.log(`orphan cleared — the ${role} is re-opened for the next send_prompt.`);
+        return;
+      }
+      fail(`the ${role} has no session yet in run ${state.runId}`);
+    }
 
     const provider = role === 'orchestrator' ? state.bindings.orchestrator.provider : state.bindings[role].provider;
     const cmd = provider === 'claude' ? ['claude', '--resume', sessionId] : ['codex', 'resume', sessionId];
@@ -704,6 +721,9 @@ program
     console.log(`  ${cmd.join(' ')}`);
     console.log(`your turns append to the run's transcript; pick duet back up afterwards with duet continue.\n`);
     await execa(cmd[0]!, cmd.slice(1), { cwd: state.cwd, stdio: 'inherit', reject: false });
+    // A session orphan the human has now inspected/finished: clear its pending
+    // record so the role re-opens for the next send_prompt.
+    if (role !== 'orchestrator' && state.pendingTurns?.[role]) clearPendingTurn(state, role);
   });
 
 program

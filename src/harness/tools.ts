@@ -343,8 +343,16 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   // the live dispatcher has no record for it — a prior server dispatched the
   // turn and died, and this (fresh) server does not own it. Detection is purely
   // the durable record's existence-without-a-live-owner; no transcript claim.
+  // Branch-aware orphan recovery (slice 4): the two sub-cases have different
+  // hazards, so the prescribed recovery differs. A SESSION orphan can be
+  // resumed (and a re-send would race that session); a NO-SESSION orphan has no
+  // session to resume, but the old worker process may still be running and
+  // editing the repo — so dropping it is a deliberate ABANDON, stated honestly.
+  // Either way `duet takeover <role>` is the single resolution affordance.
   const orphanRefusalText = (role: WorkerRole): string =>
-    `An earlier turn to the ${role} was orphaned when its session ended — its pending record is still on disk but no live turn owns it. Recover it before re-sending (the old worker may still be running): inspect or finish it with duet takeover ${role}. Do not re-send into this role until the orphan is resolved.`;
+    state.workerSessions[role]
+      ? `The prior turn to the ${role} was orphaned when its session ended — its pending record is still on disk, and that session may still be resumable. Inspect or finish it with \`duet takeover ${role}\`, then re-send. Do not re-send into this role until the orphan is resolved: an immediate re-send would resume and race the orphaned worker on that same session.`
+      : `The prior turn to the ${role} was orphaned before a session id was captured — there is no session to resume, and the old worker process may still be running and editing the repo. Dropping the orphan ABANDONS that in-flight turn: confirm it is done (or accept the risk), then run \`duet takeover ${role}\` to drop the orphan and re-send. Do not re-send until then.`;
   // The phase-exit gate (async only): advance_phase and ask_human are both
   // refused while ANY pending-turn record is non-collected — live (the
   // dispatcher owns it) OR on disk (a reconnect orphan the fresh dispatcher
