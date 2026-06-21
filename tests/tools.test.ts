@@ -12,7 +12,7 @@ import { PHASE } from '../src/phases.ts';
 import type { PhaseName } from '../src/phases.ts';
 import { listPendingSteers, loadRunState, runDirOf, saveRunState, stageHumanInput, stageSteer } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
-import { DeferredWorker, FakeWorker, test } from './helpers/fixtures.ts';
+import { DeferredWorker, FakeWorker, SyncThrowWorker, test } from './helpers/fixtures.ts';
 import { claudeApiRetry, claudeUserToolResult, jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
 
 /**
@@ -26,8 +26,8 @@ type ToolResult = Awaited<ReturnType<KernelTool['handler']>>;
 interface HarnessOpts {
   phase?: PhaseName;
   stagedAnswer?: string;
-  implementer?: FakeWorker | DeferredWorker;
-  reviewer?: FakeWorker | DeferredWorker;
+  implementer?: FakeWorker | DeferredWorker | SyncThrowWorker;
+  reviewer?: FakeWorker | DeferredWorker | SyncThrowWorker;
   home?: string;
   /** Turn on the interactive async path: send_prompt dispatches, check_turns collects. */
   async?: boolean;
@@ -1162,5 +1162,72 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     expect.soft(allText(result)).toContain('scripted response'); // the collected turn
     expect.soft(allText(result)).toContain('narrow the scope'); // the steer rode along
     expect.soft(listPendingSteers(run)).toEqual([]); // consumed once
+  });
+
+  // The non-throwing background lifecycle (review finding 1). The reachable
+  // faults are exercised through the WorkerProvider seam: a synchronous launch
+  // throw, and a mixed ready/failed batch. The deeper failSafe + collect
+  // isolation guard a finalize/render disk fault inside settleTurn/clearPendingTurn
+  // — run-store, NOT one of the six seams — so that branch is design-guaranteed
+  // (terminal .catch + per-record try/catch, see turn-dispatcher.ts) and called
+  // out here, not fault-injected.
+  test('a synchronous runTurn throw is normalized in the background — send_prompt does not throw, the role flips failed (never stranded running), then collects', async ({
+    run,
+  }) => {
+    const rejections: unknown[] = [];
+    const onRejection = (e: unknown): void => {
+      rejections.push(e);
+    };
+    process.on('unhandledRejection', onRejection);
+    try {
+      const reviewer = new SyncThrowWorker('codex');
+      const { call, dispatcher } = harness(run, { reviewer, async: true });
+      // Pre-fix this threw out of dispatch (the bare runTurn() call) and rejected
+      // the handler; post-fix the launch rides Promise.resolve().then, so the
+      // throw is normalized in the background and dispatch returns cleanly.
+      const dispatched = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+      expect.soft(dispatched.isError).toBeFalsy();
+      expect.soft(text(dispatched)).toContain('Dispatched to the reviewer');
+      await flush();
+      // The role is NOT stranded running — the failure path flipped it, in memory
+      // and on disk, so check_turns / status --wait can never hang on it.
+      expect.soft(dispatcher!.statusOf('reviewer')).toBe('failed');
+      expect.soft(loadRunState(run.cwd, run.runId).pendingTurns?.reviewer?.status).toBe('failed');
+      // check_turns delivers the prescribed infra-failure recovery and re-opens the role.
+      const collected = await call('check_turns');
+      expect.soft(allText(collected)).toContain('infrastructure layer');
+      expect.soft(dispatcher!.statusOf('reviewer')).toBeUndefined();
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+    expect.soft(rejections).toEqual([]); // the terminal path leaks no unhandled rejection
+  });
+
+  test('a mixed batch — one role ready, one failed — collects in a single check_turns, each record handled independently', async ({
+    run,
+  }) => {
+    const implementer = new DeferredWorker('claude');
+    const reviewer = new DeferredWorker('codex');
+    const { call, dispatcher } = harness(run, { implementer, reviewer, async: true });
+    await call('send_prompt', { role: 'implementer', tag: 'draft', body: 'draft the spec' });
+    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    implementer.resolve({ text: 'the draft', sessionId: 'impl-1' });
+    reviewer.reject(new Error('codex exec boom'));
+    await flush();
+    expect.soft(dispatcher!.statusOf('implementer')).toBe('ready');
+    expect.soft(dispatcher!.statusOf('reviewer')).toBe('failed');
+
+    const collected = await call('check_turns');
+    const out = allText(collected);
+    expect.soft(out).toContain('── implementer ──');
+    expect.soft(out).toContain('the draft'); // the success delivered
+    expect.soft(out).toContain('── reviewer ──');
+    expect.soft(out).toContain('infrastructure layer'); // the failure's recovery, NOT suppressed by the sibling
+    // Both records collected and re-opened in the one pass.
+    expect.soft(dispatcher!.statusOf('implementer')).toBeUndefined();
+    expect.soft(dispatcher!.statusOf('reviewer')).toBeUndefined();
+    const after = loadRunState(run.cwd, run.runId).pendingTurns ?? {};
+    expect.soft(after.implementer).toBeUndefined();
+    expect.soft(after.reviewer).toBeUndefined();
   });
 });

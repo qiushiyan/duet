@@ -3,6 +3,7 @@ import type { PhaseName } from '../phases.ts';
 import type { WorkerProvider, WorkerRole, WorkerTurn } from '../providers/types.ts';
 import {
   clearPendingTurn,
+  clearTurnActive,
   loadRunState,
   markPendingTurn,
   markTurnActive,
@@ -25,6 +26,15 @@ import { renderTurnResult, settleTurn, startHeartbeat } from './tools.ts';
  * — the dispatcher outlives the tool call that dispatched a turn, so a stale
  * closed-over copy would resume the wrong session or commit against an old
  * round count.
+ *
+ * The background lifecycle is NON-THROWING end to end: dispatch launches through
+ * Promise.resolve().then (a synchronous runTurn throw joins the async rejection
+ * path), any launch/finalize fault is caught into a terminal failSafe that flips
+ * the in-memory record `failed` (so the role is never stranded `running` —
+ * check_turns / `duet status --wait` read `running` as "still going"), the
+ * heartbeat is stopped in a finally, and collect isolates each record so one
+ * role's fault never aborts the batch or half-collects another. A stranded
+ * record under AFK would hang supervision forever, so this boundary earns its keep.
  *
  * Lifetime is PHASE-scoped (rebuilt at a phase boundary by the run-scoped
  * server, mcp-server.ts), which is safe because the phase-exit gate forbids
@@ -74,6 +84,35 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
   const { state, phase, cap, providers, log, home, holdsLease } = deps;
   const records = new Map<WorkerRole, PendingRecord>();
 
+  // The lifecycle's terminal backstop: the launch or a finalize step threw — a
+  // disk fault mid-settle, say. A role must NEVER be left stranded `running`:
+  // check_turns and `duet status --wait` both read `running` as "still going",
+  // so a stuck record hangs them forever under AFK. The in-memory flip cannot
+  // throw (a Map write), so it unsticks the role even if disk writes keep
+  // faulting; the disk flip + activeTurns clear are best-effort and lease-gated
+  // (a superseded server still writes nothing). Logs rather than rethrowing, so
+  // nothing escapes as an unhandled rejection.
+  const failSafe = (role: WorkerRole, err: unknown): void => {
+    const detail = err instanceof Error ? err.message : String(err);
+    log(`[check_turns] ${role} turn lifecycle failed after dispatch (${detail}) — marking it failed so the role is not stranded`);
+    const rec = records.get(role);
+    if (rec) {
+      rec.status = 'failed';
+      rec.outcome = rec.outcome ?? (err instanceof Error ? err : new Error(detail));
+    }
+    if (!holdsLease()) return; // superseded — write nothing; the in-memory flip already unstuck us
+    try {
+      settlePendingTurn(state, role, 'failed');
+    } catch {
+      // disk still faulting — the in-memory flip above already unstuck the role
+    }
+    try {
+      clearTurnActive(state, role);
+    } catch {
+      // best-effort hint cleanup
+    }
+  };
+
   return {
     dispatch({ role, tag, body, isReviewRound }) {
       const meta = { role, tag, isReviewRound };
@@ -92,10 +131,12 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
         { state: fresh, log, ...(home !== undefined ? { home } : {}) },
         { role, tag, startedAt },
       );
-      const onSettle = (outcome: WorkerTurn | Error): void => {
-        stopHeartbeat();
-        // The second lease boundary (see deps.holdsLease): a superseded server's
-        // settle writes nothing.
+      // The settled half: durable bookkeeping (success) or infra-failure log
+      // (failure), then flip the in-memory record. The SECOND lease boundary
+      // (see deps.holdsLease): a superseded server's settle is inert. The early
+      // return is a CLEAN exit — it must never throw, so the failsafe below does
+      // not fire for a lost lease.
+      const finalize = (outcome: WorkerTurn | Error): void => {
         if (!holdsLease()) return;
         settleTurn({ state: loadRunState(state.cwd, state.runId), phase, providers, log }, meta, outcome);
         settlePendingTurn(state, role, outcome instanceof Error ? 'failed' : 'ready');
@@ -105,9 +146,20 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
           rec.outcome = outcome;
         }
       };
-      providers[role]
-        .runTurn({ prompt: body, sessionId: fresh.workerSessions[role], readOnly: role === 'reviewer', cwd: fresh.cwd })
-        .then(onSettle, (err) => onSettle(err instanceof Error ? err : new Error(String(err))));
+      // The whole background lifecycle is non-throwing. Promise.resolve().then so
+      // a SYNCHRONOUS runTurn throw lands on the same rejection path as an async
+      // one; the terminal catch turns any launch- or finalize-time fault into a
+      // safe terminal state (failSafe) instead of an unhandled rejection plus a
+      // record stranded `running`. stopHeartbeat rides a finally so the 5-minute
+      // interval can never leak, on any exit.
+      Promise.resolve()
+        .then(() => providers[role].runTurn({ prompt: body, sessionId: fresh.workerSessions[role], readOnly: role === 'reviewer', cwd: fresh.cwd }))
+        .then(
+          (turn) => finalize(turn),
+          (err) => finalize(err instanceof Error ? err : new Error(String(err))),
+        )
+        .catch((err) => failSafe(role, err))
+        .finally(stopHeartbeat);
     },
 
     statusOf(role) {
@@ -118,16 +170,27 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
       const out: Array<{ role: WorkerRole; result: CallToolResult }> = [];
       for (const [role, rec] of [...records]) {
         if (rec.status === 'running') continue;
-        out.push({
-          role,
-          result: renderTurnResult(
+        // Per-record isolation (the deletion path is part of the non-throwing
+        // lifecycle): render → clear → delete → report, for THIS role only,
+        // inside a guard. A disk fault rendering or clearing one role must not
+        // abort the batch (which would silently drop the already-rendered
+        // results of earlier roles) nor leave a half-collected split (cleared on
+        // disk but never delivered). A record that throws here is left intact —
+        // disk uncleared, in-memory kept — so it stays collectible on the next
+        // call rather than vanishing. report only AFTER the disk clear succeeds.
+        try {
+          const result = renderTurnResult(
             { state: loadRunState(state.cwd, state.runId), phase },
             { role, isReviewRound: rec.meta.isReviewRound, cap },
             rec.outcome as WorkerTurn | Error,
-          ),
-        });
-        clearPendingTurn(state, role); // re-opens the role for the next send_prompt
-        records.delete(role);
+          );
+          clearPendingTurn(state, role); // re-opens the role for the next send_prompt
+          records.delete(role);
+          out.push({ role, result });
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          log(`[check_turns] could not collect the ${role} turn (${detail}) — left intact, collectible on the next check_turns`);
+        }
       }
       return out;
     },

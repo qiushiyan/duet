@@ -82,6 +82,29 @@ export class DeferredWorker implements WorkerProvider {
   }
 }
 
+/**
+ * A worker whose runTurn throws SYNCHRONOUSLY — before returning a promise. The
+ * production claude/codex adapters are `async` (a sync throw inside them becomes
+ * a rejection), but the WorkerProvider contract only promises Promise<WorkerTurn>,
+ * so a conforming impl may throw at the call site. This exercises the
+ * dispatcher's launch-through-Promise.resolve guard: a sync launch throw must be
+ * normalized to a collectible failed turn, never propagate out of send_prompt
+ * and never strand the role `running`.
+ */
+export class SyncThrowWorker implements WorkerProvider {
+  readonly name: 'claude' | 'codex';
+  readonly calls: RunTurnOptions[] = [];
+
+  constructor(name: 'claude' | 'codex' = 'claude') {
+    this.name = name;
+  }
+
+  runTurn(opts: RunTurnOptions): Promise<WorkerTurn> {
+    this.calls.push(opts);
+    throw new Error('synchronous launch failure');
+  }
+}
+
 export interface Fixtures {
   /** A fresh temp directory standing in for the target project root. */
   projectDir: string;
