@@ -3,7 +3,7 @@ import { execa } from 'execa';
 import { z } from 'zod';
 import { PHASE, isGatePhase } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
-import type { WorkerProvider, WorkerRole } from '../providers/types.ts';
+import type { WorkerProvider, WorkerRole, WorkerTurn } from '../providers/types.ts';
 import { getSnippet, renderSnippetLibrary } from '../snippets.ts';
 import {
   appendNote,
@@ -22,6 +22,7 @@ import {
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
 import { readRoleTranscriptTail } from '../sessions.ts';
+import type { TurnDispatcher } from './turn-dispatcher.ts';
 import { formatAge, probeRole } from '../worker-health.ts';
 import {
   answerResumePrompt,
@@ -108,6 +109,14 @@ export interface PhaseToolsDeps {
    * point it at a planted fake home.
    */
   home?: string;
+  /**
+   * Present only on the interactive host (the run-scoped server, mcp-server.ts):
+   * the TurnDispatcher that makes send_prompt async (dispatch-now / collect with
+   * check_turns). Its presence is the host switch — it flips send_prompt from
+   * blocking to dispatching AND exposes check_turns. Absent → the headless host,
+   * which blocks and never exposes check_turns.
+   */
+  async?: { dispatcher: TurnDispatcher };
 }
 
 export interface PhaseTools {
@@ -138,7 +147,134 @@ function heartbeatHealth(state: RunState, role: WorkerRole, startedAt: number, n
   }
 }
 
-export function createPhaseTools({ state, phase, providers, log, stagedAnswer: initialAnswer, rails, home }: PhaseToolsDeps): PhaseTools {
+/** A base template (warned once per phase per worker) vs. a delta (custom / -again). */
+export function isBaseTemplate(tag: string): boolean {
+  return tag !== 'custom' && !tag.endsWith('-again');
+}
+
+// ── send_prompt's three lifecycle steps, as module-level functions ──
+// One blocking call on the headless host runs them in immediate succession
+// (startHeartbeat → await runTurn → settleTurn → renderTurnResult); the
+// interactive host's TurnDispatcher (turn-dispatcher.ts) calls the SAME three
+// across dispatch / settle / collect. Module-level (not closures) precisely so
+// the dispatcher can call them with fresh state at settle/collect time, long
+// after the send_prompt call that dispatched the turn has returned. The rails
+// and bookkeeping are therefore written exactly once, host-agnostic.
+
+/**
+ * The 5-minute heartbeat: worker turns are non-streaming and can run 30+
+ * minutes, so these voice-log lines keep the log (and its tmux pane) visibly
+ * alive, enriched with the worker's own transcript recency + retry count once a
+ * session id exists. Returns its own stop fn (clearInterval).
+ */
+export function startHeartbeat(
+  deps: { state: RunState; log: (line: string) => void; home?: string },
+  meta: { role: WorkerRole; tag: string; startedAt: number },
+): () => void {
+  const { state, log, home } = deps;
+  const { role, tag, startedAt } = meta;
+  const heartbeat = setInterval(() => {
+    const mins = Math.round((Date.now() - startedAt) / 60_000);
+    const health = heartbeatHealth(state, role, startedAt, Date.now(), home);
+    log(`[send_prompt] ⏳ ${role} turn running — ${mins}m elapsed (tag=${tag})${health}`);
+    appendVoiceLog(state, role, `⏳ turn running — ${mins}m elapsed (tag=${tag})${health}`);
+  }, 5 * 60_000);
+  return () => clearInterval(heartbeat);
+}
+
+/**
+ * The worker-settled half: commit the turn's DURABLE bookkeeping (success) or
+ * log the infra failure (no round, no sent tag), and clear the activeTurns hint
+ * either way. Persists; builds no orchestrator-facing text (renderTurnResult's
+ * job). The load → merge → save runs against FRESH disk state so a concurrent
+ * cross-role settle never clobbers the sibling role's session / cost /
+ * sent-snippets / rounds / context; `deps.state` is re-synced afterward so
+ * same-phase reads (the warn-once / round rails) see this turn's result.
+ */
+export function settleTurn(
+  deps: { state: RunState; phase: PhaseName; providers: Record<WorkerRole, WorkerProvider>; log: (line: string) => void },
+  meta: { role: WorkerRole; tag: string; isReviewRound: boolean },
+  outcome: WorkerTurn | Error,
+): void {
+  const { state, phase, providers, log } = deps;
+  const { role, tag, isReviewRound } = meta;
+  if (outcome instanceof Error) {
+    log(`[send_prompt] ✗ ${role} turn failed: ${outcome.message}`);
+    appendVoiceLog(state, role, `✗ turn failed: ${outcome.message}`);
+    clearTurnActive(state, role);
+    return;
+  }
+  const turn = outcome;
+  const fresh = loadRunState(state.cwd, state.runId);
+  fresh.workerSessions[role] = turn.sessionId;
+  // Re-read off fresh rather than a call-start snapshot: the minutes-long await
+  // means a parallel call may have moved the round count.
+  if (isReviewRound) fresh.rounds[phase] = (fresh.rounds[phase] ?? 0) + 1;
+  if (isBaseTemplate(tag)) {
+    const sent = ((fresh.sentSnippets ??= {})[phase] ??= {});
+    const tags = (sent[role] ??= []);
+    if (!tags.includes(tag)) tags.push(tag);
+  }
+  if (turn.costUsd) fresh.costs.claudeWorkersUsd += turn.costUsd;
+  // A claude turn that reported no cost (the interactive transport, by P5) means
+  // the claudeWorkersUsd total is partial — mark it so the status never presents
+  // the known sum as the complete total.
+  if (providers[role].name === 'claude' && turn.costUsd === undefined) {
+    fresh.costs.claudeWorkersCostPartial = true;
+  }
+  if (providers[role].name === 'codex' && turn.tokens) {
+    fresh.costs.codexTokens.input += turn.tokens.input;
+    fresh.costs.codexTokens.output += turn.tokens.output;
+  }
+  if (turn.context) recordContextUsage(fresh, role, turn.context);
+  fresh.lastActivity = `send_prompt → ${role} (${tag})`;
+  saveRunState(fresh);
+  Object.assign(state, fresh);
+  const ctx = turn.context ? ` · context ${contextPercent(turn.context)}%` : '';
+  appendVoiceLog(state, role, `▶ response (session ${turn.sessionId})${ctx}`, turn.text);
+  log(`[send_prompt] ← ${role} responded (${turn.text.length} chars${ctx})`);
+  clearTurnActive(state, role);
+}
+
+/**
+ * The result-collected half: build the orchestrator-facing CallToolResult from
+ * the settled outcome — the worker's text plus the near-cap nudge, or the
+ * prescribed-recovery infra error. Reads `deps.state.rounds` for the nudge, so
+ * it must run AFTER settleTurn (which lands this round's +1); persists nothing.
+ */
+export function renderTurnResult(
+  deps: { state: RunState; phase: PhaseName },
+  meta: { role: WorkerRole; isReviewRound: boolean; cap: number },
+  outcome: WorkerTurn | Error,
+): CallToolResult {
+  const { state, phase } = deps;
+  const { role, isReviewRound, cap } = meta;
+  if (outcome instanceof Error) {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `The ${role} worker's turn failed at the infrastructure layer (${outcome.message}). The worker never saw your prompt, so this is not a content problem. Retry this same send_prompt call once; if the retry also fails, stop routing and report the failure to the human via ask_human instead of continuing the round.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+  const content: Array<{ type: 'text'; text: string }> = [{ type: 'text' as const, text: outcome.text }];
+  // Reactive state-triggered nudge (docs/prompting-and-tool-design.md
+  // §"Results nudge the next step"): when this review round leaves exactly one
+  // before the backstop cap, say so once — the cap is runaway protection, not a
+  // target, so the reminder steers toward converging or flagging.
+  if (isReviewRound && (state.rounds[phase] ?? 0) === cap - 1) {
+    content.push({
+      type: 'text' as const,
+      text: `(${state.rounds[phase]} of ${cap} review rounds used — one remains before this phase’s backstop cap. The cap is runaway protection, not a target: if the loop has converged, advance_phase now; if a substantive disagreement is still open, that is the human’s call via ask_human. Spend the last round only on a genuinely open structural point.)`,
+    });
+  }
+  return { content };
+}
+
+export function createPhaseTools({ state, phase, providers, log, stagedAnswer: initialAnswer, rails, home, async: asyncDeps }: PhaseToolsDeps): PhaseTools {
   let stagedAnswer = initialAnswer ?? null;
 
   // First-terminal-wins: advance_phase and ask_human each end the phase, so the
@@ -176,7 +312,6 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     return (roles[role] ??= []);
   };
   const resendWarned = rails?.resendWarned ?? new Set<string>();
-  const isBaseTemplate = (tag: string): boolean => tag !== 'custom' && !tag.endsWith('-again');
 
   // get_task folds a staged human input (an approval rider, a reject's
   // feedback, or an answer) into the phase brief as an appended block — reusing
@@ -199,6 +334,48 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     kind === 'advance'
       ? 'This phase is parked at its gate — your advance_phase packet is recorded. Present it to the human and propose the crossing (duet continue --approve "<rider>", or --reject "<feedback>"); a gate is crossed by the human’s tap, never by a tool of yours. Do not start new work — the phase is ending. Re-anchor here any time with get_task.'
       : 'This phase is parked on a queued question — your ask_human flag is recorded. Present it to the human and wait for their answer (duet continue --answer "<answer>"). Do not start new work until it arrives. Re-anchor here any time with get_task.';
+
+  // The interactive host's pending-turn lifecycle (async send_prompt) is owned
+  // by the injected dispatcher; absent → the headless host, blocking. The
+  // same-role guard, the phase-exit gate, and check_turns all branch on it.
+  const dispatcher = asyncDeps?.dispatcher;
+  const ROLES: WorkerRole[] = ['implementer', 'reviewer'];
+  // A reconnect ORPHAN: a pending-turn record exists on disk for this role, but
+  // the live dispatcher has no record for it — a prior server dispatched the
+  // turn and died, and this (fresh) server does not own it. Detection is purely
+  // the durable record's existence-without-a-live-owner; no transcript claim.
+  // Branch-aware orphan recovery (slice 4): the two sub-cases have different
+  // hazards, so the prescribed recovery differs. A SESSION orphan can be
+  // resumed (and a re-send would race that session); a NO-SESSION orphan has no
+  // session to resume, but the old worker process may still be running and
+  // editing the repo — so dropping it is a deliberate ABANDON, stated honestly.
+  // Either way `duet takeover <role>` is the single resolution affordance.
+  const orphanRefusalText = (role: WorkerRole): string =>
+    state.workerSessions[role]
+      ? `The prior turn to the ${role} was orphaned when its session ended — its pending record is still on disk, and that session may still be resumable. Inspect or finish it with \`duet takeover ${role}\`, then re-send. Do not re-send into this role until the orphan is resolved: an immediate re-send would resume and race the orphaned worker on that same session.`
+      : `The prior turn to the ${role} was orphaned before a session id was captured — there is no session to resume, and the old worker process may still be running and editing the repo. Dropping the orphan ABANDONS that in-flight turn: confirm it is done (or accept the risk), then run \`duet takeover ${role}\` to drop the orphan and re-send. Do not re-send until then.`;
+  // The phase-exit gate (async only): advance_phase and ask_human are both
+  // refused while ANY pending-turn record is non-collected — live (the
+  // dispatcher owns it) OR on disk (a reconnect orphan the fresh dispatcher
+  // doesn't). A turn dispatched-but-uncollected means the phase isn't done;
+  // advancing would strand the turn and its bookkeeping, and the disk half also
+  // keeps the per-phase ctx registry safe to rebuild at a boundary. Returns a
+  // prescribed-recovery refusal, or null when nothing is outstanding.
+  const pendingTurnGate = (verb: 'advance the phase' | 'queue a question'): CallToolResult | null => {
+    if (!dispatcher) return null;
+    const live = dispatcher.hasPending();
+    const onDisk = state.pendingTurns !== undefined && Object.keys(state.pendingTurns).length > 0;
+    if (!live && !onDisk) return null;
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `A worker turn dispatched in this phase has not been collected yet, so you can't ${verb} — advancing or flagging now would strand the turn and its bookkeeping. Collect it with check_turns first (or, if it was orphaned when a prior session ended, recover it with duet takeover <role>), then ${verb === 'advance the phase' ? 'advance' : 'ask'} once nothing is outstanding.`,
+        },
+      ],
+      isError: true,
+    };
+  };
 
   const tools: Array<KernelTool<any>> = [
     kernelTool(
@@ -268,7 +445,13 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           ),
       },
       async (args) => {
-        if (turnsInFlight.has(args.role)) {
+        // Same-role guard (host-divergent). Blocking: the in-memory
+        // turnsInFlight set. Async: the pending-turn record IS the guard — a
+        // live running/settled-uncollected record refuses a re-send, AND a
+        // reconnect orphan (a record on disk this fresh server doesn't own)
+        // keeps the role closed until the human recovers it (slice 4 refines).
+        const inFlight = dispatcher ? dispatcher.statusOf(args.role) !== undefined : turnsInFlight.has(args.role);
+        if (inFlight) {
           return {
             content: [
               {
@@ -278,6 +461,11 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             ],
             isError: true,
           };
+        }
+        if (dispatcher && state.pendingTurns?.[args.role]) {
+          // A non-collected record with no live owner is an orphan, not a live
+          // turn — refuse the re-send (it would race the orphaned worker).
+          return { content: [{ type: 'text' as const, text: orphanRefusalText(args.role) }], isError: true };
         }
         const isReviewRound = args.role === 'reviewer' && args.tag.startsWith('review');
         const cap = PHASE[phase].roundCap;
@@ -315,30 +503,37 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           log(`[send_prompt] resend of ${args.tag} → ${args.role} allowed after steering (deliberate)`);
         }
 
-        turnsInFlight.add(args.role);
         const provider = providers[args.role];
         log(`[send_prompt] → ${args.role} (${provider.name})  tag=${args.tag}  body=${args.body.length} chars`);
         appendVoiceLog(state, args.role, `◀ prompt (tag=${args.tag}, from orchestrator)`, args.body);
 
+        // Async (interactive host): dispatch the turn into the background and
+        // return at once, so the session stays live. The dispatcher takes the
+        // pending-turn record, the branch-fixed flag, the activeTurns hint, and
+        // the heartbeat; the turn settles (durable bookkeeping commits) when its
+        // promise resolves; check_turns collects the result later.
+        if (dispatcher) {
+          dispatcher.dispatch({ role: args.role, tag: args.tag, body: args.body, isReviewRound });
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Dispatched to the ${args.role} — the turn runs in the background and this session stays live: keep talking with the human, steer, check status, or fire the other role meanwhile. Pull the result with check_turns once it lands (it returns the moment the turn settles; a phase can't advance while a turn is uncollected). A turn to the other role can run in parallel.`,
+              },
+            ],
+          };
+        }
+
+        // Blocking (headless host): run dispatch → settle → collect in one call.
         // Persist the in-flight hint (a separate doctor process reads it to tell
         // long-inference from idle). Best-effort like all of state.json.
+        turnsInFlight.add(args.role);
         markTurnActive(state, args.role, args.tag);
-
-        // Worker turns are non-streaming and can run 30+ minutes; heartbeat
-        // lines keep the voice log (and its tmux pane) visibly alive. Once a
-        // session id exists (every turn after the first), each heartbeat enriches
-        // the elapsed line with the worker's own transcript recency + retry count
-        // (probeRole), so "is it stuck?" usually needs no command. Best-effort:
-        // the first turn (no session id yet) and any read/probe failure fall back
-        // to elapsed-only, never throwing into the turn.
         const startedAt = Date.now();
-        const heartbeat = setInterval(() => {
-          const mins = Math.round((Date.now() - startedAt) / 60_000);
-          const health = heartbeatHealth(state, args.role, startedAt, Date.now(), home);
-          log(`[send_prompt] ⏳ ${args.role} turn running — ${mins}m elapsed (tag=${args.tag})${health}`);
-          appendVoiceLog(state, args.role, `⏳ turn running — ${mins}m elapsed (tag=${args.tag})${health}`);
-        }, 5 * 60_000);
-
+        const stopHeartbeat = startHeartbeat({ state, log, ...(home !== undefined ? { home } : {}) }, { role: args.role, tag: args.tag, startedAt });
+        // settleTurn + renderTurnResult are kept INSIDE this try/catch (in both
+        // arms) so a throw during the merge renders as an infra failure exactly
+        // as the inline block did — the await and the settle share one boundary.
         try {
           const turn = await provider.runTurn({
             prompt: args.body,
@@ -346,80 +541,15 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             readOnly: args.role === 'reviewer',
             cwd: state.cwd,
           });
-          // Merge this turn's results against FRESH disk state, then save — so a
-          // concurrent cross-role send cannot clobber the other's worker session
-          // / cost / sent-snippets / rounds / context with a stale full-object
-          // save. Under the run-scoped interactive host each call loads its own
-          // RunState (mcp-server.ts), so two parallel sends would otherwise each
-          // save the call-start object and the later wins. The load→merge→save
-          // here runs synchronously (no await), so concurrent sends serialize at
-          // this point: the second loads after the first saved, and the deltas
-          // (a set session, a += cost, an appended tag, a +1 round) compose. In
-          // headless the shared `state` is already disk-fresh, so the merge is a
-          // no-op overlay. Re-sync the closed-over `state` afterward so
-          // subsequent same-phase reads — the warn-once / round rails,
-          // list_snippets annotations — see this turn's result.
-          const fresh = loadRunState(state.cwd, state.runId);
-          fresh.workerSessions[args.role] = turn.sessionId;
-          // Re-read off fresh rather than reusing `used`: the minutes-long await
-          // above means a parallel call may have moved the round count.
-          if (isReviewRound) fresh.rounds[phase] = (fresh.rounds[phase] ?? 0) + 1;
-          if (isBaseTemplate(args.tag)) {
-            const sent = ((fresh.sentSnippets ??= {})[phase] ??= {});
-            const tags = (sent[args.role] ??= []);
-            if (!tags.includes(args.tag)) tags.push(args.tag);
-          }
-          if (turn.costUsd) fresh.costs.claudeWorkersUsd += turn.costUsd;
-          // A claude turn that reported no cost (the interactive transport, by
-          // P5) means the claudeWorkersUsd total is partial — mark it so the
-          // status never presents the known sum as the complete total. The
-          // claim is about cost completeness, not transport: total_cost_usd is
-          // optional in the envelope, so anything needing "interactive"
-          // specifically reads the binding's transport, never a missing cost.
-          if (provider.name === 'claude' && turn.costUsd === undefined) {
-            fresh.costs.claudeWorkersCostPartial = true;
-          }
-          if (provider.name === 'codex' && turn.tokens) {
-            fresh.costs.codexTokens.input += turn.tokens.input;
-            fresh.costs.codexTokens.output += turn.tokens.output;
-          }
-          if (turn.context) recordContextUsage(fresh, args.role, turn.context);
-          fresh.lastActivity = `send_prompt → ${args.role} (${args.tag})`;
-          saveRunState(fresh);
-          Object.assign(state, fresh);
-          const ctx = turn.context ? ` · context ${contextPercent(turn.context)}%` : '';
-          appendVoiceLog(state, args.role, `▶ response (session ${turn.sessionId})${ctx}`, turn.text);
-          log(`[send_prompt] ← ${args.role} responded (${turn.text.length} chars${ctx})`);
-          const content: Array<{ type: 'text'; text: string }> = [{ type: 'text' as const, text: turn.text }];
-          // Reactive state-triggered nudge (docs/prompting-and-tool-design.md
-          // §"Results nudge the next step"): when this review round leaves
-          // exactly one before the backstop cap, say so once — the cap is
-          // runaway protection, not a target, so the reminder steers toward
-          // converging or flagging rather than spending the last round idly.
-          if (isReviewRound && (state.rounds[phase] ?? 0) === cap - 1) {
-            content.push({
-              type: 'text' as const,
-              text: `(${state.rounds[phase]} of ${cap} review rounds used — one remains before this phase’s backstop cap. The cap is runaway protection, not a target: if the loop has converged, advance_phase now; if a substantive disagreement is still open, that is the human’s call via ask_human. Spend the last round only on a genuinely open structural point.)`,
-            });
-          }
-          return { content };
+          settleTurn({ state, phase, providers, log }, { role: args.role, tag: args.tag, isReviewRound }, turn);
+          return renderTurnResult({ state, phase }, { role: args.role, isReviewRound, cap }, turn);
         } catch (err) {
-          const detail = err instanceof Error ? err.message : String(err);
-          log(`[send_prompt] ✗ ${args.role} turn failed: ${detail}`);
-          appendVoiceLog(state, args.role, `✗ turn failed: ${detail}`);
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: `The ${args.role} worker's turn failed at the infrastructure layer (${detail}). The worker never saw your prompt, so this is not a content problem. Retry this same send_prompt call once; if the retry also fails, stop routing and report the failure to the human via ask_human instead of continuing the round.`,
-              },
-            ],
-            isError: true,
-          };
+          const outcome = err instanceof Error ? err : new Error(String(err));
+          settleTurn({ state, phase, providers, log }, { role: args.role, tag: args.tag, isReviewRound }, outcome);
+          return renderTurnResult({ state, phase }, { role: args.role, isReviewRound, cap }, outcome);
         } finally {
           turnsInFlight.delete(args.role);
-          clearTurnActive(state, args.role);
-          clearInterval(heartbeat);
+          stopHeartbeat();
         }
       },
       // CLI quirk, load-bearing: readOnlyHint here is a CONCURRENCY HINT, not
@@ -454,6 +584,8 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           return { content: [{ type: 'text' as const, text: `The human answered: ${answer}` }] };
         }
         if (terminalAlreadySet()) return alreadyEnding();
+        const stranded = pendingTurnGate('queue a question');
+        if (stranded) return stranded;
         state.pendingQuestion = { question: args.question, ...(args.context ? { context: args.context } : {}), cause: 'human' };
         state.lastActivity = 'ask_human (queued)';
         // The marker rides the SAME atomic write as the question it carries, so
@@ -481,7 +613,11 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         name: z.string().describe('Branch name fitting the work and the project’s conventions, e.g. "feat/queued-flags".'),
       },
       async (args) => {
-        if (state.workerSessions.implementer || state.workerSessions.reviewer) {
+        // Branch fixed once any worker prompt has been issued. workerDispatched
+        // (the durable one-way flag) covers the async window where a turn was
+        // dispatched but its session id isn't yet persisted; workerSessions
+        // covers the headless host (and a settled interactive turn).
+        if (state.workerDispatched || state.workerSessions.implementer || state.workerSessions.reviewer) {
           return {
             content: [
               {
@@ -549,6 +685,8 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       },
       async (args) => {
         if (terminalAlreadySet()) return alreadyEnding();
+        const stranded = pendingTurnGate('advance the phase');
+        if (stranded) return stranded;
         const roundsRun = state.rounds[phase] ?? 0;
         if (PHASE[phase].reviewLoop && roundsRun === 0) {
           return {
@@ -629,6 +767,58 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       },
     ),
   ];
+
+  // check_turns — interactive host only (present iff a dispatcher is injected).
+  // Instant, role-keyed: collect every settled turn (delivering the same text /
+  // near-cap nudge / infra error a blocking send_prompt would have returned),
+  // report each still-running role, and surface any reconnect orphan rather than
+  // hide it behind "nothing in flight". Never blocks — "block until ready" lives
+  // in `duet status --wait`, off the session.
+  if (dispatcher) {
+    tools.push(
+      kernelTool(
+        'check_turns',
+        'Collect the results of worker turns dispatched with send_prompt. On the interactive host send_prompt returns immediately and the turn runs in the background; check_turns is how you pull a finished turn’s response back into the conversation — the worker’s text (or, if its turn failed at the infrastructure layer, the prescribed recovery), with the same bookkeeping a blocking turn would have done already committed. It is instant: it delivers whatever has settled, names any role whose turn is still running (call it again later — or let `duet status --wait` wake you on completion), and never waits. Collecting a role’s result re-opens it for the next send_prompt; a phase cannot advance while any dispatched turn is still uncollected.',
+        {},
+        async () => {
+          const ready = dispatcher.collectReady();
+          const content: Array<{ type: 'text'; text: string }> = [];
+          for (const { role, result } of ready) {
+            content.push({ type: 'text' as const, text: `── ${role} ──` });
+            for (const block of result.content) {
+              if (typeof block === 'object' && block !== null && (block as { type?: string }).type === 'text') {
+                content.push({ type: 'text' as const, text: (block as { text: string }).text });
+              }
+            }
+          }
+          for (const role of ROLES) {
+            if (dispatcher.statusOf(role) === 'running') {
+              content.push({
+                type: 'text' as const,
+                text: `The ${role} turn is still running — keep the conversation going and call check_turns again later, or run \`duet status --wait\` (it wakes the moment the turn settles).`,
+              });
+            }
+          }
+          // collectReady cleared the just-collected records from disk; re-read so
+          // a freshly-collected role isn't mistaken for an orphan. A reconnect
+          // orphan (on disk, no live owner) is reported, never hidden.
+          const afterCollect = loadRunState(state.cwd, state.runId);
+          for (const role of ROLES) {
+            if (afterCollect.pendingTurns?.[role] && dispatcher.statusOf(role) === undefined) {
+              content.push({ type: 'text' as const, text: orphanRefusalText(role) });
+            }
+          }
+          if (content.length === 0) {
+            content.push({
+              type: 'text' as const,
+              text: 'No worker turns are in flight — nothing to collect. Dispatch one with send_prompt, or advance the phase if the work is done.',
+            });
+          }
+          return { content };
+        },
+      ),
+    );
+  }
 
   /**
    * Steer delivery rides every tool result (docs/specs/2026-06-12-concierge-package.md):

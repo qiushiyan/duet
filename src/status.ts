@@ -1,6 +1,7 @@
 import type { RunPosition } from './harness/lifecycle.ts';
 import { WORKFLOWS, gateOf, phaseOfGateState, phasesOf } from './phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
+import type { WorkerRole } from './providers/types.ts';
 import { contextPercent, workflowOf } from './run-store.ts';
 import type { HumanDecision, RunState, Steer, Voice } from './run-store.ts';
 import { resolveSessions } from './sessions.ts';
@@ -141,6 +142,13 @@ export interface StatusModel {
   context: Array<{ role: Voice; usedTokens: number; windowTokens: number; percent: number; at: string }>;
   /** Staged steers not yet delivered to the orchestrator. */
   pendingSteers: Array<{ stagedAt: string; stagedDuring?: PhaseName; text: string }>;
+  /**
+   * Interactive-host worker turns in flight or settled-uncollected (the async
+   * send_prompt lifecycle). Present only when `state.pendingTurns` has entries;
+   * a `ready`/`failed` turn signals "collect with check_turns" and is what
+   * `duet status --wait` (slice 5) wakes on. Additive (schema-additive-only).
+   */
+  pendingTurns?: Array<{ role: WorkerRole; tag: string; status: 'running' | 'ready' | 'failed'; startedAt: string }>;
   /** Queued library edits (rationale only — full bodies stay in state.json). */
   snippetProposals: Array<{ snippetKey: string; rationale: string; at: string }>;
   lastActivity?: string;
@@ -174,6 +182,14 @@ export function buildStatusModel(state: RunState, position: RunPosition, pending
       ...(stagedDuring ? { stagedDuring } : {}),
       text,
     })),
+    ...(state.pendingTurns && Object.keys(state.pendingTurns).length > 0
+      ? {
+          pendingTurns: (['implementer', 'reviewer'] as const).flatMap((role) => {
+            const t = state.pendingTurns?.[role];
+            return t ? [{ role, tag: t.tag, status: t.status, startedAt: t.startedAt }] : [];
+          }),
+        }
+      : {}),
     snippetProposals: state.snippetProposals.map(({ snippetKey, rationale, at }) => ({ snippetKey, rationale, at })),
     ...(state.lastActivity ? { lastActivity: state.lastActivity } : {}),
   };
@@ -303,6 +319,19 @@ export function renderStatus(model: StatusModel): string {
     }
   }
 
+  if (model.pendingTurns && model.pendingTurns.length > 0) {
+    lines.push(`\nworker turns dispatched (interactive host):`);
+    for (const t of model.pendingTurns) {
+      const note =
+        t.status === 'running'
+          ? 'running in the background'
+          : t.status === 'ready'
+            ? 'ready — collect with check_turns'
+            : 'failed — collect with check_turns to see the error';
+      lines.push(`  • ${t.role} (${t.tag}): ${note}`);
+    }
+  }
+
   if (model.autoApprovals.length > 0) {
     lines.push(`\nwhile you were away — gates auto-approved (pre-authorized):`);
     for (const a of model.autoApprovals) {
@@ -386,6 +415,15 @@ export interface BriefModel {
   pendingSteers: number;
   autoApprovals: Array<{ gate: string; at: string; headline: string }>;
   humanDecisions?: HumanDecision[];
+  /**
+   * Interactive-host worker turns in flight or settled-uncollected — narrowed
+   * from the full model's `pendingTurns` (startAt dropped; brief renders no
+   * timestamps). Present only when there are entries, so the lean supervision
+   * path (`--brief`, what the concierge reads remotely) still surfaces the one
+   * thing async turns add: a `ready`/`failed` turn to collect with check_turns.
+   * Additive (schema-additive-only).
+   */
+  pendingTurns?: Array<{ role: WorkerRole; tag: string; status: 'running' | 'ready' | 'failed' }>;
 }
 
 function briefHeadline(stop: StopModel, workflow: WorkflowName): string {
@@ -433,6 +471,9 @@ export function buildBrief(model: StatusModel): BriefModel {
     pendingSteers: model.pendingSteers.length,
     autoApprovals: model.autoApprovals,
     ...(stop.kind === 'gate' && stop.packet?.humanDecisions ? { humanDecisions: stop.packet.humanDecisions } : {}),
+    ...(model.pendingTurns && model.pendingTurns.length > 0
+      ? { pendingTurns: model.pendingTurns.map(({ role, tag, status }) => ({ role, tag, status })) }
+      : {}),
   };
 }
 
@@ -447,6 +488,9 @@ export function renderBrief(brief: BriefModel): string {
     lines.push(`decisions: ${list}${anyHigh ? '  (hold — a high decision is the human’s to make)' : ''}`);
   }
   if (brief.pendingSteers > 0) lines.push(`pending steers: ${brief.pendingSteers}`);
+  if (brief.pendingTurns && brief.pendingTurns.length > 0) {
+    lines.push(`pending turns: ${brief.pendingTurns.map((t) => `${t.role} ${t.status}`).join(' · ')}`);
+  }
   if (brief.autoApprovals.length > 0) lines.push(`auto-approved: ${brief.autoApprovals.map((a) => a.gate).join(', ')}`);
   if (brief.nextCommand) lines.push(`next: ${brief.nextCommand}`);
   return lines.join('\n');

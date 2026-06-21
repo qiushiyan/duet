@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -8,12 +10,12 @@ import { createActor } from 'xstate';
 import { toSdkTools } from '../src/harness/driver.ts';
 import { crossInteractive } from '../src/harness/lifecycle.ts';
 import { interactiveMachine } from '../src/harness/machine.ts';
-import { buildKernelMcpServer, buildKernelTools, createRunScopedKernel } from '../src/harness/mcp-server.ts';
+import { buildKernelMcpServer, buildKernelTools, buildRunScopedKernelServer, createRunScopedKernel } from '../src/harness/mcp-server.ts';
 import { createPhaseTools } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
 import { renderSnippetLibrary } from '../src/snippets.ts';
 import { FakeWorker, test } from './helpers/fixtures.ts';
-import { createRun, loadRunState, markAbandoned, saveMachineSnapshot, saveRunState, stageHumanInput } from '../src/run-store.ts';
+import { createRun, loadRunState, markAbandoned, runDirOf, saveMachineSnapshot, saveRunState, stageHumanInput } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
 
@@ -42,6 +44,10 @@ const ALL_TOOLS = [
   'propose_snippet_edit',
   'write_note',
 ].sort();
+
+// The interactive host adds one tool — check_turns — to collect async turns.
+// The headless/single-phase surface stays ALL_TOOLS (send_prompt blocks there).
+const INTERACTIVE_TOOLS = [...ALL_TOOLS, 'check_turns'].sort();
 
 function registryFor(run: RunState, phase: Parameters<typeof createPhaseTools>[0]['phase'] = 'spec'): Array<KernelTool<any>> {
   return createPhaseTools({
@@ -258,15 +264,25 @@ describe('the run-scoped, phase-less kernel server (Stage 1)', () => {
       reviewer: new FakeWorker('codex'),
     }));
     const t = { role: 'implementer', tag: 'think-holistic', body: 'x' };
+    // send_prompt is async here: dispatch, let the FakeWorker turn settle, then
+    // collect (which re-opens the role). The warn-once rail is unchanged — it
+    // just runs once the same-role guard is clear.
+    const sendAndCollect = async () => {
+      await kernel.callTool('send_prompt', t, {});
+      await new Promise((r) => setTimeout(r, 0)); // let the turn settle
+      await kernel.callTool('check_turns', {}, {}); // collect → re-opens the role
+    };
 
-    // Frame: send, re-send (warns once), re-send (passes) — resendWarned now holds it.
-    await kernel.callTool('send_prompt', t, {});
+    // Frame: send+collect, re-send (warns once), re-send passes (then collect).
+    await sendAndCollect();
     expect.soft((await kernel.callTool('send_prompt', t, {})).isError).toBe(true);
     expect.soft((await kernel.callTool('send_prompt', t, {})).isError).toBeUndefined();
+    await new Promise((r) => setTimeout(r, 0));
+    await kernel.callTool('check_turns', {}, {}); // drain the dispatched turn
 
-    // Cross to spec on disk; the per-phase rails are rebuilt (resendWarned reset).
+    // Cross to spec on disk; the per-phase rails AND dispatcher are rebuilt.
     restAtSpec(loadRunState(projectDir, interactiveRun.runId));
-    await kernel.callTool('send_prompt', t, {}); // first send in the new phase — passes
+    await sendAndCollect(); // first send in the new phase — passes
     // The second identical send warns FRESH, proving the rail reset at the boundary.
     expect((await kernel.callTool('send_prompt', t, {})).isError).toBe(true);
   });
@@ -339,6 +355,53 @@ describe('the run-scoped, phase-less kernel server (Stage 1)', () => {
     expect.soft(textOf(refused)).toContain('no longer being orchestrated interactively');
   });
 
+  test('host-divergent surface: the run-scoped (interactive) server advertises check_turns; the single-phase one does not', async ({
+    projectDir,
+    interactiveRun,
+    run,
+  }) => {
+    // Interactive run-scoped server → 9 tools (adds check_turns).
+    const runScoped = buildRunScopedKernelServer(projectDir, interactiveRun.runId);
+    const interactiveClient = await linkedClient(runScoped);
+    expect.soft((await interactiveClient.listTools()).tools.map((t) => t.name).sort()).toEqual(INTERACTIVE_TOOLS);
+    await interactiveClient.close();
+
+    // Single-phase buildKernelTools (the headless/_drive shape) → 8, no check_turns.
+    const { tools } = buildKernelTools(projectDir, run.runId, 'spec');
+    const singleClient = await linkedClient(buildKernelMcpServer(tools));
+    expect.soft((await singleClient.listTools()).tools.map((t) => t.name).sort()).toEqual(ALL_TOOLS);
+    await singleClient.close();
+  });
+
+  test('acquires the single-writer lease on construction, and a newer server supersedes it', ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    const a = createRunScopedKernel(projectDir, interactiveRun.runId);
+    // The lease file exists and this server holds it.
+    expect.soft(existsSync(join(runDirOf(projectDir, interactiveRun.runId), 'mcp-owner.json'))).toBe(true);
+    expect.soft(a.holdsLease()).toBe(true);
+
+    // A second server over the same run takes ownership — the first is superseded.
+    const b = createRunScopedKernel(projectDir, interactiveRun.runId);
+    expect.soft(b.holdsLease()).toBe(true);
+    expect.soft(a.holdsLease()).toBe(false);
+  });
+
+  test('a superseded server refuses every tool call and mutates nothing (the broad lease gate)', async ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    const a = createRunScopedKernel(projectDir, interactiveRun.runId);
+    createRunScopedKernel(projectDir, interactiveRun.runId); // b takes the lease
+
+    // get_task would normally mark phaseStarted — under supersession it must not.
+    const refused = await a.callTool('get_task', {}, {});
+    expect.soft(refused.isError).toBe(true);
+    expect.soft(textOf(refused)).toContain('superseded by a newer');
+    expect.soft(loadRunState(projectDir, interactiveRun.runId).phaseStarted.frame).toBeUndefined();
+  });
+
   test(
     'phase-less duet _mcp over a real subprocess enumerates the surface and answers list_snippets at zero worker cost',
     async ({ projectDir, interactiveRun }) => {
@@ -351,7 +414,7 @@ describe('the run-scoped, phase-less kernel server (Stage 1)', () => {
       const client = new Client({ name: 'test', version: '0' });
       await client.connect(transport);
       try {
-        expect.soft((await client.listTools()).tools.map((t) => t.name).sort()).toEqual(ALL_TOOLS); // incl get_task
+        expect.soft((await client.listTools()).tools.map((t) => t.name).sort()).toEqual(INTERACTIVE_TOOLS); // incl check_turns
         const result = await client.callTool({ name: 'list_snippets', arguments: {} });
         expect.soft(textOf(result)).toBe(renderSnippetLibrary({ phase: 'frame', sentTo: {}, all: undefined }));
       } finally {

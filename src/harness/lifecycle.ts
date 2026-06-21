@@ -6,6 +6,7 @@ import type { AnyMachineSnapshot, Snapshot } from 'xstate';
 import { notify as desktopNotify } from '../notify.ts';
 import { PHASE, WORKFLOWS, entryOf, phaseOfGateState, phasesOf } from '../phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from '../phases.ts';
+import type { WorkerRole } from '../providers/types.ts';
 import {
   gateAttended,
   loadMachineSnapshot,
@@ -258,6 +259,43 @@ export async function waitForRunStop(
   for (;;) {
     const position = probeRunPosition(loadRunState(cwd, runId));
     if (position.kind !== 'running') return position;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+/** A pending worker turn settled — what `duet status --wait` wakes on, beside a run stop. */
+export type TurnReady = { kind: 'turn-ready'; roles: WorkerRole[] };
+
+/**
+ * The turn-aware wait behind `duet status --wait`: wake on a worker turn
+ * settling (interactive host) OR a run stop, whichever comes first. Stop-only
+ * polling (waitForRunStop) is wrong for the interactive host — an interactive
+ * run probes as `interactive`, never `running`, so it would wake instantly on
+ * exactly the host async send_prompt is for. The rule:
+ *   - any pending record `ready`/`failed` → `turn-ready` (collect with check_turns);
+ *   - a real stop (gate/flag/crashed/done/abandoned) → that position;
+ *   - keep polling only while a headless driver is `running`, or an `interactive`
+ *     run still has a turn `running`;
+ *   - otherwise return the position (an interactive rest with nothing pending is
+ *     itself the answer — there is nothing to wait for).
+ * Read-only, like waitForRunStop; interrupting it cannot affect the run.
+ */
+export async function waitForTurnOrStop(
+  cwd: string,
+  runId: string,
+  opts: { intervalMs?: number } = {},
+): Promise<RunPosition | TurnReady> {
+  const intervalMs = opts.intervalMs ?? 5_000;
+  const ROLES: WorkerRole[] = ['implementer', 'reviewer'];
+  for (;;) {
+    const state = loadRunState(cwd, runId);
+    const pending = state.pendingTurns ?? {};
+    const ready = ROLES.filter((r) => pending[r]?.status === 'ready' || pending[r]?.status === 'failed');
+    if (ready.length > 0) return { kind: 'turn-ready', roles: ready };
+    const position = probeRunPosition(state);
+    const turnRunning = ROLES.some((r) => pending[r]?.status === 'running');
+    const keepPolling = position.kind === 'running' || (position.kind === 'interactive' && turnRunning);
+    if (!keepPolling) return position;
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 }
