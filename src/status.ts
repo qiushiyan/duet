@@ -1,6 +1,7 @@
 import type { RunPosition } from './harness/lifecycle.ts';
 import { PHASES, gateOf, phaseOfGateState } from './phases.ts';
 import type { GatePhase, PhaseName } from './phases.ts';
+import type { WorkerRole } from './providers/types.ts';
 import { contextPercent } from './run-store.ts';
 import type { HumanDecision, RunState, Steer, Voice } from './run-store.ts';
 import { resolveSessions } from './sessions.ts';
@@ -122,6 +123,13 @@ export interface StatusModel {
   context: Array<{ role: Voice; usedTokens: number; windowTokens: number; percent: number; at: string }>;
   /** Staged steers not yet delivered to the orchestrator. */
   pendingSteers: Array<{ stagedAt: string; stagedDuring?: PhaseName; text: string }>;
+  /**
+   * Interactive-host worker turns in flight or settled-uncollected (the async
+   * send_prompt lifecycle). Present only when `state.pendingTurns` has entries;
+   * a `ready`/`failed` turn signals "collect with check_turns" and is what
+   * `duet status --wait` (slice 5) wakes on. Additive (schema-additive-only).
+   */
+  pendingTurns?: Array<{ role: WorkerRole; tag: string; status: 'running' | 'ready' | 'failed'; startedAt: string }>;
   /** Queued library edits (rationale only — full bodies stay in state.json). */
   snippetProposals: Array<{ snippetKey: string; rationale: string; at: string }>;
   lastActivity?: string;
@@ -151,6 +159,14 @@ export function buildStatusModel(state: RunState, position: RunPosition, pending
       ...(stagedDuring ? { stagedDuring } : {}),
       text,
     })),
+    ...(state.pendingTurns && Object.keys(state.pendingTurns).length > 0
+      ? {
+          pendingTurns: (['implementer', 'reviewer'] as const).flatMap((role) => {
+            const t = state.pendingTurns?.[role];
+            return t ? [{ role, tag: t.tag, status: t.status, startedAt: t.startedAt }] : [];
+          }),
+        }
+      : {}),
     snippetProposals: state.snippetProposals.map(({ snippetKey, rationale, at }) => ({ snippetKey, rationale, at })),
     ...(state.lastActivity ? { lastActivity: state.lastActivity } : {}),
   };
@@ -264,6 +280,19 @@ export function renderStatus(model: StatusModel): string {
     lines.push(`\nstaged steers awaiting delivery:`);
     for (const s of model.pendingSteers) {
       lines.push(`  • ${fmtStamp(s.stagedAt)}  ${s.text}`);
+    }
+  }
+
+  if (model.pendingTurns && model.pendingTurns.length > 0) {
+    lines.push(`\nworker turns dispatched (interactive host):`);
+    for (const t of model.pendingTurns) {
+      const note =
+        t.status === 'running'
+          ? 'running in the background'
+          : t.status === 'ready'
+            ? 'ready — collect with check_turns'
+            : 'failed — collect with check_turns to see the error';
+      lines.push(`  • ${t.role} (${t.tag}): ${note}`);
     }
   }
 

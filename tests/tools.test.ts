@@ -6,10 +6,13 @@ import { z } from 'zod';
 import { buildPhaseBrief } from '../src/harness/orchestrator-prompts.ts';
 import { createPhaseTools } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
+import { createTurnDispatcher } from '../src/harness/turn-dispatcher.ts';
+import type { TurnDispatcher } from '../src/harness/turn-dispatcher.ts';
+import { PHASE } from '../src/phases.ts';
 import type { PhaseName } from '../src/phases.ts';
 import { listPendingSteers, loadRunState, runDirOf, saveRunState, stageHumanInput, stageSteer } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
-import { FakeWorker, test } from './helpers/fixtures.ts';
+import { DeferredWorker, FakeWorker, test } from './helpers/fixtures.ts';
 import { claudeApiRetry, claudeUserToolResult, jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
 
 /**
@@ -20,20 +23,46 @@ import { claudeApiRetry, claudeUserToolResult, jsonl, plantClaudeTranscript } fr
 
 type ToolResult = Awaited<ReturnType<KernelTool['handler']>>;
 
-function harness(
-  run: RunState,
-  opts: { phase?: PhaseName; stagedAnswer?: string; implementer?: FakeWorker; reviewer?: FakeWorker; home?: string } = {},
-) {
+interface HarnessOpts {
+  phase?: PhaseName;
+  stagedAnswer?: string;
+  implementer?: FakeWorker | DeferredWorker;
+  reviewer?: FakeWorker | DeferredWorker;
+  home?: string;
+  /** Turn on the interactive async path: send_prompt dispatches, check_turns collects. */
+  async?: boolean;
+  /** The dispatcher's lease check (the background-settle fence); defaults to always-held. */
+  holdsLease?: () => boolean;
+}
+
+function harness(run: RunState, opts: HarnessOpts = {}) {
   const implementer = opts.implementer ?? new FakeWorker('claude');
   const reviewer = opts.reviewer ?? new FakeWorker('codex');
+  const providers = { implementer, reviewer };
+  const phase = opts.phase ?? 'spec';
   const lines: string[] = [];
+  const log = (line: string) => lines.push(line);
+  // The interactive host injects a real dispatcher (the same module production
+  // wires into ctx) — not a mock; its presence is the host switch.
+  const dispatcher: TurnDispatcher | undefined = opts.async
+    ? createTurnDispatcher({
+        state: run,
+        phase,
+        cap: PHASE[phase].roundCap,
+        providers,
+        log,
+        ...(opts.home !== undefined ? { home: opts.home } : {}),
+        holdsLease: opts.holdsLease ?? (() => true),
+      })
+    : undefined;
   const { tools } = createPhaseTools({
     state: run,
-    phase: opts.phase ?? 'spec',
-    providers: { implementer, reviewer },
-    log: (line) => lines.push(line),
+    phase,
+    providers,
+    log,
     ...(opts.stagedAnswer !== undefined ? { stagedAnswer: opts.stagedAnswer } : {}),
     ...(opts.home !== undefined ? { home: opts.home } : {}),
+    ...(dispatcher ? { async: { dispatcher } } : {}),
   });
   const call = (name: string, args: Record<string, unknown> = {}): Promise<ToolResult> => {
     const tool = tools.find((t) => t.name === name);
@@ -42,8 +71,11 @@ function harness(
   };
   // The terminal decision now lives on the run state the handlers mutate (the
   // persisted marker), not a returned outcome flag — assertions read run.terminalMarker.
-  return { call, implementer, reviewer, lines };
+  return { call, implementer, reviewer, lines, dispatcher };
 }
+
+/** Let a DeferredWorker's just-resolved settle continuation drain (microtask flush). */
+const flush = () => new Promise((r) => setTimeout(r, 0));
 
 const text = (result: ToolResult): string => (result.content[0] as { text: string }).text;
 
@@ -837,5 +869,270 @@ describe('the library and the journal', () => {
 
     const notes = readFileSync(join(runDirOf(projectDir, run.runId), 'notes.md'), 'utf8');
     expect(notes).toContain('[orchestrator] review-spec did not fit a refactor-only change');
+  });
+});
+
+describe('async send_prompt + check_turns (the interactive host)', () => {
+  const allText = (result: ToolResult): string =>
+    result.content.map((c) => (c as { text?: string }).text ?? '').join('\n');
+
+  test('send_prompt returns BEFORE the worker turn completes — the session stays live', async ({ run }) => {
+    expect.assertions(3);
+    const reviewer = new DeferredWorker('codex');
+    const { call } = harness(run, { reviewer, async: true });
+
+    const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    // The dispatch returned while the worker turn is still pending — the whole point.
+    expect.soft(reviewer.pending).toBe(1);
+    expect.soft(result.isError).toBeUndefined();
+    expect.soft(allText(result)).toContain('Dispatched to the reviewer');
+  });
+
+  test('check_turns reports still-running, then delivers the text and commits the durable bookkeeping at settle', async ({
+    projectDir,
+    run,
+  }) => {
+    const reviewer = new DeferredWorker('codex');
+    const { call } = harness(run, { reviewer, async: true });
+    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+
+    // Before the worker settles: nothing to deliver, the role is still running.
+    const early = await call('check_turns');
+    expect.soft(allText(early)).toContain('still running');
+    expect.soft(allText(early)).not.toContain('scripted response');
+
+    reviewer.resolve({ sessionId: 'rev-1' });
+    await flush();
+    // Settle committed the durable bookkeeping (round, sent tag, session id) — even
+    // before collect, so duet status stays truthful the instant the worker finished.
+    const settled = loadRunState(projectDir, run.runId);
+    expect.soft(settled.rounds.spec).toBe(1);
+    expect.soft(settled.sentSnippets?.spec?.reviewer).toEqual(['review-spec']);
+    expect.soft(settled.workerSessions.reviewer).toBe('rev-1');
+
+    // Collect delivers the worker's text and clears the pending record.
+    const collected = await call('check_turns');
+    expect.soft(allText(collected)).toContain('scripted response');
+    expect.soft(loadRunState(projectDir, run.runId).pendingTurns?.reviewer).toBeUndefined();
+  });
+
+  test('the same-role guard spans the lifecycle: running and ready-uncollected refuse; collecting re-opens', async ({
+    run,
+  }) => {
+    const reviewer = new DeferredWorker('codex');
+    const { call } = harness(run, { reviewer, async: true });
+    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'r1' });
+
+    // running → refused
+    const whileRunning = await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'x' });
+    expect.soft(whileRunning.isError).toBe(true);
+    expect.soft(allText(whileRunning)).toContain('already in flight');
+    expect.soft(reviewer.calls).toHaveLength(1); // never reached the worker
+
+    // ready-uncollected → still refused (must read the prior answer + land the merge first)
+    reviewer.resolve({ sessionId: 'rev-1' });
+    await flush();
+    expect.soft((await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'x' })).isError).toBe(true);
+
+    // collect → re-opens; a fresh dispatch now reaches the worker
+    await call('check_turns');
+    expect.soft((await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'x2' })).isError).toBeUndefined();
+    expect.soft(reviewer.calls).toHaveLength(2);
+  });
+
+  test('a failed turn also holds the guard until collected, then re-opens', async ({ run }) => {
+    const reviewer = new DeferredWorker('codex');
+    const { call } = harness(run, { reviewer, async: true });
+    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'r1' });
+    reviewer.reject(new Error('spawn codex ENOENT'));
+    await flush();
+
+    // failed-uncollected → refused
+    expect.soft((await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'x' })).isError).toBe(true);
+    // collect the failure → re-opens
+    await call('check_turns');
+    expect.soft((await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'x2' })).isError).toBeUndefined();
+  });
+
+  test('cross-role turns run concurrently — check_turns returns both, with cost and tokens merged', async ({
+    projectDir,
+    run,
+  }) => {
+    const implementer = new DeferredWorker('claude');
+    const reviewer = new DeferredWorker('codex');
+    const { call } = harness(run, { implementer, reviewer, async: true });
+
+    await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    expect.soft(implementer.pending).toBe(1);
+    expect.soft(reviewer.pending).toBe(1); // both in flight at once
+
+    implementer.resolve({ sessionId: 'impl-1', costUsd: 1.25 });
+    reviewer.resolve({ sessionId: 'rev-1', tokens: { input: 1000, output: 50 } });
+    await flush();
+
+    const both = allText(await call('check_turns'));
+    expect.soft(both).toContain('── implementer ──');
+    expect.soft(both).toContain('── reviewer ──');
+
+    const disk = loadRunState(projectDir, run.runId);
+    expect.soft(disk.costs.claudeWorkersUsd).toBe(1.25);
+    expect.soft(disk.costs.codexTokens).toEqual({ input: 1000, output: 50 });
+    expect.soft(disk.workerSessions).toMatchObject({ implementer: 'impl-1', reviewer: 'rev-1' });
+  });
+
+  test('a failed settle commits no round and no sent tag; the retry of the same tag is clean (rail preserved)', async ({
+    projectDir,
+    run,
+  }) => {
+    const reviewer = new DeferredWorker('codex');
+    const { call } = harness(run, { reviewer, async: true });
+    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    reviewer.reject(new Error('spawn codex ENOENT'));
+    await flush();
+
+    // check_turns delivers the prescribed-recovery infra error.
+    const collected = await call('check_turns');
+    expect.soft(allText(collected)).toContain('infrastructure layer (spawn codex ENOENT)');
+    expect.soft(allText(collected)).toContain('Retry this same send_prompt call once');
+
+    const disk = loadRunState(projectDir, run.runId);
+    expect.soft(disk.rounds.spec ?? 0).toBe(0); // no round
+    expect.soft(disk.sentSnippets?.spec?.reviewer ?? []).toEqual([]); // no sent tag
+
+    // The prescribed retry of the SAME tag does not trip the duplicate-template warning.
+    const retry = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    expect.soft(retry.isError).toBeUndefined();
+    expect.soft(allText(retry)).toContain('Dispatched');
+  });
+
+  test('the branch-fixed flag is durable and one-way: a dispatch fixes the branch, a failed-then-collected turn keeps it fixed', async ({
+    run,
+  }) => {
+    const implementer = new DeferredWorker('claude');
+    const { call } = harness(run, { implementer, async: true });
+
+    await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+    const afterDispatch = await call('create_branch', { name: 'feat/too-late' });
+    expect.soft(afterDispatch.isError).toBe(true);
+    expect.soft(allText(afterDispatch)).toContain('branch is fixed');
+
+    // The turn FAILS and is collected (its pending record is cleared) — but the
+    // branch stays fixed, because workerDispatched is one-way and never cleared.
+    implementer.reject(new Error('spawn claude ENOENT'));
+    await flush();
+    await call('check_turns');
+    const afterFailure = await call('create_branch', { name: 'feat/still-too-late' });
+    expect.soft(afterFailure.isError).toBe(true);
+    expect.soft(allText(afterFailure)).toContain('branch is fixed');
+  });
+
+  test('phase-exit (advance_phase & ask_human) is refused while a turn is running/failed/ready, allowed once drained', async ({
+    run,
+  }) => {
+    const implementer = new DeferredWorker('claude');
+    const { call } = harness(run, { phase: 'frame', implementer, async: true });
+
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'x' });
+    // running
+    expect.soft((await call('advance_phase', { summary: 's', artifacts: [] })).isError).toBe(true);
+    expect.soft((await call('ask_human', { question: 'q?' })).isError).toBe(true);
+
+    // failed-uncollected
+    implementer.reject(new Error('boom'));
+    await flush();
+    expect.soft((await call('advance_phase', { summary: 's', artifacts: [] })).isError).toBe(true);
+    await call('check_turns'); // drain the failure
+
+    // ready-uncollected
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'y' });
+    implementer.resolve({ sessionId: 'i1' });
+    await flush();
+    expect.soft((await call('advance_phase', { summary: 's', artifacts: [] })).isError).toBe(true);
+
+    // drained → advance succeeds
+    await call('check_turns');
+    const adv = await call('advance_phase', { summary: 's', artifacts: [] });
+    expect.soft(adv.isError).toBeUndefined();
+    expect.soft(run.terminalMarker).toEqual({ phase: 'frame', kind: 'advance' });
+  });
+
+  test('the settle is lease-fenced: a superseded server (holdsLease false) writes nothing', async ({ projectDir, run }) => {
+    const reviewer = new DeferredWorker('codex');
+    const { call } = harness(run, { reviewer, async: true, holdsLease: () => false });
+    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+
+    reviewer.resolve({ sessionId: 'rev-1' });
+    await flush();
+
+    // The background settle ran but the lease was lost — so it committed nothing:
+    // no round, no session id, and the record never flipped off `running`.
+    const disk = loadRunState(projectDir, run.runId);
+    expect.soft(disk.rounds.spec ?? 0).toBe(0);
+    expect.soft(disk.workerSessions.reviewer).toBeUndefined();
+    expect.soft(disk.pendingTurns?.reviewer?.status).toBe('running');
+  });
+
+  test('reconnect orphan: a record on disk with no live owner is refused on send, blocks phase-exit, and is surfaced by check_turns', async ({
+    projectDir,
+    run,
+  }) => {
+    // Seed a pending record on disk, then build a FRESH dispatcher (empty
+    // in-memory) over the run — exactly the post-reconnect state.
+    run.pendingTurns = { reviewer: { tag: 'review-spec', startedAt: '2026-06-21T00:00:00.000Z', status: 'running' } };
+    saveRunState(run);
+    const { call, reviewer, dispatcher } = harness(run, { async: true });
+    expect.soft(dispatcher?.hasPending()).toBe(false); // the fresh dispatcher owns nothing
+
+    // (a) a same-role send is refused with the orphan copy and never reaches the worker
+    const send = await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'x' });
+    expect.soft(send.isError).toBe(true);
+    expect.soft(allText(send)).toContain('orphaned');
+    expect.soft((reviewer as FakeWorker).calls).toHaveLength(0);
+
+    // (b) advance_phase AND ask_human are refused (the disk half of the gate)
+    expect.soft((await call('advance_phase', { summary: 's', artifacts: [] })).isError).toBe(true);
+    expect.soft((await call('ask_human', { question: 'q?' })).isError).toBe(true);
+
+    // (c) check_turns surfaces the orphan rather than say "nothing in flight"
+    const checked = await call('check_turns');
+    expect.soft(allText(checked)).toContain('orphaned');
+    expect.soft(allText(checked)).not.toContain('No worker turns are in flight');
+    // The orphan persists — never auto-collected, never auto-cleared.
+    expect.soft(loadRunState(projectDir, run.runId).pendingTurns?.reviewer?.status).toBe('running');
+  });
+
+  test('the heartbeat stops at settle — no further "running" lines accrue before collect', async ({ run, onTestFinished }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const reviewer = new DeferredWorker('codex');
+    const { call, lines } = harness(run, { reviewer, async: true });
+    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    const beforeSettle = lines.filter((l) => l.includes('⏳ reviewer turn running')).length;
+    expect.soft(beforeSettle).toBeGreaterThanOrEqual(1);
+
+    reviewer.resolve({ sessionId: 'rev-1' });
+    await vi.advanceTimersByTimeAsync(0); // let the settle continuation run (clears the interval)
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    const afterSettle = lines.filter((l) => l.includes('⏳ reviewer turn running')).length;
+    expect.soft(afterSettle).toBe(beforeSettle); // settle stopped the heartbeat
+  });
+
+  test('steers ride a check_turns result (the phase-continuing steer surface)', async ({ run }) => {
+    const reviewer = new DeferredWorker('codex');
+    const { call } = harness(run, { reviewer, async: true });
+    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    reviewer.resolve({ sessionId: 'rev-1' });
+    await flush();
+
+    stageSteer(run, 'narrow the scope');
+    const result = await call('check_turns');
+    expect.soft(allText(result)).toContain('scripted response'); // the collected turn
+    expect.soft(allText(result)).toContain('narrow the scope'); // the steer rode along
+    expect.soft(listPendingSteers(run)).toEqual([]); // consumed once
   });
 });

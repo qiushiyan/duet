@@ -12,6 +12,8 @@ import { probeRunPosition } from './lifecycle.ts';
 import type { RunPosition } from './lifecycle.ts';
 import { createPhaseTools } from './tools.ts';
 import type { KernelTool } from './tools.ts';
+import { createTurnDispatcher } from './turn-dispatcher.ts';
+import type { TurnDispatcher } from './turn-dispatcher.ts';
 
 /**
  * The standard-MCP adapter over the host-neutral kernel registry — the sibling
@@ -165,7 +167,9 @@ export function createRunScopedKernel(
   const ownerNonce = acquireMcpOwner(loadRunState(cwd, runId));
   const leaseHeld = (): boolean => holdsMcpOwner(loadRunState(cwd, runId), ownerNonce);
 
-  let ctx: { phase: PhaseName; providers: Record<WorkerRole, WorkerProvider>; rails: { turnsInFlight: Set<WorkerRole>; resendWarned: Set<string> } } | null = null;
+  let ctx:
+    | { phase: PhaseName; providers: Record<WorkerRole, WorkerProvider>; rails: { turnsInFlight: Set<WorkerRole>; resendWarned: Set<string> }; dispatcher: TurnDispatcher }
+    | null = null;
 
   const toolsFor = (): Array<KernelTool<any>> => {
     const state = loadRunState(cwd, runId);
@@ -173,16 +177,39 @@ export function createRunScopedKernel(
     // The broad lease rule: a superseded server refuses EVERY tool call (read or
     // write). Because this check runs synchronously immediately before the
     // handler — no await between it and a tool's dispatch-time writes — it also
-    // fences slice 3's dispatch-time mutations without a redundant inner check;
-    // the one path it cannot reach is the dispatcher's background settle (no
-    // tool call to gate), which keeps its own fence.
+    // fences the dispatcher's dispatch-time mutations without a redundant inner
+    // check; the one path it cannot reach is the background settle (no tool call
+    // to gate), which the dispatcher fences with the same leaseHeld thunk.
     if (!holdsMcpOwner(state, ownerNonce)) throw new Error(SUPERSEDED_MESSAGE);
     const phase = hostablePhase(probeRunPosition(state));
     if (!phase) throw new Error(NOT_HOSTABLE_MESSAGE);
     if (!ctx || ctx.phase !== phase) {
-      ctx = { phase, providers: makeWorkers(state, phase), rails: { turnsInFlight: new Set(), resendWarned: new Set() } };
+      // Rebuild the per-phase context — providers, rails, AND the dispatcher —
+      // at a phase boundary. Safe because the phase-exit gate forbids advancing
+      // with a pending turn, so the old dispatcher is always drained here.
+      const providers = makeWorkers(state, phase);
+      ctx = {
+        phase,
+        providers,
+        rails: { turnsInFlight: new Set(), resendWarned: new Set() },
+        dispatcher: createTurnDispatcher({
+          state,
+          phase,
+          cap: PHASE[phase].roundCap,
+          providers,
+          log: (line) => console.error(line),
+          holdsLease: leaseHeld,
+        }),
+      };
     }
-    return createPhaseTools({ state, phase, providers: ctx.providers, log: (line) => console.error(line), rails: ctx.rails }).tools;
+    return createPhaseTools({
+      state,
+      phase,
+      providers: ctx.providers,
+      log: (line) => console.error(line),
+      rails: ctx.rails,
+      async: { dispatcher: ctx.dispatcher },
+    }).tools;
   };
 
   const errorResult = (message: string): CallToolResult => {
@@ -193,9 +220,24 @@ export function createRunScopedKernel(
   return {
     // The surface is phase-independent, so build it for any phase (frame) purely
     // to register stable tool metadata; the delegating handlers never run these.
+    // An inert dispatcher is passed so check_turns appears in the advertised
+    // surface — its methods are never invoked (callTool routes through toolsFor,
+    // which supplies the live dispatcher).
     surface: () => {
       const state = loadRunState(cwd, runId);
-      return createPhaseTools({ state, phase: 'frame', providers: makeWorkers(state, 'frame'), log: () => {} }).tools;
+      const inertDispatcher: TurnDispatcher = {
+        dispatch: () => {},
+        statusOf: () => undefined,
+        collectReady: () => [],
+        hasPending: () => false,
+      };
+      return createPhaseTools({
+        state,
+        phase: 'frame',
+        providers: makeWorkers(state, 'frame'),
+        log: () => {},
+        async: { dispatcher: inertDispatcher },
+      }).tools;
     },
     callTool: async (name, args, extra) => {
       let tools: Array<KernelTool<any>>;

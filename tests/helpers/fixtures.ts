@@ -36,6 +36,52 @@ export class FakeWorker implements WorkerProvider {
   }
 }
 
+/**
+ * A commandable worker — also a real adapter on the WorkerProvider seam — whose
+ * runTurn returns a promise the test resolves or rejects on demand. It makes
+ * "send_prompt returns before the worker completes" directly observable: the
+ * turn stays pending until the test calls resolve()/reject(). FIFO over
+ * concurrently-in-flight turns to this role (at most one, by the same-role
+ * guard, but the queue keeps the helper honest).
+ */
+export class DeferredWorker implements WorkerProvider {
+  readonly name: 'claude' | 'codex';
+  readonly calls: RunTurnOptions[] = [];
+  private readonly resolvers: Array<{ resolve: (t: WorkerTurn) => void; reject: (e: Error) => void }> = [];
+  private resolved = 0;
+
+  constructor(name: 'claude' | 'codex') {
+    this.name = name;
+  }
+
+  runTurn(opts: RunTurnOptions): Promise<WorkerTurn> {
+    this.calls.push(opts);
+    return new Promise<WorkerTurn>((resolve, reject) => {
+      this.resolvers.push({ resolve, reject });
+    });
+  }
+
+  /** Number of turns dispatched but not yet resolved/rejected. */
+  get pending(): number {
+    return this.resolvers.length;
+  }
+
+  /** Resolve the oldest pending turn (a default sessionId, overridable). */
+  resolve(turn: Partial<WorkerTurn> = {}): void {
+    const r = this.resolvers.shift();
+    if (!r) throw new Error('DeferredWorker.resolve: no pending turn');
+    this.resolved += 1;
+    r.resolve({ text: 'scripted response', sessionId: `session-${this.resolved}`, ...turn });
+  }
+
+  /** Reject the oldest pending turn (an infra failure). */
+  reject(err: Error): void {
+    const r = this.resolvers.shift();
+    if (!r) throw new Error('DeferredWorker.reject: no pending turn');
+    r.reject(err);
+  }
+}
+
 export interface Fixtures {
   /** A fresh temp directory standing in for the target project root. */
   projectDir: string;

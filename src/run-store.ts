@@ -148,6 +148,29 @@ export interface RunState {
    */
   activeTurns?: Partial<Record<WorkerRole, { tag: string; startedAt: string }>>;
   /**
+   * The interactive-host pending-turn lifecycle projection (async send_prompt):
+   * a dispatched worker turn carried through `running` → `ready`|`failed` →
+   * (removed at collect). Distinct from `activeTurns` (which stays doctor's
+   * running/idle health hint): this carries a STATUS and is the durable signal
+   * the same-role guard, the phase-exit gate, the reconnect-orphan detection,
+   * and `duet status --wait` all read. Written only by the lease-holding
+   * run-scoped server, via the markPendingTurn / settlePendingTurn /
+   * clearPendingTurn mutators (the fresh-load → mutate-this-role → save
+   * discipline of markTurnActive). Absent on the headless host, which never
+   * leaves a turn in flight.
+   */
+  pendingTurns?: Partial<Record<WorkerRole, { tag: string; startedAt: string; status: 'running' | 'ready' | 'failed' }>>;
+  /**
+   * The branch-fixed-after-first-prompt flag, durable and ONE-WAY: set at the
+   * first async dispatch, never cleared. create_branch reads it so the branch
+   * stays fixed through the dispatched-but-uncollected window (and even if that
+   * first turn fails and its pending record is cleared) — a worker prompt was
+   * issued, so the one-branch-per-run invariant has bound the branch. Headless
+   * never sets it (it reads workerSessions, written at settle, which suffices
+   * there because the blocking call never returns mid-turn).
+   */
+  workerDispatched?: true;
+  /**
    * A queued flag awaiting `duet continue --answer`. `cause` distinguishes the
    * supervisor's actual decision — escalate vs resume/retry: `human` (an
    * ask_human-originated question — product, environment, blocker, or
@@ -354,6 +377,51 @@ export function clearTurnActive(state: RunState, role: WorkerRole): void {
     saveRunState(fresh);
   }
   if (state.activeTurns) delete state.activeTurns[role];
+}
+
+/**
+ * The interactive pending-turn lifecycle mutators — each a fresh-load → mutate
+ * THIS role's record → save, the same discipline as markTurnActive, so a
+ * concurrent cross-role write never clobbers the sibling role's record. The
+ * passed copy is re-synced so in-process reads after the call stay consistent.
+ *
+ * markPendingTurn (status `running`, at dispatch) · settlePendingTurn (→ `ready`
+ * | `failed`, at worker-settle) · clearPendingTurn (at collect, or to resolve an
+ * orphan). markWorkerDispatched sets the one-way branch-fixed flag.
+ */
+export function markPendingTurn(state: RunState, role: WorkerRole, tag: string): void {
+  const entry = { tag, startedAt: new Date().toISOString(), status: 'running' as const };
+  const fresh = loadRunState(state.cwd, state.runId);
+  (fresh.pendingTurns ??= {})[role] = entry;
+  saveRunState(fresh);
+  (state.pendingTurns ??= {})[role] = entry;
+}
+
+export function settlePendingTurn(state: RunState, role: WorkerRole, status: 'ready' | 'failed'): void {
+  const fresh = loadRunState(state.cwd, state.runId);
+  const entry = fresh.pendingTurns?.[role];
+  if (entry) {
+    entry.status = status;
+    saveRunState(fresh);
+  }
+  if (state.pendingTurns?.[role]) state.pendingTurns[role].status = status;
+}
+
+export function clearPendingTurn(state: RunState, role: WorkerRole): void {
+  const fresh = loadRunState(state.cwd, state.runId);
+  if (fresh.pendingTurns?.[role]) {
+    delete fresh.pendingTurns[role];
+    saveRunState(fresh);
+  }
+  if (state.pendingTurns) delete state.pendingTurns[role];
+}
+
+export function markWorkerDispatched(state: RunState): void {
+  if (state.workerDispatched) return;
+  const fresh = loadRunState(state.cwd, state.runId);
+  fresh.workerDispatched = true;
+  saveRunState(fresh);
+  state.workerDispatched = true;
 }
 
 const OWNER_FILE = 'mcp-owner.json';

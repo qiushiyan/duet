@@ -223,6 +223,25 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     expect(model.pendingSteers).toEqual([{ stagedAt: 't1', stagedDuring: 'impl', text: 'drop the retry tests' }]);
   });
 
+  test('pendingTurns surfaces the interactive in-flight/settled turns, and the text names check_turns', ({ run }) => {
+    run.pendingTurns = {
+      implementer: { tag: 'write-spec', startedAt: 't1', status: 'running' },
+      reviewer: { tag: 'review-spec', startedAt: 't2', status: 'ready' },
+    };
+    const model = buildStatusModel(run, { kind: 'interactive', phase: 'spec' }, []);
+    expect.soft(model.pendingTurns).toEqual([
+      { role: 'implementer', tag: 'write-spec', status: 'running', startedAt: 't1' },
+      { role: 'reviewer', tag: 'review-spec', status: 'ready', startedAt: 't2' },
+    ]);
+    const out = renderStatus(model);
+    expect.soft(out).toContain('implementer (write-spec): running in the background');
+    expect.soft(out).toContain('reviewer (review-spec): ready — collect with check_turns');
+  });
+
+  test('pendingTurns is absent when no turn is in flight (additive — omitted, not empty)', ({ run }) => {
+    expect(buildStatusModel(run, { kind: 'interactive', phase: 'spec' }, [])).not.toHaveProperty('pendingTurns');
+  });
+
   test('rounds run against their caps; auto-approvals carry packet headlines', ({ run }) => {
     run.rounds = { spec: 2, frame: 1 };
     run.autoApprovals = [{ gate: 'directionGate', at: '2026-06-12T03:14:00.000Z' }];
