@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 import { execa } from "execa";
 import { z } from "zod";
-import { GATE_PHASES } from "./phases.ts";
+import { WORKFLOWS, gatePhasesOf } from "./phases.ts";
 import type { GatePhase } from "./phases.ts";
 import { ensureDuetDir } from "./run-store.ts";
 
@@ -262,18 +262,6 @@ export async function resolveHumanText(
   return composeInEditor(instructions);
 }
 
-/** Named presets — pure aliases for gate lists, never a separate vocabulary. */
-const GATES_AT_PRESETS: Record<string, GatePhase[]> = {
-  /** Attend nothing after the spec — the full sleep posture. */
-  overnight: ["frame", "spec"],
-  /**
-   * Walk away at spec approval, return at the Ship gate — the plan loop runs
-   * unattended. Born from run evidence (the human reports rubber-stamping
-   * plan gates); whether this earns default status is Q20's evidence stream.
-   */
-  "skip-plan": ["frame", "spec", "impl", "docs"],
-};
-
 export interface FramingFrontmatter {
   gatesAt?: GatePhase[];
   spec?: string;
@@ -305,23 +293,27 @@ export function parseRetryInfra(value: string): number {
  * never pre-authorizable. Throws with the full vocabulary on bad input.
  */
 export function parseGatesAt(value: string): GatePhase[] {
-  const preset = GATES_AT_PRESETS[value.trim()];
+  const gatePhases = gatePhasesOf("full");
+  const presets: Record<string, readonly string[]> = WORKFLOWS.full.presets;
+  const preset = presets[value.trim()];
   const names = preset ?? value.split(/[,\s]+/).filter(Boolean);
   const gates: GatePhase[] = [];
   for (const name of names) {
-    if (!(GATE_PHASES as readonly string[]).includes(name)) {
+    if (!(gatePhases as readonly string[]).includes(name)) {
       throw new Error(
-        `gates_at: "${name}" is not a gate-bearing phase — use a list from {${GATE_PHASES.join(", ")}} or a preset: "overnight" (= frame,spec) or "skip-plan" (= frame,spec,impl,docs — walk away at spec approval, return at the Ship gate). The open phase has no gate; pr is always attended.`,
+        `gates_at: "${name}" is not a gate-bearing phase — use a list from {${gatePhases.join(", ")}} or a preset: "overnight" (= frame,spec) or "skip-plan" (= frame,spec,impl,docs — walk away at spec approval, return at the Ship gate). The open phase has no gate; pr is always attended.`,
       );
     }
     if (!gates.includes(name as GatePhase)) gates.push(name as GatePhase);
   }
   if (gates.length === 0) {
     throw new Error(
-      `gates_at is empty — list the phases whose gates you will attend (from {${GATE_PHASES.join(", ")}}), or omit it to attend every gate.`,
+      `gates_at is empty — list the phases whose gates you will attend (from {${gatePhases.join(", ")}}), or omit it to attend every gate.`,
     );
   }
-  if (!gates.includes("pr")) gates.push("pr");
+  for (const forced of WORKFLOWS.full.forceAttend) {
+    if (!gates.includes(forced as GatePhase)) gates.push(forced as GatePhase);
+  }
   return gates;
 }
 

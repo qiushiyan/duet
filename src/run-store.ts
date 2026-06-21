@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { Snapshot } from 'xstate';
 import type { RoleBindings } from './config.ts';
-import type { GatePhase, PhaseName } from './phases.ts';
+import { WORKFLOWS } from './phases.ts';
+import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
 import type { ContextUsage, WorkerRole } from './providers/types.ts';
 import { locateSessionTranscripts } from './sessions.ts';
 import type { ErrorClass, RetryState } from './worker-health.ts';
@@ -81,6 +82,12 @@ export interface RunState {
    * (the orchestrator reports it via advance_phase's spec_path).
    */
   specPath?: string;
+  /**
+   * Which workflow arc this run is on (additive — set at creation). A missing
+   * value (a pre-feature or hand-written state.json) resolves to `'full'` via
+   * `workflowOf`; old state files are never rewritten on read.
+   */
+  workflow?: WorkflowName;
   /** Project briefing from --framing — the only place project knowledge enters. */
   framing?: string;
   /** The run's working branch (captured at creation; updated by create_branch). */
@@ -207,13 +214,18 @@ export interface RunState {
   lastActivity?: string;
 }
 
+/** The run's workflow, defaulting a missing/pre-feature value to `'full'`. */
+export function workflowOf(state: RunState): WorkflowName {
+  return state.workflow ?? 'full';
+}
+
 /**
  * Whether a phase's exit gate is attended by the human (vs pre-authorized at
- * run start). Absent gatesAt means every gate is attended; the Open-PR gate
- * is attended unconditionally.
+ * run start). Absent gatesAt means every gate is attended; the workflow's
+ * force-attended gates (Full's Open-PR gate) are attended unconditionally.
  */
 export function gateAttended(state: RunState, phase: GatePhase): boolean {
-  if (phase === 'pr') return true;
+  if ((WORKFLOWS[workflowOf(state)].forceAttend as readonly string[]).includes(phase)) return true;
   return state.gatesAt === undefined || state.gatesAt.includes(phase);
 }
 
@@ -255,6 +267,8 @@ function atomicWrite(path: string, content: string): void {
 
 export function createRun(opts: {
   cwd: string;
+  /** The run's workflow arc (absent ⇒ the `full` default via `workflowOf`). */
+  workflow?: WorkflowName;
   specPath?: string;
   /** The framing body the orchestrator sees (frontmatter already stripped). */
   framing?: string;
@@ -272,6 +286,7 @@ export function createRun(opts: {
     runId,
     createdAt: now.toISOString(),
     cwd: opts.cwd,
+    ...(opts.workflow ? { workflow: opts.workflow } : {}),
     ...(opts.specPath ? { specPath: opts.specPath } : {}),
     ...(opts.framing ? { framing: opts.framing } : {}),
     ...(opts.branch ? { branch: opts.branch } : {}),

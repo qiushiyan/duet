@@ -41,6 +41,7 @@ import {
   saveRunState,
   stageHumanInput,
   stageSteer,
+  workflowOf,
 } from './run-store.ts';
 import type { RunState, Voice } from './run-store.ts';
 
@@ -511,7 +512,7 @@ program
     // A snapshot parked at a pre-authorized gate means the driver died after
     // reaching it but before the next attended stop — re-enter; the driver
     // crosses it again on the standing authorization.
-    const restoredGatePhase = typeof restored.value === 'string' ? phaseOfGateState(restored.value) : undefined;
+    const restoredGatePhase = typeof restored.value === 'string' ? phaseOfGateState(workflowOf(state), restored.value) : undefined;
     if (chosen.length === 0 && restoredGatePhase && !gateAttended(state, restoredGatePhase) && restored.status !== 'done') {
       console.log(
         `run ${state.runId}: stopped at the pre-authorized ${String(restored.value)} — re-entering (it auto-crosses)`,

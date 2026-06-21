@@ -13,6 +13,7 @@ import {
   runDirOf,
   saveMachineSnapshot,
   saveRunState,
+  workflowOf,
 } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
 import { describeStop } from '../status.ts';
@@ -201,7 +202,7 @@ function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running
     return state.pendingQuestion ? { kind: 'flag', phase } : { kind: 'crashed', phase, resumeEvent: 'answer' };
   }
 
-  const gatePhase = phaseOfGateState(value);
+  const gatePhase = phaseOfGateState(workflowOf(state), value);
   if (gatePhase) {
     // The entry prompt of the NEXT phase was built — the gate was crossed,
     // then the driver died mid-phase. (A crash during gate-reject rework is
@@ -309,7 +310,7 @@ export async function driveToQuiescence(
   if (
     restoredMarker &&
     typeof restoredValue === 'string' &&
-    (phaseOfGateState(restoredValue) === restoredMarker.phase ||
+    (phaseOfGateState(workflowOf(state), restoredValue) === restoredMarker.phase ||
       restoredValue === flagWaitStateOf(restoredMarker.phase))
   ) {
     delete state.terminalMarker;
@@ -344,7 +345,7 @@ export async function driveToQuiescence(
       saveRunState(fresh);
     }
 
-    const gatePhase = snapshot.status !== 'done' ? phaseOfGateState(fresh.machineState) : undefined;
+    const gatePhase = snapshot.status !== 'done' ? phaseOfGateState(workflowOf(fresh), fresh.machineState) : undefined;
     if (gatePhase && !gateAttended(fresh, gatePhase)) {
       // Dedupe on crash-recovery re-entry at the same gate.
       if (fresh.autoApprovals?.at(-1)?.gate !== fresh.machineState) {

@@ -1,7 +1,7 @@
 import type { RunPosition } from './harness/lifecycle.ts';
 import { PHASES, gateOf, phaseOfGateState } from './phases.ts';
 import type { GatePhase, PhaseName } from './phases.ts';
-import { contextPercent } from './run-store.ts';
+import { contextPercent, workflowOf } from './run-store.ts';
 import type { HumanDecision, RunState, Steer, Voice } from './run-store.ts';
 import { resolveSessions } from './sessions.ts';
 import type { SessionRef } from './sessions.ts';
@@ -27,7 +27,7 @@ export function describeStop(state: RunState, done: boolean): string {
   if (state.pendingQuestion && machineState.includes('FlagWait')) {
     return `question queued: ${state.pendingQuestion.question}`;
   }
-  const gatePhase = phaseOfGateState(machineState);
+  const gatePhase = phaseOfGateState(workflowOf(state), machineState);
   if (gatePhase) return gateOf(gatePhase).ready;
   return `stopped at ${machineState}`;
 }
@@ -204,7 +204,7 @@ function stopModel(state: RunState, position: RunPosition): StopModel {
 }
 
 function packetHeadline(state: RunState, gateState: string): string {
-  const phase = phaseOfGateState(gateState);
+  const phase = phaseOfGateState(workflowOf(state), gateState);
   if (!phase) return '';
   return (state.phaseSummaries[phase]?.summary.split('\n').find((l) => l.trim()) ?? '').slice(0, 96);
 }
