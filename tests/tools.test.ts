@@ -7,8 +7,9 @@ import { buildPhaseBrief } from '../src/harness/orchestrator-prompts.ts';
 import { createPhaseTools } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
 import type { PhaseName } from '../src/phases.ts';
-import { listPendingSteers, loadRunState, runDirOf, saveRunState, stageHumanInput, stageSteer } from '../src/run-store.ts';
+import { createRun, listPendingSteers, loadRunState, runDirOf, saveRunState, stageHumanInput, stageSteer } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
+import { DEFAULT_BINDINGS } from '../src/config.ts';
 import { FakeWorker, test } from './helpers/fixtures.ts';
 import { claudeApiRetry, claudeUserToolResult, jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
 
@@ -801,6 +802,20 @@ describe('the library and the journal', () => {
 
     const library = text(await call('list_snippets'));
     expect(library).toContain('<snippet key="review-spec" already_sent_this_phase_to="reviewer">');
+  });
+
+  test('list_snippets renders the run’s own arc (a RIR run sees RIR phases, not Full’s)', async ({ projectDir }) => {
+    // Finding #2 — exercise the tool surface, not just renderSnippetLibrary: a
+    // workflow:'rir' run on the research phase indexes the RIR arc only.
+    const rir = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'build a thing' });
+    const { call } = harness(rir, { phase: 'research' });
+    const library = text(await call('list_snippets'));
+
+    expect.soft(library.startsWith('<snippet_library phase="research">')).toBe(true);
+    expect.soft(library).toContain('<snippet key="use-latest-docs">'); // research's own template, in full
+    expect.soft(library).toContain('<phase name="implement">'); // the next RIR phase, indexed by key
+    expect.soft(library).not.toContain('<phase name="plan">'); // no Full-only phase leaks in
+    expect.soft(library).not.toContain('<phase name="spec">');
   });
 
   test('propose_snippet_edit queues for the end-of-run review, never applies now', async ({ projectDir, run }) => {

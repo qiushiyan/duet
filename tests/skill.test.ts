@@ -140,6 +140,16 @@ describe('the duet orchestrator identity coheres with the CLI', () => {
       }
     }
   });
+
+  test('the identity is workflow-neutral — no hardcoded single-arc, anchored on get_task', () => {
+    // Slice 4 made it arc-neutral: it must not name a fixed phase arc (the old
+    // "FRAME → SPEC → PLAN") and must point the session at get_task + a generic
+    // handoff gate, so a RIR session isn't told it's in the Full arc.
+    expect.soft(duetIdentityMd).not.toMatch(/FRAME\s*→\s*SPEC\s*→\s*PLAN/);
+    expect.soft(duetIdentityMd).not.toContain('plan-approval gate, the human');
+    expect.soft(duetIdentityMd).toContain('get_task');
+    expect.soft(duetIdentityMd).toContain('handoff gate');
+  });
 });
 
 const duetFrameDir = new URL('../skills/duet-frame/', import.meta.url);
