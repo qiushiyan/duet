@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   PHASE,
+  defaultPosture,
   gateOf,
   gatePhasesOf,
   handoffWatchLabel,
@@ -42,6 +43,7 @@ function workflow(overrides: Record<string, unknown> = {}) {
     handoffGate: 'a',
     presets: {},
     forceAttend: [] as readonly string[],
+    defaultPreAuthorized: [] as readonly string[],
     ...overrides,
   };
 }
@@ -70,6 +72,16 @@ describe('validateRegistry', () => {
       throws: /forceAttend entry "b" is not a gate phase/,
     },
     {
+      name: 'a defaultPreAuthorized entry that is not a gate phase throws',
+      registry: { w: workflow({ defaultPreAuthorized: ['b'] }) },
+      throws: /defaultPreAuthorized entry "b" is not a gate phase/,
+    },
+    {
+      name: 'a gate in both forceAttend and defaultPreAuthorized throws (disjointness)',
+      registry: { w: workflow({ forceAttend: ['a'], defaultPreAuthorized: ['a'] }) },
+      throws: /gate "a" is in both forceAttend and defaultPreAuthorized/,
+    },
+    {
       name: 'a preset value that is not a gate phase throws',
       registry: { w: workflow({ presets: { p: ['b'] } }) },
       throws: /preset "p" value "b" is not a gate phase/,
@@ -87,6 +99,20 @@ describe('validateRegistry', () => {
   ])('$name', ({ registry, throws }) => {
     if (throws) expect(() => validateRegistry(registry)).toThrow(throws);
     else expect(() => validateRegistry(registry)).not.toThrow();
+  });
+});
+
+describe('defaultPosture — the materialized default gate posture', () => {
+  test('empty defaultPreAuthorized → undefined (legacy attend-all preserved)', () => {
+    expect(defaultPosture(gatePhasesOf('full'), [])).toBeUndefined();
+  });
+
+  test("excluding ['pr'] over full's gate set drops only pr, order preserved", () => {
+    expect(defaultPosture(gatePhasesOf('full'), ['pr'])).toEqual(['frame', 'spec', 'plan', 'impl', 'docs']);
+  });
+
+  test('a two-element exclusion drops both, order preserved', () => {
+    expect(defaultPosture(gatePhasesOf('full'), ['spec', 'pr'])).toEqual(['frame', 'plan', 'impl', 'docs']);
   });
 });
 

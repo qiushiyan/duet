@@ -76,6 +76,20 @@ describe('run creation', () => {
   test('loading an unknown run names the path and the likely mistake', ({ projectDir }) => {
     expect(() => loadRunState(projectDir, 'nope')).toThrow(/is nope a run of this project/);
   });
+
+  test('createRun without gatesAt leaves it absent while defaultPreAuthorized is empty (legacy attend-all)', ({
+    projectDir,
+  }) => {
+    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
+    expect.soft(created.gatesAt).toBeUndefined();
+    expect.soft(loadRunState(projectDir, created.runId).gatesAt).toBeUndefined();
+  });
+
+  test('createRun persists an explicit gatesAt unchanged (materialization does not override it)', ({ projectDir }) => {
+    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, gatesAt: ['frame', 'spec'] });
+    expect.soft(created.gatesAt).toEqual(['frame', 'spec']);
+    expect.soft(loadRunState(projectDir, created.runId).gatesAt).toEqual(['frame', 'spec']);
+  });
 });
 
 describe('persistence', () => {

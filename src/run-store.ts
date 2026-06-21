@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { Snapshot } from 'xstate';
 import type { RoleBindings } from './config.ts';
-import { WORKFLOWS } from './phases.ts';
+import { WORKFLOWS, defaultPosture, defaultPreAuthorizedOf, gatePhasesOf } from './phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
 import type { ContextUsage, WorkerRole } from './providers/types.ts';
 import { locateSessionTranscripts } from './sessions.ts';
@@ -305,6 +305,13 @@ export function createRun(opts: {
   const now = new Date();
   const stamp = now.toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
   const runId = `${stamp}-${randomBytes(2).toString('hex')}`;
+  // Materialize the default gate posture at creation: an explicit gatesAt wins
+  // (including an explicit `[]` attend-none — nullish, not truthy), else the
+  // workflow's default-pre-authorized inverse. While defaultPreAuthorized is
+  // empty this stays undefined, so a default run keeps absent gatesAt = the
+  // pre-feature attend-all, written byte-for-byte as before.
+  const wf = opts.workflow ?? 'full';
+  const gatesAt = opts.gatesAt ?? defaultPosture(gatePhasesOf(wf), defaultPreAuthorizedOf(wf));
   const state: RunState = {
     runId,
     createdAt: now.toISOString(),
@@ -314,7 +321,7 @@ export function createRun(opts: {
     ...(opts.framing ? { framing: opts.framing } : {}),
     ...(opts.branch ? { branch: opts.branch } : {}),
     bindings: opts.bindings,
-    ...(opts.gatesAt ? { gatesAt: opts.gatesAt } : {}),
+    ...(gatesAt ? { gatesAt } : {}),
     ...(opts.retryInfra ? { retryInfra: opts.retryInfra } : {}),
     workerSessions: {},
     phaseStarted: {},
