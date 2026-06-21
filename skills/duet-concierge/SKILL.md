@@ -9,14 +9,15 @@ allowed-tools: Bash(duet status:*), Bash(duet logs:*), Bash(duet runs:*)
 
 ## What duet is
 
-duet is a command-line tool, installed on this machine, that runs a largely autonomous software-engineering workflow on one of the user's projects. Inside a **run** there are already three AI parties at work: a read-only LLM **orchestrator** that directs the process, an **implementer** agent that writes specs, plans, and code, and a **reviewer** agent that critiques each artifact. The orchestrator routes prompts between the two workers through a fixed arc:
+duet is a command-line tool, installed on this machine, that runs a largely autonomous software-engineering workflow on one of the user's projects. Inside a **run** there are already three AI parties at work: a read-only LLM **orchestrator** that directs the process, an **implementer** agent that writes specs, plans, and code, and a **reviewer** agent that critiques each artifact. A run follows one of two arcs (the run picked which at creation):
 
 ```
-frame → DIRECTION gate → spec → COMMIT-SPEC gate → plan → PLAN gate (human walks away)
-→ impl (autonomous, often hours) → SHIP gate → docs → DOCS-PLAN gate → pr → OPEN-PR gate → done
+full:  frame → DIRECTION gate → spec → COMMIT-SPEC gate → plan → PLAN gate (human walks away)
+       → impl (autonomous, often hours) → SHIP gate → docs → DOCS-PLAN gate → pr → OPEN-PR gate → done
+rir:   research → DIRECTION gate (human walks away) → implement (autonomous) → SHIP gate → done
 ```
 
-The capitalized stops are **human gates**: the run cannot cross them by itself — the statechart only moves on the human's decision. Between gates the orchestrator may also pause the run on a **queued question** (a product or environment call only the human can make). Phases execute in a detached background process, so every duet command returns immediately; a "running" phase commonly stays running for hours, and *nothing* runs once the run is at a stop. Run state lives under `.duet/runs/<id>/` in the project directory; commands default to the project's latest run.
+The lighter **rir** arc (Research → Implement → Review) drops the spec, plan, docs, and PR — its research decisions are the design, and it ends at the Ship gate with no PR opened. The capitalized stops are **human gates**: the run cannot cross them by itself — the statechart only moves on the human's decision. You don't need to track which arc a run is on; `duet status` always names the current stop and the command that acts there. Between gates the orchestrator may also pause the run on a **queued question** (a product or environment call only the human can make). Phases execute in a detached background process, so every duet command returns immediately; a "running" phase commonly stays running for hours, and *nothing* runs once the run is at a stop. Run state lives under `.duet/runs/<id>/` in the project directory; commands default to the project's latest run.
 
 The human therefore interacts with a run through exactly three channels, one per condition:
 
@@ -72,7 +73,7 @@ Gotchas worth knowing before they bite:
 | `gate` | waiting on a decision | present `stop.packet.summary`, then `stop.commands.approve` / `.reject` on their word — "approve, but tweak X" is one command: `duet continue <run-id> --approve "<their tweak, verbatim>"`. Check `stop.packet.humanDecisions` first — empty or all-`low` is safe to relay an approve; any `high` is a real product decision: hold and put it to the human |
 | `flag` | paused on a queued question | present `stop.question` + `stop.context` whole; `--answer` with their words. `stop.cause` says `human` (a real question for them) vs `infra` (an environment failure — say so; `duet doctor` shows what broke) |
 | `crashed` | a phase died mid-flight (infrastructure, not content) | tell the human; on their go-ahead run `stop.command` — it re-enters from the transcripts |
-| `done` | complete | report the summary — the PR link leads it |
+| `done` | complete | report the summary — a full run's leads with the PR link; a rir run ends at the Ship gate with no PR |
 
 Gate and flag stops carry the exact command string to run, so translation is mechanical. The packet is written to be decided from — present it before asking for the decision, and surface `pendingSteers` (notes staged but not yet delivered) and `autoApprovals` (gates that auto-crossed under pre-authorization, listed for the morning review) whenever they appear. Full field-by-field schema: [references/cli-reference.md](references/cli-reference.md).
 

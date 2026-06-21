@@ -184,4 +184,14 @@ describe('the duet-frame skill coheres with the CLI', () => {
       }
     }
   });
+
+  test('the framing author picks the workflow and emits the --workflow selector', () => {
+    // Slice 7: duet-frame settles the arc and emits it; --workflow must be a
+    // real flag of `duet new`, and the skill must name both arcs so the author
+    // can choose between them.
+    expect.soft(duetFrameMd).toContain('--workflow');
+    expect.soft(publicCommands.get('new')?.options.some((o) => o.long === '--workflow')).toBe(true);
+    expect.soft(duetFrameMd.toLowerCase()).toContain('rir');
+    expect.soft(duetFrameMd).toContain('afk'); // RIR's pre-authorization preset
+  });
 });
