@@ -7,8 +7,12 @@ references/*
 
 *.local*
 
-# duet run state (per-repo working data, never committed)
-.duet/
+# duet run state (per-repo working data, never committed) — except the tracked
+# framing templates + the carve itself, shared across worktrees (docs/automation-design.md).
+.duet/*
+!.duet/.gitignore
+!.duet/templates/
+!.duet/templates/**
 
 # publish-only bundle output (`pnpm build`); dev runs src/ directly
 dist/
