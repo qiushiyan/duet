@@ -186,7 +186,7 @@ function framingConsultantNote(state: RunState, phase: PhaseName): string {
   if (!state.bindings.consultant || !snippet) return '';
   return `
 
-Consultant checkpoint (the consultant is bound for this run): make framing a THREE-voice analysis. In the analysis step, also send the consultant a ${snippet} prompt — a third, independent, cross-family read on its bet-level-outsider lane, issued alongside the other two (it shares no inputs with them). In the synthesis step, give the implementer the reviewer's AND the consultant's analyses via compare-notes, presented as two anonymized peers (do not label either by role): synthesize across all three voices, don't average them. The consultant's analysis is a synthesis input to the direction, like the reviewer's — not a gate-holding finding.`;
+Consultant checkpoint (the consultant is bound for this run): make framing a three-voice analysis, not the usual two. In the analysis step, also send the consultant a ${snippet} prompt — a third, independent, cross-family read on its bet-level-outsider lane, issued alongside the other two (it shares no inputs with them). In the synthesis step, give the implementer the reviewer's and the consultant's analyses via compare-notes, presented as two anonymized peers (do not label either by role, so the implementer stays blind to reviewer identity): synthesize across all three voices, don't average them. The consultant's analysis is a synthesis input to the direction, like the reviewer's — not a gate-holding finding.`;
 }
 
 /**

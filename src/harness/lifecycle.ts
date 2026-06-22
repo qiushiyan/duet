@@ -503,7 +503,7 @@ export function enterAfk(state: RunState, posture: GatePhase[]): { attended: Gat
     throw new Error(
       `run ${state.runId} can't hand off to AFK from this gate — it carries a high human decision that needs you (${held
         .map((d) => d.title)
-        .join('; ')}). duet afk would approve it unattended; approve THIS gate explicitly and then hand off: duet continue --approve --headless.`,
+        .join('; ')}). duet afk would approve it unattended; approve this gate explicitly and then hand off: duet continue --approve --headless.`,
     );
   }
   setGatesAt(state, posture);

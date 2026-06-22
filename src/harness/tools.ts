@@ -461,9 +461,14 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   const sendPromptRoleDescribe = consultantBound
     ? 'implementer produces and revises artifacts (write access); reviewer critiques them (read-only); consultant is the independent cross-family second reviewer — read-only, and a fresh seeded session each turn (it does not accumulate the run’s context the way the persistent implementer and reviewer do).'
     : 'implementer produces and revises artifacts (write access); reviewer critiques them (read-only).';
-  const sendPromptEphemerality = consultantBound
-    ? ' The consultant role is ephemeral: each consultant turn starts a fresh seeded session — unlike the persistent implementer and reviewer, it carries no prior turn’s context, so seed it with the curated artifact and decisions it needs each time.'
-    : '';
+  // The session paragraph, reconciled by binding so persistent-vs-ephemeral reads
+  // as one coherent rule (not a persistent claim with a later exception). Unbound,
+  // it is byte-for-byte today's text; bound, it scopes "persistent" to the
+  // implementer and reviewer and states the consultant's ephemerality as the
+  // contrast at the same altitude.
+  const sendPromptSessionParagraph = consultantBound
+    ? 'The implementer and reviewer are each one persistent session: a later call to that role continues the worker’s conversation, so refer back to earlier turns instead of repeating context it has already seen — and the instructions you send persist the same way, so a full snippet template goes to such a worker once per phase, with later turns steered by deltas (-again variants, short frame-referencing follow-ups). The consultant is the exception: it is ephemeral — a fresh seeded session each turn, carrying no prior context — so seed it fully each time rather than referring back.'
+    : 'Each role is one persistent session: a later call to the same role continues that worker’s conversation, so refer back to earlier turns instead of repeating context the worker has already seen — and the instructions you send persist the same way, so a full snippet template goes to a given worker once per phase, with later turns steered by deltas (-again variants, short frame-referencing follow-ups).';
 
   const tools: Array<KernelTool<any>> = [
     kernelTool(
@@ -518,7 +523,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
 
     kernelTool(
       'send_prompt',
-      `Send a prompt to a worker agent and return its final response. Each role is one persistent session: a later call to the same role continues that worker’s conversation, so refer back to earlier turns instead of repeating context the worker has already seen — and the instructions you send persist the same way, so a full snippet template goes to a given worker once per phase, with later turns steered by deltas (-again variants, short frame-referencing follow-ups). Worker turns are slow (often minutes) and a sent prompt becomes a permanent part of the session — there is no unsend — so compose the full body before calling and send one well-formed prompt rather than iterating by sending. Independent turns to different roles can be issued as parallel tool calls in one message and run concurrently — the frame phase’s two unshared analyses are the canonical case; a second turn to the same role while one is in flight is refused until the first returns (one session is one conversation). Sending the reviewer a prompt whose tag starts with "review" counts as a review round against the phase’s backstop cap. A claude-bound worker’s context can be deliberately compacted: a body that is literally "/compact " followed by your instructions (e.g. an adapted compact-for-* snippet) resets that session in place, keeping what the instructions name; codex-bound workers compact themselves automatically, so this applies only to claude.${sendPromptEphemerality}`,
+      `Send a prompt to a worker agent and return its final response. ${sendPromptSessionParagraph} Worker turns are slow (often minutes) and a sent prompt becomes a permanent part of the session — there is no unsend — so compose the full body before calling and send one well-formed prompt rather than iterating by sending. Independent turns to different roles can be issued as parallel tool calls in one message and run concurrently — the frame phase’s two unshared analyses are the canonical case; a second turn to the same role while one is in flight is refused until the first returns (one session is one conversation). Sending the reviewer a prompt whose tag starts with "review" counts as a review round against the phase’s backstop cap. A claude-bound worker’s context can be deliberately compacted: a body that is literally "/compact " followed by your instructions (e.g. an adapted compact-for-* snippet) resets that session in place, keeping what the instructions name; codex-bound workers compact themselves automatically, so this applies only to claude.`,
       {
         role: z
           .enum(workerRoles as [WorkerRole, ...WorkerRole[]])
@@ -777,7 +782,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           .array(z.object({ title: z.string(), severity: z.enum(['low', 'high']) }))
           .optional()
           .describe(
-            'A structured echo of the genuine human decisions this gate carries — the "things for you to decide" you would otherwise leave only in the prose summary. severity: "high" = a real product/direction call the human must make; "low" = notable but not blocking. A "high" holds a NON-EXPLICIT crossing: a pre-authorized gate will not auto-cross over it and a one-tap `duet afk` handoff is refused — both convert to an attended stop so the human weighs the call before it ships; an explicit human approval still crosses. "low" rides the packet as advisory. This does not change what advance_phase itself does — it records a normal advance; the hold lives in the crossing path, not this tool. Omit the field on a routine convergence with nothing for the human to weigh.',
+            'A structured echo of the genuine human decisions this gate carries — the "things for you to decide" you would otherwise leave only in the prose summary. severity: "high" = a real product/direction call the human must make; "low" = notable but not blocking. A high holds a non-explicit crossing: a pre-authorized gate will not auto-cross over it and a one-tap `duet afk` handoff is refused — both stop for the human so they weigh the call before it ships; an explicit human approval still crosses. A low rides the packet as advisory. Omit the field on a routine convergence with nothing for the human to weigh.',
           ),
       },
       async (args) => {

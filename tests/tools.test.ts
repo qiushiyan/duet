@@ -692,7 +692,7 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
   test('the frame brief becomes a three-voice analysis when bound; unbound names no consultant', ({ run, consultantRun }) => {
     const bound = buildPhaseBrief(consultantRun, 'frame');
     expect.soft(bound).toContain('Consultant checkpoint');
-    expect.soft(bound).toContain('THREE-voice');
+    expect.soft(bound).toContain('three-voice');
     expect.soft(bound).toContain('consultant-frame');
     expect.soft(bound).toContain('anonymized peers');
     expect.soft(buildPhaseBrief(run, 'frame').toLowerCase()).not.toContain('consultant');

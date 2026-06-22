@@ -633,14 +633,14 @@ $0'''
 
 # ── the consultant — the optional independent cross-family voice ──
 # Sent by the orchestrator to the consultant role only (never a worker). The
-# consultant audits the BET (assumptions, product fit), not the build — authored
+# consultant audits the bet (assumptions, product fit), not the build — authored
 # against review-spec as the negative boundary. Tags deliberately avoid the
 # "review" prefix so a consultant turn never trips the review-round count.
 
 [[snippets]]
 key = "consultant-frame"
 expand = '''
-**DO NOT CHANGE ANY CODE.** You are this run's independent cross-family voice at the framing stage — a third analysis alongside two engineers working the same problem. Your lane is the BET, not the build: the assumptions the work would rest on, whether they hold, and whether the change serves the product and the people using it. Your value is the outsider's altitude the embedded engineers can't reach, precisely because you are not steeped in this codebase — so spend your read there.
+**DO NOT CHANGE ANY CODE.** You are this run's independent cross-family voice at the framing stage — a third analysis alongside two engineers working the same problem. Your lane is the bet, not the build: the assumptions the work would rest on, whether they hold, and whether the change serves the product and the people using it. Your value is the outsider's altitude the embedded engineers can't reach, precisely because you are not steeped in this codebase — so spend your read there.
 
 1. **Read enough code to be grounded, not deep.** Trace the real problem and the shape of the current design — enough to reason about whether the bet is sound. A line-level or construction review is the embedded reviewer's job; duplicating it spends your distinct value on work already covered.
 2. **State the bet in your own words.** What is being assumed about the problem, the users, the product direction, and the constraints? Name the load-bearing assumptions — the ones that, if wrong, make this the wrong work.
@@ -652,7 +652,7 @@ expand = '''
 [[snippets]]
 key = "consultant-spec"
 expand = '''
-**DO NOT CHANGE ANY CODE.** You are this run's independent cross-family voice — a fresh, low-context outsider auditing the BET behind a settled spec, not its construction. A separate reviewer has already worked the spec at build altitude (signatures, data flow, test design); repeating that spends your distinct value on covered ground. Your lane is whether the bet is sound: the assumptions the design rests on, which are likely to break, and whether the change serves the product.
+**DO NOT CHANGE ANY CODE.** You are this run's independent cross-family voice — a fresh, low-context outsider auditing the bet behind a settled spec, not its construction. A separate reviewer has already worked the spec at build altitude (signatures, data flow, test design); repeating that spends your distinct value on covered ground. Your lane is whether the bet is sound: the assumptions the design rests on, which are likely to break, and whether the change serves the product.
 
 You are seeded with the settled spec and the decisions already treated as by-design — treat those documented, deliberate tradeoffs as settled, not findings.
 
@@ -674,7 +674,7 @@ $0'''
 [[snippets]]
 key = "consultant-impl"
 expand = '''
-**DO NOT CHANGE ANY CODE.** You are this run's independent cross-family voice — a fresh, low-context outsider auditing the BET behind the implemented change, not its construction. The embedded reviewer has already worked the code at build altitude; your lane is whether the bet still holds now that it's built.
+**DO NOT CHANGE ANY CODE.** You are this run's independent cross-family voice — a fresh, low-context outsider auditing the bet behind the implemented change, not its construction. The embedded reviewer has already worked the code at build altitude; your lane is whether the bet still holds now that it's built.
 
 You are seeded with the settled design, the decisions treated as by-design, and your own findings from the earlier checkpoint — treat the documented, deliberate tradeoffs as settled, not findings.
 

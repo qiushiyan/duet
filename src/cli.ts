@@ -870,7 +870,7 @@ program
     const cmd = provider === 'claude' ? ['claude', '--resume', plan.sessionId] : ['codex', 'resume', plan.sessionId];
     console.log(
       plan.ephemeral
-        ? `opening the ${role}'s latest checkpoint session (${plan.sessionId}) for inspection — it is ephemeral, so duet will NOT resume it: the next ${role} turn seeds a fresh session.`
+        ? `opening the ${role}'s latest checkpoint session (${plan.sessionId}) for inspection — it is ephemeral, so duet will not resume it: the next ${role} turn seeds a fresh session.`
         : `handing over the ${role} session (${plan.sessionId})`,
     );
     console.log(`  ${cmd.join(' ')}`);
