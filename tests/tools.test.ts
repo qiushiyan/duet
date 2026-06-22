@@ -653,6 +653,22 @@ describe('advance_phase (the gate packet)', () => {
 
     expect(text(result)).toContain('pre-authorized');
     expect(text(result)).not.toContain('gate decision arrives');
+    expect(text(result)).toContain('continues immediately'); // headless: the run auto-continues here
+  });
+
+  test('a pre-authorized gate on the interactive host names the handoff, not auto-continuation (F1)', async ({ run }) => {
+    run.gatesAt = ['pr'];
+    run.rounds.spec = 1;
+    // The interactive host: a dispatcher is present (the host switch). A
+    // pre-authorized gate does NOT auto-continue here — only the headless driver
+    // auto-crosses — so the message must say to hand off, not to wait for the
+    // next phase.
+    const { call } = harness(run, { phase: 'spec', async: true });
+    const result = await call('advance_phase', { summary: 'converged', artifacts: [] });
+
+    expect.soft(text(result)).toContain('pre-authorized');
+    expect.soft(text(result)).toContain('duet afk'); // hand off to run the rest unattended
+    expect.soft(text(result)).not.toContain('continues immediately');
   });
 
   test('synthesis phases may advance without a review round; open completes the run', async ({ run }) => {

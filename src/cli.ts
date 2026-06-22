@@ -7,11 +7,12 @@ import { execa } from 'execa';
 import { createActor } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
 import { loadRunConfig } from './config.ts';
-import { DEFAULT_FRAMING_FILE, resolveHumanText, resolveRunInputs } from './framing.ts';
+import { DEFAULT_FRAMING_FILE, parseGatesAt, resolveHumanText, resolveRunInputs } from './framing.ts';
 import {
   aliveDriverPid,
   crossInteractive,
   driveToQuiescence,
+  enterAfk,
   interactiveContinueAction,
   killDriver,
   probeRunPosition,
@@ -364,6 +365,36 @@ function guardRunIdAsText(
     }
   }
 }
+
+program
+  .command('afk')
+  .description(
+    "Hand off mid-session from any interactive gate: re-set the downstream gate posture and drop to the headless driver in one tap. Legal at any interactive gate parked on the approve path — including a pre-authorized one. Bare = attend nothing downstream (maximum AFK).",
+  )
+  .argument('[preset]', 'a workflow gates_at preset or phase list for the downstream posture (bare = attend none)')
+  .argument('[runId]', 'run id (defaults to the latest run in this project)')
+  .action((preset: string | undefined, runId: string | undefined) => {
+    const cwd = process.cwd();
+    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
+    if (!state) fail('no runs found in this project — start one with duet new');
+    let split;
+    try {
+      // Bare afk → the empty "attend none" posture; a named arg → an existing
+      // preset/list (no new presets). parseGatesAt validates against the workflow.
+      const posture = preset ? parseGatesAt(preset, workflowOf(state)) : [];
+      split = enterAfk(state, posture);
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+    }
+    // Print the resulting split so the single tap is informed consent.
+    console.log(
+      split.attended.length > 0
+        ? `gates: attending ${split.attended.join(', ')} — ${split.preAuthorized.join(', ') || 'nothing else'} pre-authorized (auto-cross, packets recorded)`
+        : `gates: attending none — all downstream gates pre-authorized (auto-cross, packets recorded)`,
+    );
+    const pid = spawnDrive(state);
+    printWatchHints(state, pid, 'handed off to headless (duet afk)');
+  });
 
 program
   .command('continue')

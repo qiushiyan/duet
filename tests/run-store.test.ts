@@ -96,6 +96,14 @@ describe('run creation', () => {
     expect.soft(loadRunState(projectDir, created.runId).gatesAt).toEqual(['frame', 'spec']);
   });
 
+  test('createRun persists an explicit empty gatesAt ([]) as first-class attend-none (bare duet afk relies on it)', ({
+    projectDir,
+  }) => {
+    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, gatesAt: [] });
+    expect.soft(created.gatesAt).toEqual([]); // not coerced to absent — [] is a real "attend none" posture
+    expect.soft(loadRunState(projectDir, created.runId).gatesAt).toEqual([]);
+  });
+
   test('createRun freezes the resolved budget; a later budgetFor reads it back (scaled)', ({ projectDir }) => {
     const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, budget: 2 });
     expect.soft(created.budget).toBe(2);

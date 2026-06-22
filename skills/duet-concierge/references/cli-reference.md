@@ -32,6 +32,7 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | `duet view [run-id]` | Open a tmux viewer (one pane per voice). Terminal-side; not useful remotely. |
 | `duet takeover <role> [run-id]` | Hand a role's session to the human in the provider's own interactive CLI. Terminal-only by nature — never the concierge's verb. |
 | `duet orchestrate [run-id]` | Bring up the human's local interactive `/duet` orchestrator for a run over its attended arc (full: FRAME → PLAN; rir: RESEARCH). Terminal-only — never the concierge's verb. Relevant to know about: a run started with `duet new --interactive` is driven by that local session until the handoff gate (full: plan-approval; rir: Direction), after which AFK implementation runs headless and the concierge supervises it exactly as any other run. |
+| `duet afk [preset] [run-id]` | The human's one-tap mid-session handoff from an interactive gate: re-set the downstream gate posture (bare = attend none; a preset/list otherwise) and drop the run to the headless driver. Terminal-only — never the concierge's verb. Relevant to know about: after it runs, the run is an ordinary headless run the concierge supervises like any other, auto-crossing the now-pre-authorized gates and stopping only at a still-attended gate, a queued question, or done. |
 
 Every command defaults to the latest run in the project when `[run-id]` is omitted.
 

@@ -13,13 +13,14 @@ import type { PhaseEvent } from '../src/harness/phase-events.ts';
 import {
   crossInteractive,
   driveToQuiescence,
+  enterAfk,
   interactiveContinueAction,
   probeRunPosition,
   validateInteractiveCrossing,
   waitForRunStop,
   waitForTurnOrStop,
 } from '../src/harness/lifecycle.ts';
-import { createRun, loadMachineSnapshot, loadRunState, markAbandoned, runDirOf, saveMachineSnapshot, saveRunState } from '../src/run-store.ts';
+import { createRun, gateAttended, loadMachineSnapshot, loadRunState, markAbandoned, runDirOf, saveMachineSnapshot, saveRunState, stageHumanInput } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
 import { scriptedMachine } from './helpers/scripted-machine.ts';
@@ -712,5 +713,73 @@ describe('gate pre-authorization (gates_at)', () => {
     const fresh = loadRunState(projectDir, run.runId);
     await driveToQuiescence(fresh, undefined, { machine: second.machine, notify: quiet.notify });
     expect(loadRunState(projectDir, run.runId).autoApprovals?.map((a) => a.gate)).toEqual(['directionGate']);
+  });
+});
+
+describe('enterAfk — the mid-session AFK handoff (#1)', () => {
+  /** An interactive run parked at the frame gate (no snapshot ⇒ entry-phase marker is live). */
+  const atFrameGate = (projectDir: string, interactiveRun: RunState): RunState => {
+    const parked = loadRunState(projectDir, interactiveRun.runId);
+    parked.terminalMarker = { phase: 'frame', kind: 'advance' };
+    saveRunState(parked);
+    return parked;
+  };
+
+  test('from an ATTENDED interactive gate: sets the posture, crosses the gate, clears the interactive marker', ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    const parked = atFrameGate(projectDir, interactiveRun);
+    expect.soft(probeRunPosition(parked)).toEqual({ kind: 'gate', phase: 'frame' });
+
+    const split = enterAfk(parked, ['spec']);
+
+    const persisted = loadRunState(projectDir, interactiveRun.runId);
+    expect.soft(persisted.gatesAt).toEqual(['spec']); // downstream posture re-set
+    expect.soft(persisted.orchestrationHost).toBeUndefined(); // handed off to headless
+    expect.soft(probeRunPosition(persisted)).not.toEqual({ kind: 'gate', phase: 'frame' }); // frame crossed
+    expect.soft(split.attended).toEqual(['spec']);
+    expect.soft(split.preAuthorized).toEqual(['frame', 'plan', 'impl', 'docs', 'pr']);
+  });
+
+  test('is legal at a PRE-AUTHORIZED interactive gate — legality keys on the gate position, not gateAttended (the F1 case)', ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    // Make frame pre-authorized: gatesAt excludes it, so gateAttended(frame) is false.
+    const parked = atFrameGate(projectDir, interactiveRun);
+    parked.gatesAt = ['spec'];
+    saveRunState(parked);
+    expect.soft(gateAttended(parked, 'frame')).toBe(false); // pre-authorized, yet still an AFK position
+
+    expect(() => enterAfk(parked, [])).not.toThrow();
+    expect.soft(loadRunState(projectDir, interactiveRun.runId).orchestrationHost).toBeUndefined();
+  });
+
+  test('refuses when not parked at a gate (a flag) and when the run is not interactive', ({
+    projectDir,
+    interactiveRun,
+    run,
+  }) => {
+    const flagged = loadRunState(projectDir, interactiveRun.runId);
+    flagged.terminalMarker = { phase: 'frame', kind: 'flag' };
+    saveRunState(flagged);
+    expect.soft(() => enterAfk(flagged, [])).toThrow(/queued question|gate/);
+
+    // A headless run (no interactive marker) is already unattended — refused.
+    expect.soft(() => enterAfk(run, [])).toThrow(/not orchestrated interactively/);
+  });
+
+  test('the posture survives a co-staged approval rider (the stale-save guard)', ({ projectDir, interactiveRun }) => {
+    const parked = atFrameGate(projectDir, interactiveRun);
+    // The hazard: setGatesAt then a whole-state save (a staged rider) must not
+    // clobber the posture — setGatesAt syncs the passed copy, so the rider save
+    // carries the new gatesAt forward.
+    enterAfk(parked, ['spec', 'plan']);
+    stageHumanInput(parked, { kind: 'approval', text: 'take it the rest of the way' });
+
+    const persisted = loadRunState(projectDir, interactiveRun.runId);
+    expect.soft(persisted.gatesAt).toEqual(['spec', 'plan']);
+    expect.soft(persisted.pendingMessage).toEqual({ kind: 'approval', text: 'take it the rest of the way' });
   });
 });

@@ -484,6 +484,22 @@ export function markWorkerDispatched(state: RunState): void {
   state.workerDispatched = true;
 }
 
+/**
+ * Set the run's gate posture mid-run (#1/0b — the one mutable-posture write).
+ * Fresh-load → mutate THIS field → save, the markTurnActive discipline, so a
+ * step that saved the whole RunState between the caller's load and here (a
+ * staged approval rider) is not clobbered; the passed copy is re-synced so
+ * in-process reads after the call stay consistent. The cross-process race (a
+ * live headless driver) does not apply: the only caller is `duet afk`, which
+ * runs during the interactive arc and spawns the driver only AFTER this write.
+ */
+export function setGatesAt(state: RunState, gatesAt: GatePhase[]): void {
+  const fresh = loadRunState(state.cwd, state.runId);
+  fresh.gatesAt = gatesAt;
+  saveRunState(fresh);
+  state.gatesAt = gatesAt;
+}
+
 const OWNER_FILE = 'mcp-owner.json';
 
 /**

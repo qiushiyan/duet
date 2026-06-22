@@ -753,7 +753,13 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             ? 'the run is complete. End your turn with a one-line status.'
             : gateAttended(state, phase)
               ? 'the run moves to the human gate. End your turn with a one-line status; the gate decision arrives as your next message.'
-              : 'this phase’s gate was pre-authorized by the human at run start, so your packet is saved for their later review and the run continues immediately. End your turn with a one-line status; the next phase’s instructions arrive as your next message.';
+              : dispatcher
+                ? // The interactive host (a dispatcher is present): a pre-authorized
+                  // gate does NOT auto-continue here — only the headless driver
+                  // auto-crosses — so the message must not promise the next phase
+                  // arrives automatically. It says to hand off instead.
+                  'this phase’s gate was pre-authorized, so your packet is saved for the human’s later review. On this interactive host the run does NOT auto-continue here — hand off with `duet afk` (or `duet continue --approve --headless`) to run the pre-authorized rest unattended. End your turn with a one-line status.'
+                : 'this phase’s gate was pre-authorized by the human at run start, so your packet is saved for their later review and the run continues immediately. End your turn with a one-line status; the next phase’s instructions arrive as your next message.';
         return {
           content: [{ type: 'text' as const, text: `Phase advance recorded — ${next}` }],
         };
