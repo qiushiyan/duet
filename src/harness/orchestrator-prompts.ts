@@ -349,7 +349,11 @@ ${approvalClause(
 1. Have the implementer apply the approved docs plan and commit the doc changes. If a skill was paused at its internal approval step, resume it past that step — when the framing says the skill recognizes a resume token, send it; otherwise tell the implementer the plan is approved and to proceed with applying it.
 2. Send the implementer the pr-description snippet — the PR body for a technical colleague who won't read the diff.
 3. A review round on the description is available when it warrants one (backstop cap ${roundCap}).
-4. Call advance_phase with the PR title and description verbatim in the summary — the human reads exactly this at the Open-PR gate and decides whether to open.
+4. Call advance_phase with the PR title and description verbatim in the summary — this becomes the Open-PR packet. ${
+    gateAttended(state, 'pr')
+      ? 'The Open-PR gate is attended: the human reads the packet there and decides whether to open.'
+      : 'The Open-PR gate is pre-authorized (the PR auto-opens by default): your packet is recorded and auto-crossed straight into PR creation, with no human tap — so make it self-contained.'
+  }
 
 Throughout: flag product or direction questions with ask_human; tactical questions bounce to the worker.
 </task>`;

@@ -13,6 +13,7 @@ import {
   implementPhaseEntryPrompt,
   openPhaseEntryPrompt,
   planPhaseEntryPrompt,
+  prPhaseEntryPrompt,
   researchPhaseEntryPrompt,
   specPhaseEntryPrompt,
 } from '../src/harness/orchestrator-prompts.ts';
@@ -101,6 +102,21 @@ describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)
     const preAuth = openPhaseEntryPrompt(run);
     expect.soft(preAuth).toContain('pre-authorized');
     expect.soft(preAuth).not.toContain('The human approved opening the PR');
+  });
+
+  test('the pr-phase prompt is state-aware about the Open-PR packet, not a mandatory stop (#2)', ({ run }) => {
+    // Attended: the human decides from the packet at the gate.
+    run.gatesAt = ['pr'];
+    const attended = prPhaseEntryPrompt(run, PHASE.pr.roundCap);
+    expect.soft(attended).toContain('decides whether to open');
+    expect.soft(attended).not.toContain('auto-opens by default');
+
+    // Pre-authorized (the default): the packet is recorded and auto-crossed —
+    // no "the human decides whether to open" mandatory-stop framing.
+    run.gatesAt = ['frame'];
+    const preAuth = prPhaseEntryPrompt(run, PHASE.pr.roundCap);
+    expect.soft(preAuth).toContain('auto-opens by default');
+    expect.soft(preAuth).not.toContain('decides whether to open');
   });
 });
 
