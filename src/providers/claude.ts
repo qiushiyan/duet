@@ -116,6 +116,15 @@ function lastAssistantText(candidates: unknown[]): string | undefined {
 }
 
 /**
+ * The `claude -p` envelope reported a failed turn — `message` is the CLI's own
+ * reason (an API / auth / network error — whatever the `result` field held). A
+ * distinct type, not matched by wording, so recoverClaudeFailure can propagate
+ * this clean reason while routing genuinely unparseable output down the
+ * exit-code/stderr path instead.
+ */
+export class ClaudeTurnFailedError extends Error {}
+
+/**
  * Parse one `--output-format json` invocation's stdout into a WorkerTurn.
  * Current CLI versions emit an array of all session messages (older versions
  * emitted the result object alone); the envelope is the element with
@@ -158,7 +167,7 @@ export function parseClaudeTurn(stdout: string, prompt: string): WorkerTurn {
   }
   const envelope = resultEnvelope.parse(raw);
   if (envelope.is_error || envelope.subtype !== 'success') {
-    throw new Error(`claude worker turn failed (${envelope.subtype}): ${envelope.result ?? ''}`);
+    throw new ClaudeTurnFailedError(`claude worker turn failed (${envelope.subtype}): ${envelope.result ?? ''}`);
   }
   // A /compact turn succeeds with an empty result (the CLI emits only a
   // compact_boundary event) — name what happened so the orchestrator isn't
@@ -177,6 +186,56 @@ export function parseClaudeTurn(stdout: string, prompt: string): WorkerTurn {
       : {}),
     ...(context ? { context } : {}),
   };
+}
+
+/**
+ * A concise infra-error string from an execa failure that produced no parseable
+ * `-p` envelope — a spawn failure (ENOENT), a timeout, or a crash that wrote no
+ * JSON. execa's `shortMessage` is "Command failed with exit code N: <argv>" (the
+ * prompt rides stdin, so it is never in the argv) and `stderr` is separate —
+ * together the signal, without the stdout dump that bloats `.message`. The stderr
+ * tail is bounded so even a noisy crash stays small.
+ */
+export function conciseExecaError(err: unknown): string {
+  const e = err as { shortMessage?: unknown; message?: unknown; stderr?: unknown };
+  const base = typeof e.shortMessage === 'string' ? e.shortMessage : typeof e.message === 'string' ? e.message : String(err);
+  const stderr = typeof e.stderr === 'string' ? e.stderr.trim() : '';
+  const tail = stderr ? ` — ${stderr.length > 500 ? `…${stderr.slice(-500)}` : stderr}` : '';
+  return `${base}${tail}`;
+}
+
+/**
+ * Recover from a failed `claude -p` invocation. A budget cutoff is a checkpoint
+ * (return the settled WorkerTurn, or propagate the session-less BudgetCutoffError);
+ * anything else throws a CONCISE infra error. When stdout carried a `-p` result
+ * envelope, parseClaudeTurn's message is the CLI's own failure reason — an API /
+ * auth / network error, *whatever* the envelope's `result` field holds, so no
+ * error class is matched by wording — and that is the signal: we propagate it
+ * rather than execa's raw `.message`, which inlines the entire multi-KB stdout
+ * stream (the init payload, every message event, their ids). With no parseable
+ * envelope the signal is the exit code + stderr, via conciseExecaError. Exported
+ * as the provider's testable failure seam.
+ */
+export function recoverClaudeFailure(err: unknown, prompt: string): WorkerTurn {
+  if (err instanceof BudgetCutoffError) throw err;
+  const stdout = (err as { stdout?: unknown }).stdout;
+  if (typeof stdout === 'string' && stdout.length > 0) {
+    try {
+      const turn = parseClaudeTurn(stdout, prompt);
+      if (turn.budgetTruncated) return turn;
+      // A success envelope on a non-zero exit is contradictory and rare — prefer
+      // the concise exit/stderr error below over trusting it.
+    } catch (parseErr) {
+      if (parseErr instanceof BudgetCutoffError) throw parseErr;
+      // The -p envelope reported a failure (an API/auth/network error — whatever
+      // the result field held): that reason is the signal, so propagate it rather
+      // than execa's raw stdout dump. Genuinely unparseable output (no result
+      // event, not JSON) falls through to the exit-code/stderr path below, which
+      // carries more than a bare "not JSON" would.
+      if (parseErr instanceof ClaudeTurnFailedError) throw parseErr;
+    }
+  }
+  throw new Error(conciseExecaError(err));
 }
 
 /**
@@ -261,23 +320,12 @@ export class ClaudeWorker implements WorkerProvider {
       return parseClaudeTurn(stdout, opts.prompt);
     } catch (err) {
       // A budget cutoff exits non-zero, so execa throws BEFORE parseClaudeTurn
-      // sees stdout. Re-parse the captured stdout: a budget-truncated turn is a
-      // checkpoint (return it); a session-less cutoff is a BudgetCutoffError
-      // (propagate it). Anything else — a non-budget result, or no parseable
-      // result — is genuine infra: re-throw the ORIGINAL execa error, message
-      // preserved, so the infra/retry path stays intact.
-      if (err instanceof BudgetCutoffError) throw err;
-      const stdout = (err as { stdout?: unknown }).stdout;
-      if (typeof stdout === 'string' && stdout.length > 0) {
-        try {
-          const turn = parseClaudeTurn(stdout, opts.prompt);
-          if (turn.budgetTruncated) return turn;
-        } catch (parseErr) {
-          if (parseErr instanceof BudgetCutoffError) throw parseErr;
-          // a non-budget parse failure — fall through to re-throw the original
-        }
-      }
-      throw err;
+      // sees stdout. recoverClaudeFailure re-parses the captured stdout: a
+      // budget-truncated turn is a checkpoint (returned); a session-less cutoff
+      // is a BudgetCutoffError (propagated); a CLI-reported failure surfaces the
+      // envelope's own reason; anything unparseable becomes a concise exit/stderr
+      // error — never execa's raw multi-KB stdout dump.
+      return recoverClaudeFailure(err, opts.prompt);
     }
   }
 }

@@ -4,7 +4,7 @@ import { execa } from 'execa';
 import { describe, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { ORCHESTRATOR_SYSTEM_PROMPT, buildPhaseBrief, orchestratorSystemPrompt } from '../src/harness/orchestrator-prompts.ts';
-import { createPhaseTools } from '../src/harness/tools.ts';
+import { createPhaseTools, projectDetail } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
 import { createTurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import type { TurnDispatcher } from '../src/harness/turn-dispatcher.ts';
@@ -378,6 +378,58 @@ describe('send_prompt fan-out (role array — the framing analysis pass)', () =>
     const refused = await call('send_prompt', { role: [], tag: 'think-holistic', body: 'x' });
     expect.soft(refused.isError).toBe(true);
     expect.soft(text(refused)).toContain('at least one worker');
+  });
+});
+
+describe('projectDetail (the check_turns context guard)', () => {
+  // A leaked provider failure envelope: KB of init payload + per-event ids wrapped
+  // around a one-line signal, inside the prescribed-recovery framing.
+  const envelope = JSON.stringify([
+    { type: 'system', subtype: 'init', tools: Array(40).fill('SomeNoisyToolName'), slash_commands: Array(40).fill('cmd'), uuid: 'init-uuid' },
+    { type: 'assistant', uuid: 'msg-uuid', message: { content: [{ type: 'text', text: 'z'.repeat(500) }] } },
+    { type: 'result', subtype: 'success', is_error: true, session_id: 's-1', result: 'API Error: Connection closed mid-response' },
+  ]);
+  const leaked = `The reviewer worker's turn failed at the infrastructure layer (Command failed with exit code 1: claude -p\n\n${envelope}). Retry once, then ask_human.`;
+
+  test('projects a leaked envelope to its high-value fields — signal kept, noise and framing-recovery preserved', () => {
+    const out = projectDetail(leaked);
+    expect.soft(out).toContain('API Error: Connection closed mid-response'); // the signal
+    expect.soft(out).toContain('Retry once, then ask_human'); // the recovery framing survives
+    expect.soft(out).not.toContain('SomeNoisyToolName'); // init-payload noise dropped
+    expect.soft(out).not.toContain('msg-uuid'); // per-event ids dropped
+    expect.soft(out.length).toBeLessThan(leaked.length / 3); // far smaller than the dump
+  });
+
+  test('leaves a normal worker response untouched', () => {
+    const prose = 'Here is my grounded analysis of the problem.\n'.repeat(60); // well under the runaway ceiling
+    expect(projectDetail(prose)).toBe(prose);
+  });
+
+  test('a true runaway (no envelope) keeps the head and tail and names the raw escape hatch', () => {
+    const big = `HEAD-MARKER${'z'.repeat(80_000)}TAIL-MARKER`;
+    const out = projectDetail(big);
+    expect.soft(out.length).toBeLessThan(big.length);
+    expect.soft(out).toContain('HEAD-MARKER'); // head kept
+    expect.soft(out).toContain('TAIL-MARKER'); // tail kept — not a top-to-bottom trim
+    expect.soft(out).toContain('raw=true'); // the escape hatch is named
+  });
+
+  test('check_turns projects a leaked dump by default and returns it whole with raw=true', async ({ run }) => {
+    const rev = new FakeWorker('codex', [new Error(envelope), new Error(envelope)]);
+    const { call } = harness(run, { phase: 'frame', reviewer: rev, async: true });
+
+    await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'go' });
+    await flush();
+    const def = await call('check_turns');
+    const dtext = def.content.map((c) => (c as { text?: string }).text ?? '').join('\n');
+    expect.soft(dtext).toContain('API Error: Connection closed mid-response'); // signal kept
+    expect.soft(dtext).not.toContain('SomeNoisyToolName'); // noise dropped by default
+
+    await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'again' });
+    await flush();
+    const rawOut = await call('check_turns', { raw: true });
+    const rtext = rawOut.content.map((c) => (c as { text?: string }).text ?? '').join('\n');
+    expect.soft(rtext).toContain('SomeNoisyToolName'); // raw=true returns the full dump
   });
 });
 

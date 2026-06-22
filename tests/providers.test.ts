@@ -524,9 +524,12 @@ describe('context-window probes (per-provider math, one shape)', () => {
   });
 });
 
-describe('ClaudeWorker.runTurn (budget cutoff handling at the execa boundary)', () => {
-  // A budget cutoff exits non-zero, so execa throws before parseClaudeTurn runs;
-  // runTurn re-parses the captured stdout. execa is mocked (the true boundary).
+describe('ClaudeWorker.runTurn (failure recovery at the execa boundary)', () => {
+  // A claude -p failure exits non-zero, so execa throws before parseClaudeTurn
+  // sees stdout; runTurn recovers from the captured output. execa is mocked (the
+  // true boundary). The behaviors that matter: the signal survives, the dump does
+  // not, and a budget cutoff is still a checkpoint — none of these pin the exact
+  // message wording, so they survive refactors.
   const worker = () => new ClaudeWorker({ model: 'claude-opus-4-8', maxBudgetUsd: 0.01 });
   const execaExit1 = (stdout: string) =>
     Object.assign(new Error('Command failed with exit code 1'), { stdout });
@@ -543,17 +546,44 @@ describe('ClaudeWorker.runTurn (budget cutoff handling at the execa boundary)', 
     await expect(worker().runTurn({ prompt: 'do it', cwd: '/x' })).rejects.toBeInstanceOf(BudgetCutoffError);
   });
 
-  test('a genuine infra failure (empty stdout) re-throws the ORIGINAL execa error', async () => {
-    mockExeca.mockRejectedValueOnce(Object.assign(new Error('spawn claude ENOENT'), { stdout: '' }));
-    await expect(worker().runTurn({ prompt: 'do it', cwd: '/x' })).rejects.toThrow('spawn claude ENOENT');
-  });
-
-  test('a non-budget error envelope in stdout re-throws the original execa error, not budget', async () => {
+  test('a CLI-reported failure surfaces the envelope’s reason — not a budget turn, not the multi-KB stdout dump', async () => {
+    // A realistic noisy -p stream: a fat init event + a message event with ids,
+    // wrapping the one error result. Any error class lands here the same way — the
+    // reason is whatever `result` holds (here a 5xx), matched by structure not text.
     const stdout = JSON.stringify([
-      { type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 's', result: 'crashed' },
+      { type: 'system', subtype: 'init', tools: Array(40).fill('SomeNoisyToolName'), slash_commands: Array(40).fill('cmd') },
+      { type: 'assistant', uuid: 'msg-id-1', message: { content: [{ type: 'text', text: 'partial' }] } },
+      { type: 'result', subtype: 'success', is_error: true, session_id: 's', result: 'API Error: 500 Internal server error' },
     ]);
     mockExeca.mockRejectedValueOnce(execaExit1(stdout));
-    await expect(worker().runTurn({ prompt: 'do it', cwd: '/x' })).rejects.toThrow('Command failed with exit code 1');
+    const err: Error = await worker().runTurn({ prompt: 'do it', cwd: '/x' }).catch((e) => e);
+    expect.soft(err).toBeInstanceOf(Error);
+    expect.soft(err).not.toBeInstanceOf(BudgetCutoffError);
+    expect.soft(err.message).toContain('API Error: 500 Internal server error'); // the signal survives
+    expect.soft(err.message).not.toContain('SomeNoisyToolName'); // the init-payload noise is gone
+    expect.soft(err.message.length).toBeLessThan(stdout.length / 2); // far smaller than the dump
+  });
+
+  test('an unparseable failure (no result event) surfaces the exit code + stderr, not the stdout dump', async () => {
+    // stdout is JSON but carries no result event (a crash / auth-at-startup); the
+    // real reason is on stderr, separate from the noisy stdout.
+    const noisyStdout = JSON.stringify(Array(50).fill({ type: 'system', blob: 'x'.repeat(200) }));
+    mockExeca.mockRejectedValueOnce(
+      Object.assign(new Error('big raw message — would inline all of stdout'), {
+        shortMessage: 'Command failed with exit code 1: claude -p',
+        stdout: noisyStdout,
+        stderr: 'Invalid API key · Please run /login',
+      }),
+    );
+    const err: Error = await worker().runTurn({ prompt: 'do it', cwd: '/x' }).catch((e) => e);
+    expect.soft(err.message).toContain('Please run /login'); // the stderr signal surfaces
+    expect.soft(err.message).toContain('exit code 1'); // exit context kept
+    expect.soft(err.message).not.toContain('blob'); // the stdout dump is dropped
+  });
+
+  test('a spawn failure with no output surfaces a concise error', async () => {
+    mockExeca.mockRejectedValueOnce(Object.assign(new Error('spawn claude ENOENT'), { stdout: '' }));
+    await expect(worker().runTurn({ prompt: 'do it', cwd: '/x' })).rejects.toThrow('spawn claude ENOENT');
   });
 });
 

@@ -425,6 +425,61 @@ function combineFanoutResults(parts: Array<{ role: WorkerRole; result: CallToolR
   return parts.some((p) => p.result.isError) ? { content, isError: true } : { content };
 }
 
+/**
+ * Above this, a collected turn's text is a candidate for the runaway head+tail
+ * guard. Set generously above legitimate long worker analyses (which run tens of
+ * KB) so real output is never clipped — only genuinely runaway content is.
+ */
+const RUNAWAY_DETAIL_CHARS = 50_000;
+
+/**
+ * High-value projection of a leaked provider failure envelope (the claude `-p`
+ * JSON stream): the dump is a tiny signal — the result event's error reason —
+ * wrapped in KB of init payload, per-event stream, and ids. Keep the diagnostic
+ * fields, drop the rest, in place (the surrounding human-authored framing — the
+ * role header, the "failed at the infrastructure layer" wrapper — is preserved).
+ * Returns null when the text is not such a dump, so a normal response is never
+ * mangled. Recognized by the distinctive init+result event combo (structure),
+ * never by an error's wording.
+ */
+export function summarizeProviderEnvelope(text: string): string | null {
+  if (!(text.includes('"type":"result"') && text.includes('"type":"system"'))) return null;
+  const m = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
+  if (!m) return null;
+  let arr: unknown;
+  try {
+    arr = JSON.parse(m[0]);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(arr)) return null;
+  const result = arr.find(
+    (e): e is Record<string, unknown> => typeof e === 'object' && e !== null && (e as { type?: unknown }).type === 'result',
+  );
+  if (!result) return null;
+  const KEEP = ['subtype', 'is_error', 'result', 'session_id', 'total_cost_usd', 'num_turns', 'duration_ms'];
+  const kept: Record<string, unknown> = {};
+  for (const k of KEEP) if (k in result) kept[k] = result[k];
+  return text.replace(m[0], JSON.stringify(kept));
+}
+
+/**
+ * Project a collected turn's text to a context-friendly form — check_turns'
+ * default (raw=true bypasses it). A leaked provider failure envelope is reduced to
+ * its high-value fields; otherwise the text is returned untouched unless it is a
+ * true runaway, in which case the head and tail are kept (both ends carry signal —
+ * an error reason or a conclusion) and the middle is elided. Never a blind
+ * top-to-bottom trim, and never clipping a normal worker response.
+ */
+export function projectDetail(text: string): string {
+  const summary = summarizeProviderEnvelope(text);
+  if (summary) return summary;
+  if (text.length <= RUNAWAY_DETAIL_CHARS) return text;
+  const head = text.slice(0, 8_000);
+  const tail = text.slice(-4_000);
+  return `${head}\n\n…[${text.length - 12_000} chars elided — call check_turns with raw=true for the full text]…\n\n${tail}`;
+}
+
 export function createPhaseTools({ state, phase, providers, log, stagedAnswer: initialAnswer, rails, home, async: asyncDeps }: PhaseToolsDeps): PhaseTools {
   let stagedAnswer = initialAnswer ?? null;
 
@@ -1022,15 +1077,24 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       kernelTool(
         'check_turns',
         'Collect the results of worker turns dispatched with send_prompt. On the interactive host send_prompt returns immediately and the turn runs in the background; check_turns is how you pull a finished turn’s response back into the conversation — the worker’s text (with any checkpoint note if it hit its budget cap), or, if the turn stopped short, the prescribed recovery: a budget-control stop (resume the session / raise the budget) or an infrastructure failure (retry once, then ask_human). The same bookkeeping a blocking turn would have done is already committed. It is instant: it delivers whatever has settled, names any role whose turn is still running (call it again later — or background `duet status --wait` so its settling re-invokes you), and never waits. Collecting a role’s result re-opens it for the next send_prompt; a phase cannot advance while any dispatched turn is still uncollected.',
-        {},
-        async () => {
+        {
+          raw: z
+            .boolean()
+            .optional()
+            .describe(
+              'Set true to get each collected turn’s full, unmodified text. By default (false) an over-long machine dump — a failed turn’s raw provider error envelope — is reduced to its high-value fields to save context; a worker’s normal response is always returned in full either way.',
+            ),
+        },
+        async (args) => {
+          const raw = args.raw === true;
           const ready = dispatcher.collectReady();
           const content: Array<{ type: 'text'; text: string }> = [];
           for (const { role, result } of ready) {
             content.push({ type: 'text' as const, text: `── ${role} ──` });
             for (const block of result.content) {
               if (typeof block === 'object' && block !== null && (block as { type?: string }).type === 'text') {
-                content.push({ type: 'text' as const, text: (block as { text: string }).text });
+                const t = (block as { text: string }).text;
+                content.push({ type: 'text' as const, text: raw ? t : projectDetail(t) });
               }
             }
           }

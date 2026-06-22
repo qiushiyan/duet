@@ -115,6 +115,8 @@ An error result is a steering opportunity, not a stack trace. Name the failure l
 
 > The {role} worker's turn failed at the infrastructure layer ({detail}). The worker never saw your prompt, so this is not a content problem. Retry this same send_prompt call once; if the retry also fails, stop routing and report the failure to the human via ask_human instead of continuing the round.
 
+The corollary the house pattern needs: the `{detail}` slot must itself be concise. A `claude -p` failure dumps its whole stdout stream — the init payload, every message event, their ids — around a one-line reason; left raw, that detail buries the signal and burns the orchestrator's context. So the claude provider extracts the CLI's own failure reason (or, with no parseable envelope, exit code + stderr), never the raw stream, and `check_turns` projects any residual dump to its high-value fields (a `raw` arg returns the full text). An error that prescribes recovery in a 30KB blob has defeated its own purpose.
+
 Validation errors should communicate the specific fix ("expected `role` to be implementer|reviewer"), never opaque codes or tracebacks.
 
 ### Results nudge the next step
