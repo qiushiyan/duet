@@ -304,6 +304,17 @@ export function renderTurnResult(
       text: `(${state.rounds[phase]} of ${cap} review rounds used — one remains before this phase’s backstop cap. The cap is runaway protection, not a target: if the loop has converged, advance_phase now; if a substantive disagreement is still open, that is the human’s call via ask_human. Spend the last round only on a genuinely open structural point.)`,
     });
   }
+  // F5: a compact per-turn footer — this role's context fill, the cumulative
+  // worker cost (with a `+` when partial/unmetered), and the round vs cap. Both
+  // hosts flow through here (blocking send_prompt and check_turns via the
+  // dispatcher's collect), so one edit covers both.
+  const ctxUsage = state.contextUsage?.[role];
+  const footer = [
+    ...(ctxUsage ? [`context ${contextPercent(ctxUsage)}%`] : []),
+    `workers $${state.costs.claudeWorkersUsd.toFixed(2)}${state.costs.claudeWorkersCostPartial ? '+' : ''}`,
+    `round ${state.rounds[phase] ?? 0}/${cap}`,
+  ].join(' · ');
+  content.push({ type: 'text' as const, text: `[${footer}]` });
   return { content };
 }
 

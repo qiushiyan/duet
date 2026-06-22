@@ -266,11 +266,37 @@ function fmtStamp(iso: string): string {
  * question, crash notice, or completion), the while-you-were-away section,
  * staged steers, and the next command.
  */
+/**
+ * The display label for a run's state (F5). Prefer the quiescent `machineState`
+ * mirror when present (the headless stop labels), else derive an honest label
+ * from the probed stop — so an interactive run whose crossInteractive never set
+ * machineState shows its live phase/gate, not the misleading `(not started)`.
+ * `(not started)` is reserved for the genuine no-state case. Every stop kind is
+ * mapped explicitly — there is no `unstarted` RunPosition kind to lean on.
+ */
+export function displayState(stop: StopModel, machineState?: string): string {
+  if (machineState) return machineState;
+  switch (stop.kind) {
+    case 'running':
+    case 'interactive':
+    case 'crashed':
+      return stop.phase;
+    case 'gate':
+      return stop.gate;
+    case 'flag':
+      return 'flag';
+    case 'done':
+      return 'done';
+    case 'abandoned':
+      return 'abandoned';
+  }
+}
+
 export function renderStatus(model: StatusModel): string {
   const lines: string[] = [];
   lines.push(`\n━━━ duet run ${model.runId} ━━━`);
   lines.push(`workflow: ${model.workflowDisplayName}`);
-  lines.push(`state:    ${model.machineState ?? '(not started)'}`);
+  lines.push(`state:    ${displayState(model.stop, model.machineState)}`);
   if (model.stop.kind === 'running') {
     lines.push(`phase:    running in the background (pid ${model.stop.pid})`);
   }
@@ -412,6 +438,8 @@ export function renderStatus(model: StatusModel): string {
 export interface BriefModel {
   runId: string;
   machineState?: string;
+  /** The honest display label (F5): machineState when present, else derived from the stop. */
+  displayState: string;
   stopKind: StopModel['kind'];
   headline: string;
   nextCommand?: string;
@@ -468,6 +496,7 @@ export function buildBrief(model: StatusModel): BriefModel {
   return {
     runId: model.runId,
     ...(model.machineState ? { machineState: model.machineState } : {}),
+    displayState: displayState(stop, model.machineState),
     stopKind: stop.kind,
     headline: briefHeadline(stop, model.workflow),
     ...(nextCommand ? { nextCommand } : {}),
@@ -483,7 +512,7 @@ export function buildBrief(model: StatusModel): BriefModel {
 /** The lean human render of the digest — a few lines, not the full packet. */
 export function renderBrief(brief: BriefModel): string {
   const lines: string[] = [];
-  lines.push(`duet ${brief.runId} — ${brief.machineState ?? '(not started)'} [${brief.stopKind}]`);
+  lines.push(`duet ${brief.runId} — ${brief.displayState} [${brief.stopKind}]`);
   lines.push(brief.headline);
   if (brief.humanDecisions && brief.humanDecisions.length > 0) {
     const anyHigh = brief.humanDecisions.some((d) => d.severity === 'high');

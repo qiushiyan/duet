@@ -159,6 +159,16 @@ describe('send_prompt', () => {
       .toContain('▶ response (session session-1) · context 24%');
   });
 
+  test('every worker result carries a compact per-turn footer — context, cost, round (F5)', async ({ run }) => {
+    const reviewer = new FakeWorker('codex', [{ costUsd: 0.5, context: { usedTokens: 50, windowTokens: 200 } }]);
+    const { call } = harness(run, { reviewer });
+    const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'r' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+    expect.soft(joined).toContain('context 25%'); // 50/200
+    expect.soft(joined).toMatch(/workers \$0\.50/);
+    expect.soft(joined).toContain('round 1/'); // the review round just settled
+  });
+
   test('a worker failure names the layer, prescribes retry-then-flag, and counts nothing', async ({ run }) => {
     const reviewer = new FakeWorker('codex', [new Error('spawn codex ENOENT')]);
     const { call } = harness(run, { reviewer });

@@ -1,5 +1,6 @@
 import { describe, expect } from 'vitest';
-import { buildBrief, buildStatusModel, describeStop, renderBrief, renderStatus, steerRefusal } from '../src/status.ts';
+import { buildBrief, buildStatusModel, describeStop, displayState, renderBrief, renderStatus, steerRefusal } from '../src/status.ts';
+import type { StopModel } from '../src/status.ts';
 import { createRun } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import type { RunPosition } from '../src/harness/lifecycle.ts';
@@ -478,5 +479,27 @@ describe('renderStatus', () => {
 
     expect.soft(out).toContain('the interactive orchestrator is driving the spec phase');
     expect.soft(out).toContain('interactive orchestrator session');
+  });
+});
+
+describe('displayState — the truthful state label (F5)', () => {
+  test('machineState wins when present; otherwise the label derives from the stop kind', () => {
+    // machineState present → it wins (preserves headless quiescent labels).
+    expect.soft(displayState({ kind: 'interactive', phase: 'spec' }, 'specLoop')).toBe('specLoop');
+    // No machineState (the interactive case crossInteractive never mirrored):
+    expect.soft(displayState({ kind: 'interactive', phase: 'spec' })).toBe('spec');
+    expect.soft(displayState({ kind: 'running', pid: 1, phase: 'impl' })).toBe('impl');
+    expect.soft(displayState({ kind: 'crashed', phase: 'plan', command: 'c' })).toBe('plan');
+    expect.soft(displayState({ kind: 'gate', phase: 'pr', gate: 'openPrGate', heading: 'h', commands: { approve: 'a', reject: 'r' } } as StopModel)).toBe('openPrGate');
+    expect.soft(displayState({ kind: 'flag', question: 'q?', command: 'c' } as StopModel)).toBe('flag');
+    expect.soft(displayState({ kind: 'done', summary: 's' } as StopModel)).toBe('done');
+  });
+
+  test('an interactive run with no machineState shows its phase, never "(not started)"', ({ projectDir }) => {
+    const interactive = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, framing: 'x' });
+    interactive.orchestrationHost = 'interactive';
+    const out = renderStatus(buildStatusModel(interactive, { kind: 'interactive', phase: 'frame' }, []));
+    expect.soft(out).toContain('state:    frame');
+    expect.soft(out).not.toContain('(not started)');
   });
 });
