@@ -3,12 +3,15 @@ import { execa } from 'execa';
 import { z } from 'zod';
 import { PHASE, isGatePhase } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
+import { providerFor } from '../providers/index.ts';
 import { BudgetCutoffError } from '../providers/types.ts';
-import type { WorkerProvider, WorkerRole, WorkerTurn } from '../providers/types.ts';
+import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
+import { countsReviewRound, orphanRecoveryFor, readOnlyFor, sessionIdFor, workerRolesFor } from '../roles.ts';
 import { getSnippet, renderSnippetLibrary } from '../snippets.ts';
 import {
   appendNote,
   appendVoiceLog,
+  clearPendingTurn,
   clearTurnActive,
   consumeHumanInput,
   contextPercent,
@@ -92,7 +95,7 @@ export interface PhaseToolsDeps {
   /** The driver invocation's single live RunState copy — handlers mutate and persist it. */
   state: RunState;
   phase: PhaseName;
-  providers: Record<WorkerRole, WorkerProvider>;
+  providers: WorkerProviders;
   /** Narration sink (driver stdout → driver.log; view-time color). */
   log: (line: string) => void;
   /** A staged human answer, delivered to the first ask_human call instead of pausing. */
@@ -236,7 +239,7 @@ export function startHeartbeat(
  * same-phase reads (the warn-once / round rails) see this turn's result.
  */
 export function settleTurn(
-  deps: { state: RunState; phase: PhaseName; providers: Record<WorkerRole, WorkerProvider>; log: (line: string) => void },
+  deps: { state: RunState; phase: PhaseName; providers: WorkerProviders; log: (line: string) => void },
   meta: { role: WorkerRole; tag: string; isReviewRound: boolean },
   outcome: WorkerTurn | Error,
 ): void {
@@ -274,10 +277,11 @@ export function settleTurn(
   // misaccounted as Claude spend. An absent costUsd on a claude turn (the
   // interactive transport, by P5) makes the running total partial — mark it so
   // status/footer never present the known sum as the complete total.
-  if (providers[role].name === 'claude') {
+  const provider = providerFor(providers, role);
+  if (provider.name === 'claude') {
     if (turn.costUsd !== undefined) fresh.costs.claudeWorkersUsd += turn.costUsd;
     else fresh.costs.claudeWorkersCostPartial = true;
-  } else if (providers[role].name === 'codex' && turn.tokens) {
+  } else if (provider.name === 'codex' && turn.tokens) {
     fresh.costs.codexTokens.input += turn.tokens.input;
     fresh.costs.codexTokens.output += turn.tokens.output;
   }
@@ -449,43 +453,80 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   // by the injected dispatcher; absent → the headless host, blocking. The
   // same-role guard, the phase-exit gate, and check_turns all branch on it.
   const dispatcher = asyncDeps?.dispatcher;
-  const ROLES: WorkerRole[] = ['implementer', 'reviewer'];
+  const ROLES: WorkerRole[] = workerRolesFor(state);
   // A reconnect ORPHAN: a pending-turn record exists on disk for this role, but
   // the live dispatcher has no record for it — a prior server dispatched the
   // turn and died, and this (fresh) server does not own it. Detection is purely
   // the durable record's existence-without-a-live-owner; no transcript claim.
-  // Branch-aware orphan recovery (slice 4): the two sub-cases have different
-  // hazards, so the prescribed recovery differs. A SESSION orphan can be
-  // resumed (and a re-send would race that session); a NO-SESSION orphan has no
-  // session to resume, but the old worker process may still be running and
-  // editing the repo — so dropping it is a deliberate ABANDON, stated honestly.
-  // Either way `duet takeover <role>` is the single resolution affordance.
+  // Branch-aware orphan recovery: the prescribed recovery differs by the role's
+  // orphan POLICY (orphanRecoveryFor), not a role check. A `takeover` role's
+  // orphan can be resumed (and a re-send would race that session — or, with no
+  // session, the old worker may still be editing the repo), so it refuses until
+  // `duet takeover <role>`. A `discard-and-reseed` role (the ephemeral,
+  // read-only consultant) has nothing to resume and no repo to race, so its
+  // orphan is dropped and the fresh body re-dispatched — no human action needed.
   const orphanRefusalText = (role: WorkerRole): string =>
     state.workerSessions[role]
       ? `The prior turn to the ${role} was orphaned when its session ended — its pending record is still on disk, and that session may still be resumable. Inspect or finish it with \`duet takeover ${role}\`, then re-send. Do not re-send into this role until the orphan is resolved: an immediate re-send would resume and race the orphaned worker on that same session.`
       : `The prior turn to the ${role} was orphaned before a session id was captured — there is no session to resume, and the old worker process may still be running and editing the repo. Dropping the orphan ABANDONS that in-flight turn: confirm it is done (or accept the risk), then run \`duet takeover ${role}\` to drop the orphan and re-send. Do not re-send until then.`;
+  const orphanDiscardText = (role: WorkerRole): string =>
+    `The prior turn to the ${role} was orphaned when its session ended, but the ${role} is ephemeral and read-only — there is nothing to resume and no repo it could have edited, so just resend: your next send_prompt to the ${role} clears the stale record and dispatches the fresh body in one call. (Or run \`duet takeover ${role}\` to clear it by hand — it opens no resume target, since the next turn seeds a new session.)`;
   // The phase-exit gate (async only): advance_phase and ask_human are both
   // refused while ANY pending-turn record is non-collected — live (the
   // dispatcher owns it) OR on disk (a reconnect orphan the fresh dispatcher
   // doesn't). A turn dispatched-but-uncollected means the phase isn't done;
   // advancing would strand the turn and its bookkeeping, and the disk half also
-  // keeps the per-phase ctx registry safe to rebuild at a boundary. Returns a
-  // prescribed-recovery refusal, or null when nothing is outstanding.
+  // keeps the per-phase ctx registry safe to rebuild at a boundary.
+  //
+  // The recovery is per-role and policy-aware, not one generic line: a live turn
+  // collects with check_turns; an orphan recovers by its role's orphan POLICY
+  // (orphanRecoveryFor) — a `takeover` role refuses until `duet takeover`, but a
+  // `discard-and-reseed` role (the ephemeral consultant) just resends (or clears
+  // by hand), needing no human escalation. The generic "duet takeover <role>"
+  // copy steered a consultant orphan to a takeover it doesn't need — this is the
+  // third orphan-recovery surface, aligned with send_prompt's branch and
+  // check_turns. Returns the refusal, or null when nothing is outstanding.
   const pendingTurnGate = (verb: 'advance the phase' | 'queue a question'): CallToolResult | null => {
     if (!dispatcher) return null;
-    const live = dispatcher.hasPending();
-    const onDisk = state.pendingTurns !== undefined && Object.keys(state.pendingTurns).length > 0;
-    if (!live && !onDisk) return null;
+    const outstanding = ROLES.filter((r) => dispatcher.statusOf(r) !== undefined || state.pendingTurns?.[r]);
+    if (outstanding.length === 0) return null;
+    const recovery = (role: WorkerRole): string => {
+      // Live: the dispatcher owns the turn (running, or settled-but-uncollected) — collect it.
+      if (dispatcher.statusOf(role) !== undefined) return `Collect the ${role}'s turn with check_turns.`;
+      // On-disk orphan with no live owner — recover by the role's policy.
+      return orphanRecoveryFor(role) === 'discard-and-reseed'
+        ? `The ${role} turn was orphaned, but the ${role} is ephemeral and read-only — resend to it (your next send_prompt clears the stale record and reseeds), or run \`duet takeover ${role}\` to clear it; no human action is needed.`
+        : `The ${role} turn was orphaned when its session ended — recover it with \`duet takeover ${role}\` (its session may still be resumable), then re-send.`;
+    };
+    const action = verb === 'advance the phase' ? 'advance' : 'ask';
     return {
       content: [
         {
           type: 'text' as const,
-          text: `A worker turn dispatched in this phase has not been collected yet, so you can't ${verb} — advancing or flagging now would strand the turn and its bookkeeping. Collect it with check_turns first (or, if it was orphaned when a prior session ended, recover it with duet takeover <role>), then ${verb === 'advance the phase' ? 'advance' : 'ask'} once nothing is outstanding.`,
+          text: `A worker turn dispatched in this phase has not been collected yet, so you can't ${verb} — doing so would strand the turn and its bookkeeping. ${outstanding.map(recovery).join(' ')} Then ${action} once nothing is outstanding.`,
         },
       ],
       isError: true,
     };
   };
+
+  // send_prompt's role surface is the run's BOUND worker roles: the consultant
+  // is an enum value (and named in the role/description copy) ONLY when bound, so
+  // an un-enabled run's tool schema is byte-for-byte today's and the orchestrator
+  // cannot route to a role that does not exist.
+  const workerRoles = workerRolesFor(state);
+  const consultantBound = workerRoles.includes('consultant');
+  const sendPromptRoleDescribe = consultantBound
+    ? 'implementer produces and revises artifacts (write access); reviewer critiques them (read-only); consultant is the independent cross-family second reviewer — read-only, and a fresh seeded session each turn (it does not accumulate the run’s context the way the persistent implementer and reviewer do).'
+    : 'implementer produces and revises artifacts (write access); reviewer critiques them (read-only).';
+  // The session paragraph, reconciled by binding so persistent-vs-ephemeral reads
+  // as one coherent rule (not a persistent claim with a later exception). Unbound,
+  // it is byte-for-byte today's text; bound, it scopes "persistent" to the
+  // implementer and reviewer and states the consultant's ephemerality as the
+  // contrast at the same altitude.
+  const sendPromptSessionParagraph = consultantBound
+    ? 'The implementer and reviewer are each one persistent session: a later call to that role continues the worker’s conversation, so refer back to earlier turns instead of repeating context it has already seen — and the instructions you send persist the same way, so a full snippet template goes to such a worker once per phase, with later turns steered by deltas (-again variants, short frame-referencing follow-ups). The consultant is the exception: it is ephemeral — a fresh seeded session each turn, carrying no prior context — so seed it fully each time rather than referring back.'
+    : 'Each role is one persistent session: a later call to the same role continues that worker’s conversation, so refer back to earlier turns instead of repeating context the worker has already seen — and the instructions you send persist the same way, so a full snippet template goes to a given worker once per phase, with later turns steered by deltas (-again variants, short frame-referencing follow-ups).';
 
   const tools: Array<KernelTool<any>> = [
     kernelTool(
@@ -528,23 +569,23 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       },
       async (args) => {
         const sent: Record<string, string[]> = {};
-        for (const role of ['implementer', 'reviewer'] as const) {
+        for (const role of workerRolesFor(state)) {
           for (const tag of state.sentSnippets?.[phase]?.[role] ?? []) {
             (sent[tag] ??= []).push(role);
           }
         }
-        return { content: [{ type: 'text' as const, text: renderSnippetLibrary({ phase, workflow: workflowOf(state), sentTo: sent, all: args.all }) }] };
+        return { content: [{ type: 'text' as const, text: renderSnippetLibrary({ phase, workflow: workflowOf(state), sentTo: sent, all: args.all, consultantBound: Boolean(state.bindings.consultant) }) }] };
       },
       { annotations: { readOnlyHint: true } }, // genuinely read-only; also batches with parallel sends
     ),
 
     kernelTool(
       'send_prompt',
-      'Send a prompt to a worker agent and return its final response. Each role is one persistent session: a later call to the same role continues that worker’s conversation, so refer back to earlier turns instead of repeating context the worker has already seen — and the instructions you send persist the same way, so a full snippet template goes to a given worker once per phase, with later turns steered by deltas (-again variants, short frame-referencing follow-ups). Worker turns are slow (often minutes) and a sent prompt becomes a permanent part of the session — there is no unsend — so compose the full body before calling and send one well-formed prompt rather than iterating by sending. Independent turns to different roles can be issued as parallel tool calls in one message and run concurrently — the frame phase’s two unshared analyses are the canonical case; a second turn to the same role while one is in flight is refused until the first returns (one session is one conversation). Sending the reviewer a prompt whose tag starts with "review" counts as a review round against the phase’s backstop cap. A claude-bound worker’s context can be deliberately compacted: a body that is literally "/compact " followed by your instructions (e.g. an adapted compact-for-* snippet) resets that session in place, keeping what the instructions name; codex-bound workers compact themselves automatically, so this applies only to claude.',
+      `Send a prompt to a worker agent and return its final response. ${sendPromptSessionParagraph} Worker turns are slow (often minutes) and a sent prompt becomes a permanent part of the session — there is no unsend — so compose the full body before calling and send one well-formed prompt rather than iterating by sending. Independent turns to different roles can be issued as parallel tool calls in one message and run concurrently — the frame phase’s ${consultantBound ? 'three' : 'two'} unshared analyses are the canonical case; a second turn to the same role while one is in flight is refused until the first returns (one session is one conversation). Sending the reviewer a prompt whose tag starts with "review" counts as a review round against the phase’s backstop cap. A claude-bound worker’s context can be deliberately compacted: a body that is literally "/compact " followed by your instructions (e.g. an adapted compact-for-* snippet) resets that session in place, keeping what the instructions name; codex-bound workers compact themselves automatically, so this applies only to claude.`,
       {
         role: z
-          .enum(['implementer', 'reviewer'])
-          .describe('implementer produces and revises artifacts (write access); reviewer critiques them (read-only).'),
+          .enum(workerRoles as [WorkerRole, ...WorkerRole[]])
+          .describe(sendPromptRoleDescribe),
         tag: z
           .string()
           .describe('Source snippet key this prompt was built from, e.g. "review-spec". Use "custom" if composed from scratch.'),
@@ -574,10 +615,19 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         }
         if (dispatcher && state.pendingTurns?.[args.role]) {
           // A non-collected record with no live owner is an orphan, not a live
-          // turn — refuse the re-send (it would race the orphaned worker).
-          return { content: [{ type: 'text' as const, text: orphanRefusalText(args.role) }], isError: true };
+          // turn. A `takeover` role refuses the re-send (it would race the
+          // orphaned worker); a `discard-and-reseed` role (the ephemeral,
+          // read-only consultant) clears the stale record and re-dispatches the
+          // newly supplied body in this same call — the durable record holds no
+          // body (run-store.ts), so recovery is a fresh send, not a replay.
+          if (orphanRecoveryFor(args.role) === 'discard-and-reseed') {
+            clearPendingTurn(state, args.role);
+            log(`[send_prompt] discarded an orphaned ${args.role} turn — reseeding with the newly supplied body`);
+          } else {
+            return { content: [{ type: 'text' as const, text: orphanRefusalText(args.role) }], isError: true };
+          }
         }
-        const isReviewRound = args.role === 'reviewer' && args.tag.startsWith('review');
+        const isReviewRound = countsReviewRound(args.role, args.tag);
         const cap = PHASE[phase].roundCap;
         const used = state.rounds[phase] ?? 0;
         if (isReviewRound && used >= cap) {
@@ -613,7 +663,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           log(`[send_prompt] resend of ${args.tag} → ${args.role} allowed after steering (deliberate)`);
         }
 
-        const provider = providers[args.role];
+        const provider = providerFor(providers, args.role);
         log(`[send_prompt] → ${args.role} (${provider.name})  tag=${args.tag}  body=${args.body.length} chars`);
         appendVoiceLog(state, args.role, `◀ prompt (tag=${args.tag}, from orchestrator)`, args.body);
 
@@ -647,8 +697,8 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         try {
           const turn = await provider.runTurn({
             prompt: args.body,
-            sessionId: state.workerSessions[args.role],
-            readOnly: args.role === 'reviewer',
+            sessionId: sessionIdFor(state, args.role),
+            readOnly: readOnlyFor(args.role),
             cwd: state.cwd,
           });
           settleTurn({ state, phase, providers, log }, { role: args.role, tag: args.tag, isReviewRound }, turn);
@@ -727,7 +777,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         // (the durable one-way flag) covers the async window where a turn was
         // dispatched but its session id isn't yet persisted; workerSessions
         // covers the headless host (and a settled interactive turn).
-        if (state.workerDispatched || state.workerSessions.implementer || state.workerSessions.reviewer) {
+        if (state.workerDispatched || workerRolesFor(state).some((r) => state.workerSessions[r])) {
           return {
             content: [
               {
@@ -790,7 +840,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           .array(z.object({ title: z.string(), severity: z.enum(['low', 'high']) }))
           .optional()
           .describe(
-            'A SIGNAL-ONLY structured echo of the genuine human decisions this gate carries — the "things for you to decide" you would otherwise leave only in the prose summary. severity: "high" = a real product/direction call the human must make; "low" = notable but not blocking. The human/concierge reads it to decide hold-vs-relay; it never affects gate-crossing (only the human’s tap crosses a gate). Omit it when the gate is a routine convergence with nothing for the human to weigh.',
+            'A structured echo of the genuine human decisions this gate carries — the "things for you to decide" you would otherwise leave only in the prose summary. severity: "high" = a real product/direction call the human must make; "low" = notable but not blocking. A high holds a non-explicit crossing: a pre-authorized gate will not auto-cross over it and a one-tap `duet afk` handoff is refused — both stop for the human so they weigh the call before it ships; an explicit human approval still crosses. A low rides the packet as advisory. Omit the field on a routine convergence with nothing for the human to weigh.',
           ),
       },
       async (args) => {
@@ -921,7 +971,9 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           const afterCollect = loadRunState(state.cwd, state.runId);
           for (const role of ROLES) {
             if (afterCollect.pendingTurns?.[role] && dispatcher.statusOf(role) === undefined) {
-              content.push({ type: 'text' as const, text: orphanRefusalText(role) });
+              // A discard-and-reseed role's orphan is "just resend," not "takeover".
+              const text = orphanRecoveryFor(role) === 'discard-and-reseed' ? orphanDiscardText(role) : orphanRefusalText(role);
+              content.push({ type: 'text' as const, text });
             }
           }
           if (content.length === 0) {

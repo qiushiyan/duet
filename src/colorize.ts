@@ -14,6 +14,7 @@ export const ROLE_GLYPH: Record<Voice, string> = {
   orchestrator: '◆',
   implementer: '■',
   reviewer: '●',
+  consultant: '▲',
 };
 
 /** tmux color names for pane borders — same hues the colorizer uses. */
@@ -21,12 +22,14 @@ export const ROLE_TMUX_COLOR: Record<Voice, string> = {
   orchestrator: 'cyan',
   implementer: 'blue',
   reviewer: 'yellow',
+  consultant: 'magenta',
 };
 
 const ROLE_PAINT: Record<Voice, (s: string) => string> = {
   orchestrator: pc.cyan,
   implementer: pc.blue,
   reviewer: pc.yellow,
+  consultant: pc.magenta,
 };
 
 /** `[ISO-timestamp] header` lines as appendVoiceLog writes them. */

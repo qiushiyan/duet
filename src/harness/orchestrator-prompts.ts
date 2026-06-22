@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PHASE } from '../phases.ts';
+import { PHASE, consultantSnippetFor } from '../phases.ts';
 import type { GatePhase, PhaseName } from '../phases.ts';
+import { workerRolesFor } from '../roles.ts';
 import { gateAttended } from '../run-store.ts';
 import type { RunState, Steer } from '../run-store.ts';
 
@@ -60,7 +61,34 @@ The human can steer the run mid-phase: a note staged from outside arrives append
 Call write_note when you notice friction worth remembering — a snippet that didn't fit, a triage call you were unsure about, a worker that needed unusual hand-holding. These notes are how the workflow improves between runs.
 </recording>
 
-When a phase's exit criteria are met, call advance_phase with an honest summary — it always lands on a human gate, so the summary is what the human decides from. When the gate carries genuine decisions for the human — a product or direction call you deliberately did not make yourself — also pass them as advance_phase's structured human_decisions (each a short title plus severity: high for a real call the human must make, low for notable-but-not-blocking). It is a signal that helps whoever relays the gate decide whether to hold for the human or relay an approval; it never changes the gate and does not replace the prose summary, which still carries the full picture. A routine convergence with nothing for the human to weigh needs no decisions list.`;
+When a phase's exit criteria are met, call advance_phase with an honest summary — it always lands on a human gate, so the summary is what the human decides from. When the gate carries genuine decisions for the human — a product or direction call you deliberately did not make yourself — also pass them as advance_phase's structured human_decisions (each a short title plus severity: high for a real call the human must make, low for notable-but-not-blocking). It helps whoever relays the gate decide whether to hold for the human or relay an approval — and a high also holds a non-explicit crossing: a pre-authorized gate will not auto-cross over it and a one-tap afk handoff is refused, so an overnight or walk-away run stops for it rather than shipping past it (an explicit human approval still crosses). It does not replace the prose summary, which still carries the full picture. A routine convergence with nothing for the human to weigh needs no decisions list.`;
+
+/**
+ * The bound-only consultant clause, at identity altitude — naming the optional
+ * third voice without rewriting the "two-agent" opening (the persistent spine
+ * genuinely IS the implementer + reviewer; the consultant is ephemeral,
+ * checkpoint-only, and optional). The single source BOTH hosts append when a
+ * consultant is bound: the headless system prompt via `orchestratorSystemPrompt`
+ * below, the interactive identity via the launcher composing it into the run-dir
+ * identity file (`orchestrate.ts`). Behavior is driven by the phase brief (the
+ * conditional three-send shape) which get_task serves on both hosts; this clause
+ * keeps the orchestrator's standing mental model in step with that brief.
+ */
+export const CONSULTANT_IDENTITY_CLAUSE = `<consultant>
+This run also binds a consultant — an optional third voice the workflow consults at specific gate-adjacent checkpoints (your phase brief names exactly when and how). It is read-only and ephemeral: a fresh, low-context session each time, carrying no run history, so it questions the bet (assumptions, product fit) rather than the build. It is additive, never substitutive — it never stands in for a reviewer round, and its findings inform a direction or a gate packet, they do not by themselves hold a gate. The implementer and reviewer remain the persistent spine described above.
+</consultant>`;
+
+/**
+ * The headless orchestrator's system prompt for a run — the base prompt, plus
+ * the consultant clause only when one is bound. Unbound it returns
+ * ORCHESTRATOR_SYSTEM_PROMPT verbatim (the default-off byte-for-byte). The
+ * interactive host gains the same clause by a different route — the launcher
+ * composes it onto the shipped identity file it feeds (`orchestrate.ts`) — so
+ * both hosts' identities match when bound and are unchanged when not.
+ */
+export function orchestratorSystemPrompt(state: RunState): string {
+  return state.bindings.consultant ? `${ORCHESTRATOR_SYSTEM_PROMPT}\n\n${CONSULTANT_IDENTITY_CLAUSE}` : ORCHESTRATOR_SYSTEM_PROMPT;
+}
 
 /**
  * Few-shot example blocks for the phases with genuine judgment latitude. Each
@@ -163,10 +191,50 @@ function approvalClause(state: RunState, gatePhase: GatePhase, attended: string,
  * is structurally unavailable.
  */
 function branchPolicyParagraph(state: RunState): string {
-  if (state.workerSessions.implementer || state.workerSessions.reviewer) return '';
+  if (workerRolesFor(state).some((r) => state.workerSessions[r])) return '';
   return `
 Branch: the run works on exactly one branch, fixed before your first worker prompt. The repo is currently on "${state.branch ?? 'unknown'}". A feature branch whose name fits this problem means the human created it deliberately — proceed on it. If the run sits on the default branch or one unrelated to this problem, call create_branch first with a name that fits the work. Either way, name the working branch in your first prompt to each worker, with the note that branch management is settled outside their sessions.
 `;
+}
+
+/**
+ * The generative-mode (frame/research) consultant integration. NOT an appended
+ * note: the consultant is a primary numbered step that a model executing the
+ * list cannot skip (the failure the append-only shape risked — framing has no
+ * mechanical gate proving the third send ran). So the analysis and synthesis
+ * STEPS THEMSELVES are conditional on the binding: unbound returns today's
+ * two-analysis text byte-for-byte; bound returns a three-send / three-voice
+ * shape. The snippet name comes from the registry (consultantSnippetFor).
+ *
+ * The two critical-mode injections (spec/impl, consultantAuditStep below) stay
+ * append-style: there the audit is its own gate-adjacent step, not a rewrite of
+ * an existing one.
+ */
+function analysisSendStep(state: RunState, phase: PhaseName): string {
+  const snippet = consultantSnippetFor(phase);
+  if (!state.bindings.consultant || !snippet) {
+    return 'Send think-holistic to each worker independently — same problem, two unshared analyses. Issue both send_prompt calls in one message: turns to different workers run concurrently, and these two share no inputs, so there is nothing to wait for.';
+  }
+  return `Send three independent analyses in one message — think-holistic to the implementer and to the reviewer, and ${snippet} to the consultant (a third, cross-family read on its bet-level-outsider lane). Same problem, three unshared analyses that share no inputs, so issue all three send_prompt calls together — turns to different workers run concurrently and there is nothing to wait for.`;
+}
+
+function synthesisStep(state: RunState): string {
+  if (!state.bindings.consultant) {
+    return "Send the reviewer's analysis to the implementer with compare-notes: critique, synthesize, don't capitulate.";
+  }
+  return "Send the reviewer's AND the consultant's analyses to the implementer with compare-notes, presented as two anonymized peers (do not label either by role, so the implementer stays blind to reviewer identity): critique and synthesize across all three voices, don't capitulate or average. The consultant's analysis is a synthesis input to the direction, like the reviewer's — not a gate-holding finding.";
+}
+
+/**
+ * The critical-mode augmentation (spec/impl): a bet audit just before the gate.
+ * `seedNote` names exactly what to curate into the ephemeral session.
+ */
+function consultantAuditStep(state: RunState, phase: PhaseName, seedNote: string): string {
+  const snippet = consultantSnippetFor(phase);
+  if (!state.bindings.consultant || !snippet) return '';
+  return `
+
+Consultant checkpoint (the consultant is bound for this run): before you advance, run its bet audit. Send the consultant a ${snippet} prompt — a fresh, ephemeral, read-only session, so curate what it sees rather than pointing it at the run's history: ${seedNote} Fold its raw findings into your advance_phase summary, and echo each finding's consultant-assigned severity into advance_phase's human_decisions — record them, never re-grade (you do triage, not opinion). "The bet is sound — ship" is a first-class outcome; a documented tradeoff is by-design, not a finding.`;
 }
 
 function documentsBlock(state: RunState): string {
@@ -190,8 +258,8 @@ ${branchPolicyParagraph(state)}${attendancePosture(state, 'frame')}
 The shape of the phase:
 1. Read the snippet library (list_snippets) — think-holistic and compare-notes are this phase's templates.
 2. Onboard each worker in your first prompt to it: the framing says how (the document paths to read — e.g. an onboarding or skill file named by path). Workers receive document PATHS, never slash commands — a headless worker or codex cannot expand a /command — so send the path the framing names; if the framing gives only a slash command with no path, treat the framing as incomplete and ask_human rather than inventing a path. Fold the onboarding, the working branch, and the problem statement from the framing into that first prompt.
-3. Send think-holistic to each worker independently — same problem, two unshared analyses. Issue both send_prompt calls in one message: turns to different workers run concurrently, and these two share no inputs, so there is nothing to wait for.
-4. Send the reviewer's analysis to the implementer with compare-notes: critique, synthesize, don't capitulate.
+3. ${analysisSendStep(state, 'frame')}
+4. ${synthesisStep(state)}
 5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
@@ -212,7 +280,7 @@ The shape of the loop:
 2. Send the reviewer a review-spec prompt wrapping the current spec. The reviewer can read the repo directly, so point it at ${state.specPath} and related code — name the path as well as quoting the content.
 3. Route the reviewer's feedback to the implementer with an update-spec prompt. The implementer should apply accepted changes to ${state.specPath} directly (it has write access) and report what it changed versus rejected and why.
 4. Judge convergence. Run another round with the -again variants when substantive points remain open; stop when what's left is minor. The backstop cap for this phase is ${roundCap} review rounds — your judgment should converge well before it.
-5. When converged, call advance_phase with a summary of what the reviewer flagged, what changed, and any rejections with their rationale — the human decides at the gate from your summary.
+5. When converged, call advance_phase with a summary of what the reviewer flagged, what changed, and any rejections with their rationale — the human decides at the gate from your summary.${consultantAuditStep(state, 'spec', 'the settled spec and the decisions it must treat as by-design — not the review-loop traffic.')}
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
 
@@ -233,7 +301,7 @@ The shape of the phase:
 1. Decide where the spec file lives — the framing names the project's spec location. If it doesn't, ask_human for one before drafting.
 2. Send the implementer a write-spec prompt carrying the approved direction; it writes the spec file and reports the path and content.
 3. Run the review loop: review-spec to the reviewer (point it at the file's path as well as the content), update-spec to the implementer, -again variants for later rounds. The backstop cap is ${roundCap} review rounds; converge well before it.
-4. When converged, call advance_phase with the summary and with spec_path set to the spec file's repo-relative path — the harness records it for the later phases.
+4. When converged, call advance_phase with the summary and with spec_path set to the spec file's repo-relative path — the harness records it for the later phases.${consultantAuditStep(state, 'spec', 'the settled spec and the decisions it must treat as by-design — not the review-loop traffic.')}
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
 
@@ -311,7 +379,7 @@ The arc:
 4. Insert a midpoint checkpoint only when the implementation is genuinely large — more than roughly six slices is a rough signal, but judge by the real size and structural risk, not the count. Its whole value is catching a foundational problem while many slices still remain for the correction to save; a small or moderate plan has too little left to pay for the extra turns, so skip it and run straight to the handoff. When you do run it, run it exactly once: have the implementer stop at a sensible point partway (around the first third to half), then midpoint-status → review-midpoint → respond-midpoint. The reviewer weights foundational problems highest — they compound across every remaining slice — and treats unreached slices as intentionally undone, not missing. The implementer then triages the points into fix-now / fold-into-the-remaining-slices / disagree, applies the fix-now items, and continues to the end — folding the rest of the guidance into the remaining slices as it goes. It does not pause again; the next stop is the handoff.
 5. ${reviewCompactionStep}
 6. When all slices are in: implementation-handoff from the implementer, then the review loop — review-implementation to the reviewer, respond-review to the implementer, -again variants for later rounds, fix commits as they're accepted. The backstop cap for this phase is ${roundCap} review rounds; converge well before it.
-7. Last act, after the loop converges: send the implementer ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review history (rounds run, points raised, resolved, disputed), deviations from the plan, and the test state. The human returns from hours away and decides to ship from this packet alone — make it carry everything.
+7. Last act, after the loop converges: send the implementer ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review history (rounds run, points raised, resolved, disputed), deviations from the plan, and the test state. The human returns from hours away and decides to ship from this packet alone — make it carry everything.${consultantAuditStep(state, 'impl', "the settled spec, the by-design decisions, and the consultant's own prior spec-checkpoint findings — not the raw build or review traffic.")}
 
 Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
 
@@ -391,8 +459,8 @@ ${branchPolicyParagraph(state)}${attendancePosture(state, 'research')}
 The shape of the phase:
 1. Read the snippet library (list_snippets) — think-holistic, compare-notes, and use-latest-docs are this phase's templates.
 2. Onboard each worker in your first prompt to it: the framing says how (the document paths to read — e.g. an onboarding or skill file named by path). Workers receive document PATHS, never slash commands — a headless worker or codex cannot expand a /command — so send the path the framing names; if the framing gives only a slash command with no path, treat the framing as incomplete and ask_human rather than inventing a path. Fold the onboarding, the working branch, and the problem statement from the framing into that first prompt.
-3. Send think-holistic to each worker independently — same problem, two unshared analyses. Issue both send_prompt calls in one message: turns to different workers run concurrently, and these two share no inputs, so there is nothing to wait for. When the work leans on an external library or SDK, fold use-latest-docs into the prompt so the analysis is grounded in current APIs rather than stale memory.
-4. Send the reviewer's analysis to the implementer with compare-notes: critique, synthesize, don't capitulate.
+3. ${analysisSendStep(state, 'research')} When the work leans on an external library or SDK, fold use-latest-docs into the prompt so the analysis is grounded in current APIs rather than stale memory.
+4. ${synthesisStep(state)}
 5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The implementer builds directly from these decisions, so the summary must carry enough that the build can proceed without a spec. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
@@ -421,7 +489,7 @@ The arc — there is no spec or plan here; the research decisions are the source
 1. Send the implementer the implement-direct prompt: build the change directly from the research decisions, rereading the decisions and the code it touches first, working in coherent commits and keeping tests green as it goes. There is no plan file to commit — the decisions carry the design. Never descope or thin tests to fit a turn: a fresh prompt carries a fresh budget ceiling, so trimming scope for budget is a product decision that needs work-content reasons and an honest line in the Ship packet. Have the implementer keep ephemeral verification harnesses (throwaway tsconfigs, scratch scripts) under .duet/scratch/ or delete them before handoff, so they don't ride the worktree as untracked strays. (Gotcha: a worker can't watch its own budget — a turn that hits the per-turn cap or time limit is cut off mechanically, surfacing as a failed or short response, not a graceful "I'm low" report. Its committed work is on disk, so just resume that session with a short continue prompt for the rest; that's resumption, not a content failure, so don't re-send the original prompt.)
 2. When the build is in: handoff-direct from the implementer — it orients the reviewer fast (what changed, where to look hardest), tied to the research decisions rather than a spec/plan.
 3. One writable review round — this arc has exactly one, no second pass: review-direct to the reviewer (it reviews against the research decisions and the actual goal, not a document), then apply-review to the implementer. apply-review is writable: the implementer assesses each point, fixes the valid ones in place, pushes back on the rest with reasons, and reports what it changed. The backstop cap for this phase is ${roundCap} review round.
-4. Call advance_phase with a lean Ship packet: the implementation handoff, plus the review-and-fix summary (what the reviewer raised, what was fixed, anything disputed) and the test state. There is no CEO summary in this arc — the human reads what shipped and the review outcome. The human returns from away and decides to ship from this packet, so it must reflect the final state of the code.
+4. Call advance_phase with a lean Ship packet: the implementation handoff, plus the review-and-fix summary (what the reviewer raised, what was fixed, anything disputed) and the test state. There is no CEO summary in this arc — the human reads what shipped and the review outcome. The human returns from away and decides to ship from this packet, so it must reflect the final state of the code.${consultantAuditStep(state, 'implement', "the research decisions treated as the design, the implemented change, and the consultant's own prior research-checkpoint findings — not the raw build or review traffic.")}
 
 Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
 

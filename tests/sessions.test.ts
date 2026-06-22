@@ -28,6 +28,24 @@ describe('resolveSessions — the cheap exact session map (no fs)', () => {
   test('a fresh run with no sessions resolves to []', ({ run }) => {
     expect(resolveSessions(run)).toEqual([]);
   });
+
+  test('a bound consultant resolves alongside the base workers; an unbound run never includes it', ({
+    run,
+    consultantRun,
+  }) => {
+    consultantRun.orchestratorSessionId = 'orch-1';
+    consultantRun.workerSessions = { implementer: 'impl-1', reviewer: 'rev-1', consultant: 'c-1' };
+    expect.soft(resolveSessions(consultantRun)).toEqual([
+      { role: 'orchestrator', provider: 'claude', sessionId: 'orch-1' },
+      { role: 'implementer', provider: 'claude', sessionId: 'impl-1' },
+      { role: 'reviewer', provider: 'codex', sessionId: 'rev-1' },
+      { role: 'consultant', provider: 'claude', sessionId: 'c-1' },
+    ]);
+    // Unbound: even a stray tracked consultant id is not enumerated — the role
+    // isn't bound, so workerRolesFor doesn't reach it.
+    run.workerSessions = { implementer: 'impl-1', consultant: 'stray' };
+    expect.soft(resolveSessions(run).map((s) => s.role)).toEqual(['implementer']);
+  });
 });
 
 describe('readRoleTranscriptTail — the fs tail wrapper', () => {

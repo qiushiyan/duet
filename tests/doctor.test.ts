@@ -37,6 +37,28 @@ describe('buildDoctorModel — per-role verdicts', () => {
     expect.soft(rowOf(model, 'implementer').sessionPath).toContain('impl-1.jsonl');
   });
 
+  test('a bound consultant gets its own health row; the orchestrator is never dropped', async ({ consultantRun, projectDir }) => {
+    const home = join(projectDir, 'home');
+    consultantRun.orchestratorSessionId = 'orch-1';
+    consultantRun.workerSessions = { consultant: 'consult-1' };
+    saveRunState(consultantRun);
+    plantClaudeTranscript(home, 'orch-1', jsonl(claudeUserToolResult({ ts: ago(20 * MIN) })));
+    plantClaudeTranscript(home, 'consult-1', jsonl(claudeUserToolResult({ ts: ago(20 * MIN) })));
+
+    const model = await buildDoctorModel(consultantRun, { now: NOW, home, fetch: okFetch });
+    const roles = model.roles.map((r) => r.role);
+    expect.soft(roles).toContain('orchestrator'); // voicesFor keeps it
+    expect.soft(roles).toContain('consultant');
+    expect.soft(rowOf(model, 'consultant').provider).toBe('claude'); // its exact bound provider
+    expect.soft(rowOf(model, 'consultant').sessionPath).toContain('consult-1.jsonl');
+  });
+
+  test('an unbound run has exactly today’s three voices (byte-for-byte)', async ({ run, projectDir }) => {
+    const home = join(projectDir, 'home');
+    const model = await buildDoctorModel(run, { now: NOW, home, fetch: okFetch });
+    expect.soft(model.roles.map((r) => r.role)).toEqual(['orchestrator', 'implementer', 'reviewer']);
+  });
+
   test('an in-flight worker (activeTurns + live driver) reads working', async ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
     run.workerSessions = { implementer: 'impl-1' };

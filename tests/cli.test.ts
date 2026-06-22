@@ -1,5 +1,5 @@
 import { describe, expect } from 'vitest';
-import { newRunInputOpts, resolveAfkArgs } from '../src/cli.ts';
+import { newRunInputOpts, resolveAfkArgs, takeoverPlan } from '../src/cli.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**
@@ -52,5 +52,32 @@ describe('newRunInputOpts — duet new flag forwarding (#3)', () => {
       workflow: 'full',
       retryInfra: '2',
     });
+  });
+});
+
+describe('takeoverPlan — the takeover decision (resume vs inspect vs clear-orphan)', () => {
+  test('a persistent role with a captured session opens to RESUME (not ephemeral)', ({ run }) => {
+    run.workerSessions = { reviewer: 'rev-1' };
+    expect(takeoverPlan(run, 'reviewer')).toEqual({ kind: 'open', sessionId: 'rev-1', ephemeral: false });
+  });
+
+  test('the consultant with a captured session opens to INSPECT — ephemeral, duet will not resume it', ({ consultantRun }) => {
+    consultantRun.workerSessions = { consultant: 'c-1' };
+    expect(takeoverPlan(consultantRun, 'consultant')).toEqual({ kind: 'open', sessionId: 'c-1', ephemeral: true });
+  });
+
+  test('a pending record with no session is a clear-orphan — read-only-safe for the consultant, an abandon for a worker', ({
+    run,
+    consultantRun,
+  }) => {
+    run.pendingTurns = { reviewer: { tag: 'review-spec', startedAt: 't', status: 'running' } };
+    expect.soft(takeoverPlan(run, 'reviewer')).toEqual({ kind: 'clear-orphan', ephemeral: false });
+
+    consultantRun.pendingTurns = { consultant: { tag: 'consultant-spec', startedAt: 't', status: 'running' } };
+    expect.soft(takeoverPlan(consultantRun, 'consultant')).toEqual({ kind: 'clear-orphan', ephemeral: true });
+  });
+
+  test('no session and no orphan is no-session', ({ run }) => {
+    expect(takeoverPlan(run, 'reviewer')).toEqual({ kind: 'no-session' });
   });
 });

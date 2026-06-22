@@ -11,7 +11,20 @@ import { parse } from 'smol-toml';
  * billing posture is about to land in this file, that's the design failing.
  */
 
+/**
+ * The REQUIRED role set: every run binds all three. It keys `DEFAULT_BINDINGS`,
+ * the total config loops, and `RoleBindings`' required half — so widening the
+ * worker roles never forces a persisted-state change for an unbound run.
+ */
 export type Role = 'orchestrator' | 'implementer' | 'reviewer';
+
+/**
+ * The roles a `[roles.*]` table or a `--<role>` flag may bind: the required base
+ * plus the optional `consultant`. Distinct from `Role` precisely so the optional
+ * consultant lives outside the required set — present-only, never persisted by
+ * default.
+ */
+export type BindableRole = Role | 'consultant';
 
 export interface RoleBinding {
   provider: 'claude' | 'codex';
@@ -28,7 +41,15 @@ export interface RoleBinding {
   transport?: 'headless' | 'interactive';
 }
 
-export type RoleBindings = Record<Role, RoleBinding>;
+/**
+ * Required base plus an optional consultant. An *absent* consultant makes a
+ * run's persisted `bindings` byte-for-byte today's — strictly stronger than
+ * growing a closed `Record<BindableRole, RoleBinding>`, which would change every
+ * state file. Dynamic `bindings[role]` (a `WorkerRole`/`Voice` variable) yields
+ * `RoleBinding | undefined` under `noUncheckedIndexedAccess`, so such sites go
+ * through `bindingFor`, never a bare index.
+ */
+export type RoleBindings = Record<Role, RoleBinding> & { consultant?: RoleBinding };
 
 /**
  * A CLI `--<role> provider[:model]` override. Deliberately has NO transport
@@ -52,10 +73,15 @@ export interface RoleOverride {
  * an artifact-heavy feature warrants it; the shipped default keeps every
  * claude role on Opus 4.8.
  */
-export const DEFAULT_CLAUDE_MODEL: Record<Role, string> = {
+export const DEFAULT_CLAUDE_MODEL: Record<BindableRole, string> = {
   orchestrator: 'claude-opus-4-8',
   implementer: 'claude-opus-4-8',
   reviewer: 'claude-opus-4-8',
+  // The consultant's no-model default. A PARSE-TIME default (read only when a
+  // consultant binding is being parsed) — never written into DEFAULT_BINDINGS,
+  // so an unbound run's persisted state is untouched. Opus only as a default;
+  // the cross-family binding is fully configurable and that is the point.
+  consultant: 'claude-opus-4-8',
 };
 
 /** Shipped default when no config file is present (claude roles on Opus 4.8, reviewer on codex). */
@@ -68,13 +94,32 @@ export const DEFAULT_BINDINGS: RoleBindings = {
 export const CONFIG_PATH = join(homedir(), '.config', 'duet', 'config.toml');
 
 /**
+ * Narrow a dynamic role index into a present binding, or throw a
+ * prescribed-recovery error. The binding-map twin of `providerFor`
+ * (src/providers/index.ts): `RoleBindings` carries an OPTIONAL consultant, so
+ * indexing `bindings[role]` by a dynamic `WorkerRole`/`Voice`/`BindableRole`
+ * yields `RoleBinding | undefined` under `noUncheckedIndexedAccess` — every such
+ * site routes through here, never a bare index. The three required base roles
+ * always resolve; only an unbound consultant can throw.
+ */
+export function bindingFor(bindings: RoleBindings, role: BindableRole): RoleBinding {
+  const binding = bindings[role];
+  if (!binding) {
+    throw new Error(
+      `no binding for role "${role}" on this run — a consultant is bound only when --consultant or [roles.consultant] is set, so the enumerating surface should not have reached an unbound role here.`,
+    );
+  }
+  return binding;
+}
+
+/**
  * Validate the provider + model of a binding spec — the part shared by config
  * tables and CLI overrides. Defaults a claude binding's model per role and
  * rejects a model on codex; deliberately says NOTHING about transport, which is
  * a config-only concern parseBinding layers on top (so an override can never
  * inherit a transport default through this path).
  */
-function parseProviderModel(role: Role, table: Record<string, unknown>): RoleOverride {
+function parseProviderModel(role: BindableRole, table: Record<string, unknown>): RoleOverride {
   const provider = table['provider'];
   if (provider !== 'claude' && provider !== 'codex') {
     throw new Error(`config: [roles.${role}].provider must be "claude" or "codex", got ${JSON.stringify(provider)}`);
@@ -94,7 +139,7 @@ function parseProviderModel(role: Role, table: Record<string, unknown>): RoleOve
   return model === undefined ? { provider } : { provider, model };
 }
 
-function parseBinding(role: Role, raw: unknown): RoleBinding {
+function parseBinding(role: BindableRole, raw: unknown): RoleBinding {
   if (typeof raw !== 'object' || raw === null) throw new Error(`config: [roles.${role}] must be a table`);
   const table = raw as Record<string, unknown>;
   const base = parseProviderModel(role, table);
@@ -132,7 +177,7 @@ function parseBinding(role: Role, raw: unknown): RoleBinding {
  * or "codex". Returns a RoleOverride (no transport) — the grammar can't express
  * transport, and the merge in loadRoleBindings owns the effective transport.
  */
-export function parseRoleOverride(role: Role, spec: string): RoleOverride {
+export function parseRoleOverride(role: BindableRole, spec: string): RoleOverride {
   const [provider, ...rest] = spec.split(':');
   const model = rest.length > 0 ? rest.join(':') : undefined;
   return parseProviderModel(role, model === undefined ? { provider } : { provider, model });
@@ -171,7 +216,7 @@ export function parseBudget(value: unknown): number | undefined {
  * caps); it is never `0`.
  */
 export function loadRunConfig(
-  opts: { roleOverrides?: Partial<Record<Role, string>>; budgetOverride?: string } = {},
+  opts: { roleOverrides?: Partial<Record<BindableRole, string>>; budgetOverride?: string; noConsultant?: boolean } = {},
   configPath: string = CONFIG_PATH,
 ): { bindings: RoleBindings; budget?: number } {
   const bindings: RoleBindings = { ...DEFAULT_BINDINGS };
@@ -185,6 +230,10 @@ export function loadRunConfig(
         const raw = (roles as Record<string, unknown>)[role];
         if (raw !== undefined) bindings[role] = parseBinding(role, raw);
       }
+      // The consultant is the optional binding: parsed only when present, never
+      // defaulted in — so an unbound run keeps today's byte-for-byte bindings.
+      const rawConsultant = (roles as Record<string, unknown>)['consultant'];
+      if (rawConsultant !== undefined) bindings.consultant = parseBinding('consultant', rawConsultant);
     }
     if (config['budget'] !== undefined) configBudget = parseBudget(config['budget']);
   }
@@ -206,6 +255,22 @@ export function loadRunConfig(
       bindings[role] = { ...override, transport: carried ?? 'headless' };
     } else {
       bindings[role] = override;
+    }
+  }
+
+  // The consultant override: `--no-consultant` removes a config-bound consultant
+  // for one run (it wins, so the disable is unambiguous); else `--consultant
+  // provider[:model]` binds/replaces it. A fresh binding has no prior transport
+  // to carry, and the override grammar can't express `interactive` (rejected
+  // anyway — the consultant is read-only by policy), so a claude consultant is
+  // always headless.
+  if (opts.noConsultant) {
+    delete bindings.consultant;
+  } else {
+    const consultantSpec = opts.roleOverrides?.consultant;
+    if (consultantSpec) {
+      const override = parseRoleOverride('consultant', consultantSpec);
+      bindings.consultant = override.provider === 'claude' ? { ...override, transport: 'headless' } : override;
     }
   }
 

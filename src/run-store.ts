@@ -3,10 +3,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { Snapshot } from 'xstate';
-import type { RoleBindings } from './config.ts';
+import { bindingFor } from './config.ts';
+import type { RoleBinding, RoleBindings } from './config.ts';
 import { PHASE, WORKFLOWS, defaultPosture, defaultPreAuthorizedOf, gatePhasesOf } from './phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
 import type { ContextUsage, WorkerRole } from './providers/types.ts';
+import { workerRolesFor } from './roles.ts';
 import { locateSessionTranscripts } from './sessions.ts';
 import type { ErrorClass, RetryState } from './worker-health.ts';
 
@@ -28,14 +30,22 @@ import type { ErrorClass, RetryState } from './worker-health.ts';
  * a loaded copy as stale once you hand control away.
  */
 
-export type Voice = 'orchestrator' | 'implementer' | 'reviewer';
+export type Voice = 'orchestrator' | 'implementer' | 'reviewer' | 'consultant';
 
 /**
  * A structured echo of a genuine human decision a gate carries (#3) — what the
- * orchestrator would otherwise write only in prose. SIGNAL-ONLY: the human /
- * concierge reads it to decide hold-vs-relay; duet never reads it in the
- * gate-crossing path (gates cross only on the human's tap). `high` = a real
+ * orchestrator would otherwise write only in prose. `high` = a real
  * product/direction call the human must make; `low` = notable, not blocking.
+ *
+ * A `high` WITHHOLDS a non-explicit crossing (consultant reviewer, slice 5): the
+ * headless `driveToQuiescence` auto-cross and the one-tap `duet afk` handoff both
+ * refuse to manufacture an approval over a `high`, converting it to an attended
+ * stop. An EXPLICIT human approval (`duet continue --approve`, crossInteractive)
+ * always crosses — blocking the human's own tap would fight the gate model. `low`
+ * stays advisory and rides the packet. The single resolver `highDecisionsAt`
+ * (beside gateAttended) is what every consumer reads; advance_phase itself stays
+ * signal-only (it records a normal advance — the hold lives in the crossing path,
+ * not the tool).
  */
 export interface HumanDecision {
   title: string;
@@ -140,7 +150,7 @@ export interface RunState {
   /** Mirror of the machine's state value, for humans and `duet status`. */
   machineState?: string;
   orchestratorSessionId?: string;
-  workerSessions: Partial<Record<'implementer' | 'reviewer', string>>;
+  workerSessions: Partial<Record<WorkerRole, string>>;
 
   /** Which phases have had their entry prompt sent (drives entry-vs-resume). */
   phaseStarted: Partial<Record<PhaseName, true>>;
@@ -151,7 +161,7 @@ export interface RunState {
    * template discipline: a duplicate full-template send gets a warn-once
    * steering refusal, and list_snippets annotates already-sent snippets.
    */
-  sentSnippets?: Partial<Record<PhaseName, Partial<Record<'implementer' | 'reviewer', string[]>>>>;
+  sentSnippets?: Partial<Record<PhaseName, Partial<Record<WorkerRole, string[]>>>>;
   /** advance_phase outputs, shown at gates. */
   phaseSummaries: Partial<Record<PhaseName, { summary: string; artifacts: string[]; humanDecisions?: HumanDecision[] }>>;
 
@@ -265,6 +275,18 @@ export function workflowOf(state: RunState): WorkflowName {
 export function gateAttended(state: RunState, phase: GatePhase): boolean {
   if ((WORKFLOWS[workflowOf(state)].forceAttend as readonly string[]).includes(phase)) return true;
   return state.gatesAt === undefined || state.gatesAt.includes(phase);
+}
+
+/**
+ * The `high`-severity human decisions a gate's packet carries — the single
+ * resolver for the severity hold (consultant reviewer, slice 5), beside
+ * gateAttended. A non-explicit crossing (driveToQuiescence's auto-cross,
+ * enterAfk's handoff) is withheld when this is non-empty; the status renderer
+ * reads the same list to name the hold. Returns the decisions (not a boolean) so
+ * those surfaces can name them. An explicit `--approve` never consults it.
+ */
+export function highDecisionsAt(state: RunState, gatePhase: GatePhase): HumanDecision[] {
+  return (state.phaseSummaries[gatePhase]?.humanDecisions ?? []).filter((d) => d.severity === 'high');
 }
 
 /**
@@ -571,15 +593,20 @@ export interface PurgeResult {
  * tests resolve transcripts under a tmp dir.
  */
 export function purgeRun(state: RunState, home: string = homedir()): PurgeResult {
-  const sessions: Array<{ provider: RoleBindings[keyof RoleBindings]['provider']; sessionId: string }> = [];
+  const sessions: Array<{ provider: RoleBinding['provider']; sessionId: string }> = [];
   if (state.orchestratorSessionId) {
     sessions.push({ provider: state.bindings.orchestrator.provider, sessionId: state.orchestratorSessionId });
   }
-  if (state.workerSessions.implementer) {
-    sessions.push({ provider: state.bindings.implementer.provider, sessionId: state.workerSessions.implementer });
-  }
-  if (state.workerSessions.reviewer) {
-    sessions.push({ provider: state.bindings.reviewer.provider, sessionId: state.workerSessions.reviewer });
+  // Each BOUND worker's LATEST tracked transcript, by exact session-id match —
+  // the consultant included when bound. Prior consultant checkpoint transcripts
+  // are intentionally left on disk: state tracks only the latest id and
+  // sessions.ts matches by exact id (never a directory sweep), so purge cannot
+  // reach them. (The run dir — including consultant.log — is removed below, so
+  // consultant.log is NOT a post-purge findability path; the surviving priors
+  // are the provider transcripts in ~/.claude / ~/.codex.)
+  for (const role of workerRolesFor(state)) {
+    const sessionId = state.workerSessions[role];
+    if (sessionId) sessions.push({ provider: bindingFor(state.bindings, role).provider, sessionId });
   }
 
   const transcripts = [

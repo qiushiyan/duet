@@ -44,6 +44,7 @@ If `BASE` equals `HEAD` (you're on `main`), `git diff $BASE` is just the working
 - **Changed interfaces or control flow** — the orchestrator tool surface, the worker provider contract, the statechart arc, the steer / staging paths.
 - **Removed or renamed concepts** — need doc cleanup or deletion.
 - **Policy or behavioral changes** — triage rules, gate policy, branch policy, budgets / caps.
+- **New user-facing capability** — a `duet new` flag, a setup / gate-posture choice, a run-management verb — may need a shipped skill (`skills/duet-frame` composes run setup; `skills/duet-concierge` starts / supervises runs) to surface it, not just a design-doc mention. A flag can land without touching any `.md`, and `tests/skill.test.ts` checks coherence (named things exist), not completeness (whether a skill *should* name a new capability) — so this one is caught by asking, not by a test.
 
 Asked to update docs more than once in a session? Don't re-diff the whole range — start from the first commit (or change) after the previous update-docs pass.
 
@@ -82,6 +83,10 @@ Use the significance tiers from `documentation-standards.md`. If the changes are
 - No change — Phase 1 paths still resolve and the topic table still routes.
 [Or: "Add a `providers` deep-dive path: `interactive-claude.ts` was split."]
 
+### Shipped skills (skills/duet-frame, skills/duet-concierge)
+- No change — the change added no user-facing flag/verb/setup-choice these surface.
+[Or: "duet-frame: surface the new `--consultant` setup choice in the launch command."]
+
 ### CLAUDE.md
 - No change — no new cross-cutting invariant.
 [Or: "Add invariant: <one line>."]
@@ -112,10 +117,11 @@ When a `docs/specs/` or `docs/plans/` proposal ships, fold its surviving decisio
 
 ## Step 7 — Assess the skill and the invariants
 
-Apply the maintenance rules from `documentation-standards.md` to the two surfaces above per-doc edits:
+Apply the maintenance rules from `documentation-standards.md` to these surfaces, above per-doc edits:
 
 1. **`.claude/skills/onboarding/SKILL.md`** — does the change warrant it? A new top-level doc the topic table doesn't route to, a renamed / split Phase 1 doc, or a drifted deep-dive path. Routine edits inside an existing doc don't touch the skill.
-2. **`CLAUDE.md`** — only when a new cross-cutting, load-bearing invariant emerged or an existing one's framing rotted. The bar is high; most branches need neither update.
+2. **`skills/duet-frame` / `skills/duet-concierge`** (the shipped, user-facing skills) — did the change add or alter a user-facing capability (a `duet new` flag, a setup / gate-posture choice, a run-management verb) that one of them should surface? These are prompts: edit to `prompting-and-tool-design.md` and the skill's own voice. Coherence is pinned by `tests/skill.test.ts`; completeness is your call (`documentation-standards.md` §"Shipped skill maintenance").
+3. **`CLAUDE.md`** — only when a new cross-cutting, load-bearing invariant emerged or an existing one's framing rotted. The bar is high; most branches need neither update.
 
 ## Output
 

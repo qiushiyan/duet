@@ -40,6 +40,18 @@ function frontmatterOf(markdown: string): Record<string, string> {
   return fields;
 }
 
+describe('the consultant flags exist on the command table', () => {
+  // The optional consultant is enabled per-run via `duet new --consultant` /
+  // disabled via `--no-consultant`. Pin both onto the real command table so a
+  // rename fails here, not at run time (the generic doc-scan guards below only
+  // cover flags the shipped skill docs name).
+  test('duet new advertises --consultant and --no-consultant', () => {
+    const longs = new Set((publicCommands.get('new')?.options ?? []).map((o) => o.long));
+    expect.soft(longs.has('--consultant')).toBe(true);
+    expect.soft(longs.has('--no-consultant')).toBe(true);
+  });
+});
+
 describe('the duet-concierge skill coheres with the CLI', () => {
   test('SKILL.md frontmatter is complete and pre-approves read verbs only', () => {
     const fm = frontmatterOf(skillMd);

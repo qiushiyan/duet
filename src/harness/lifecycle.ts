@@ -7,8 +7,10 @@ import { notify as desktopNotify } from '../notify.ts';
 import { PHASE, WORKFLOWS, entryOf, gatePhasesOf, phaseOfGateState, phasesOf } from '../phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from '../phases.ts';
 import type { WorkerRole } from '../providers/types.ts';
+import { workerRolesFor } from '../roles.ts';
 import {
   gateAttended,
+  highDecisionsAt,
   loadMachineSnapshot,
   loadRunState,
   runDirOf,
@@ -287,14 +289,16 @@ export async function waitForTurnOrStop(
   opts: { intervalMs?: number } = {},
 ): Promise<RunPosition | TurnReady> {
   const intervalMs = opts.intervalMs ?? 5_000;
-  const ROLES: WorkerRole[] = ['implementer', 'reviewer'];
   for (;;) {
     const state = loadRunState(cwd, runId);
+    // The run's bound worker roles — the consultant included when bound, so a
+    // dispatched consultant turn wakes `duet status --wait` like any other.
+    const roles = workerRolesFor(state);
     const pending = state.pendingTurns ?? {};
-    const ready = ROLES.filter((r) => pending[r]?.status === 'ready' || pending[r]?.status === 'failed');
+    const ready = roles.filter((r) => pending[r]?.status === 'ready' || pending[r]?.status === 'failed');
     if (ready.length > 0) return { kind: 'turn-ready', roles: ready };
     const position = probeRunPosition(state);
-    const turnRunning = ROLES.some((r) => pending[r]?.status === 'running');
+    const turnRunning = roles.some((r) => pending[r]?.status === 'running');
     const keepPolling = position.kind === 'running' || (position.kind === 'interactive' && turnRunning);
     if (!keepPolling) return position;
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
@@ -390,7 +394,12 @@ export async function driveToQuiescence(
     }
 
     const gatePhase = snapshot.status !== 'done' ? phaseOfGateState(workflowOf(fresh), fresh.machineState) : undefined;
-    if (gatePhase && !gateAttended(fresh, gatePhase)) {
+    // The severity hold: a `high` human decision withholds the pre-authorized
+    // auto-cross (a non-explicit crossing), converting the gate to an attended
+    // stop so the human weighs the call before it ships. An EXPLICIT approve
+    // (crossInteractive) never consults this — only the manufactured one here.
+    const held = gatePhase ? highDecisionsAt(fresh, gatePhase) : [];
+    if (gatePhase && !gateAttended(fresh, gatePhase) && held.length === 0) {
       // Dedupe on crash-recovery re-entry at the same gate.
       if (fresh.autoApprovals?.at(-1)?.gate !== fresh.machineState) {
         (fresh.autoApprovals ??= []).push({ gate: fresh.machineState, at: new Date().toISOString() });
@@ -404,6 +413,13 @@ export async function driveToQuiescence(
 
     saveRunState(fresh);
     actor.stop();
+    if (gatePhase && !gateAttended(fresh, gatePhase) && held.length > 0) {
+      // A pre-authorized gate that did NOT auto-cross because of a `high` — name
+      // the held decision so the human sees why the overnight run stopped here.
+      console.log(`[gate] ${fresh.machineState} held — a high human decision withheld the pre-authorized auto-cross`);
+      await notify(`duet ${fresh.runId}`, `${fresh.machineState} held for you — a high decision needs you: ${held.map((d) => d.title).join('; ')}`);
+      return { snapshot, state: fresh };
+    }
     await notify(`duet ${fresh.runId}`, describeStop(fresh, snapshot.status === 'done'));
     return { snapshot, state: fresh };
   }
@@ -476,6 +492,19 @@ export function enterAfk(state: RunState, posture: GatePhase[]): { attended: Gat
   if (position.kind !== 'gate') {
     const why = validateInteractiveCrossing(position, 'approve') ?? "isn't parked at a gate";
     throw new Error(`run ${state.runId} ${why} — duet afk hands off only from a gate (steer a live phase, or answer a flag).`);
+  }
+  // The severity hold on the present→away transition: `duet afk` is a blanket
+  // walk-away authority — the one interactive path that could turn a `high` into
+  // an unattended approval. Refuse it over a `high`, directing the human to the
+  // explicit one-command substitute (approve THIS gate, then hand off). An
+  // ordinary interactive gate the human attends in person needs no such guard.
+  const held = highDecisionsAt(state, position.phase);
+  if (held.length > 0) {
+    throw new Error(
+      `run ${state.runId} can't hand off to AFK from this gate — it carries a high human decision that needs you (${held
+        .map((d) => d.title)
+        .join('; ')}). duet afk would approve it unattended; approve this gate explicitly and then hand off: duet continue --approve --headless.`,
+    );
   }
   setGatesAt(state, posture);
   crossInteractive(state, { type: 'human.approve' });

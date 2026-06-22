@@ -10,6 +10,7 @@ import {
   consumeHumanInput,
   createRun,
   gateAttended,
+  highDecisionsAt,
   holdsMcpOwner,
   listPendingSteers,
   listRuns,
@@ -250,6 +251,29 @@ describe('gate attendance', () => {
     const legacy = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
     delete legacy.gatesAt;
     expect.soft(gateAttended(legacy, 'pr')).toBe(true);
+  });
+});
+
+describe('highDecisionsAt — the severity-hold resolver', () => {
+  test('returns the high decisions, filters low, and is empty with none or no packet', ({ run }) => {
+    run.phaseSummaries.impl = {
+      summary: 's',
+      artifacts: [],
+      humanDecisions: [
+        { title: 'a', severity: 'high' },
+        { title: 'b', severity: 'low' },
+        { title: 'c', severity: 'high' },
+      ],
+    };
+    expect.soft(highDecisionsAt(run, 'impl')).toEqual([
+      { title: 'a', severity: 'high' },
+      { title: 'c', severity: 'high' },
+    ]);
+    // Low-only → no hold.
+    run.phaseSummaries.spec = { summary: 's', artifacts: [], humanDecisions: [{ title: 'x', severity: 'low' }] };
+    expect.soft(highDecisionsAt(run, 'spec')).toEqual([]);
+    // No packet at all → no hold.
+    expect.soft(highDecisionsAt(run, 'plan')).toEqual([]);
   });
 });
 

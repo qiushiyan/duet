@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadRunState, saveRunState } from './run-store.ts';
+import { CONSULTANT_IDENTITY_CLAUSE } from './harness/orchestrator-prompts.ts';
+import { loadRunState, runDirOf, saveRunState } from './run-store.ts';
 import type { RunState } from './run-store.ts';
 
 /**
@@ -30,6 +31,21 @@ import type { RunState } from './run-store.ts';
 // packed build points --append-system-prompt-file at a missing file.
 // (docs/engineering.md §Build.)
 export const IDENTITY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'prompts', 'orchestrator-identity.md');
+
+/**
+ * Where the per-run COMPOSED identity lives when a consultant is bound: the
+ * shipped identity plus the consultant clause (`CONSULTANT_IDENTITY_CLAUSE` — the
+ * SAME clause the headless system prompt appends via `orchestratorSystemPrompt`,
+ * so both hosts gain it identically and only when bound). Written under the run
+ * dir so the launcher feeds a single `--append-system-prompt-file`: the Claude
+ * CLI doesn't document `--append-system-prompt-file` composing with a second
+ * `--append-system-prompt`, so we compose into one file rather than trust two
+ * flags to both apply. Unbound, the launcher feeds the shipped `IDENTITY_PATH`
+ * directly and writes nothing — byte-for-byte the pre-consultant launch.
+ */
+function composedIdentityPath(state: RunState): string {
+  return join(runDirOf(state.cwd, state.runId), 'orchestrator-identity.md');
+}
 
 /**
  * The single gate-safety rule: an `ask` prompt on `duet continue`. It survives
@@ -95,7 +111,9 @@ export function buildLaunchSpec(state: RunState, self: CliSelfRef = currentSelfR
       // The session's MCP surface is exactly the duet kernel — no user/global
       // MCP leakage, the hygiene the headless host gets from strictMcpConfig.
       '--strict-mcp-config',
-      '--append-system-prompt-file', IDENTITY_PATH,
+      // Bound: the run-dir composed identity (base + consultant clause), written
+      // by runOrchestrate before launch. Unbound: the shipped identity, verbatim.
+      '--append-system-prompt-file', state.bindings.consultant ? composedIdentityPath(state) : IDENTITY_PATH,
       '--settings', settings,
       // Family A: the first user turn, as claude's positional [prompt] operand,
       // so the session opens working instead of blank. It trails every option —
@@ -203,6 +221,18 @@ export function runOrchestrate(
   // orchestrationHost.
   state.costs.orchestratorCostPartial = true;
   saveRunState(state);
+
+  // When a consultant is bound, compose the identity the launcher will feed:
+  // the shipped base plus the consultant clause, into one run-dir file (see
+  // composedIdentityPath). Preflight already confirmed the base exists. Unbound,
+  // this is skipped and the shipped identity is fed directly — byte-for-byte the
+  // pre-consultant launch. A leftover composed file from a failed launch is
+  // harmless: it lives under the self-ignored run dir, is overwritten next
+  // launch, and is removed by `duet abandon --purge`.
+  if (state.bindings.consultant) {
+    const base = readFileSync(identityPath, 'utf8');
+    writeFileSync(composedIdentityPath(state), `${base.trimEnd()}\n\n${CONSULTANT_IDENTITY_CLAUSE}\n`);
+  }
 
   const spec = buildSpec(state);
   if (!gateAskRuleLive(spec)) {

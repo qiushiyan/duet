@@ -1,8 +1,9 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
 import { GATE_ASK_RULE, KICKOFF_PROMPT, buildLaunchSpec, gateAskRuleLive, runOrchestrate } from '../src/orchestrate.ts';
 import type { ClaudeLauncher } from '../src/orchestrate.ts';
+import { CONSULTANT_IDENTITY_CLAUSE } from '../src/harness/orchestrator-prompts.ts';
 import { loadRunState, runDirOf, saveRunState } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
 
@@ -178,5 +179,55 @@ describe('runOrchestrate — marks the run and launches over the seam', () => {
     const after = loadRunState(projectDir, run.runId);
     expect.soft(after.orchestrationHost).toBeUndefined();
     expect.soft(after.costs.orchestratorCostPartial).toBe(false);
+  });
+});
+
+// The interactive analogue of the headless orchestratorSystemPrompt(state)
+// clause: the identity the launcher feeds gains the consultant clause ONLY when
+// bound, so the interactive orchestrator's identity matches the headless one's
+// — and an unbound run's launch stays byte-for-byte the pre-consultant one.
+describe('consultant identity composition (parity with the headless clause)', () => {
+  test('unbound: the launcher feeds the shipped identity verbatim — no composed file written', ({ projectDir, run }) => {
+    const rec = recordingLauncher();
+    runOrchestrate(run, { launcher: rec.launcher });
+
+    const args = rec.calls[0]!.args;
+    const fed = args[args.indexOf('--append-system-prompt-file') + 1]!;
+    expect.soft(fed).toMatch(/prompts[/\\]orchestrator-identity\.md$/); // the shipped file, not a composition
+    // Nothing was written under the run dir — the unbound launch is unchanged.
+    expect.soft(existsSync(join(runDirOf(projectDir, run.runId), 'orchestrator-identity.md'))).toBe(false);
+  });
+
+  test('bound: the launcher feeds a run-dir identity composed of the shipped base + the consultant clause', ({
+    projectDir,
+    consultantRun,
+  }) => {
+    const rec = recordingLauncher();
+    runOrchestrate(consultantRun, { launcher: rec.launcher });
+
+    const composed = join(runDirOf(projectDir, consultantRun.runId), 'orchestrator-identity.md');
+    const args = rec.calls[0]!.args;
+    const fed = args[args.indexOf('--append-system-prompt-file') + 1]!;
+    // The fed path is the run-dir composition, never the shipped prompts/ file.
+    expect.soft(fed).toBe(composed);
+    expect.soft(fed).not.toMatch(/prompts[/\\]orchestrator-identity\.md$/);
+    // The composed file carries BOTH the shipped base (its two-agent opening) and
+    // the consultant clause verbatim — the SAME clause the headless system prompt
+    // appends, so the two hosts gain it identically.
+    const body = readFileSync(composed, 'utf8');
+    expect.soft(body).toContain('two-agent engineering workflow'); // the shipped base survived
+    expect.soft(body).toContain(CONSULTANT_IDENTITY_CLAUSE); // the appended clause, byte-identical to headless
+  });
+
+  test('buildLaunchSpec stays pure: it names the composed path when bound but writes nothing', ({
+    projectDir,
+    consultantRun,
+  }) => {
+    // The file write is runOrchestrate's job; buildLaunchSpec only computes argv,
+    // so a direct call names the run-dir path without creating it.
+    const args = buildLaunchSpec(consultantRun).args;
+    const fed = args[args.indexOf('--append-system-prompt-file') + 1]!;
+    expect.soft(fed).toBe(join(runDirOf(projectDir, consultantRun.runId), 'orchestrator-identity.md'));
+    expect.soft(existsSync(fed)).toBe(false); // no FS side effect
   });
 });

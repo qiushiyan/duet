@@ -30,6 +30,16 @@
  */
 
 /**
+ * A consultant checkpoint mode — the posture the optional consultant takes at a
+ * phase, named by lineage, not by phase. `frame` is the generative third-analysis
+ * mode (framing); `specGate`/`implGate` are the critical bet-audit modes just
+ * before the Commit-spec and Ship gates. Each arc maps the modes onto its own
+ * phases (Full: frame/specGate/implGate; RIR: frame/implGate — no spec phase).
+ * Registry data, so "where the consultant fires" stays in the single source.
+ */
+export type ConsultantCheckpoint = 'frame' | 'specGate' | 'implGate';
+
+/**
  * The gate a phase exits through (registry input shape). String-typed at input
  * time; the derived `GatePhase` discriminates on `gate` being non-null.
  */
@@ -60,6 +70,12 @@ interface PhaseSpecInput<Name extends string = string> {
   readonly orchestratorBudgetUsd: number;
   readonly workerBudgetUsd: number;
   readonly workerTurnTimeoutMs: number;
+  /**
+   * The consultant checkpoint this phase carries (absent ⇒ none). Drives the
+   * orchestrator-brief injection that only fires when a consultant is bound; the
+   * unbound run never reads it.
+   */
+  readonly consultantCheckpoint?: ConsultantCheckpoint;
 }
 
 /** A workflow definition as written in the registry (string-typed input shape). */
@@ -104,6 +120,11 @@ export const WORKFLOWS = {
     phases: [
       {
         name: 'frame',
+        // Base snippets are the run's ALWAYS-ON templates. The consultant
+        // checkpoint snippet is NOT listed here — it is registry data
+        // (consultantCheckpoint, below) folded in per-run by phaseSnippetsFor
+        // only when a consultant is bound, so list_snippets never exposes it on
+        // an unbound run (the default-off byte-for-byte invariant).
         snippets: ['think-holistic', 'compare-notes'],
         gate: {
           state: 'directionGate',
@@ -117,6 +138,7 @@ export const WORKFLOWS = {
         orchestratorBudgetUsd: 15,
         workerBudgetUsd: 10,
         workerTurnTimeoutMs: 30 * 60_000,
+        consultantCheckpoint: 'frame',
       },
       {
         name: 'spec',
@@ -133,6 +155,7 @@ export const WORKFLOWS = {
         orchestratorBudgetUsd: 15,
         workerBudgetUsd: 10,
         workerTurnTimeoutMs: 30 * 60_000,
+        consultantCheckpoint: 'specGate',
       },
       {
         name: 'plan',
@@ -177,6 +200,7 @@ export const WORKFLOWS = {
         orchestratorBudgetUsd: 30,
         workerBudgetUsd: 25,
         workerTurnTimeoutMs: 60 * 60_000,
+        consultantCheckpoint: 'implGate',
       },
       {
         name: 'docs',
@@ -265,6 +289,7 @@ export const WORKFLOWS = {
         orchestratorBudgetUsd: 15,
         workerBudgetUsd: 10,
         workerTurnTimeoutMs: 30 * 60_000,
+        consultantCheckpoint: 'frame',
       },
       {
         name: 'implement',
@@ -283,6 +308,7 @@ export const WORKFLOWS = {
         orchestratorBudgetUsd: 30,
         workerBudgetUsd: 25,
         workerTurnTimeoutMs: 60 * 60_000,
+        consultantCheckpoint: 'implGate',
       },
     ],
     entry: { firstPhase: 'research' },
@@ -354,6 +380,8 @@ export interface PhaseSpec {
   orchestratorBudgetUsd: number;
   workerBudgetUsd: number;
   workerTurnTimeoutMs: number;
+  /** The consultant checkpoint this phase carries, when any (registry data). */
+  consultantCheckpoint?: ConsultantCheckpoint;
 }
 
 /**
@@ -546,3 +574,47 @@ export const ANYTIME_SNIPPETS: readonly string[] = [
  * invite the very pre-plan compaction the design moved away from).
  */
 export const UNLISTED_SNIPPETS: readonly string[] = ['compact-for-plan'];
+
+/** The snippet each consultant checkpoint mode is run with. */
+const CONSULTANT_CHECKPOINT_SNIPPET: Record<ConsultantCheckpoint, string> = {
+  frame: 'consultant-frame',
+  specGate: 'consultant-spec',
+  implGate: 'consultant-impl',
+};
+
+/**
+ * The consultant checkpoint snippets, as a set — every snippet that is enabled
+ * ONLY when a consultant is bound. The render layer (snippets.ts) filters the
+ * flat `all=true` library against this so an unbound run's library never exposes
+ * one; the classification test reads it as the consultant bucket rather than
+ * forcing these into the phases' always-on lists (which is what leaked them).
+ */
+export const CONSULTANT_SNIPPETS: ReadonlySet<string> = new Set(Object.values(CONSULTANT_CHECKPOINT_SNIPPET));
+
+/** A phase's consultant checkpoint mode, or undefined when it carries none. */
+export function consultantCheckpointOf(phase: PhaseName): ConsultantCheckpoint | undefined {
+  return PHASE[phase].consultantCheckpoint;
+}
+
+/**
+ * A phase's snippets ENABLED for this run — the always-on base list, plus the
+ * phase's consultant checkpoint snippet appended (last, preserving today's bound
+ * order) only when a consultant is bound. The single source list_snippets reads,
+ * so "what the orchestrator may reach for" is base ∪ (checkpoint iff bound) on
+ * every render path: an unbound run sees byte-for-byte the base list, a bound run
+ * sees the checkpoint snippet in its owning phase.
+ */
+export function phaseSnippetsFor(phase: PhaseName, opts: { consultant: boolean }): readonly string[] {
+  const checkpoint = consultantSnippetFor(phase);
+  return opts.consultant && checkpoint ? [...PHASE[phase].snippets, checkpoint] : PHASE[phase].snippets;
+}
+
+/**
+ * The consultant snippet a phase's checkpoint runs with, or undefined when the
+ * phase carries no checkpoint — the single source the orchestrator-brief
+ * injection reads, so the phase→snippet mapping is never duplicated in prompts.
+ */
+export function consultantSnippetFor(phase: PhaseName): string | undefined {
+  const mode = PHASE[phase].consultantCheckpoint;
+  return mode ? CONSULTANT_CHECKPOINT_SNIPPET[mode] : undefined;
+}

@@ -146,6 +146,25 @@ describe('purgeRun', () => {
     expect.soft(result.transcripts).toEqual([]);
     expect.soft(existsSync(runDirOf(projectDir, run.runId))).toBe(false);
   });
+
+  test('a bound consultant: purge removes the LATEST tracked transcript, leaving prior checkpoint ones', ({
+    projectDir,
+    consultantRun,
+  }) => {
+    const h = home();
+    const latest = writeClaudeTranscript(h, '-proj', 'consult-latest');
+    // An earlier checkpoint's session — state tracks only the latest id, so this
+    // was never recorded, and purge (exact-id match, no directory sweep) leaves it.
+    const prior = writeClaudeTranscript(h, '-proj', 'consult-prior');
+    consultantRun.workerSessions = { consultant: 'consult-latest' };
+    saveRunState(consultantRun);
+
+    const result = purgeRun(loadRunState(projectDir, consultantRun.runId), h);
+    expect.soft(result.transcripts).toContain(latest);
+    expect.soft(existsSync(latest)).toBe(false);
+    expect.soft(result.transcripts).not.toContain(prior);
+    expect.soft(existsSync(prior)).toBe(true); // the prior checkpoint transcript survives, by design
+  });
 });
 
 describe('status at an abandoned / done stop', () => {

@@ -1,6 +1,7 @@
 import { join, resolve } from 'node:path';
 import { execa } from 'execa';
 import { ROLE_GLYPH, ROLE_TMUX_COLOR } from './colorize.ts';
+import { voicesFor } from './roles.ts';
 import { runDirOf } from './run-store.ts';
 import type { RunState, Voice } from './run-store.ts';
 
@@ -53,16 +54,40 @@ function tailCommand(state: RunState, voice: Voice): string {
  * narration (the run's control plane, on top) with the reviewer's critiques
  * below it.
  */
+/**
+ * A nested tmux `#{?match-glyph, then, else}` chain over the bound voices, the
+ * last voice as the terminal else — so the 3-voice layout and the 4-voice
+ * (consultant-bound) layout share one builder, and the 3-voice output is
+ * byte-for-byte the prior hand-written format.
+ */
+function paneBranch(voices: Voice[], then: (v: Voice) => string): string {
+  const [head, ...rest] = voices;
+  if (head === undefined) return '';
+  if (rest.length === 0) return then(head);
+  return `#{?#{m:${ROLE_GLYPH[head]}*,#{pane_title}},${then(head)},${paneBranch(rest, then)}}`;
+}
+
 async function layoutPanes(state: RunState, orchestratorPane: string): Promise<void> {
   // New pane sizes are percentages of the pane being split: -h 50% peels
   // the right column off the window, then -v 45% peels the reviewer off
   // the left column's height.
   const implementer = await tmux('split-window', '-d', '-h', '-l', '50%', '-t', orchestratorPane, '-P', '-F', '#{pane_id}', tailCommand(state, 'implementer'));
   const reviewer = await tmux('split-window', '-d', '-v', '-l', '45%', '-t', orchestratorPane, '-P', '-F', '#{pane_id}', tailCommand(state, 'reviewer'));
+  const panes: Array<[Voice, string]> = [
+    ['orchestrator', orchestratorPane],
+    ['implementer', implementer],
+    ['reviewer', reviewer],
+  ];
+  // The consultant is a fourth voice when bound: split the implementer's column
+  // to give it a pane. Unbound, the three-pane layout is byte-for-byte today's.
+  if (state.bindings.consultant) {
+    const consultant = await tmux('split-window', '-d', '-v', '-l', '45%', '-t', implementer, '-P', '-F', '#{pane_id}', tailCommand(state, 'consultant'));
+    panes.push(['consultant', consultant]);
+  }
   await tmux('set-option', '-w', '-t', orchestratorPane, 'pane-border-status', 'top');
-  await tmux('select-pane', '-t', orchestratorPane, '-T', `${ROLE_GLYPH.orchestrator} orchestrator`);
-  await tmux('select-pane', '-t', reviewer, '-T', `${ROLE_GLYPH.reviewer} reviewer`);
-  await tmux('select-pane', '-t', implementer, '-T', `${ROLE_GLYPH.implementer} implementer`);
+  for (const [voice, pane] of panes) {
+    await tmux('select-pane', '-t', pane, '-T', `${ROLE_GLYPH[voice]} ${voice}`);
+  }
   // Color each border title by role, keyed on the title's leading glyph —
   // tmux has no per-pane border-style, but the border format can branch.
   // The context suffix is a #(cat) of the role's plain-text sidecar
@@ -71,12 +96,10 @@ async function layoutPanes(state: RunState, orchestratorPane: string): Promise<v
   // a cat per interval, nothing parsed at view time. Missing file = no
   // reading yet = empty.
   const ctxFor = (voice: Voice) => `#(cat ${shq(join(runDirOf(state.cwd, state.runId), 'context', voice))} 2>/dev/null)`;
-  const fmt =
-    ` #{?#{m:${ROLE_GLYPH.orchestrator}*,#{pane_title}},#[fg=${ROLE_TMUX_COLOR.orchestrator}],` +
-    `#{?#{m:${ROLE_GLYPH.implementer}*,#{pane_title}},#[fg=${ROLE_TMUX_COLOR.implementer}],` +
-    `#[fg=${ROLE_TMUX_COLOR.reviewer}]}}#{pane_title}#[default] ` +
-    `#{?#{m:${ROLE_GLYPH.orchestrator}*,#{pane_title}},${ctxFor('orchestrator')},` +
-    `#{?#{m:${ROLE_GLYPH.implementer}*,#{pane_title}},${ctxFor('implementer')},${ctxFor('reviewer')}}} `;
+  const voices = voicesFor(state);
+  const colorBranch = paneBranch(voices, (v) => `#[fg=${ROLE_TMUX_COLOR[v]}]`);
+  const ctxBranch = paneBranch(voices, ctxFor);
+  const fmt = ` ${colorBranch}#{pane_title}#[default] ${ctxBranch} `;
   await tmux('set-option', '-w', '-t', orchestratorPane, 'pane-border-format', fmt);
 }
 

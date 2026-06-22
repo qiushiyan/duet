@@ -6,7 +6,9 @@ import { Command } from 'commander';
 import { execa } from 'execa';
 import { createActor } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
-import { loadRunConfig } from './config.ts';
+import { bindingFor, loadRunConfig } from './config.ts';
+import type { BindableRole } from './config.ts';
+import { sessionPolicyFor, voicesFor } from './roles.ts';
 import { DEFAULT_FRAMING_FILE, parseGatesAt, resolveHumanText, resolveRunInputs } from './framing.ts';
 import {
   aliveDriverPid,
@@ -134,6 +136,30 @@ export function resolveAfkArgs(
   }
   return { ...(preset !== undefined ? { preset } : {}), ...(runId !== undefined ? { runId } : {}) };
 }
+
+/**
+ * The takeover decision, pure and exported for test (the action is thin IO over
+ * it — console + execa). It sorts a role into: a captured session to `open` (the
+ * persistent roles RESUME it; an ephemeral role only INSPECTS — `ephemeral`
+ * carries that distinction into the copy), a `clear-orphan` (a pending record
+ * with no session — read-only-safe for an ephemeral role, an ABANDON for a
+ * persistent one), or `no-session`. Ephemerality keys on the session policy
+ * (sessionPolicyFor), never a `role === 'consultant'` check.
+ */
+export type TakeoverPlan =
+  | { kind: 'open'; sessionId: string; ephemeral: boolean }
+  | { kind: 'clear-orphan'; ephemeral: boolean }
+  | { kind: 'no-session' };
+
+export function takeoverPlan(state: RunState, role: BindableRole): TakeoverPlan {
+  const ephemeral = role !== 'orchestrator' && sessionPolicyFor(role) === 'ephemeral';
+  const sessionId = role === 'orchestrator' ? state.orchestratorSessionId : state.workerSessions[role];
+  if (!sessionId) {
+    if (role !== 'orchestrator' && state.pendingTurns?.[role]) return { kind: 'clear-orphan', ephemeral };
+    return { kind: 'no-session' };
+  }
+  return { kind: 'open', sessionId, ephemeral };
+}
 program
   .name('duet')
   .description(
@@ -186,9 +212,14 @@ program
   .option('--orchestrator <provider[:model]>', 'role binding override (claude[:model] only in v1)')
   .option('--impl <provider[:model]>', 'implementer binding override')
   .option('--reviewer <provider[:model]>', 'reviewer binding override')
+  .option(
+    '--consultant <provider[:model]>',
+    'enable the optional consultant — an independent cross-family second reviewer (read-only). provider[:model], e.g. claude:claude-opus-4-8; defaults to claude-opus-4-8 when no model is named. Off by default; settable for every run via [roles.consultant] in the config',
+  )
+  .option('--no-consultant', 'disable the consultant for this run even when the config binds one')
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
   .option('--interactive', "orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over the attended arc up to the workflow's handoff gate (full: through the plan gate; rir: through the Direction gate); implementation onward runs headless after that handoff")
-  .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; budget?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean; interactive?: boolean }) => {
+  .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; budget?: string; orchestrator?: string; impl?: string; reviewer?: string; consultant?: string | boolean; tmux?: boolean; interactive?: boolean }) => {
     const cwd = process.cwd();
 
     // The framing's frontmatter is the machine/prose boundary: parsed
@@ -206,7 +237,10 @@ program
         ...(opts.orchestrator ? { orchestrator: opts.orchestrator } : {}),
         ...(opts.impl ? { implementer: opts.impl } : {}),
         ...(opts.reviewer ? { reviewer: opts.reviewer } : {}),
+        // --consultant carries a spec (string); --no-consultant arrives as `false`.
+        ...(typeof opts.consultant === 'string' ? { consultant: opts.consultant } : {}),
       },
+      ...(opts.consultant === false ? { noConsultant: true } : {}),
       ...(opts.budget !== undefined ? { budgetOverride: opts.budget } : {}),
     });
 
@@ -231,7 +265,7 @@ program
     console.log(`run ${state.runId} created`);
     if (opts.tmux) await openTmuxView(state);
     console.log(
-      `roles: orchestrator=${bindings.orchestrator.provider}:${bindings.orchestrator.model ?? ''} implementer=${bindings.implementer.provider}${bindings.implementer.model ? ':' + bindings.implementer.model : ''} reviewer=${bindings.reviewer.provider}${bindings.reviewer.model ? ':' + bindings.reviewer.model : ''}`,
+      `roles: orchestrator=${bindings.orchestrator.provider}:${bindings.orchestrator.model ?? ''} implementer=${bindings.implementer.provider}${bindings.implementer.model ? ':' + bindings.implementer.model : ''} reviewer=${bindings.reviewer.provider}${bindings.reviewer.model ? ':' + bindings.reviewer.model : ''}${bindings.consultant ? ` consultant=${bindings.consultant.provider}${bindings.consultant.model ? ':' + bindings.consultant.model : ''}` : ''}`,
     );
     // gatesAt: [] is the afk "attend none" posture — explicit copy, not an empty join.
     if (state.gatesAt)
@@ -784,17 +818,20 @@ program
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
     if (!state) fail('no runs found in this project');
     await openTmuxView(state);
-    console.log(`raw logs: ${join(runDirOf(state.cwd, state.runId))}/{orchestrator,implementer,reviewer,driver}.log`);
+    // The voice set is the run's bound voices (consultant included when bound),
+    // not a static list — the slice-3 enumeration rule reaches this hint too.
+    const logNames = [...voicesFor(state), 'driver'].join(',');
+    console.log(`raw logs: ${join(runDirOf(state.cwd, state.runId))}/{${logNames}}.log`);
   });
 
 program
   .command('takeover')
   .description('Hand a role’s session to you: opens the provider’s interactive CLI resumed on that session. Duet stays out until you return; your turns land in the same transcript the orchestrator continues from.')
-  .argument('<role>', 'orchestrator | implementer | reviewer')
+  .argument('<role>', 'orchestrator | implementer | reviewer | consultant')
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
   .action(async (role: string, runId: string | undefined) => {
-    if (role !== 'orchestrator' && role !== 'implementer' && role !== 'reviewer') {
-      fail(`unknown role "${role}" — use orchestrator, implementer, or reviewer`);
+    if (role !== 'orchestrator' && role !== 'implementer' && role !== 'reviewer' && role !== 'consultant') {
+      fail(`unknown role "${role}" — use orchestrator, implementer, reviewer, or consultant`);
     }
     const cwd = process.cwd();
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
@@ -807,33 +844,44 @@ program
       );
     }
 
-    const sessionId = role === 'orchestrator' ? state.orchestratorSessionId : state.workerSessions[role];
-    if (!sessionId) {
-      // No session captured. A worker role may still have an ORPHANED pending
-      // turn — its interactive session died before settle persisted an id. There
-      // is nothing to resume, but the old worker process may still be running and
-      // editing the repo, so dropping the orphan ABANDONS that in-flight turn.
-      // takeover is the single resolution affordance: say so honestly, clear the
-      // orphan, and re-open the role.
-      if (role !== 'orchestrator' && state.pendingTurns?.[role]) {
-        console.log(
-          `no session was captured for the ${role}'s interrupted turn — the old worker process may still be running and touching the repo. Dropping the orphan abandons that in-flight turn so you can re-send.`,
-        );
-        clearPendingTurn(state, role);
-        console.log(`orphan cleared — the ${role} is re-opened for the next send_prompt.`);
-        return;
-      }
-      fail(`the ${role} has no session yet in run ${state.runId}`);
+    const plan = takeoverPlan(state, role);
+    if (plan.kind === 'no-session') fail(`the ${role} has no session yet in run ${state.runId}`);
+
+    if (plan.kind === 'clear-orphan') {
+      // §7 — a pending record with no captured session. Clear it without a resume
+      // target. The hazard differs by policy: a persistent role's old worker may
+      // still be editing the repo (a deliberate ABANDON); the ephemeral consultant
+      // is read-only, so the discard is benign.
+      console.log(
+        plan.ephemeral
+          ? `the ${role}'s interrupted turn left no session — it is ephemeral and read-only, so there is nothing to resume and no repo write to race. Clearing the orphan re-opens the role; the next send_prompt seeds a fresh session.`
+          : `no session was captured for the ${role}'s interrupted turn — the old worker process may still be running and touching the repo. Dropping the orphan abandons that in-flight turn so you can re-send.`,
+      );
+      if (role !== 'orchestrator') clearPendingTurn(state, role);
+      console.log(`orphan cleared — the ${role} is re-opened for the next send_prompt.`);
+      return;
     }
 
-    const provider = role === 'orchestrator' ? state.bindings.orchestrator.provider : state.bindings[role].provider;
-    const cmd = provider === 'claude' ? ['claude', '--resume', sessionId] : ['codex', 'resume', sessionId];
-    console.log(`handing over the ${role} session (${sessionId})`);
+    // §4 — a captured session exists. A persistent role RESUMES it (duet picks the
+    // session back up); the ephemeral consultant only INSPECTS its latest
+    // checkpoint — duet will not resume it, so the messaging must not imply
+    // continuity.
+    const provider = role === 'orchestrator' ? state.bindings.orchestrator.provider : bindingFor(state.bindings, role).provider;
+    const cmd = provider === 'claude' ? ['claude', '--resume', plan.sessionId] : ['codex', 'resume', plan.sessionId];
+    console.log(
+      plan.ephemeral
+        ? `opening the ${role}'s latest checkpoint session (${plan.sessionId}) for inspection — it is ephemeral, so duet will not resume it: the next ${role} turn seeds a fresh session.`
+        : `handing over the ${role} session (${plan.sessionId})`,
+    );
     console.log(`  ${cmd.join(' ')}`);
-    console.log(`your turns append to the run's transcript; pick duet back up afterwards with duet continue.\n`);
+    console.log(
+      plan.ephemeral
+        ? `inspect freely — anything you do here stays in this checkpoint's session and won't carry into the next ${role} turn.\n`
+        : `your turns append to the run's transcript; pick duet back up afterwards with duet continue.\n`,
+    );
     await execa(cmd[0]!, cmd.slice(1), { cwd: state.cwd, stdio: 'inherit', reject: false });
-    // A session orphan the human has now inspected/finished: clear its pending
-    // record so the role re-opens for the next send_prompt.
+    // Clear any pending record the human has now inspected/finished, re-opening
+    // the role for the next send_prompt.
     if (role !== 'orchestrator' && state.pendingTurns?.[role]) clearPendingTurn(state, role);
   });
 
@@ -860,9 +908,9 @@ program
 // tailing a voice log) pipe through. The log files stay plain text; color
 // exists only in the live view. Unknown voices pass lines through untouched.
 const colorizeCommand = new Command('_colorize')
-  .argument('<voice>', 'orchestrator | implementer | reviewer')
+  .argument('<voice>', 'orchestrator | implementer | reviewer | consultant')
   .action(async (voice: string) => {
-    const known = voice === 'orchestrator' || voice === 'implementer' || voice === 'reviewer';
+    const known = voice === 'orchestrator' || voice === 'implementer' || voice === 'reviewer' || voice === 'consultant';
     process.stdout.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'EPIPE') process.exit(0); // pane closed mid-stream
     });

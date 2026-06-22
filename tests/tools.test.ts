@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, vi } from 'vitest';
 import { z } from 'zod';
-import { buildPhaseBrief } from '../src/harness/orchestrator-prompts.ts';
+import { ORCHESTRATOR_SYSTEM_PROMPT, buildPhaseBrief, orchestratorSystemPrompt } from '../src/harness/orchestrator-prompts.ts';
 import { createPhaseTools } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
 import { createTurnDispatcher } from '../src/harness/turn-dispatcher.ts';
@@ -11,7 +11,7 @@ import type { TurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import { BudgetCutoffError } from '../src/providers/types.ts';
 import { PHASE } from '../src/phases.ts';
 import type { PhaseName } from '../src/phases.ts';
-import { createRun, listPendingSteers, loadRunState, runDirOf, saveRunState, stageHumanInput, stageSteer } from '../src/run-store.ts';
+import { createRun, listPendingSteers, loadRunState, markPendingTurn, runDirOf, saveRunState, stageHumanInput, stageSteer } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
 import { DeferredWorker, FakeWorker, SyncThrowWorker, test } from './helpers/fixtures.ts';
@@ -30,6 +30,8 @@ interface HarnessOpts {
   stagedAnswer?: string;
   implementer?: FakeWorker | DeferredWorker | SyncThrowWorker;
   reviewer?: FakeWorker | DeferredWorker | SyncThrowWorker;
+  /** The optional consultant worker — present only when the run binds one. */
+  consultant?: FakeWorker | DeferredWorker | SyncThrowWorker;
   home?: string;
   /** Turn on the interactive async path: send_prompt dispatches, check_turns collects. */
   async?: boolean;
@@ -40,7 +42,7 @@ interface HarnessOpts {
 function harness(run: RunState, opts: HarnessOpts = {}) {
   const implementer = opts.implementer ?? new FakeWorker('claude');
   const reviewer = opts.reviewer ?? new FakeWorker('codex');
-  const providers = { implementer, reviewer };
+  const providers = { implementer, reviewer, ...(opts.consultant ? { consultant: opts.consultant } : {}) };
   const phase = opts.phase ?? 'spec';
   const lines: string[] = [];
   const log = (line: string) => lines.push(line);
@@ -73,7 +75,7 @@ function harness(run: RunState, opts: HarnessOpts = {}) {
   };
   // The terminal decision now lives on the run state the handlers mutate (the
   // persisted marker), not a returned outcome flag — assertions read run.terminalMarker.
-  return { call, implementer, reviewer, lines, dispatcher };
+  return { call, implementer, reviewer, consultant: opts.consultant, lines, dispatcher };
 }
 
 /** Let a DeferredWorker's just-resolved settle continuation drain (microtask flush). */
@@ -644,6 +646,323 @@ describe('review-round backstop cap', () => {
   });
 });
 
+describe('the consultant role (ephemeral, read-only, additive)', () => {
+  test('ephemerality (blocking host): a later consultant turn carries no resume session id', async ({ consultantRun }) => {
+    const consultant = new FakeWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant });
+
+    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'bet audit 1' });
+    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'bet audit 2' });
+
+    // The first settle recorded a session id, yet the second turn still launches
+    // fresh — ephemerality by construction, not by forgetting to track it.
+    expect.soft(consultant.calls[0]?.sessionId).toBeUndefined();
+    expect.soft(consultant.calls[1]?.sessionId).toBeUndefined();
+    expect.soft(consultantRun.workerSessions.consultant).toBeDefined();
+  });
+
+  test('ephemerality (interactive host): the dispatcher launches each consultant turn fresh', async ({ consultantRun }) => {
+    const consultant = new DeferredWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant, async: true });
+
+    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit 1' });
+    consultant.resolve({ sessionId: 'c-1' });
+    await flush();
+    await call('check_turns'); // collect → re-opens the role
+    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit 2' });
+
+    // Both launches went out with no resume id, even though the first settle
+    // tracked 'c-1' — the dispatcher reads sessionIdFor, not workerSessions.
+    expect.soft(consultant.calls[0]?.sessionId).toBeUndefined();
+    expect.soft(consultant.calls[1]?.sessionId).toBeUndefined();
+  });
+
+  test('latest-session tracked: workerSessions.consultant holds the newest id; consultant.log names each', async ({
+    projectDir,
+    consultantRun,
+  }) => {
+    const consultant = new FakeWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant });
+
+    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit 1' });
+    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit 2' });
+
+    const persisted = loadRunState(projectDir, consultantRun.runId);
+    expect.soft(persisted.workerSessions.consultant).toBe('session-2'); // the latest, not the first
+    // The find-on-disk mechanism: each checkpoint's session id is named in the
+    // consultant's own voice log (the Voice widening routes it to consultant.log).
+    const log = readFileSync(join(runDirOf(projectDir, consultantRun.runId), 'consultant.log'), 'utf8');
+    expect.soft(log).toContain('session session-1');
+    expect.soft(log).toContain('session session-2');
+  });
+
+  test('additivity: a consultant turn never counts a review round nor satisfies the loop requirement', async ({
+    consultantRun,
+  }) => {
+    const consultant = new FakeWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant });
+
+    // Even a review-prefixed tag to the CONSULTANT does not count — countsReviewRound
+    // gates on the role, so the consultant is additive, never substitutive.
+    await call('send_prompt', { role: 'consultant', tag: 'review-spec', body: 'bet audit' });
+    expect.soft(consultantRun.rounds.spec ?? 0).toBe(0);
+
+    // spec is a review-loop phase; with only a consultant turn run, advance_phase
+    // still refuses — the embedded reviewer round is still owed.
+    const refused = await call('advance_phase', { summary: 'looks fine', artifacts: [] });
+    expect.soft(refused.isError).toBe(true);
+    expect.soft(text(refused)).toContain('No review round has run');
+  });
+
+  test('a consultant turn runs read-only', async ({ consultantRun }) => {
+    const consultant = new FakeWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant });
+    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit' });
+    expect(consultant.calls[0]?.readOnly).toBe(true);
+  });
+});
+
+describe('send_prompt enum visibility (consultant only when bound)', () => {
+  const sendPromptTool = (run: RunState, withConsultant: boolean) => {
+    const providers = {
+      implementer: new FakeWorker('claude'),
+      reviewer: new FakeWorker('codex'),
+      ...(withConsultant ? { consultant: new FakeWorker('claude') } : {}),
+    };
+    const { tools } = createPhaseTools({ state: run, phase: 'spec', providers, log: () => {} });
+    return tools.find((t) => t.name === 'send_prompt')!;
+  };
+
+  test('unbound: the schema is byte-for-byte today’s — consultant is not a routable role', ({ run }) => {
+    const tool = sendPromptTool(run, false);
+    const schema = z.object(tool.inputSchema);
+    expect.soft(schema.safeParse({ role: 'consultant', tag: 't', body: 'b' }).success).toBe(false);
+    expect.soft(schema.safeParse({ role: 'reviewer', tag: 't', body: 'b' }).success).toBe(true);
+    expect.soft(tool.description).not.toContain('consultant');
+    expect.soft(tool.description).not.toContain('ephemeral');
+    // Finding 3: the description doesn't hardcode "two" — unbound it says two.
+    expect.soft(tool.description).toContain('two unshared analyses');
+  });
+
+  test('bound: consultant becomes a routable role and the description names its ephemerality', ({ consultantRun }) => {
+    const tool = sendPromptTool(consultantRun, true);
+    const schema = z.object(tool.inputSchema);
+    expect.soft(schema.safeParse({ role: 'consultant', tag: 't', body: 'b' }).success).toBe(true);
+    expect.soft(tool.description).toContain('consultant');
+    expect.soft(tool.description.toLowerCase()).toContain('ephemeral');
+    // Bound: the canonical-case count tracks the third analysis.
+    expect.soft(tool.description).toContain('three unshared analyses');
+    expect.soft(tool.description).not.toContain('two unshared analyses');
+  });
+});
+
+describe('orchestratorSystemPrompt (the bound-only identity clause)', () => {
+  test('unbound: byte-for-byte the base prompt — no consultant at identity altitude', ({ run }) => {
+    expect.soft(orchestratorSystemPrompt(run)).toBe(ORCHESTRATOR_SYSTEM_PROMPT);
+    expect.soft(orchestratorSystemPrompt(run).toLowerCase()).not.toContain('consultant');
+  });
+
+  test('bound: appends the consultant clause, naming it additive and ephemeral', ({ consultantRun }) => {
+    const prompt = orchestratorSystemPrompt(consultantRun);
+    expect.soft(prompt.startsWith(ORCHESTRATOR_SYSTEM_PROMPT)).toBe(true); // base preserved, clause appended
+    expect.soft(prompt).toContain('<consultant>');
+    expect.soft(prompt.toLowerCase()).toContain('ephemeral');
+    expect.soft(prompt.toLowerCase()).toContain('additive, never substitutive');
+  });
+});
+
+// Finding 1: the run-facing guard the leak slipped through — list_snippets at
+// the tool altitude. An unbound run's library must name no consultant snippet
+// (body or key, in any section); a bound run shows the phase's checkpoint.
+describe('list_snippets default-off (consultant snippets are gated per-run)', () => {
+  test('unbound: the rendered library names no consultant snippet, default or all=true', async ({ run }) => {
+    const { call } = harness(run, { phase: 'frame' });
+    const def = text(await call('list_snippets'));
+    expect.soft(def).not.toContain('consultant');
+    const all = text(await call('list_snippets', { all: true }));
+    expect.soft(all).not.toContain('consultant');
+  });
+
+  test('bound: the owning phase’s checkpoint snippet surfaces as a full body', async ({ consultantRun }) => {
+    const { call } = harness(consultantRun, { phase: 'frame', consultant: new FakeWorker('claude') });
+    const def = text(await call('list_snippets'));
+    expect.soft(def).toContain('<snippet key="consultant-frame">');
+  });
+});
+
+describe('consultant enumeration (both hosts surface it)', () => {
+  test('a settled consultant turn fixes the branch (the headless-settled case) and empties the branch paragraph', async ({
+    projectDir,
+    consultantRun,
+  }) => {
+    await execa('git', ['init', '-b', 'main'], { cwd: projectDir });
+    const consultant = new FakeWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'frame', consultant });
+
+    // A consultant turn IS a worker prompt — and it can settle before create_branch
+    // runs, the case the async workerDispatched flag doesn't cover.
+    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'frame analysis' });
+
+    const refused = await call('create_branch', { name: 'feat/too-late' });
+    expect.soft(refused.isError).toBe(true);
+    expect.soft(text(refused)).toContain('branch is fixed');
+    // The first-phase brief no longer offers the branch paragraph either.
+    expect.soft(buildPhaseBrief(consultantRun, 'frame')).not.toContain('the run works on exactly one branch');
+  });
+
+  test('check_turns enumerates a still-running consultant turn on the interactive host', async ({ consultantRun }) => {
+    const consultant = new DeferredWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant, async: true });
+    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit' });
+
+    const checked = await call('check_turns');
+    const joined = checked.content.map((c) => (c as { text?: string }).text ?? '').join('\n');
+    expect.soft(joined).toContain('consultant'); // the scan (ROLES = workerRolesFor) reaches it
+    expect.soft(joined).toContain('still running');
+  });
+});
+
+describe('consultant checkpoint brief injection (orchestrator-only, additive)', () => {
+  // The cohort lives in the orchestrator brief (F3) — so buildPhaseBrief DOES
+  // name the consultant when bound, and is byte-for-byte today's when not.
+  // Finding 3: the consultant is a PRIMARY numbered step when bound (a model
+  // executing the list can't skip it), not an appended note after a step that
+  // says "two". So the bound brief's analysis/synthesis steps change shape.
+  test('the frame brief makes the consultant a primary send step when bound — three sends, not an appended note', ({ run, consultantRun }) => {
+    const bound = buildPhaseBrief(consultantRun, 'frame');
+    // The numbered steps now instruct three sends + two anonymized peers.
+    expect.soft(bound).toContain('three independent analyses');
+    expect.soft(bound).toContain('consultant-frame');
+    expect.soft(bound).toContain('anonymized peers');
+    // And the "two" framing is GONE when bound — the fragility the append-only
+    // shape risked (the list says two, the footnote says also a third).
+    expect.soft(bound).not.toContain('two unshared analyses');
+    expect.soft(bound).not.toContain('both send_prompt calls');
+
+    const unbound = buildPhaseBrief(run, 'frame');
+    expect.soft(unbound.toLowerCase()).not.toContain('consultant');
+    // Unbound is today's text: the two-analysis framing is intact.
+    expect.soft(unbound).toContain('two unshared analyses');
+    expect.soft(unbound).toContain('both send_prompt calls');
+  });
+
+  test('the RIR research brief takes the same conditional shape, keeping its use-latest-docs sentence', ({ run, consultantRun }) => {
+    const bound = buildPhaseBrief(consultantRun, 'research');
+    expect.soft(bound).toContain('three independent analyses');
+    expect.soft(bound).toContain('consultant-frame'); // research maps to the frame checkpoint mode
+    expect.soft(bound).toContain('anonymized peers');
+    expect.soft(bound).not.toContain('two unshared analyses');
+    // The research-specific use-latest-docs guidance survives the rewrite.
+    expect.soft(bound).toContain('use-latest-docs');
+
+    const unbound = buildPhaseBrief(run, 'research');
+    expect.soft(unbound.toLowerCase()).not.toContain('consultant');
+    expect.soft(unbound).toContain('two unshared analyses');
+    expect.soft(unbound).toContain('use-latest-docs');
+  });
+
+  test('the spec brief gains the bet-audit step (folding severity into human_decisions) when bound; unbound is clean', ({
+    run,
+    consultantRun,
+  }) => {
+    const bound = buildPhaseBrief(consultantRun, 'spec'); // framing-only run → the draft entry variant
+    expect.soft(bound).toContain('Consultant checkpoint');
+    expect.soft(bound).toContain('consultant-spec');
+    expect.soft(bound).toContain('human_decisions');
+    expect.soft(bound).toContain('never re-grade');
+    expect.soft(buildPhaseBrief(run, 'spec').toLowerCase()).not.toContain('consultant');
+  });
+
+  test('the impl brief gains the bet-audit step when bound; unbound is clean', ({ run, consultantRun }) => {
+    expect.soft(buildPhaseBrief(consultantRun, 'impl')).toContain('consultant-impl');
+    expect.soft(buildPhaseBrief(consultantRun, 'impl')).toContain('Consultant checkpoint');
+    expect.soft(buildPhaseBrief(run, 'impl').toLowerCase()).not.toContain('consultant');
+  });
+
+  test('a non-checkpoint phase (plan) never injects, bound or not', ({ run, consultantRun }) => {
+    expect.soft(buildPhaseBrief(consultantRun, 'plan').toLowerCase()).not.toContain('consultant');
+    expect.soft(buildPhaseBrief(run, 'plan').toLowerCase()).not.toContain('consultant');
+  });
+});
+
+describe('consultant orphan recovery (discard-and-reseed)', () => {
+  const allText = (result: ToolResult): string => result.content.map((c) => (c as { text?: string }).text ?? '').join('\n');
+
+  test('a stale consultant record is cleared and the new body re-dispatched in one call — no refusal', async ({
+    consultantRun,
+  }) => {
+    // An orphan on disk the fresh dispatcher does not own (a prior server died).
+    markPendingTurn(consultantRun, 'consultant', 'consultant-spec');
+    const consultant = new DeferredWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant, async: true });
+
+    const result = await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'reseeded body' });
+
+    expect.soft(result.isError).toBeUndefined();
+    expect.soft(allText(result)).toContain('Dispatched to the consultant'); // dispatched, not refused
+    expect.soft(consultant.calls[0]?.prompt).toBe('reseeded body'); // the fresh body the orchestrator re-supplied
+  });
+
+  test('a consultant orphan blocks advance_phase, and the refusal gives the reseed recovery — not takeover as the only path (finding 2)', async ({
+    consultantRun,
+  }) => {
+    markPendingTurn(consultantRun, 'consultant', 'consultant-spec');
+    const consultant = new DeferredWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant, async: true });
+
+    const blocked = await call('advance_phase', { summary: 's', artifacts: [] });
+    expect.soft(blocked.isError).toBe(true);
+    expect.soft(text(blocked)).toContain("can't advance the phase"); // still gated — not exempt
+    // The policy-aware recovery: resend reseeds, no human action needed — the
+    // gate no longer steers a discard-and-reseed orphan to a takeover it doesn't need.
+    expect.soft(text(blocked)).toContain('resend');
+    expect.soft(text(blocked).toLowerCase()).toContain('ephemeral');
+    expect.soft(text(blocked)).toContain('no human action is needed');
+  });
+
+  test('a consultant orphan blocks ask_human with the same reseed recovery copy (finding 2)', async ({
+    consultantRun,
+  }) => {
+    markPendingTurn(consultantRun, 'consultant', 'consultant-spec');
+    const consultant = new DeferredWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant, async: true });
+
+    const blocked = await call('ask_human', { question: 'q' });
+    expect.soft(blocked.isError).toBe(true);
+    expect.soft(text(blocked)).toContain("can't queue a question");
+    expect.soft(text(blocked)).toContain('resend');
+    expect.soft(text(blocked).toLowerCase()).toContain('ephemeral');
+  });
+
+  test('a persistent-role orphan still gets the takeover recovery (the policy branch is real)', async ({
+    run,
+  }) => {
+    // A reviewer orphan on disk (persistent role) → takeover, not reseed.
+    markPendingTurn(run, 'reviewer', 'review-spec');
+    const { call } = harness(run, { phase: 'spec', async: true });
+
+    const blocked = await call('advance_phase', { summary: 's', artifacts: [] });
+    expect.soft(blocked.isError).toBe(true);
+    expect.soft(text(blocked)).toContain('duet takeover reviewer');
+    expect.soft(text(blocked).toLowerCase()).toContain('resumable');
+    // The reviewer is not ephemeral — the reseed framing must NOT appear for it.
+    expect.soft(text(blocked)).not.toContain('reseeds');
+  });
+
+  test('check_turns surfaces a consultant orphan as "just resend", read-only-framed (not the takeover refusal)', async ({
+    consultantRun,
+  }) => {
+    markPendingTurn(consultantRun, 'consultant', 'consultant-spec');
+    const consultant = new DeferredWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant, async: true });
+
+    const checked = await call('check_turns');
+    const joined = allText(checked);
+    expect.soft(joined).toContain('just resend');
+    expect.soft(joined).toContain('ephemeral and read-only'); // distinct from the persistent "may still be editing the repo"
+  });
+});
+
 describe('ask_human (the cooperative pause)', () => {
   test('queues the question, persists it, and tells the orchestrator to end its turn', async ({ projectDir, run }) => {
     const { call } = harness(run);
@@ -690,7 +1009,7 @@ describe('ask_human (the cooperative pause)', () => {
   });
 });
 
-describe('advance_phase human_decisions (signal-only gate-decision echo, #3)', () => {
+describe('advance_phase human_decisions (the tool stays signal-only; the hold lives in the crossing path)', () => {
   test('persists the decisions onto the gate packet', async ({ projectDir, run }) => {
     const { call } = harness(run, { phase: 'frame' });
     await call('advance_phase', { summary: 's', artifacts: [], human_decisions: [{ title: 'pick the backend', severity: 'low' }] });
@@ -705,12 +1024,14 @@ describe('advance_phase human_decisions (signal-only gate-decision echo, #3)', (
     expect(loadRunState(projectDir, run.runId).phaseSummaries.frame).not.toHaveProperty('humanDecisions');
   });
 
-  test('is signal-only: a high decision does not change the terminal decision (gate-crossing unaffected)', async ({ run }) => {
+  test('advance_phase itself records a normal advance regardless of severity — the hold is in lifecycle, not the tool (slice 5)', async ({ run }) => {
     const { call } = harness(run, { phase: 'frame' });
     const result = await call('advance_phase', { summary: 's', artifacts: [], human_decisions: [{ title: 'storage backend', severity: 'high' }] });
     expect.soft(result.isError).toBeUndefined();
-    // The terminal marker is the normal advance — a high decision neither holds
-    // nor crosses; only the human's tap crosses, and the marker is unchanged.
+    // The terminal marker is the normal advance — advance_phase does not gate on
+    // severity. The severity HOLD lives in the crossing path (driveToQuiescence /
+    // enterAfk / status, exercised in lifecycle.test.ts and status.test.ts), so
+    // the tool stays signal-only and only the recorded packet differs.
     expect.soft(run.terminalMarker).toEqual({ phase: 'frame', kind: 'advance' });
   });
 

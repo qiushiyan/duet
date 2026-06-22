@@ -783,3 +783,65 @@ describe('enterAfk — the mid-session AFK handoff (#1)', () => {
     expect.soft(persisted.pendingMessage).toEqual({ kind: 'approval', text: 'take it the rest of the way' });
   });
 });
+
+describe('the severity hold — a high human decision withholds a NON-EXPLICIT crossing', () => {
+  const highFrame = (run: RunState, severity: 'low' | 'high'): void => {
+    run.phaseSummaries.frame = { summary: 's', artifacts: [], humanDecisions: [{ title: 'storage backend', severity }] };
+    saveRunState(run);
+  };
+
+  test('driveToQuiescence WITHHOLDS the pre-authorized auto-cross on a high — converts to an attended stop', async ({
+    run,
+    projectDir,
+  }) => {
+    run.gatesAt = ['pr']; // frame is pre-authorized (would normally auto-cross)
+    highFrame(run, 'high');
+    const { machine } = scriptedMachine([advanced]);
+    const { notify, notifications } = recordingNotify();
+
+    const stop = await driveToQuiescence(run, undefined, { machine, notify });
+
+    // Held at the gate: not auto-crossed, no auto-approval recorded, the high named.
+    expect.soft(stop.snapshot.value).toBe('directionGate');
+    expect.soft(loadRunState(projectDir, run.runId).autoApprovals).toBeUndefined();
+    expect.soft(notifications.join('\n')).toContain('held');
+    expect.soft(notifications.join('\n')).toContain('storage backend');
+  });
+
+  test('a low-only (or clean) pre-authorized gate auto-crosses exactly as today', async ({ run, projectDir }) => {
+    run.gatesAt = ['spec']; // frame pre-authorized, spec attended → stops at the spec gate
+    highFrame(run, 'low');
+    const { machine } = scriptedMachine([advanced, advanced]);
+    const { notify, notifications } = recordingNotify();
+
+    await driveToQuiescence(run, undefined, { machine, notify });
+
+    expect.soft(loadRunState(projectDir, run.runId).autoApprovals?.some((a) => a.gate === 'directionGate')).toBe(true);
+    expect.soft(notifications.join('\n')).toContain('auto-approved');
+  });
+
+  test('enterAfk REFUSES handoff over a high, directing to the explicit substitute', ({ projectDir, interactiveRun }) => {
+    const parked = loadRunState(projectDir, interactiveRun.runId);
+    parked.terminalMarker = { phase: 'frame', kind: 'advance' };
+    parked.phaseSummaries.frame = { summary: 's', artifacts: [], humanDecisions: [{ title: 'pricing model', severity: 'high' }] };
+    saveRunState(parked);
+
+    expect.soft(() => enterAfk(parked, [])).toThrow(/--approve --headless/);
+    expect.soft(() => enterAfk(parked, [])).toThrow(/pricing model/);
+    // Not handed off — still interactive.
+    expect.soft(loadRunState(projectDir, interactiveRun.runId).orchestrationHost).toBe('interactive');
+  });
+
+  test('an EXPLICIT crossInteractive crosses a high-carrying gate — explicit approval always crosses', ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    const parked = loadRunState(projectDir, interactiveRun.runId);
+    parked.terminalMarker = { phase: 'frame', kind: 'advance' };
+    parked.phaseSummaries.frame = { summary: 's', artifacts: [], humanDecisions: [{ title: 'pricing model', severity: 'high' }] };
+    saveRunState(parked);
+
+    crossInteractive(parked, { type: 'human.approve' }); // never consults the severity hold
+    expect(probeRunPosition(loadRunState(projectDir, interactiveRun.runId))).toEqual({ kind: 'interactive', phase: 'spec' });
+  });
+});

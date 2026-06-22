@@ -24,7 +24,7 @@ import type { PhaseEvent } from './phase-events.ts';
 import { createPhaseTools } from './tools.ts';
 import type { KernelTool } from './tools.ts';
 import {
-  ORCHESTRATOR_SYSTEM_PROMPT,
+  orchestratorSystemPrompt,
   answerResumePrompt,
   approvalRiderBlock,
   buildPhaseBrief,
@@ -242,7 +242,7 @@ async function drivePhase(
     strictMcpConfig: true,
     // Set only when defined — an undefined cap (budgets off) omits the SDK option.
     ...(budget.orchestrator !== undefined ? { maxBudgetUsd: budget.orchestrator } : {}),
-    systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
+    systemPrompt: orchestratorSystemPrompt(state),
     // send_prompt calls outlive the default 60s SDK MCP stream window.
     env: { ...process.env, CLAUDE_CODE_STREAM_CLOSE_TIMEOUT: String(2 * 60 * 60_000) },
     ...(state.orchestratorSessionId ? { resume: state.orchestratorSessionId } : {}),

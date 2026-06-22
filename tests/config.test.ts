@@ -164,6 +164,66 @@ describe('parseBudget — the opt-in budget knob', () => {
   });
 });
 
+describe('the consultant binding (optional, present-only)', () => {
+  test('default-off is byte-for-byte: no consultant key, bindings equal the shipped defaults', ({ projectDir }) => {
+    const bindings = loadRunConfig({}, join(projectDir, 'missing.toml')).bindings;
+    expect.soft(bindings).not.toHaveProperty('consultant');
+    expect.soft(bindings).toEqual(DEFAULT_BINDINGS);
+  });
+
+  test('[roles.consultant] binds the named provider; an omitted model defaults to claude-opus-4-8', ({ projectDir }) => {
+    const named = configIn(projectDir, `[roles.consultant]\nprovider = "claude"\nmodel = "claude-opus-4-6"`);
+    expect.soft(loadRunConfig({}, named).bindings.consultant).toEqual({
+      provider: 'claude',
+      model: 'claude-opus-4-6',
+      transport: 'headless',
+    });
+    const bare = configIn(projectDir, `[roles.consultant]\nprovider = "claude"`);
+    expect.soft(loadRunConfig({}, bare).bindings.consultant).toEqual({
+      provider: 'claude',
+      model: 'claude-opus-4-8', // the no-model default
+      transport: 'headless',
+    });
+  });
+
+  test('--consultant binds the named provider/model verbatim; enabled-without-model defaults claude-opus-4-8', ({
+    projectDir,
+  }) => {
+    const missing = join(projectDir, 'missing.toml');
+    expect.soft(loadRunConfig({ roleOverrides: { consultant: 'claude:claude-opus-4-6' } }, missing).bindings.consultant).toEqual({
+      provider: 'claude',
+      model: 'claude-opus-4-6',
+      transport: 'headless',
+    });
+    expect.soft(loadRunConfig({ roleOverrides: { consultant: 'claude' } }, missing).bindings.consultant).toEqual({
+      provider: 'claude',
+      model: 'claude-opus-4-8',
+      transport: 'headless',
+    });
+    // A codex consultant carries no model and no transport, like any codex binding.
+    expect.soft(loadRunConfig({ roleOverrides: { consultant: 'codex' } }, missing).bindings.consultant).toEqual({
+      provider: 'codex',
+    });
+  });
+
+  test('--no-consultant removes a config-bound consultant for the run (and wins over --consultant)', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.consultant]\nprovider = "claude"`);
+    // The disable yields an absent binding — back to byte-for-byte defaults.
+    expect.soft(loadRunConfig({ noConsultant: true }, path).bindings.consultant).toBeUndefined();
+    expect.soft(loadRunConfig({ noConsultant: true }, path).bindings).toEqual(DEFAULT_BINDINGS);
+    // Mutually exclusive intent: the disable wins over a same-run --consultant.
+    expect
+      .soft(loadRunConfig({ noConsultant: true, roleOverrides: { consultant: 'claude' } }, path).bindings.consultant)
+      .toBeUndefined();
+  });
+
+  test('[roles.consultant].transport = "interactive" is rejected — the consultant is read-only', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.consultant]\nprovider = "claude"\ntransport = "interactive"`);
+    expect.soft(() => loadRunConfig({}, path)).toThrow(/implementer-only/);
+    expect.soft(() => loadRunConfig({}, path)).toThrow(/read-only/);
+  });
+});
+
 describe('loadRunConfig — bindings + the resolved budget', () => {
   test('absent config and no override ⇒ budget off (absent), shipped bindings', ({ projectDir }) => {
     const cfg = loadRunConfig({}, join(projectDir, 'missing.toml'));

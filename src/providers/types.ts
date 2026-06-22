@@ -5,8 +5,12 @@
  * exist — `claude` and `codex`. A third provider means forking the code.
  */
 
-/** The two worker roles the orchestrator routes between. */
-export type WorkerRole = 'implementer' | 'reviewer';
+/**
+ * The worker roles the orchestrator routes between. `implementer` and
+ * `reviewer` are the always-present base; `consultant` is the optional second
+ * reviewer — an independent cross-family voice, bound only when configured.
+ */
+export type WorkerRole = 'implementer' | 'reviewer' | 'consultant';
 
 /**
  * What currently fills a session's context window, captured at a turn
@@ -77,8 +81,20 @@ export interface RunTurnOptions {
   cwd?: string;
 }
 
-/** A provider serving a worker role (implementer or reviewer). */
+/** A provider serving a worker role (implementer, reviewer, or consultant). */
 export interface WorkerProvider {
   readonly name: 'claude' | 'codex';
   runTurn(opts: RunTurnOptions): Promise<WorkerTurn>;
 }
+
+/**
+ * The run's built worker providers: the always-present base pair plus the
+ * optional consultant, built only when a consultant is bound. Required-base
+ * over a closed `Record<WorkerRole, …>` keeps the unbound run's map byte-for-byte
+ * today's; the optional consultant is why dynamic access goes through
+ * `providerFor` (src/providers/index.ts), never `providers[role]` directly
+ * (indexing this by a `WorkerRole` variable yields `WorkerProvider | undefined`).
+ */
+export type WorkerProviders = Record<'implementer' | 'reviewer', WorkerProvider> & {
+  consultant?: WorkerProvider;
+};

@@ -1,6 +1,6 @@
 ---
 name: duet-frame
-description: Turn a rough, natural-language problem into a polished duet framing document, ready to start a run — sharpening the wording, using the codebase's real names, structuring it for a clean read, and settling gate posture, all without changing what you want or proposing how to build it. Use when you have a problem in mind for a duet run and want it shaped into a solid framing before launching the orchestrator. Explicit invocation only.
+description: Turn a rough, natural-language problem into a polished duet framing document, ready to start a run — sharpening the wording, using the codebase's real names, structuring it for a clean read, and settling setup posture (workflow, gates, and whether to add an outside reviewer), all without changing what you want or proposing how to build it. Use when you have a problem in mind for a duet run and want it shaped into a solid framing before launching the orchestrator. Explicit invocation only.
 disable-model-invocation: true
 allowed-tools: Read, Grep, Glob, Write, Bash(git:*), Bash(grep:*), Bash(rg:*), Bash(ls:*), Bash(find:*)
 ---
@@ -60,6 +60,17 @@ A framing can pre-authorize gates so the user can walk away. Before finalizing, 
 - **rir** has just two gates — **Direction** (the walk-away / headless-handoff point) and **Ship** (the return). Postures: **attend both** (default), or **`afk`** — pre-authorize both and run straight through to done.
 
 Record their choice as `gates_at:` in the framing frontmatter. A preset must belong to the chosen workflow (`overnight` / `skip-plan` are full's; `afk` is rir's), so duet rejects a mismatch.
+
+## Consultant — an optional outside voice
+
+duet's reviewer reads the whole run and is sharp on *is this well-built* — but, invested in the framing it helped shape, it rarely challenges the *bet* underneath. A run can bind an optional **consultant**: a second, read-only reviewer that questions the assumptions and product fit rather than the build, ideally on a **different model family** from the reviewer — a fresh outside perspective is the point, and a different family is the one thing a single reviewer working harder can't supply. It is **off by default** and never changes what gets built; it only adds a check on whether the bet is sound.
+
+Surface it the way you do gate posture — offer the choice, don't make it. Whether the premise is worth a second opinion is the user's call, the same as the rest of the framing's substance:
+
+- **Worth raising** when the *premise* carries the risk: a new direction, an unproven assumption, a product bet where "are we building the right thing?" matters more than execution polish.
+- **Leave it off** for routine, well-understood work — the embedded reviewer is enough there, and an extra voice is just cost and ceremony.
+
+Unlike workflow and gate posture, this is **not frontmatter** — it rides as a flag on the launch command, `--consultant <provider[:model]>` (e.g. `--consultant codex` for a cross-family read against a claude reviewer, or `--consultant claude:claude-opus-4-8`). If the user already binds a consultant in their config (`[roles.consultant]`) it runs every time and you needn't add the flag; `--no-consultant` turns it off for a single run.
 
 ## The framing schema
 
@@ -124,4 +135,4 @@ Before showing the framing, check it against the user's original words: is every
 duet new --interactive --workflow <full|rir> --framing .duet/<slug>.md
 ```
 
-Use the workflow you settled on (omit `--workflow` to take the default `full`). Tell them to run it in their own terminal — `--interactive` hands the terminal to a live orchestrator session, so it can't be launched for them from a non-interactive session.
+Use the workflow you settled on (omit `--workflow` to take the default `full`). Add `--consultant <provider[:model]>` only if the user chose the outside voice for this run (omit it otherwise, or when their config already binds one). Tell them to run it in their own terminal — `--interactive` hands the terminal to a live orchestrator session, so it can't be launched for them from a non-interactive session.
