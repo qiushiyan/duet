@@ -86,7 +86,7 @@ Top-level fields:
 }
 ```
 
-**`flag`** — the orchestrator queued a question and the run is paused on it. Present `question` and `context` whole. `cause` distinguishes a `human` question (a real product/environment call — relay it) from an `infra` failure (`cause:"infra"` plus an `errorClass` such as `network` / `auth` / `quota-billing` — report it as broken, not a question; `duet doctor` shows what broke). The `crashed` stop below is the separate driver-death signal.
+**`flag`** — the orchestrator queued a question and the run is paused on it. Present `question` and `context` whole. `cause` distinguishes a `human` question (a real product/environment call — relay it), an `infra` failure (`cause:"infra"` plus an `errorClass` such as `network` / `auth` / `quota-billing` — report it as broken, not a question; `duet doctor` shows what broke), and a `budget` stop (a cost cap was hit — resumable: raise the budget or resume, not an outage; no `errorClass`). The `crashed` stop below is the separate driver-death signal.
 
 ```json
 {

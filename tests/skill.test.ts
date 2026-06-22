@@ -286,10 +286,20 @@ describe('shipped gate-posture copy teaches the auto-open-PR default (rails bund
   // the wrong posture. These guards pin the corrected model so a future edit
   // can't quietly reintroduce the old one.
   const gatesAtHelp = (publicCommands.get('new')?.options.find((o) => o.long === '--gates-at')?.description ?? '');
+  // All three shipped prose surfaces — including the root concierge SKILL.md the
+  // round-1 guard missed (round 2).
+  const shippedDocs = [
+    ['duet-frame SKILL.md', duetFrameMd],
+    ['concierge SKILL.md', skillMd],
+    ['concierge cli-reference.md', referenceMd],
+  ] as const;
 
-  test('no shipped surface still says the PR/Open-PR gate is "always attended"', () => {
-    expect.soft(duetFrameMd).not.toMatch(/always attended/i);
-    expect.soft(referenceMd).not.toMatch(/always attended/i);
+  test('no shipped surface still says the PR/Open-PR gate is always attended', () => {
+    // Broad enough to catch "always attended" AND "always stays attended" (the
+    // concierge SKILL.md variant) — any "always … attended" within one sentence.
+    for (const [label, md] of shippedDocs) {
+      expect.soft(md, `${label} still claims the PR gate is always attended`).not.toMatch(/always[^.]*attended/i);
+    }
   });
 
   test('no help/template copy carries an unqualified "Default: every gate"', () => {
@@ -300,9 +310,17 @@ describe('shipped gate-posture copy teaches the auto-open-PR default (rails bund
   });
 
   test('the gate-posture surfaces teach the auto-open model', () => {
-    expect.soft(duetFrameMd.toLowerCase()).toContain('auto-open');
-    expect.soft(referenceMd.toLowerCase()).toContain('auto-open');
+    for (const [label, md] of shippedDocs) {
+      expect.soft(md.toLowerCase(), `${label} omits the auto-open model`).toContain('auto-open');
+    }
     expect.soft(FRAMING_TEMPLATE.toLowerCase()).toContain('auto-open');
     expect.soft(gatesAtHelp.toLowerCase()).toContain('auto-open');
+  });
+
+  test('the concierge cause docs name the budget cause (slice 5)', () => {
+    // stop.cause gained `budget` (slice 5) — the relay docs must list it so the
+    // concierge triages a budget stop as resumable, not an outage.
+    expect.soft(skillMd, 'concierge SKILL.md omits the budget cause').toMatch(/cause[\s\S]{0,200}budget/i);
+    expect.soft(referenceMd, 'concierge cli-reference omits the budget cause').toMatch(/cause[\s\S]{0,200}budget/i);
   });
 });

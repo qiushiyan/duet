@@ -71,7 +71,7 @@ Gotchas worth knowing before they bite:
 |---|---|---|
 | `running` | mid-phase, orchestrator live | nothing is owed; relay any human guidance via `duet steer` |
 | `gate` | waiting on a decision | present `stop.packet.summary`, then `stop.commands.approve` / `.reject` on their word — "approve, but tweak X" is one command: `duet continue <run-id> --approve "<their tweak, verbatim>"`. Check `stop.packet.humanDecisions` first — empty or all-`low` is safe to relay an approve; any `high` is a real product decision: hold and put it to the human |
-| `flag` | paused on a queued question | present `stop.question` + `stop.context` whole; `--answer` with their words. `stop.cause` says `human` (a real question for them) vs `infra` (an environment failure — say so; `duet doctor` shows what broke) |
+| `flag` | paused on a queued question | present `stop.question` + `stop.context` whole; `--answer` with their words. `stop.cause` says `human` (a real question for them), `infra` (an environment failure — say so; `duet doctor` shows what broke), or `budget` (a cost cap was hit — resumable: tell them to raise the budget or resume, not an outage) |
 | `crashed` | a phase died mid-flight (infrastructure, not content) | tell the human; on their go-ahead run `stop.command` — it re-enters from the transcripts |
 | `done` | complete | report the summary — a full run's leads with the PR link; a rir run ends at the Ship gate with no PR |
 
@@ -91,7 +91,7 @@ duet new --workflow rir --framing .duet/<name>.md --gates-at afk  # rir, run str
 
 Pick the arc with `--workflow` (also settable as `workflow:` in the framing frontmatter; the flag wins). **full** is the default — research → spec → plan → implementation → docs → PR. **rir** is lighter — research → implement → one review round, ending at the Ship gate with no spec, plan, docs, or PR; use it for small, well-understood work. (`--spec <path>`, the draft-spec entry that skips FRAME, is full-only — rir has no spec phase.)
 
-`--gates-at` pre-authorizes the gates of unlisted phases (it takes a phase list or a workflow-specific preset). For **full**: `skip-plan` means "walk away once the spec is approved, return at the Ship gate" — suggest it when the human trusts the plan loop; `overnight` auto-crosses everything after the spec — suggest it when they're going to bed; the Open-PR gate always stays attended. For **rir**: `afk` pre-authorizes both gates (Direction and Ship) and runs straight to done — suggest it when the work is small and they want it hands-off.
+`--gates-at` pre-authorizes the gates of unlisted phases (it takes a phase list or a workflow-specific preset). For **full**: `skip-plan` means "walk away once the spec is approved, return at the Ship gate" — suggest it when the human trusts the plan loop; `overnight` auto-crosses everything after the spec — suggest it when they're going to bed; the PR auto-opens by default (the Open-PR gate is pre-authorized) — list `pr` to attend a pre-open stop. For **rir**: `afk` pre-authorizes both gates (Direction and Ship) and runs straight to done — suggest it when the work is small and they want it hands-off.
 
 ## Supervising
 

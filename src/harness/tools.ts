@@ -226,14 +226,16 @@ export function settleTurn(
     const tags = (sent[role] ??= []);
     if (!tags.includes(tag)) tags.push(tag);
   }
-  if (turn.costUsd) fresh.costs.claudeWorkersUsd += turn.costUsd;
-  // A claude turn that reported no cost (the interactive transport, by P5) means
-  // the claudeWorkersUsd total is partial — mark it so the status never presents
-  // the known sum as the complete total.
-  if (providers[role].name === 'claude' && turn.costUsd === undefined) {
-    fresh.costs.claudeWorkersCostPartial = true;
-  }
-  if (providers[role].name === 'codex' && turn.tokens) {
+  // Accounting is provider-scoped: Claude bills in dollars, Codex in tokens. The
+  // costUsd add is gated on the claude provider (not merely costUsd's presence),
+  // so a malformed codex adapter that returned a stray costUsd can't be
+  // misaccounted as Claude spend. An absent costUsd on a claude turn (the
+  // interactive transport, by P5) makes the running total partial — mark it so
+  // status/footer never present the known sum as the complete total.
+  if (providers[role].name === 'claude') {
+    if (turn.costUsd !== undefined) fresh.costs.claudeWorkersUsd += turn.costUsd;
+    else fresh.costs.claudeWorkersCostPartial = true;
+  } else if (providers[role].name === 'codex' && turn.tokens) {
     fresh.costs.codexTokens.input += turn.tokens.input;
     fresh.costs.codexTokens.output += turn.tokens.output;
   }

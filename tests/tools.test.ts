@@ -230,7 +230,10 @@ describe('send_prompt', () => {
     projectDir,
     run,
   }) => {
-    const reviewer = new FakeWorker('codex', [{ budgetTruncated: true, sessionId: 'sess-b', costUsd: 0.18, text: 'committed work' }]);
+    // A budget cutoff only happens on a claude worker (the cap is a claude flag),
+    // so the cut role here is a claude-bound reviewer (a valid config) — the
+    // settlement test must model the provider that can actually hit the cap.
+    const reviewer = new FakeWorker('claude', [{ budgetTruncated: true, sessionId: 'sess-b', costUsd: 0.18, text: 'committed work' }]);
     const { call } = harness(run, { reviewer });
     const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
 
