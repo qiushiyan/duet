@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, vi } from 'vitest';
 import { program, stageContinueText } from '../src/cli.ts';
@@ -43,13 +43,36 @@ describe('stageContinueText — non-TTY safety', () => {
     expect(staged(run)).toBeUndefined();
   });
 
-  test('a bare --approve on a TTY still opens the editor (the human flow is unchanged)', async ({ projectDir, run }) => {
+  test('a bare --approve on a TTY stages no rider and does NOT open the editor — the rider is opt-in', async ({ projectDir, run }) => {
+    const marker = join(projectDir, 'editor-ran.marker');
+    const editor = join(projectDir, 'editor.sh');
+    writeFileSync(editor, `#!/bin/sh\ntouch ${marker}\nprintf "should not run\\n" >> "$1"\n`, { mode: 0o755 });
+    vi.stubEnv('VISUAL', '');
+    vi.stubEnv('EDITOR', editor);
+    await stageContinueText(run, { approve: true }, { isTTY: true });
+    expect.soft(staged(run)).toBeUndefined();
+    expect.soft(existsSync(marker)).toBe(false);
+  });
+
+  test('--approve --edit on a TTY composes the rider in the editor (the human opt-in)', async ({ projectDir, run }) => {
     const editor = join(projectDir, 'editor.sh');
     writeFileSync(editor, '#!/bin/sh\nprintf "ship it, but rename the flag\\n" >> "$1"\n', { mode: 0o755 });
     vi.stubEnv('VISUAL', '');
     vi.stubEnv('EDITOR', editor);
-    await stageContinueText(run, { approve: true }, { isTTY: true });
+    await stageContinueText(run, { approve: true, edit: true }, { isTTY: true });
     expect(staged(run)).toEqual({ kind: 'approval', text: 'ship it, but rename the flag' });
+  });
+
+  test('--approve --edit off a TTY fails fast, naming the inline form', async ({ run }) => {
+    await expect(stageContinueText(run, { approve: true, edit: true }, { isTTY: false })).rejects.toThrow(
+      /--edit.*non-interactive.*--approve/s,
+    );
+    expect(staged(run)).toBeUndefined();
+  });
+
+  test('an inline --approve rider stages as-is, no editor involved', async ({ run }) => {
+    await stageContinueText(run, { approve: 'rename the flag before merging' }, { isTTY: true });
+    expect(staged(run)).toEqual({ kind: 'approval', text: 'rename the flag before merging' });
   });
 });
 

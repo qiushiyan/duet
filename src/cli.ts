@@ -230,6 +230,7 @@ interface ContinueTextOpts {
   answer?: boolean | string;
   rejectFile?: string;
   answerFile?: string;
+  edit?: boolean;
 }
 
 /** Read all of stdin to a string — the `--reject-file -` / `--answer-file -` path. */
@@ -268,12 +269,13 @@ async function resolveDecisionText(
  * Stage the human's verbatim text for a gate/flag crossing — reject feedback,
  * an approval rider, or a flag answer. Shared by the headless and interactive
  * continue paths. Text arrives inline, from a file/stdin (`--reject-file` /
- * `--answer-file`, reject/answer only), or composed in $EDITOR on a TTY.
+ * `--answer-file`, reject/answer only), or composed in $EDITOR.
  *
- * Off a TTY a bare flag resolves to the `undefined` sentinel (resolveHumanText
- * never opens an editor a headless caller can't drive) — mapped per intent:
- * approve treats it as "no rider" (advance plain), reject/answer FAIL FAST
- * naming the inline/file/stdin forms (an empty reject/answer is meaningless).
+ * The editor default tracks whether the human content is *required*: reject and
+ * answer need content, so a bare flag opens the editor on a TTY (and FAILS FAST
+ * off one, naming the inline/file/stdin forms). Approve's rider is *optional*,
+ * so a bare `--approve` means "no rider" — the editor is opt-in via `--edit`
+ * (which FAILS FAST off a TTY rather than silently approving with no rider).
  * `io` is the environment seam (injectable isTTY + stdin reader) for tests.
  */
 export async function stageContinueText(
@@ -311,13 +313,26 @@ export async function stageContinueText(
     stageHumanInput(state, { kind: 'feedback', text: feedback });
   }
   if (opts.approve !== undefined) {
-    const rider = await resolveDecisionText(
-      opts.approve,
-      undefined,
-      'Approving the gate: optionally write a rider — adjustments that ride into the next phase with your approval. Save empty to approve without one.',
-      env,
-    );
-    // The sentinel (non-TTY bare) or an empty editor result → approve, no rider.
+    // The rider is OPTIONAL, so a bare --approve approves with no rider and the
+    // editor is opt-in via --edit — unlike reject/answer, whose content is
+    // required and so default to the editor. Inline text stages as-is.
+    let rider: string | undefined;
+    if (typeof opts.approve === 'string') {
+      rider = opts.approve;
+    } else if (opts.edit) {
+      // Explicit editor opt-in. Off a TTY there is no editor to drive, so fail
+      // fast naming the inline form rather than silently approving plain.
+      rider = await resolveDecisionText(
+        true,
+        undefined,
+        'Approving the gate: write a rider — adjustments that ride into the next phase with your approval. Save empty to approve without one.',
+        env,
+      );
+      if (rider === undefined) {
+        fail('--edit opens an editor to compose a rider, but this is a non-interactive shell — pass it inline instead: duet continue --approve "<text>".');
+      }
+    }
+    // bare --approve (no --edit) → no rider; an empty editor result → no rider.
     if (rider !== undefined && rider.trim()) stageHumanInput(state, { kind: 'approval', text: rider.trim() });
   }
   if (opts.answer !== undefined || opts.answerFile !== undefined) {
@@ -363,7 +378,7 @@ program
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
   .option(
     '--approve [rider]',
-    'approve the current gate, optionally with a rider — adjustments that ride into the next phase as gate feedback in approving form. Bare --approve opens $EDITOR (save empty to approve without a rider)',
+    'approve the current gate, optionally with a rider — adjustments that ride into the next phase as gate feedback in approving form. Bare --approve approves with no rider; add one inline (--approve "text") or compose it in $EDITOR with --approve --edit',
   )
   .option(
     '--reject [feedback]',
@@ -380,6 +395,10 @@ program
   .option(
     '--answer-file <path>',
     'answer with text read VERBATIM from a file (or "-" for stdin) — the quoting-safe form of --answer',
+  )
+  .option(
+    '--edit',
+    'with --approve, compose the rider in $EDITOR (a TTY only) — the opt-in editor for an approval; reject/answer open the editor by default',
   )
   .option(
     '--headless',
