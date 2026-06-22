@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect } from 'vitest';
 import type { Snapshot } from 'xstate';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
+import { claudeArgs } from '../src/providers/claude.ts';
 import {
   acquireMcpOwner,
   budgetFor,
@@ -90,6 +91,21 @@ describe('run creation', () => {
     const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, gatesAt: ['frame', 'spec'] });
     expect.soft(created.gatesAt).toEqual(['frame', 'spec']);
     expect.soft(loadRunState(projectDir, created.runId).gatesAt).toEqual(['frame', 'spec']);
+  });
+
+  test('createRun freezes the resolved budget; a later budgetFor reads it back (scaled)', ({ projectDir }) => {
+    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, budget: 2 });
+    expect.soft(created.budget).toBe(2);
+    const reloaded = loadRunState(projectDir, created.runId);
+    expect.soft(reloaded.budget).toBe(2);
+    expect.soft(budgetFor(reloaded, 'impl')).toEqual({ worker: 50, orchestrator: 60 });
+  });
+
+  test('createRun omits budget when off (absent) ⇒ budgetFor reads off', ({ projectDir }) => {
+    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
+    expect.soft(created.budget).toBeUndefined();
+    expect.soft('budget' in loadRunState(projectDir, created.runId)).toBe(false);
+    expect.soft(budgetFor(created, 'impl')).toEqual({ worker: undefined, orchestrator: undefined });
   });
 });
 
@@ -219,11 +235,30 @@ describe('gate attendance', () => {
   });
 });
 
-describe('budgetFor — the effective per-turn caps', () => {
-  test("returns each phase's registry caps verbatim (the parity refactor — behavior identical)", ({ run }) => {
+describe('budgetFor — the opt-in knob', () => {
+  test('budget absent ⇒ OFF: both caps undefined (the maintainer default)', ({ run }) => {
+    expect.soft(run.budget).toBeUndefined();
+    expect.soft(budgetFor(run, 'impl')).toEqual({ worker: undefined, orchestrator: undefined });
+    expect.soft(budgetFor(run, 'open')).toEqual({ worker: undefined, orchestrator: undefined });
+  });
+
+  test('budget ×1 ("default") reproduces the registry profile verbatim', ({ run }) => {
+    run.budget = 1;
     expect.soft(budgetFor(run, 'impl')).toEqual({ worker: 25, orchestrator: 30 });
     expect.soft(budgetFor(run, 'open')).toEqual({ worker: 5, orchestrator: 5 });
     expect.soft(budgetFor(run, 'frame')).toEqual({ worker: 10, orchestrator: 15 });
+  });
+
+  test('a scalar scales BOTH the worker and orchestrator caps (one knob, both roles)', ({ run }) => {
+    run.budget = 0.5;
+    expect.soft(budgetFor(run, 'impl')).toEqual({ worker: 12.5, orchestrator: 15 });
+    expect.soft(budgetFor(run, 'frame')).toEqual({ worker: 5, orchestrator: 7.5 });
+  });
+
+  test('off ⇒ a worker built from the resolved cap omits --max-budget-usd', ({ run }) => {
+    const cap = budgetFor(run, 'impl').worker; // off → undefined
+    expect.soft(cap).toBeUndefined();
+    expect.soft(claudeArgs({}, { model: 'claude-opus-4-8', maxBudgetUsd: cap })).not.toContain('--max-budget-usd');
   });
 });
 

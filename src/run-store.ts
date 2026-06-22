@@ -94,6 +94,15 @@ export interface RunState {
   branch?: string;
   bindings: RoleBindings;
   /**
+   * The resolved per-turn budget multiplier (#3a — account/billing posture, the
+   * same family as the bindings' `transport`). FROZEN at creation, never mutated
+   * (the lifetime contrast with mutable `gatesAt` — billing posture does not
+   * change mid-run). Absent ⇒ OFF: `budgetFor` returns undefined caps and no
+   * `--max-budget-usd`/orchestrator cap is set. A positive number scales the
+   * per-phase profile ("default" resolves to 1); it is never `0`.
+   */
+  budget?: number;
+  /**
    * Phases whose gates the human attends (gates_at — docs/automation-design.md
    * §"Gate pre-authorization"). Absent = every gate attended (the default and
    * the pre-feature behavior). Gates of phases not listed are pre-authorized:
@@ -253,19 +262,23 @@ export function gateAttended(state: RunState, phase: GatePhase): boolean {
 }
 
 /**
- * The effective per-turn budget caps for a phase — the one source every
- * worker- and orchestrator-construction site reads, replacing direct
- * `PHASE[phase].*BudgetUsd` reads (so a later opt-in knob is a one-place
- * change). A cap is a number, or `undefined` when off. This slice returns the
- * registry numbers verbatim — a pure refactor, behavior identical; the knob
- * that can return `undefined` arrives with #3a. Lives beside gateAttended:
- * both resolve run-state policy against the phase registry.
+ * The effective per-turn budget caps for a phase — the one source every worker-
+ * and orchestrator-construction site reads, replacing direct
+ * `PHASE[phase].*BudgetUsd` reads. A cap is a number, or `undefined` when off.
+ * The opt-in knob (#3a) is `state.budget`: absent ⇒ OFF (both caps undefined,
+ * the maintainer's default), else the per-phase profile scaled by the frozen
+ * multiplier. Lives beside gateAttended: both resolve run-state policy against
+ * the phase registry.
  */
 export function budgetFor(
-  _state: RunState,
+  state: RunState,
   phase: PhaseName,
 ): { worker: number | undefined; orchestrator: number | undefined } {
-  return { worker: PHASE[phase].workerBudgetUsd, orchestrator: PHASE[phase].orchestratorBudgetUsd };
+  if (state.budget === undefined) return { worker: undefined, orchestrator: undefined };
+  return {
+    worker: PHASE[phase].workerBudgetUsd * state.budget,
+    orchestrator: PHASE[phase].orchestratorBudgetUsd * state.budget,
+  };
 }
 
 /**
@@ -315,6 +328,8 @@ export function createRun(opts: {
   framingRaw?: string;
   branch?: string;
   bindings: RoleBindings;
+  /** The resolved per-turn budget multiplier (frozen here; absent ⇒ off). */
+  budget?: number;
   gatesAt?: GatePhase[];
   retryInfra?: number;
 }): RunState {
@@ -337,6 +352,7 @@ export function createRun(opts: {
     ...(opts.framing ? { framing: opts.framing } : {}),
     ...(opts.branch ? { branch: opts.branch } : {}),
     bindings: opts.bindings,
+    ...(opts.budget !== undefined ? { budget: opts.budget } : {}),
     ...(gatesAt ? { gatesAt } : {}),
     ...(opts.retryInfra ? { retryInfra: opts.retryInfra } : {}),
     workerSessions: {},

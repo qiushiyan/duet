@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
-import { DEFAULT_BINDINGS, loadRoleBindings, parseRoleOverride } from '../src/config.ts';
+import { DEFAULT_BINDINGS, loadRoleBindings, loadRunConfig, parseBudget, parseRoleOverride } from '../src/config.ts';
 import { test } from './helpers/fixtures.ts';
 
 const configIn = (dir: string, toml: string): string => {
@@ -138,5 +138,56 @@ describe('parseRoleOverride', () => {
       model: 'claude-opus-4-6',
     });
     expect.soft(parseRoleOverride('reviewer', 'codex')).toEqual({ provider: 'codex' });
+  });
+});
+
+describe('parseBudget — the opt-in budget knob', () => {
+  test('"off" resolves to undefined (disabled, never a 0 cap)', () => {
+    expect(parseBudget('off')).toBeUndefined();
+  });
+
+  test('"default" resolves to multiplier 1 (today\'s per-phase profile)', () => {
+    expect(parseBudget('default')).toBe(1);
+  });
+
+  test('a positive scalar — string (the flag) or number (TOML) — is the multiplier', () => {
+    expect.soft(parseBudget('2')).toBe(2);
+    expect.soft(parseBudget(2)).toBe(2);
+    expect.soft(parseBudget('0.5')).toBe(0.5);
+  });
+
+  test('zero, negative, and garbage are refused with an actionable message', () => {
+    expect.soft(() => parseBudget('0')).toThrow(/positive multiplier/);
+    expect.soft(() => parseBudget(0)).toThrow(/positive multiplier/);
+    expect.soft(() => parseBudget(-1)).toThrow(/positive multiplier/);
+    expect.soft(() => parseBudget('lots')).toThrow(/must be "off", "default", or a positive multiplier/);
+  });
+});
+
+describe('loadRunConfig — bindings + the resolved budget', () => {
+  test('absent config and no override ⇒ budget off (absent), shipped bindings', ({ projectDir }) => {
+    const cfg = loadRunConfig({}, join(projectDir, 'missing.toml'));
+    expect.soft(cfg.budget).toBeUndefined();
+    expect.soft(cfg.bindings).toEqual(DEFAULT_BINDINGS);
+  });
+
+  test('a config budget key is read when no flag overrides it', ({ projectDir }) => {
+    const path = configIn(projectDir, `budget = 2`);
+    expect(loadRunConfig({}, path).budget).toBe(2);
+  });
+
+  test('the flag budgetOverride wins over a config budget', ({ projectDir }) => {
+    const path = configIn(projectDir, `budget = 2`);
+    expect(loadRunConfig({ budgetOverride: 'default' }, path).budget).toBe(1);
+  });
+
+  test('--budget off overrides a config budget down to off (absent)', ({ projectDir }) => {
+    const path = configIn(projectDir, `budget = 2`);
+    expect(loadRunConfig({ budgetOverride: 'off' }, path).budget).toBeUndefined();
+  });
+
+  test('loadRoleBindings is the bindings-only wrapper (parity, budget ignored)', ({ projectDir }) => {
+    const path = configIn(projectDir, `budget = 2\n[roles.implementer]\nprovider = "claude"`);
+    expect(loadRoleBindings(undefined, path)).toEqual(loadRunConfig({}, path).bindings);
   });
 });

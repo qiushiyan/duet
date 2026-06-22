@@ -6,7 +6,7 @@ import { Command } from 'commander';
 import { execa } from 'execa';
 import { createActor } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
-import { loadRoleBindings } from './config.ts';
+import { loadRunConfig } from './config.ts';
 import { DEFAULT_FRAMING_FILE, resolveHumanText, resolveRunInputs } from './framing.ts';
 import {
   aliveDriverPid,
@@ -131,12 +131,16 @@ program
     '--retry-infra <n>',
     'opt-in bounded auto-retry of TRANSIENT infra failures (network/server/rate-limit, and auth once) before flagging — n attempts. login/quota/persistent-auth are never retried; exhaustion always falls back to a flag. Default: off (every infra failure flags, as today)',
   )
+  .option(
+    '--budget <off|default|N>',
+    'opt-in per-turn cost caps: off (default — unbounded, the flat-quota posture), default (the built-in per-phase profile), or a positive multiplier N scaling it (e.g. 0.5, 2). Overrides the config budget key; one knob covers both the worker and orchestrator caps',
+  )
   .option('--orchestrator <provider[:model]>', 'role binding override (claude[:model] only in v1)')
   .option('--impl <provider[:model]>', 'implementer binding override')
   .option('--reviewer <provider[:model]>', 'reviewer binding override')
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
   .option('--interactive', "orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over the attended arc up to the workflow's handoff gate (full: through the plan gate; rir: through the Direction gate); implementation onward runs headless after that handoff")
-  .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean; interactive?: boolean }) => {
+  .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; budget?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean; interactive?: boolean }) => {
     const cwd = process.cwd();
 
     // The framing's frontmatter is the machine/prose boundary: parsed
@@ -156,10 +160,13 @@ program
       fail(err instanceof Error ? err.message : String(err));
     }
 
-    const bindings = loadRoleBindings({
-      ...(opts.orchestrator ? { orchestrator: opts.orchestrator } : {}),
-      ...(opts.impl ? { implementer: opts.impl } : {}),
-      ...(opts.reviewer ? { reviewer: opts.reviewer } : {}),
+    const { bindings, budget } = loadRunConfig({
+      roleOverrides: {
+        ...(opts.orchestrator ? { orchestrator: opts.orchestrator } : {}),
+        ...(opts.impl ? { implementer: opts.impl } : {}),
+        ...(opts.reviewer ? { reviewer: opts.reviewer } : {}),
+      },
+      ...(opts.budget !== undefined ? { budgetOverride: opts.budget } : {}),
     });
 
     let branch: string | undefined;
@@ -175,6 +182,7 @@ program
       ...runInputs,
       ...(branch ? { branch } : {}),
       bindings,
+      ...(budget !== undefined ? { budget } : {}),
     });
     // The editor draft is archived into the run dir by createRun; the
     // staging file is consumed so the next bare `duet new` starts fresh.
