@@ -277,3 +277,50 @@ describe('no CLI help / template copy carries a Full-only-arc claim', () => {
     }
   });
 });
+
+describe('shipped gate-posture copy teaches the auto-open-PR default (rails bundle #2)', () => {
+  // The PR auto-opens by default now (phases.ts: full's forceAttend: [],
+  // defaultPreAuthorized: ['pr']). Any "always attended" claim about the Open-PR
+  // gate, or an unqualified "Default: every gate", is the pre-bundle model — a
+  // shipped skill that teaches it would steer the framing author / concierge to
+  // the wrong posture. These guards pin the corrected model so a future edit
+  // can't quietly reintroduce the old one.
+  const gatesAtHelp = (publicCommands.get('new')?.options.find((o) => o.long === '--gates-at')?.description ?? '');
+  // All three shipped prose surfaces — including the root concierge SKILL.md the
+  // round-1 guard missed (round 2).
+  const shippedDocs = [
+    ['duet-frame SKILL.md', duetFrameMd],
+    ['concierge SKILL.md', skillMd],
+    ['concierge cli-reference.md', referenceMd],
+  ] as const;
+
+  test('no shipped surface still says the PR/Open-PR gate is always attended', () => {
+    // Broad enough to catch "always attended" AND "always stays attended" (the
+    // concierge SKILL.md variant) — any "always … attended" within one sentence.
+    for (const [label, md] of shippedDocs) {
+      expect.soft(md, `${label} still claims the PR gate is always attended`).not.toMatch(/always[^.]*attended/i);
+    }
+  });
+
+  test('no help/template copy carries an unqualified "Default: every gate"', () => {
+    // "default: every gate" is false for Full now — the corrected copy reads
+    // "default: attend every gate except full's auto-opening PR".
+    expect.soft(FRAMING_TEMPLATE).not.toMatch(/default:\s*every gate/i);
+    expect.soft(gatesAtHelp).not.toMatch(/default:\s*every gate/i);
+  });
+
+  test('the gate-posture surfaces teach the auto-open model', () => {
+    for (const [label, md] of shippedDocs) {
+      expect.soft(md.toLowerCase(), `${label} omits the auto-open model`).toContain('auto-open');
+    }
+    expect.soft(FRAMING_TEMPLATE.toLowerCase()).toContain('auto-open');
+    expect.soft(gatesAtHelp.toLowerCase()).toContain('auto-open');
+  });
+
+  test('the concierge cause docs name the budget cause (slice 5)', () => {
+    // stop.cause gained `budget` (slice 5) — the relay docs must list it so the
+    // concierge triages a budget stop as resumable, not an outage.
+    expect.soft(skillMd, 'concierge SKILL.md omits the budget cause').toMatch(/cause[\s\S]{0,200}budget/i);
+    expect.soft(referenceMd, 'concierge cli-reference omits the budget cause').toMatch(/cause[\s\S]{0,200}budget/i);
+  });
+});

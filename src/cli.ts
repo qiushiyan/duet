@@ -1,17 +1,18 @@
 #!/usr/bin/env node
-import { readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { Command } from 'commander';
 import { execa } from 'execa';
 import { createActor } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
-import { loadRoleBindings } from './config.ts';
-import { DEFAULT_FRAMING_FILE, resolveHumanText, resolveRunInputs } from './framing.ts';
+import { loadRunConfig } from './config.ts';
+import { DEFAULT_FRAMING_FILE, parseGatesAt, resolveHumanText, resolveRunInputs } from './framing.ts';
 import {
   aliveDriverPid,
   crossInteractive,
   driveToQuiescence,
+  enterAfk,
   interactiveContinueAction,
   killDriver,
   probeRunPosition,
@@ -86,6 +87,53 @@ export const program = new Command();
 function fail(message: string): never {
   return program.error(message);
 }
+
+/**
+ * Build `resolveRunInputs`'s option object from `duet new`'s raw flags. The one
+ * subtlety the bare spread got wrong: `gatesAt` is forwarded KEY-PRESENT, not
+ * truthy, so an explicit `--gates-at ""` reaches the parser and is rejected as
+ * empty (its documented contract, framing.ts) instead of being silently dropped
+ * to attend-all. spec/framing/template/workflow stay truthy-gated — they carry
+ * no empty-value semantics, so an empty string there is just an omitted flag.
+ * Pure and exported so the forward is testable without driving the whole action.
+ */
+export function newRunInputOpts(opts: {
+  spec?: string;
+  framing?: string;
+  template?: string;
+  workflow?: string;
+  gatesAt?: string;
+  retryInfra?: string;
+}): { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string } {
+  return {
+    ...(opts.spec ? { spec: opts.spec } : {}),
+    ...(opts.framing ? { framing: opts.framing } : {}),
+    ...(opts.template ? { template: opts.template } : {}),
+    ...(opts.workflow ? { workflow: opts.workflow } : {}),
+    ...(opts.gatesAt !== undefined ? { gatesAt: opts.gatesAt } : {}),
+    ...(opts.retryInfra !== undefined ? { retryInfra: opts.retryInfra } : {}),
+  };
+}
+
+/**
+ * Disambiguate `duet afk`'s two optional positionals. `duet afk <runId>` (bare
+ * attend-none posture for a specific run) and `duet afk <preset>` (a posture for
+ * the latest run) are indistinguishable to commander when only one is given, so
+ * resolve here: a lone first arg that names an existing run dir is the runId;
+ * otherwise it is the preset/list. Run ids (YYYYMMDD-HHMM-hhhh) and preset/phase
+ * names are disjoint by shape, so this never misreads one for the other. Pure
+ * (modulo the run-dir probe) and exported for test.
+ */
+export function resolveAfkArgs(
+  cwd: string,
+  preset: string | undefined,
+  runId: string | undefined,
+): { preset?: string; runId?: string } {
+  if (runId === undefined && preset !== undefined && existsSync(runDirOf(cwd, preset))) {
+    return { runId: preset };
+  }
+  return { ...(preset !== undefined ? { preset } : {}), ...(runId !== undefined ? { runId } : {}) };
+}
 program
   .name('duet')
   .description(
@@ -125,18 +173,22 @@ program
   .option('--workflow <name>', 'which arc to run: full (spec → plan → implement → ship → docs → PR) or rir (research → implement → review); default full. Also settable via a workflow: framing key (flag wins)')
   .option(
     '--gates-at <phases>',
-    'phases whose gates you attend — the set and presets are workflow-specific (full gates: frame, spec, plan, impl, docs, pr; presets "skip-plan" = walk away at spec approval, return at the Ship gate, "overnight" = frame,spec, and full\'s Open-PR gate is always attended. rir gates: research, implement; preset "afk" = attend none). The rest are pre-authorized and auto-cross with their packets recorded; default: every gate',
+    'phases whose gates you attend — the set and presets are workflow-specific (full gates: frame, spec, plan, impl, docs, pr; presets "skip-plan" = walk away at spec approval, return at the Ship gate, "overnight" = frame,spec, and full\'s PR auto-opens by default — list `pr` to attend a pre-open stop. rir gates: research, implement; preset "afk" = attend none). The rest are pre-authorized and auto-cross with their packets recorded; default: attend every gate except full\'s auto-opening PR (list `pr` to add a pre-open stop); rir attends both its gates',
   )
   .option(
     '--retry-infra <n>',
     'opt-in bounded auto-retry of TRANSIENT infra failures (network/server/rate-limit, and auth once) before flagging — n attempts. login/quota/persistent-auth are never retried; exhaustion always falls back to a flag. Default: off (every infra failure flags, as today)',
+  )
+  .option(
+    '--budget <off|default|N>',
+    'opt-in per-turn cost caps: off (default — unbounded, the flat-quota posture), default (the built-in per-phase profile), or a positive multiplier N scaling it (e.g. 0.5, 2). Overrides the config budget key; one knob covers both the worker and orchestrator caps',
   )
   .option('--orchestrator <provider[:model]>', 'role binding override (claude[:model] only in v1)')
   .option('--impl <provider[:model]>', 'implementer binding override')
   .option('--reviewer <provider[:model]>', 'reviewer binding override')
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
   .option('--interactive', "orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over the attended arc up to the workflow's handoff gate (full: through the plan gate; rir: through the Direction gate); implementation onward runs headless after that handoff")
-  .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean; interactive?: boolean }) => {
+  .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; budget?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean; interactive?: boolean }) => {
     const cwd = process.cwd();
 
     // The framing's frontmatter is the machine/prose boundary: parsed
@@ -144,22 +196,18 @@ program
     // body plus the posture instructions the harness renders from the values.
     let inputs;
     try {
-      inputs = await resolveRunInputs(cwd, {
-        ...(opts.spec ? { spec: opts.spec } : {}),
-        ...(opts.framing ? { framing: opts.framing } : {}),
-        ...(opts.template ? { template: opts.template } : {}),
-        ...(opts.workflow ? { workflow: opts.workflow } : {}),
-        ...(opts.gatesAt ? { gatesAt: opts.gatesAt } : {}),
-        ...(opts.retryInfra !== undefined ? { retryInfra: opts.retryInfra } : {}),
-      });
+      inputs = await resolveRunInputs(cwd, newRunInputOpts(opts));
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
     }
 
-    const bindings = loadRoleBindings({
-      ...(opts.orchestrator ? { orchestrator: opts.orchestrator } : {}),
-      ...(opts.impl ? { implementer: opts.impl } : {}),
-      ...(opts.reviewer ? { reviewer: opts.reviewer } : {}),
+    const { bindings, budget } = loadRunConfig({
+      roleOverrides: {
+        ...(opts.orchestrator ? { orchestrator: opts.orchestrator } : {}),
+        ...(opts.impl ? { implementer: opts.impl } : {}),
+        ...(opts.reviewer ? { reviewer: opts.reviewer } : {}),
+      },
+      ...(opts.budget !== undefined ? { budgetOverride: opts.budget } : {}),
     });
 
     let branch: string | undefined;
@@ -175,6 +223,7 @@ program
       ...runInputs,
       ...(branch ? { branch } : {}),
       bindings,
+      ...(budget !== undefined ? { budget } : {}),
     });
     // The editor draft is archived into the run dir by createRun; the
     // staging file is consumed so the next bare `duet new` starts fresh.
@@ -371,6 +420,39 @@ function guardRunIdAsText(
     }
   }
 }
+
+program
+  .command('afk')
+  .description(
+    "Hand off mid-session from any interactive gate: re-set the downstream gate posture and drop to the headless driver in one tap. Legal at any interactive gate parked on the approve path — including a pre-authorized one. Bare = attend nothing downstream (maximum AFK).",
+  )
+  .argument('[preset]', 'a workflow gates_at preset or phase list for the downstream posture (bare = attend none)')
+  .argument('[runId]', 'run id (defaults to the latest run in this project)')
+  .action((preset: string | undefined, runId: string | undefined) => {
+    const cwd = process.cwd();
+    // `duet afk <runId>` (bare posture, specific run) and `duet afk <preset>`
+    // (posture, latest run) share the first positional — resolveAfkArgs sorts it.
+    const { preset: presetArg, runId: runIdArg } = resolveAfkArgs(cwd, preset, runId);
+    const state = runIdArg ? loadRunState(cwd, runIdArg) : latestRun(cwd);
+    if (!state) fail('no runs found in this project — start one with duet new');
+    let split;
+    try {
+      // Bare afk → the empty "attend none" posture; a named arg → an existing
+      // preset/list (no new presets). parseGatesAt validates against the workflow.
+      const posture = presetArg ? parseGatesAt(presetArg, workflowOf(state)) : [];
+      split = enterAfk(state, posture);
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+    }
+    // Print the resulting split so the single tap is informed consent.
+    console.log(
+      split.attended.length > 0
+        ? `gates: attending ${split.attended.join(', ')} — ${split.preAuthorized.join(', ') || 'nothing else'} pre-authorized (auto-cross, packets recorded)`
+        : `gates: attending none — all downstream gates pre-authorized (auto-cross, packets recorded)`,
+    );
+    const pid = spawnDrive(state);
+    printWatchHints(state, pid, 'handed off to headless (duet afk)');
+  });
 
 program
   .command('continue')

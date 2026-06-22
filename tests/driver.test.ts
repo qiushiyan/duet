@@ -7,10 +7,13 @@ import { claudeApiError, claudeAssistantText, jsonl, plantClaudeTranscript } fro
 import {
   ORCHESTRATOR_SYSTEM_PROMPT,
   buildPhaseBrief,
+  docsPhaseEntryPrompt,
   feedbackResumePrompt,
   framePhaseEntryPrompt,
   implementPhaseEntryPrompt,
+  openPhaseEntryPrompt,
   planPhaseEntryPrompt,
+  prPhaseEntryPrompt,
   researchPhaseEntryPrompt,
   specPhaseEntryPrompt,
 } from '../src/harness/orchestrator-prompts.ts';
@@ -89,6 +92,31 @@ describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)
   // still surface here.
   test.for(Object.keys(PHASE) as PhaseName[])('%s builds a non-empty brief', (phase, { run }) => {
     expect(buildPhaseBrief(run, phase).trim().length).toBeGreaterThan(0);
+  });
+
+  test('the open-phase prompt is honest about how the Open-PR gate was crossed (#2)', ({ run }) => {
+    run.gatesAt = ['pr']; // attended: the human approved opening the PR
+    expect.soft(openPhaseEntryPrompt(run)).toContain('The human approved opening the PR');
+
+    run.gatesAt = ['frame']; // pr not listed → pre-authorized, auto-opened (no human tap)
+    const preAuth = openPhaseEntryPrompt(run);
+    expect.soft(preAuth).toContain('pre-authorized');
+    expect.soft(preAuth).not.toContain('The human approved opening the PR');
+  });
+
+  test('the pr-phase prompt is state-aware about the Open-PR packet, not a mandatory stop (#2)', ({ run }) => {
+    // Attended: the human decides from the packet at the gate.
+    run.gatesAt = ['pr'];
+    const attended = prPhaseEntryPrompt(run, PHASE.pr.roundCap);
+    expect.soft(attended).toContain('decides whether to open');
+    expect.soft(attended).not.toContain('auto-opens by default');
+
+    // Pre-authorized (the default): the packet is recorded and auto-crossed —
+    // no "the human decides whether to open" mandatory-stop framing.
+    run.gatesAt = ['frame'];
+    const preAuth = prPhaseEntryPrompt(run, PHASE.pr.roundCap);
+    expect.soft(preAuth).toContain('auto-opens by default');
+    expect.soft(preAuth).not.toContain('decides whether to open');
   });
 });
 
@@ -229,7 +257,7 @@ describe('phase-event mapping', () => {
     expect(loadRunState(projectDir, run.runId).pendingQuestion?.question).toBe('which scope?');
   });
 
-  test('an abnormal session end flags the human with the subtype, keeping cost and session id', async ({
+  test('an orchestrator budget cap queues a resumable budget stop (cause budget, no errorClass), keeping cost and session id', async ({
     projectDir,
     run,
   }) => {
@@ -240,7 +268,9 @@ describe('phase-event mapping', () => {
     const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
     expect(result).toEqual({ type: 'phase.flag' });
     const state = loadRunState(projectDir, run.runId);
-    expect.soft(state.pendingQuestion?.question).toContain('ended abnormally (error_max_budget_usd)');
+    expect.soft(state.pendingQuestion?.question).toContain('budget cap');
+    expect.soft(state.pendingQuestion?.cause).toBe('budget'); // its own cause — resumable, not infra
+    expect.soft(state.pendingQuestion?.errorClass).toBeUndefined(); // budget is not an infra taxonomy class
     expect.soft(state.orchestratorSessionId).toBe('orc-9');
     expect.soft(state.costs.orchestratorUsd).toBe(15);
   });
@@ -755,5 +785,25 @@ describe('prompt selection and session continuity', () => {
     });
     await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, second.runTurn);
     expect(resumedWith).toBe('orc-abc');
+  });
+});
+
+describe('provider-agnostic onboarding — workers get document paths, not slash commands (F9)', () => {
+  test('the onboarding entry prompts name a path and never instruct slash-command expansion', ({ run }) => {
+    const frame = framePhaseEntryPrompt(run, PHASE.frame.roundCap);
+    const research = researchPhaseEntryPrompt(run, PHASE.research.roundCap);
+    const docs = docsPhaseEntryPrompt(run, PHASE.docs.roundCap);
+
+    for (const p of [frame, research, docs]) {
+      expect.soft(p).not.toContain('CLI expands it'); // the now-wrong slash-command instruction is gone
+      expect.soft(p).not.toContain("include its /name");
+    }
+    // frame/research: paths-not-commands + surface an incomplete framing via ask_human.
+    expect.soft(frame).toContain('document PATHS');
+    expect.soft(frame).toMatch(/incomplete[\s\S]*ask_human/);
+    expect.soft(research).toContain('document PATHS');
+    // docs: send the path, never a slash command; incomplete → ask_human.
+    expect.soft(docs).toContain('never a slash command');
+    expect.soft(docs).toMatch(/incomplete[\s\S]*ask_human/);
   });
 });

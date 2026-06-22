@@ -18,7 +18,7 @@ import type { WorkerProvider, WorkerRole } from './types.ts';
  */
 export function createWorkers(
   bindings: RoleBindings,
-  rails: { workerBudgetUsd: number; timeoutMs: number },
+  rails: { workerBudgetUsd: number | undefined; timeoutMs: number },
 ): Record<WorkerRole, WorkerProvider> {
   const forRole = (role: WorkerRole): WorkerProvider => {
     const binding = bindings[role];

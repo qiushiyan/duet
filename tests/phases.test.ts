@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import {
   PHASE,
+  WORKFLOWS,
+  defaultPosture,
   gateOf,
   gatePhasesOf,
   handoffWatchLabel,
@@ -42,6 +44,7 @@ function workflow(overrides: Record<string, unknown> = {}) {
     handoffGate: 'a',
     presets: {},
     forceAttend: [] as readonly string[],
+    defaultPreAuthorized: [] as readonly string[],
     ...overrides,
   };
 }
@@ -70,6 +73,16 @@ describe('validateRegistry', () => {
       throws: /forceAttend entry "b" is not a gate phase/,
     },
     {
+      name: 'a defaultPreAuthorized entry that is not a gate phase throws',
+      registry: { w: workflow({ defaultPreAuthorized: ['b'] }) },
+      throws: /defaultPreAuthorized entry "b" is not a gate phase/,
+    },
+    {
+      name: 'a gate in both forceAttend and defaultPreAuthorized throws (disjointness)',
+      registry: { w: workflow({ forceAttend: ['a'], defaultPreAuthorized: ['a'] }) },
+      throws: /gate "a" is in both forceAttend and defaultPreAuthorized/,
+    },
+    {
       name: 'a preset value that is not a gate phase throws',
       registry: { w: workflow({ presets: { p: ['b'] } }) },
       throws: /preset "p" value "b" is not a gate phase/,
@@ -90,6 +103,20 @@ describe('validateRegistry', () => {
   });
 });
 
+describe('defaultPosture — the materialized default gate posture', () => {
+  test('empty defaultPreAuthorized → undefined (legacy attend-all preserved)', () => {
+    expect(defaultPosture(gatePhasesOf('full'), [])).toBeUndefined();
+  });
+
+  test("excluding ['pr'] over full's gate set drops only pr, order preserved", () => {
+    expect(defaultPosture(gatePhasesOf('full'), ['pr'])).toEqual(['frame', 'spec', 'plan', 'impl', 'docs']);
+  });
+
+  test('a two-element exclusion drops both, order preserved', () => {
+    expect(defaultPosture(gatePhasesOf('full'), ['spec', 'pr'])).toEqual(['frame', 'plan', 'impl', 'docs']);
+  });
+});
+
 describe("the Full workflow derives today's arc", () => {
   // A literal pin (not self-derived): a malformed registry can't pass a test
   // that also derives its expectation from the registry.
@@ -107,6 +134,11 @@ describe("the Full workflow derives today's arc", () => {
 
   test('gatePhasesOf("full") is every phase but the open-ended one', () => {
     expect(gatePhasesOf('full')).toEqual(['frame', 'spec', 'plan', 'impl', 'docs', 'pr']);
+  });
+
+  test('full pre-authorizes the Open-PR gate by default and force-attends nothing (#2)', () => {
+    expect.soft(WORKFLOWS.full.forceAttend).toEqual([]); // pr dropped — opening a PR is reversible
+    expect.soft(WORKFLOWS.full.defaultPreAuthorized).toEqual(['pr']); // disjoint from forceAttend (validateRegistry guards it)
   });
 
   test('PHASE indexes every phase across all workflows, flat', () => {

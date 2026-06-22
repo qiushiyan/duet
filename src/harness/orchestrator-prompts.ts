@@ -189,7 +189,7 @@ No spec exists yet — run the FRAME phase: both workers build an independent un
 ${branchPolicyParagraph(state)}${attendancePosture(state, 'frame')}
 The shape of the phase:
 1. Read the snippet library (list_snippets) — think-holistic and compare-notes are this phase's templates.
-2. Onboard each worker in your first prompt to it: the framing says how (a project skill to invoke — include its /name in the worker's prompt and the CLI expands it — or files to read). Fold the onboarding, the working branch, and the problem statement from the framing into that first prompt.
+2. Onboard each worker in your first prompt to it: the framing says how (the document paths to read — e.g. an onboarding or skill file named by path). Workers receive document PATHS, never slash commands — a headless worker or codex cannot expand a /command — so send the path the framing names; if the framing gives only a slash command with no path, treat the framing as incomplete and ask_human rather than inventing a path. Fold the onboarding, the working branch, and the problem statement from the framing into that first prompt.
 3. Send think-holistic to each worker independently — same problem, two unshared analyses. Issue both send_prompt calls in one message: turns to different workers run concurrently, and these two share no inputs, so there is nothing to wait for.
 4. Send the reviewer's analysis to the implementer with compare-notes: critique, synthesize, don't capitulate.
 5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
@@ -328,7 +328,7 @@ ${approvalClause(
     'The Ship gate was pre-authorized at run start and auto-crossed — the implementation packet is recorded for the human, and their environment verification (smoke tests, migrations) is still pending; the docs you produce describe work that has not yet had a human eye.',
   )} Run the DOCS phase to its proposal:
 ${attendancePosture(state, 'docs')}
-1. The framing names how this project updates its docs (often a project skill — include its /name in the implementer's prompt and the CLI expands it — otherwise conventions to follow). If the framing names nothing, have the implementer survey the repo's docs and derive the impact from what shipped.
+1. The framing names how this project updates its docs (often a docs or skill file named by PATH — send the implementer that path, never a slash command, which a headless worker can't expand — otherwise conventions to follow); if the framing gives only a slash command with no path, treat it as incomplete and ask_human rather than inventing a path. If the framing names nothing, have the implementer survey the repo's docs and derive the impact from what shipped.
 2. Drive the implementer to the docs-update proposal: which documents change and how. The proposal is this phase's whole product — when a skill has an internal approval step, run it exactly up to that step; applying changes happens after the human approves.
 3. A review round is available when the proposal warrants one (backstop cap ${roundCap}); most docs plans go straight to the gate.
 4. Call advance_phase with the proposal verbatim in the summary — the human approves or adjusts it at the Docs-plan gate.
@@ -349,15 +349,24 @@ ${approvalClause(
 1. Have the implementer apply the approved docs plan and commit the doc changes. It wrote this proposal and still holds it in its session, so a short go-ahead is all it needs — confirm approval, fold in any gate adjustments, and don't restate the plan back. (If the framing says the project's docs skill needs a specific marker to resume past its own approval step, that marker is your go-ahead.)
 2. Send the implementer the pr-description snippet — the PR body for a technical colleague who won't read the diff.
 3. A review round on the description is available when it warrants one (backstop cap ${roundCap}).
-4. Call advance_phase with the PR title and description verbatim in the summary — the human reads exactly this at the Open-PR gate and decides whether to open.
+4. Call advance_phase with the PR title and description verbatim in the summary — this becomes the Open-PR packet. ${
+    gateAttended(state, 'pr')
+      ? 'The Open-PR gate is attended: the human reads the packet there and decides whether to open.'
+      : 'The Open-PR gate is pre-authorized (the PR auto-opens by default): your packet is recorded and auto-crossed straight into PR creation, with no human tap — so make it self-contained.'
+  }
 
 Throughout: flag product or direction questions with ask_human; tactical questions bounce to the worker.
 </task>`;
 }
 
-export function openPhaseEntryPrompt(): string {
+export function openPhaseEntryPrompt(state: RunState): string {
   return `<task>
-The human approved opening the PR — that approval covers the mechanics, so run them:
+${approvalClause(
+    state,
+    'pr',
+    'The human approved opening the PR — that approval covers the mechanics, so run them:',
+    'The Open-PR gate was pre-authorized (the PR auto-opens by default), so no human tap was needed — run the mechanics:',
+  )}
 
 1. Have the implementer push the working branch and open the PR with gh pr create, using the approved title and description, and report the PR URL.
 2. Call advance_phase with the PR URL leading the summary — this completes the run.
@@ -381,7 +390,7 @@ Run the RESEARCH phase of the RIR arc: both workers build an independent underst
 ${branchPolicyParagraph(state)}${attendancePosture(state, 'research')}
 The shape of the phase:
 1. Read the snippet library (list_snippets) — think-holistic, compare-notes, and use-latest-docs are this phase's templates.
-2. Onboard each worker in your first prompt to it: the framing says how (a project skill to invoke — include its /name in the worker's prompt and the CLI expands it — or files to read). Fold the onboarding, the working branch, and the problem statement from the framing into that first prompt.
+2. Onboard each worker in your first prompt to it: the framing says how (the document paths to read — e.g. an onboarding or skill file named by path). Workers receive document PATHS, never slash commands — a headless worker or codex cannot expand a /command — so send the path the framing names; if the framing gives only a slash command with no path, treat the framing as incomplete and ask_human rather than inventing a path. Fold the onboarding, the working branch, and the problem statement from the framing into that first prompt.
 3. Send think-holistic to each worker independently — same problem, two unshared analyses. Issue both send_prompt calls in one message: turns to different workers run concurrently, and these two share no inputs, so there is nothing to wait for. When the work leans on an external library or SDK, fold use-latest-docs into the prompt so the analysis is grounded in current APIs rather than stale memory.
 4. Send the reviewer's analysis to the implementer with compare-notes: critique, synthesize, don't capitulate.
 5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The implementer builds directly from these decisions, so the summary must carry enough that the build can proceed without a spec. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
@@ -440,7 +449,7 @@ const phaseBriefBuilders = {
   impl: implPhaseEntryPrompt,
   docs: docsPhaseEntryPrompt,
   pr: prPhaseEntryPrompt,
-  open: (_state: RunState, _cap: number) => openPhaseEntryPrompt(),
+  open: (state: RunState, _cap: number) => openPhaseEntryPrompt(state),
   research: researchPhaseEntryPrompt,
   implement: implementPhaseEntryPrompt,
 } satisfies Record<PhaseName, (state: RunState, cap: number) => string>;

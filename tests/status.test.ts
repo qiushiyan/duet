@@ -1,5 +1,6 @@
 import { describe, expect } from 'vitest';
-import { buildBrief, buildStatusModel, describeStop, renderBrief, renderStatus, steerRefusal } from '../src/status.ts';
+import { buildBrief, buildStatusModel, describeStop, displayState, renderBrief, renderStatus, steerRefusal } from '../src/status.ts';
+import type { StopModel } from '../src/status.ts';
 import { createRun } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import type { RunPosition } from '../src/harness/lifecycle.ts';
@@ -213,6 +214,15 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     }
   });
 
+  test('a budget-cause flag carries cause budget with no errorClass (the enum-widening, #3b)', ({ run }) => {
+    run.pendingQuestion = { question: 'orchestrator capped?', cause: 'budget' };
+    const budget = buildStatusModel(run, { kind: 'flag', phase: 'impl' }, []).stop;
+    if (budget.kind === 'flag') {
+      expect.soft(budget.cause).toBe('budget');
+      expect.soft(budget.errorClass).toBeUndefined(); // budget is not an infra taxonomy class
+    }
+  });
+
   test('the gate packet carries humanDecisions only when present (additive)', ({ run }) => {
     run.phaseSummaries.impl = { summary: 's', artifacts: [] };
     const without = buildStatusModel(run, { kind: 'gate', phase: 'impl' }, []).stop;
@@ -347,7 +357,7 @@ describe('renderStatus', () => {
     expect(render(run, { kind: 'gate', phase: 'impl' })).toContain('verify in your environment before deciding');
 
     run.machineState = 'openPrGate';
-    expect(render(run, { kind: 'gate', phase: 'pr' })).toContain('approving opens the PR');
+    expect(render(run, { kind: 'gate', phase: 'pr' })).toContain('PR auto-opens by default');
   });
 
   test('a queued question takes over the action section', ({ run }) => {
@@ -360,6 +370,17 @@ describe('renderStatus', () => {
     expect.soft(out).toContain('context: schema change in slice 3');
     expect.soft(out).toContain(`duet continue ${run.runId} --answer`);
     expect.soft(out).not.toContain('decide with:');
+  });
+
+  test('a budget-cause flag names the stop resumable; an infra flag does not', ({ run }) => {
+    run.machineState = 'implFlagWait';
+    run.pendingQuestion = { question: 'orchestrator capped', cause: 'budget' };
+    const budget = render(run, { kind: 'flag', phase: 'impl' });
+    expect.soft(budget).toContain('budget-control stop');
+    expect.soft(budget).toContain('resumable');
+
+    run.pendingQuestion = { question: 'down?', cause: 'infra', errorClass: 'network' };
+    expect.soft(render(run, { kind: 'flag', phase: 'impl' })).not.toContain('budget-control stop');
   });
 
   test('the while-you-were-away section lists auto-crossed gates with packet headlines', ({ run }) => {
@@ -458,5 +479,27 @@ describe('renderStatus', () => {
 
     expect.soft(out).toContain('the interactive orchestrator is driving the spec phase');
     expect.soft(out).toContain('interactive orchestrator session');
+  });
+});
+
+describe('displayState — the truthful state label (F5)', () => {
+  test('machineState wins when present; otherwise the label derives from the stop kind', () => {
+    // machineState present → it wins (preserves headless quiescent labels).
+    expect.soft(displayState({ kind: 'interactive', phase: 'spec' }, 'specLoop')).toBe('specLoop');
+    // No machineState (the interactive case crossInteractive never mirrored):
+    expect.soft(displayState({ kind: 'interactive', phase: 'spec' })).toBe('spec');
+    expect.soft(displayState({ kind: 'running', pid: 1, phase: 'impl' })).toBe('impl');
+    expect.soft(displayState({ kind: 'crashed', phase: 'plan', command: 'c' })).toBe('plan');
+    expect.soft(displayState({ kind: 'gate', phase: 'pr', gate: 'openPrGate', heading: 'h', commands: { approve: 'a', reject: 'r' } } as StopModel)).toBe('openPrGate');
+    expect.soft(displayState({ kind: 'flag', question: 'q?', command: 'c' } as StopModel)).toBe('flag');
+    expect.soft(displayState({ kind: 'done', summary: 's' } as StopModel)).toBe('done');
+  });
+
+  test('an interactive run with no machineState shows its phase, never "(not started)"', ({ projectDir }) => {
+    const interactive = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, framing: 'x' });
+    interactive.orchestrationHost = 'interactive';
+    const out = renderStatus(buildStatusModel(interactive, { kind: 'interactive', phase: 'frame' }, []));
+    expect.soft(out).toContain('state:    frame');
+    expect.soft(out).not.toContain('(not started)');
   });
 });

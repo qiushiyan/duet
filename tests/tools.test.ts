@@ -8,6 +8,7 @@ import { createPhaseTools } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
 import { createTurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import type { TurnDispatcher } from '../src/harness/turn-dispatcher.ts';
+import { BudgetCutoffError } from '../src/providers/types.ts';
 import { PHASE } from '../src/phases.ts';
 import type { PhaseName } from '../src/phases.ts';
 import { createRun, listPendingSteers, loadRunState, runDirOf, saveRunState, stageHumanInput, stageSteer } from '../src/run-store.ts';
@@ -158,6 +159,45 @@ describe('send_prompt', () => {
       .toContain('▶ response (session session-1) · context 24%');
   });
 
+  test('the footer reports a claude turn in dollars — context, cost, round (F5)', async ({ run }) => {
+    // A claude worker (the implementer) reports costUsd — the footer's $ figure.
+    const implementer = new FakeWorker('claude', [{ costUsd: 1.25, context: { usedTokens: 50, windowTokens: 200 } }]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+    expect.soft(joined).toContain('context 25%'); // 50/200
+    expect.soft(joined).toMatch(/claude \$1\.25/);
+    expect.soft(joined).toContain('round 0/'); // write-spec is not a review round
+  });
+
+  test('the footer reports a codex turn in TOKENS, never a phantom $0.00 (F5 — the codex fix)', async ({ run }) => {
+    // A real codex worker (the default reviewer) reports tokens and NO costUsd —
+    // the pre-fix footer read only claudeWorkersUsd and showed "workers $0.00"
+    // while codex tokens accumulated. The footer must surface the tokens instead.
+    const reviewer = new FakeWorker('codex', [{ tokens: { input: 1500, output: 300 }, context: { usedTokens: 50, windowTokens: 200 } }]);
+    const { call } = harness(run, { reviewer });
+    const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+    expect.soft(joined).toContain('codex 2k/300 tok'); // fmtTokens(1500)=2k, 300
+    expect.soft(joined).not.toContain('$0.00'); // no phantom claude dollars
+    expect.soft(joined).not.toContain('workers $'); // the misleading single-figure label is gone
+    expect.soft(joined).toContain('round 1/'); // the review round just settled
+  });
+
+  test('the footer rides a budget-truncated checkpoint (F5 + #4)', async ({ run }) => {
+    // A budget cutoff only happens on a claude worker (the cap is a claude flag),
+    // so the checkpoint turn settles its claude cost and the footer reports it
+    // alongside the checkpoint note.
+    const implementer = new FakeWorker('claude', [
+      { budgetTruncated: true, sessionId: 'sess-b', costUsd: 0.18, text: 'committed work', context: { usedTokens: 80, windowTokens: 200 } },
+    ]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+    expect.soft(joined).toContain('budget reached'); // the checkpoint note still rides
+    expect.soft(joined).toMatch(/\[context 40% · claude \$0\.18 · round 0\/\d+\]/); // and the footer too
+  });
+
   test('a worker failure names the layer, prescribes retry-then-flag, and counts nothing', async ({ run }) => {
     const reviewer = new FakeWorker('codex', [new Error('spawn codex ENOENT')]);
     const { call } = harness(run, { reviewer });
@@ -184,6 +224,49 @@ describe('send_prompt', () => {
     const persisted = loadRunState(projectDir, run.runId);
     expect.soft(persisted.rounds.spec ?? 0).toBe(0);
     expect.soft(persisted.sentSnippets?.spec?.reviewer ?? []).toEqual([]);
+  });
+
+  test('a budget-truncated turn settles normally (session, cost, round) and renders a checkpoint, not infra', async ({
+    projectDir,
+    run,
+  }) => {
+    // A budget cutoff only happens on a claude worker (the cap is a claude flag),
+    // so the cut role here is a claude-bound reviewer (a valid config) — the
+    // settlement test must model the provider that can actually hit the cap.
+    const reviewer = new FakeWorker('claude', [{ budgetTruncated: true, sessionId: 'sess-b', costUsd: 0.18, text: 'committed work' }]);
+    const { call } = harness(run, { reviewer });
+    const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+
+    expect.soft(result.isError).toBeFalsy(); // a checkpoint is not an error
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+    expect.soft(joined).toContain('budget reached'); // the checkpoint note (content[1])
+    expect.soft(joined).not.toContain('never saw your prompt');
+    expect.soft(joined).not.toContain('Retry this same send_prompt');
+
+    // The work is on disk and the session is resumable — settled like any turn.
+    const persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.workerSessions.reviewer).toBe('sess-b');
+    expect.soft(persisted.costs.claudeWorkersUsd).toBeGreaterThan(0);
+    expect.soft(persisted.rounds.spec).toBe(1);
+  });
+
+  test('a BudgetCutoffError settles nothing and renders a budget-control recovery, distinct from infra', async ({
+    projectDir,
+    run,
+  }) => {
+    const reviewer = new FakeWorker('codex', [new BudgetCutoffError('cap reached with no recoverable session')]);
+    const { call } = harness(run, { reviewer });
+    const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+
+    expect.soft(text(result)).toContain('budget-control stop');
+    expect.soft(text(result)).not.toContain('infrastructure layer'); // not the infra envelope
+    expect.soft(text(result)).not.toContain('Retry this same send_prompt');
+
+    // No settlement: no session, no round, no cost.
+    const persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.workerSessions.reviewer).toBeUndefined();
+    expect.soft(persisted.rounds.spec ?? 0).toBe(0);
+    expect.soft(persisted.costs.claudeWorkersUsd).toBe(0);
   });
 
   test('emits a heartbeat while a long worker turn runs', async ({ run, onTestFinished }) => {
@@ -612,6 +695,22 @@ describe('advance_phase (the gate packet)', () => {
 
     expect(text(result)).toContain('pre-authorized');
     expect(text(result)).not.toContain('gate decision arrives');
+    expect(text(result)).toContain('continues immediately'); // headless: the run auto-continues here
+  });
+
+  test('a pre-authorized gate on the interactive host names the handoff, not auto-continuation (F1)', async ({ run }) => {
+    run.gatesAt = ['pr'];
+    run.rounds.spec = 1;
+    // The interactive host: a dispatcher is present (the host switch). A
+    // pre-authorized gate does NOT auto-continue here — only the headless driver
+    // auto-crosses — so the message must say to hand off, not to wait for the
+    // next phase.
+    const { call } = harness(run, { phase: 'spec', async: true });
+    const result = await call('advance_phase', { summary: 'converged', artifacts: [] });
+
+    expect.soft(text(result)).toContain('pre-authorized');
+    expect.soft(text(result)).toContain('duet afk'); // hand off to run the rest unattended
+    expect.soft(text(result)).not.toContain('continues immediately');
   });
 
   test('synthesis phases may advance without a review round; open completes the run', async ({ run }) => {
@@ -814,18 +913,23 @@ describe('the post-terminal quiescence rail', () => {
       ['list_snippets', {}],
       ['create_branch', { name: 'feat/nope' }],
       ['propose_snippet_edit', { snippet_key: 'k', proposed_body: 'b', rationale: 'r' }],
-      ['write_note', { observation: 'n' }],
     ] as const) {
       const result = await call(name, args);
       expect.soft(result.isError, name).toBe(true);
       expect.soft(text(result), name).toContain(`${name} is refused here`);
     }
-    // None of them ran: no worker turn, no branch, no proposal, no note.
+    // None of them ran: no worker turn, no branch, no proposal.
     expect.soft(implementer.calls).toHaveLength(0);
     expect.soft(reviewer.calls).toHaveLength(0);
     expect.soft(run.branch).toBeUndefined();
     const persisted = loadRunState(projectDir, run.runId);
     expect.soft(persisted.snippetProposals).toHaveLength(0);
+
+    // write_note is NOT refused (F2): a pure note append has no statechart
+    // effect, so it works at the gate moment a friction observation crystallizes.
+    const noted = await call('write_note', { observation: 'friction at the gate' });
+    expect.soft(noted.isError).toBeUndefined();
+    expect.soft(readFileSync(join(runDirOf(projectDir, run.runId), 'notes.md'), 'utf8')).toContain('friction at the gate');
 
     // The status/re-anchor read stays open.
     expect.soft((await call('get_task')).isError).toBeUndefined();
@@ -994,6 +1098,16 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     expect.soft(disk.costs.claudeWorkersUsd).toBe(1.25);
     expect.soft(disk.costs.codexTokens).toEqual({ input: 1000, output: 50 });
     expect.soft(disk.workerSessions).toMatchObject({ implementer: 'impl-1', reviewer: 'rev-1' });
+  });
+
+  test('check_turns delivers the per-turn footer too (F5 covers the async host)', async ({ run }) => {
+    const reviewer = new DeferredWorker('codex');
+    const { call } = harness(run, { reviewer, async: true });
+    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    reviewer.resolve({ sessionId: 'rev-1', tokens: { input: 2000, output: 400 }, context: { usedTokens: 100, windowTokens: 200 } });
+    await flush();
+    const collected = allText(await call('check_turns'));
+    expect.soft(collected).toMatch(/\[context 50% · codex 2k\/400 tok · round 1\/\d+\]/);
   });
 
   test('a failed settle commits no round and no sent tag; the retry of the same tag is clean (rail preserved)', async ({

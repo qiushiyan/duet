@@ -86,6 +86,15 @@ export interface WorkflowSpecInput {
   readonly presets: Record<string, readonly string[]>;
   /** Gates that can never be pre-authorized (outward-facing/non-negotiable). */
   readonly forceAttend: readonly string[];
+  /**
+   * Gates pre-authorized by default — the inverse of `forceAttend`. Materialized
+   * out of a new run's posture at `createRun` (the run persists `gatesAt = gate
+   * phases − defaultPreAuthorized`), so a default run auto-crosses these while a
+   * legacy run (absent `gatesAt`) keeps attend-all unchanged. Disjoint from
+   * `forceAttend` (validateRegistry enforces it). Empty ⇒ no default pre-auth
+   * (the materialization leaves `gatesAt` absent — pure pre-feature behavior).
+   */
+  readonly defaultPreAuthorized: readonly string[];
 }
 
 export const WORKFLOWS = {
@@ -192,7 +201,7 @@ export const WORKFLOWS = {
           state: 'openPrGate',
           heading: 'OPEN-PR gate — the PR description',
           ready: 'Open-PR gate — PR description ready',
-          hint: '(approving opens the PR: the implementer pushes the branch and runs gh pr create)',
+          hint: '(the PR auto-opens by default; this stop exists only when you list `pr` in gates_at — approving then opens it: the implementer pushes the branch and runs gh pr create)',
         },
         artifactLabel: 'PR description',
         reviewLoop: false,
@@ -225,7 +234,14 @@ export const WORKFLOWS = {
        */
       'skip-plan': ['frame', 'spec', 'impl', 'docs'],
     },
-    forceAttend: ['pr'],
+    // Opening a PR is non-destructive and reversible, so the Open-PR gate is no
+    // longer force-attended — it is pre-authorized by default (the PR auto-opens)
+    // and attended only when `pr` is listed in gates_at. forceAttend and
+    // defaultPreAuthorized must change together: validateRegistry rejects an
+    // overlap at module load, and the materialization (createRun) reads the new
+    // default-pre-authorized set.
+    forceAttend: [],
+    defaultPreAuthorized: ['pr'],
   },
   rir: {
     name: 'rir',
@@ -276,6 +292,7 @@ export const WORKFLOWS = {
     // forceAttend pins nothing for RIR (no outward-facing action).
     presets: { afk: [] },
     forceAttend: [],
+    defaultPreAuthorized: [],
   },
 } as const satisfies Record<string, WorkflowSpecInput>;
 
@@ -377,6 +394,19 @@ export function validateRegistry(workflows: Record<string, WorkflowSpecInput>): 
     };
     requireGatePhase(wf.handoffGate, 'handoffGate');
     for (const g of wf.forceAttend) requireGatePhase(g, 'forceAttend entry');
+    for (const g of wf.defaultPreAuthorized) requireGatePhase(g, 'defaultPreAuthorized entry');
+    // Disjointness: a gate cannot be both force-attended and default-pre-authorized.
+    // Materialization omits a defaultPreAuthorized gate from gatesAt, but gateAttended
+    // still force-attends a forceAttend gate — so an overlap would render the gate as
+    // pre-authorized in the posture text while it actually stops. Catch it at load.
+    const forceAttendSet = new Set(wf.forceAttend);
+    for (const g of wf.defaultPreAuthorized) {
+      if (forceAttendSet.has(g)) {
+        throw new Error(
+          `registry: workflow "${wfName}" gate "${g}" is in both forceAttend and defaultPreAuthorized — a gate cannot be force-attended and default-pre-authorized at once`,
+        );
+      }
+    }
     for (const [presetName, gates] of Object.entries(wf.presets)) {
       for (const g of gates) requireGatePhase(g, `preset "${presetName}" value`);
     }
@@ -446,6 +476,26 @@ export const PHASE: Record<PhaseName, PhaseSpec> = Object.fromEntries(
 /** A workflow's gate-bearing phase names, in arc order — its `gates_at` vocabulary. */
 export function gatePhasesOf(workflow: WorkflowName): readonly GatePhase[] {
   return WORKFLOWS[workflow].phases.filter((p) => p.gate !== null).map((p) => p.name as GatePhase);
+}
+
+/** A workflow's default-pre-authorized gates (the inverse of `forceAttend`). */
+export function defaultPreAuthorizedOf(workflow: WorkflowName): readonly GatePhase[] {
+  return WORKFLOWS[workflow].defaultPreAuthorized as readonly GatePhase[];
+}
+
+/**
+ * The default gate posture a new run materializes from its workflow: the gate
+ * phases minus the default-pre-authorized ones. Returns `undefined` when nothing
+ * is pre-authorized by default (≡ absent `gatesAt` ≡ attend-all/legacy), so a
+ * pre-feature run is written byte-for-byte as before. Pure (registry passed in)
+ * so it is branch-testable without mutating the live registry.
+ */
+export function defaultPosture(
+  gatePhases: readonly GatePhase[],
+  defaultPreAuthorized: readonly string[],
+): GatePhase[] | undefined {
+  if (defaultPreAuthorized.length === 0) return undefined;
+  return gatePhases.filter((g) => !defaultPreAuthorized.includes(g));
 }
 
 /**

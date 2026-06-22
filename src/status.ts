@@ -2,7 +2,7 @@ import type { RunPosition } from './harness/lifecycle.ts';
 import { WORKFLOWS, gateOf, phaseOfGateState, phasesOf } from './phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
 import type { WorkerRole } from './providers/types.ts';
-import { contextPercent, workflowOf } from './run-store.ts';
+import { contextPercent, fmtTokens, workflowOf } from './run-store.ts';
 import type { HumanDecision, RunState, Steer, Voice } from './run-store.ts';
 import { resolveSessions } from './sessions.ts';
 import type { SessionRef } from './sessions.ts';
@@ -110,7 +110,7 @@ export type StopModel =
       packet?: { summary: string; artifacts: string[]; humanDecisions?: HumanDecision[] };
       commands: { approve: string; reject: string };
     }
-  | { kind: 'flag'; question: string; context?: string; command: string; cause?: 'human' | 'infra'; errorClass?: ErrorClass }
+  | { kind: 'flag'; question: string; context?: string; command: string; cause?: 'human' | 'infra' | 'budget'; errorClass?: ErrorClass }
   | { kind: 'crashed'; phase: PhaseName; command: string }
   | { kind: 'abandoned'; at: string; revive: string; purge: string }
   | { kind: 'done'; summary?: string };
@@ -250,12 +250,6 @@ function packetHeadline(state: RunState, gateState: string): string {
   return (state.phaseSummaries[phase]?.summary.split('\n').find((l) => l.trim()) ?? '').slice(0, 96);
 }
 
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
-  return String(n);
-}
-
 /** ISO timestamp → the short human form the status lists use. */
 function fmtStamp(iso: string): string {
   return iso.slice(0, 16).replace('T', ' ');
@@ -266,11 +260,37 @@ function fmtStamp(iso: string): string {
  * question, crash notice, or completion), the while-you-were-away section,
  * staged steers, and the next command.
  */
+/**
+ * The display label for a run's state (F5). Prefer the quiescent `machineState`
+ * mirror when present (the headless stop labels), else derive an honest label
+ * from the probed stop — so an interactive run whose crossInteractive never set
+ * machineState shows its live phase/gate, not the misleading `(not started)`.
+ * `(not started)` is reserved for the genuine no-state case. Every stop kind is
+ * mapped explicitly — there is no `unstarted` RunPosition kind to lean on.
+ */
+export function displayState(stop: StopModel, machineState?: string): string {
+  if (machineState) return machineState;
+  switch (stop.kind) {
+    case 'running':
+    case 'interactive':
+    case 'crashed':
+      return stop.phase;
+    case 'gate':
+      return stop.gate;
+    case 'flag':
+      return 'flag';
+    case 'done':
+      return 'done';
+    case 'abandoned':
+      return 'abandoned';
+  }
+}
+
 export function renderStatus(model: StatusModel): string {
   const lines: string[] = [];
   lines.push(`\n━━━ duet run ${model.runId} ━━━`);
   lines.push(`workflow: ${model.workflowDisplayName}`);
-  lines.push(`state:    ${model.machineState ?? '(not started)'}`);
+  lines.push(`state:    ${displayState(model.stop, model.machineState)}`);
   if (model.stop.kind === 'running') {
     lines.push(`phase:    running in the background (pid ${model.stop.pid})`);
   }
@@ -350,6 +370,9 @@ export function renderStatus(model: StatusModel): string {
     lines.push(`\nQUEUED QUESTION for you:`);
     lines.push(`  ${stop.question}`);
     if (stop.context) lines.push(`  context: ${stop.context}`);
+    // A budget stop is resumable, not an infra failure — name that so the human
+    // reaches for "raise the budget / resume" rather than triaging an outage.
+    if (stop.cause === 'budget') lines.push(`  (budget-control stop — resumable: raise the budget or resume, not an infra failure)`);
     lines.push(`\nanswer with:  ${stop.command}`);
     return lines.join('\n');
   }
@@ -409,6 +432,8 @@ export function renderStatus(model: StatusModel): string {
 export interface BriefModel {
   runId: string;
   machineState?: string;
+  /** The honest display label (F5): machineState when present, else derived from the stop. */
+  displayState: string;
   stopKind: StopModel['kind'];
   headline: string;
   nextCommand?: string;
@@ -465,6 +490,7 @@ export function buildBrief(model: StatusModel): BriefModel {
   return {
     runId: model.runId,
     ...(model.machineState ? { machineState: model.machineState } : {}),
+    displayState: displayState(stop, model.machineState),
     stopKind: stop.kind,
     headline: briefHeadline(stop, model.workflow),
     ...(nextCommand ? { nextCommand } : {}),
@@ -480,7 +506,7 @@ export function buildBrief(model: StatusModel): BriefModel {
 /** The lean human render of the digest — a few lines, not the full packet. */
 export function renderBrief(brief: BriefModel): string {
   const lines: string[] = [];
-  lines.push(`duet ${brief.runId} — ${brief.machineState ?? '(not started)'} [${brief.stopKind}]`);
+  lines.push(`duet ${brief.runId} — ${brief.displayState} [${brief.stopKind}]`);
   lines.push(brief.headline);
   if (brief.humanDecisions && brief.humanDecisions.length > 0) {
     const anyHigh = brief.humanDecisions.some((d) => d.severity === 'high');

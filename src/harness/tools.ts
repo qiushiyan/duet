@@ -3,6 +3,7 @@ import { execa } from 'execa';
 import { z } from 'zod';
 import { PHASE, isGatePhase } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
+import { BudgetCutoffError } from '../providers/types.ts';
 import type { WorkerProvider, WorkerRole, WorkerTurn } from '../providers/types.ts';
 import { getSnippet, renderSnippetLibrary } from '../snippets.ts';
 import {
@@ -11,6 +12,7 @@ import {
   clearTurnActive,
   consumeHumanInput,
   contextPercent,
+  fmtTokens,
   gateAttended,
   listPendingSteers,
   loadRunState,
@@ -199,8 +201,17 @@ export function settleTurn(
   const { state, phase, providers, log } = deps;
   const { role, tag, isReviewRound } = meta;
   if (outcome instanceof Error) {
-    log(`[send_prompt] ✗ ${role} turn failed: ${outcome.message}`);
-    appendVoiceLog(state, role, `✗ turn failed: ${outcome.message}`);
+    // A budget cutoff with no recoverable session is a budget-control stop, not
+    // an infra failure — the log/voice must say so (the work ran and may be on
+    // disk), so the driver log reads honestly when no reviewer is watching. It
+    // still commits no bookkeeping (no session/round/cost): "no settlement".
+    if (outcome instanceof BudgetCutoffError) {
+      log(`[send_prompt] ◼ ${role} turn stopped at its budget cap: ${outcome.message}`);
+      appendVoiceLog(state, role, `◼ budget-control stop: ${outcome.message}`);
+    } else {
+      log(`[send_prompt] ✗ ${role} turn failed: ${outcome.message}`);
+      appendVoiceLog(state, role, `✗ turn failed: ${outcome.message}`);
+    }
     clearTurnActive(state, role);
     return;
   }
@@ -215,14 +226,16 @@ export function settleTurn(
     const tags = (sent[role] ??= []);
     if (!tags.includes(tag)) tags.push(tag);
   }
-  if (turn.costUsd) fresh.costs.claudeWorkersUsd += turn.costUsd;
-  // A claude turn that reported no cost (the interactive transport, by P5) means
-  // the claudeWorkersUsd total is partial — mark it so the status never presents
-  // the known sum as the complete total.
-  if (providers[role].name === 'claude' && turn.costUsd === undefined) {
-    fresh.costs.claudeWorkersCostPartial = true;
-  }
-  if (providers[role].name === 'codex' && turn.tokens) {
+  // Accounting is provider-scoped: Claude bills in dollars, Codex in tokens. The
+  // costUsd add is gated on the claude provider (not merely costUsd's presence),
+  // so a malformed codex adapter that returned a stray costUsd can't be
+  // misaccounted as Claude spend. An absent costUsd on a claude turn (the
+  // interactive transport, by P5) makes the running total partial — mark it so
+  // status/footer never present the known sum as the complete total.
+  if (providers[role].name === 'claude') {
+    if (turn.costUsd !== undefined) fresh.costs.claudeWorkersUsd += turn.costUsd;
+    else fresh.costs.claudeWorkersCostPartial = true;
+  } else if (providers[role].name === 'codex' && turn.tokens) {
     fresh.costs.codexTokens.input += turn.tokens.input;
     fresh.costs.codexTokens.output += turn.tokens.output;
   }
@@ -249,6 +262,21 @@ export function renderTurnResult(
 ): CallToolResult {
   const { state, phase } = deps;
   const { role, isReviewRound, cap } = meta;
+  // A budget cutoff with no recoverable session — a budget-control recovery, NOT
+  // the infra envelope and NOT the retry path: the worker ran (committed work may
+  // be on disk), but nothing settled, so resume manually / raise the budget /
+  // surface to the human. Checked before the generic Error arm (it is an Error).
+  if (outcome instanceof BudgetCutoffError) {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `The ${role} worker reached its budget cap — a budget-control stop, not an infrastructure failure. The worker ran and committed work may be on disk (check git), but no resumable session id was recovered. Do NOT retry this send_prompt as infra: resume the work manually once you have a session id, raise the budget, or surface it to the human via ask_human.`,
+        },
+      ],
+      isError: true,
+    };
+  }
   if (outcome instanceof Error) {
     return {
       content: [
@@ -261,6 +289,14 @@ export function renderTurnResult(
     };
   }
   const content: Array<{ type: 'text'; text: string }> = [{ type: 'text' as const, text: outcome.text }];
+  // A budget-truncated turn DID settle (session/cost committed) — surface it as a
+  // resumable checkpoint, never the infra "retry this same call" envelope.
+  if (outcome.budgetTruncated) {
+    content.push({
+      type: 'text' as const,
+      text: `(budget reached — the worker saw your prompt and committed work is on disk; its session is resumable. Resume that session for the remainder, or raise the budget. This is a checkpoint, not a failure — do not re-send the original prompt.)`,
+    });
+  }
   // Reactive state-triggered nudge (docs/prompting-and-tool-design.md
   // §"Results nudge the next step"): when this review round leaves exactly one
   // before the backstop cap, say so once — the cap is runaway protection, not a
@@ -271,7 +307,39 @@ export function renderTurnResult(
       text: `(${state.rounds[phase]} of ${cap} review rounds used — one remains before this phase’s backstop cap. The cap is runaway protection, not a target: if the loop has converged, advance_phase now; if a substantive disagreement is still open, that is the human’s call via ask_human. Spend the last round only on a genuinely open structural point.)`,
     });
   }
+  // F5: a compact per-turn footer — this role's context fill, the cumulative
+  // worker cost, and the round vs cap. Both hosts flow through here (blocking
+  // send_prompt and check_turns via the dispatcher's collect), so one edit
+  // covers both.
+  const ctxUsage = state.contextUsage?.[role];
+  const footer = [
+    ...(ctxUsage ? [`context ${contextPercent(ctxUsage)}%`] : []),
+    footerWorkerCost(state.costs),
+    `round ${state.rounds[phase] ?? 0}/${cap}`,
+  ].join(' · ');
+  content.push({ type: 'text' as const, text: `[${footer}]` });
   return { content };
+}
+
+/**
+ * The footer's cumulative worker-cost fragment — honest about BOTH providers,
+ * mirroring `duet status` semantics: Claude bills in dollars (with a `+` when
+ * the total is partial/unmetered — an interactive-transport turn reports no
+ * cost), Codex bills in tokens. Each side shows only when it has activity, so a
+ * Claude-only round reads `claude $1.25` and a Codex-only round reads
+ * `codex 2k/400 tok` — never the old `workers $0.00`, which implied no cost while
+ * Codex tokens accumulated. Falls back to `claude $0.00` only in the (post-settle
+ * unreachable) no-activity case, so the slot is never empty.
+ */
+function footerWorkerCost(costs: RunState['costs']): string {
+  const parts: string[] = [];
+  if (costs.claudeWorkersUsd > 0 || costs.claudeWorkersCostPartial) {
+    parts.push(`claude $${costs.claudeWorkersUsd.toFixed(2)}${costs.claudeWorkersCostPartial ? '+' : ''}`);
+  }
+  if (costs.codexTokens.input + costs.codexTokens.output > 0) {
+    parts.push(`codex ${fmtTokens(costs.codexTokens.input)}/${fmtTokens(costs.codexTokens.output)} tok`);
+  }
+  return parts.length > 0 ? parts.join(' · ') : `claude $${costs.claudeWorkersUsd.toFixed(2)}`;
 }
 
 export function createPhaseTools({ state, phase, providers, log, stagedAnswer: initialAnswer, rails, home, async: asyncDeps }: PhaseToolsDeps): PhaseTools {
@@ -720,7 +788,13 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             ? 'the run is complete. End your turn with a one-line status.'
             : gateAttended(state, phase)
               ? 'the run moves to the human gate. End your turn with a one-line status; the gate decision arrives as your next message.'
-              : 'this phase’s gate was pre-authorized by the human at run start, so your packet is saved for their later review and the run continues immediately. End your turn with a one-line status; the next phase’s instructions arrive as your next message.';
+              : dispatcher
+                ? // The interactive host (a dispatcher is present): a pre-authorized
+                  // gate does NOT auto-continue here — only the headless driver
+                  // auto-crosses — so the message must not promise the next phase
+                  // arrives automatically. It says to hand off instead.
+                  'this phase’s gate was pre-authorized, so your packet is saved for the human’s later review. On this interactive host the run does NOT auto-continue here — hand off with `duet afk` (or `duet continue --approve --headless`) to run the pre-authorized rest unattended. End your turn with a one-line status.'
+                : 'this phase’s gate was pre-authorized by the human at run start, so your packet is saved for their later review and the run continues immediately. End your turn with a one-line status; the next phase’s instructions arrive as your next message.';
         return {
           content: [{ type: 'text' as const, text: `Phase advance recorded — ${next}` }],
         };
@@ -778,7 +852,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     tools.push(
       kernelTool(
         'check_turns',
-        'Collect the results of worker turns dispatched with send_prompt. On the interactive host send_prompt returns immediately and the turn runs in the background; check_turns is how you pull a finished turn’s response back into the conversation — the worker’s text (or, if its turn failed at the infrastructure layer, the prescribed recovery), with the same bookkeeping a blocking turn would have done already committed. It is instant: it delivers whatever has settled, names any role whose turn is still running (call it again later — or let `duet status --wait` wake you on completion), and never waits. Collecting a role’s result re-opens it for the next send_prompt; a phase cannot advance while any dispatched turn is still uncollected.',
+        'Collect the results of worker turns dispatched with send_prompt. On the interactive host send_prompt returns immediately and the turn runs in the background; check_turns is how you pull a finished turn’s response back into the conversation — the worker’s text (with any checkpoint note if it hit its budget cap), or, if the turn stopped short, the prescribed recovery: a budget-control stop (resume the session / raise the budget) or an infrastructure failure (retry once, then ask_human). The same bookkeeping a blocking turn would have done is already committed. It is instant: it delivers whatever has settled, names any role whose turn is still running (call it again later — or background `duet status --wait` so its settling re-invokes you), and never waits. Collecting a role’s result re-opens it for the next send_prompt; a phase cannot advance while any dispatched turn is still uncollected.',
         {},
         async () => {
           const ready = dispatcher.collectReady();
@@ -795,7 +869,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             if (dispatcher.statusOf(role) === 'running') {
               content.push({
                 type: 'text' as const,
-                text: `The ${role} turn is still running — keep the conversation going and call check_turns again later, or run \`duet status --wait\` (it wakes the moment the turn settles).`,
+                text: `The ${role} turn is still running — keep the conversation going and call check_turns again later, or, with nothing more to do meanwhile, arm \`duet status --wait\` in the background so its settling brings you back.`,
               });
             }
           }
@@ -875,7 +949,9 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     'list_snippets',
     'create_branch',
     'propose_snippet_edit',
-    'write_note',
+    // write_note is NOT here (F2): a pure append to notes.md has no statechart
+    // effect, so the quiescence rationale for refusing work tools doesn't apply
+    // — a friction observation can be recorded at the gate moment it crystallizes.
   ]);
   const phaseEnding = (toolName: string): CallToolResult => ({
     content: [

@@ -17,13 +17,13 @@ import { test } from './helpers/fixtures.ts';
 
 describe('parseGatesAt', () => {
   plain.for([
-    { input: 'frame,spec', expected: ['frame', 'spec', 'pr'] },
-    { input: 'frame spec  plan', expected: ['frame', 'spec', 'plan', 'pr'] },
-    { input: 'overnight', expected: ['frame', 'spec', 'pr'] },
-    { input: 'skip-plan', expected: ['frame', 'spec', 'impl', 'docs', 'pr'] },
-    { input: 'pr', expected: ['pr'] },
-    { input: 'frame,frame,spec', expected: ['frame', 'spec', 'pr'] },
-  ])('"$input" → $expected (pr always attended)', ({ input, expected }) => {
+    { input: 'frame,spec', expected: ['frame', 'spec'] },
+    { input: 'frame spec  plan', expected: ['frame', 'spec', 'plan'] },
+    { input: 'overnight', expected: ['frame', 'spec'] },
+    { input: 'skip-plan', expected: ['frame', 'spec', 'impl', 'docs'] },
+    { input: 'pr', expected: ['pr'] }, // pr is attended only when explicitly listed (opt-in)
+    { input: 'frame,frame,spec', expected: ['frame', 'spec'] },
+  ])('"$input" → $expected (no pr auto-appended; pr is opt-in now)', ({ input, expected }) => {
     expect(parseGatesAt(input)).toEqual(expected);
   });
 
@@ -78,7 +78,7 @@ describe('parseFramingFile (the machine/prose boundary)', () => {
     const { meta, body } = parseFramingFile(
       '---\n# a comment\ngates_at: overnight\nspec: docs/spec.md\n---\n\n# Problem\nthe prose',
     );
-    expect(meta).toEqual({ gatesAt: ['frame', 'spec', 'pr'], spec: 'docs/spec.md' });
+    expect(meta).toEqual({ gatesAt: ['frame', 'spec'], spec: 'docs/spec.md' });
     expect(body).toBe('# Problem\nthe prose');
   });
 
@@ -94,7 +94,7 @@ describe('parseFramingFile (the machine/prose boundary)', () => {
 
   plain('a file ending at the closing --- has an empty body, not a leaked frontmatter', () => {
     const { meta, body } = parseFramingFile('---\ngates_at: frame\n---');
-    expect(meta.gatesAt).toEqual(['frame', 'pr']);
+    expect(meta.gatesAt).toEqual(['frame']);
     expect(body).toBe('');
   });
 
@@ -307,10 +307,10 @@ describe('resolveRunInputs', () => {
     const fromFrontmatter = await resolveRunInputs(projectDir, { framing: 'brief.md' });
     expect.soft(fromFrontmatter.framing).toBe('the briefing');
     expect.soft(fromFrontmatter.framingRaw).toContain('gates_at: overnight');
-    expect.soft(fromFrontmatter.gatesAt).toEqual(['frame', 'spec', 'pr']);
+    expect.soft(fromFrontmatter.gatesAt).toEqual(['frame', 'spec']);
 
     const flagWins = await resolveRunInputs(projectDir, { framing: 'brief.md', gatesAt: 'impl', spec: 'docs/draft.md' });
-    expect.soft(flagWins.gatesAt).toEqual(['impl', 'pr']);
+    expect.soft(flagWins.gatesAt).toEqual(['impl']);
     expect.soft(flagWins.specPath).toBe('docs/draft.md');
   });
 

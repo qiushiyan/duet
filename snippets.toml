@@ -35,7 +35,7 @@ $0'''
 [[snippets]]
 key = "write-spec"
 expand = '''
-Now, write the spec to `docs/superpowers/specs/`. Ground problem and approach in actual code — read the relevant modules first if you haven't. **Tight prose beats exhaustive sections.**
+Now, write the spec to the location the framing's conventions name (where specs live is the project's call, not this template's). Ground problem and approach in actual code — read the relevant modules first if you haven't. **Tight prose beats exhaustive sections.**
 
 **Open with a leader-facing summary.** The spec's first section reports the change the way you'd report it to your leader:
 - What we're adding or fixing, in product terms — the feature, the bug, the problem it solves.
@@ -216,8 +216,8 @@ expand = '''
 Spec updated. I've drafted an implementation plan. Review with the same rigor as the spec.
 
 Background (skim as a lens, don't recite):
-- `~/.agents/skills/tdd/SKILL.md` — vertical slices, behavior-focused tests, when to mock
-- `~/.agents/skills/improve-codebase-architecture/SKILL.md` — deep modules, seams, the deletion test
+- `~/.claude/skills/tdd/SKILL.md` — vertical slices, behavior-focused tests, when to mock
+- `~/.claude/skills/improve-codebase-architecture/SKILL.md` — deep modules, seams, the deletion test
 
 **Adapt; drop what doesn't fit our use case.**
 

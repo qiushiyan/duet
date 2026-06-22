@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { createActor, waitFor } from 'xstate';
 import type { AnyMachineSnapshot, Snapshot } from 'xstate';
 import { notify as desktopNotify } from '../notify.ts';
-import { PHASE, WORKFLOWS, entryOf, phaseOfGateState, phasesOf } from '../phases.ts';
+import { PHASE, WORKFLOWS, entryOf, gatePhasesOf, phaseOfGateState, phasesOf } from '../phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from '../phases.ts';
 import type { WorkerRole } from '../providers/types.ts';
 import {
@@ -14,6 +14,7 @@ import {
   runDirOf,
   saveMachineSnapshot,
   saveRunState,
+  setGatesAt,
   workflowOf,
 } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
@@ -450,6 +451,43 @@ export function crossInteractive(state: RunState, humanEvent: HumanEvent): void 
   const fresh = loadRunState(state.cwd, state.runId);
   delete fresh.terminalMarker;
   saveRunState(fresh);
+}
+
+/**
+ * The mid-session AFK handoff (#1): from ANY interactive gate parked on the
+ * approve path — INCLUDING a pre-authorized one — re-set the downstream posture,
+ * cross this gate, clear the interactive marker, and let the caller spawn the
+ * detached headless driver. Legality keys on the gate POSITION (probeRunPosition
+ * kind 'gate' + validateInteractiveCrossing), never on gateAttended: a
+ * pre-authorized interactive gate is exactly where afk is the one tap that hands
+ * off (the interactive host never auto-crosses). Posture is written first
+ * (setGatesAt, fresh-load-safe), then the gate is crossed, then the interactive
+ * marker is cleared (fresh-load, preserving the just-written posture/snapshot).
+ * Returns the resulting attended/pre-authorized split for the caller to print as
+ * informed consent.
+ */
+export function enterAfk(state: RunState, posture: GatePhase[]): { attended: GatePhase[]; preAuthorized: GatePhase[] } {
+  if (state.orchestrationHost !== 'interactive') {
+    throw new Error(
+      `run ${state.runId} is not orchestrated interactively — duet afk hands off from an interactive gate; a headless run already runs unattended.`,
+    );
+  }
+  const position = probeRunPosition(state);
+  if (position.kind !== 'gate') {
+    const why = validateInteractiveCrossing(position, 'approve') ?? "isn't parked at a gate";
+    throw new Error(`run ${state.runId} ${why} — duet afk hands off only from a gate (steer a live phase, or answer a flag).`);
+  }
+  setGatesAt(state, posture);
+  crossInteractive(state, { type: 'human.approve' });
+  const fresh = loadRunState(state.cwd, state.runId);
+  delete fresh.orchestrationHost;
+  saveRunState(fresh);
+  Object.assign(state, fresh);
+  const gates = gatePhasesOf(workflowOf(state));
+  return {
+    attended: gates.filter((g) => posture.includes(g)),
+    preAuthorized: gates.filter((g) => !posture.includes(g)),
+  };
 }
 
 /**

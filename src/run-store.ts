@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { Snapshot } from 'xstate';
 import type { RoleBindings } from './config.ts';
-import { WORKFLOWS } from './phases.ts';
+import { PHASE, WORKFLOWS, defaultPosture, defaultPreAuthorizedOf, gatePhasesOf } from './phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
 import type { ContextUsage, WorkerRole } from './providers/types.ts';
 import { locateSessionTranscripts } from './sessions.ts';
@@ -94,11 +94,22 @@ export interface RunState {
   branch?: string;
   bindings: RoleBindings;
   /**
+   * The resolved per-turn budget multiplier (#3a — account/billing posture, the
+   * same family as the bindings' `transport`). FROZEN at creation, never mutated
+   * (the lifetime contrast with mutable `gatesAt` — billing posture does not
+   * change mid-run). Absent ⇒ OFF: `budgetFor` returns undefined caps and no
+   * `--max-budget-usd`/orchestrator cap is set. A positive number scales the
+   * per-phase profile ("default" resolves to 1); it is never `0`.
+   */
+  budget?: number;
+  /**
    * Phases whose gates the human attends (gates_at — docs/automation-design.md
    * §"Gate pre-authorization"). Absent = every gate attended (the default and
-   * the pre-feature behavior). Gates of phases not listed are pre-authorized:
-   * the harness records the packet, notifies, and auto-approves. `pr` is
-   * always present — the Open-PR gate cannot be pre-authorized.
+   * the pre-feature behavior); a new run materializes a concrete default at
+   * createRun (gate phases − the workflow's defaultPreAuthorized). Gates of
+   * phases not listed are pre-authorized: the harness records the packet,
+   * notifies, and auto-approves. The Open-PR gate is pre-authorized by default
+   * now (the PR auto-opens), attended only when `pr` is listed here.
    */
   gatesAt?: GatePhase[];
   /** Gates auto-crossed under pre-authorization, for the morning review. */
@@ -181,11 +192,14 @@ export interface RunState {
    * A queued flag awaiting `duet continue --answer`. `cause` distinguishes the
    * supervisor's actual decision — escalate vs resume/retry: `human` (an
    * ask_human-originated question — product, environment, blocker, or
-   * "asked twice" escalation, all human-owned) vs `infra` (a caught
-   * infrastructure failure), with `errorClass` (taxonomy class, infra only)
-   * naming what failed. Absent cause = pre-feature flags (read as human-owned).
+   * "asked twice" escalation, all human-owned), `infra` (a caught infrastructure
+   * failure), or `budget` (the orchestrator itself hit its cost cap — a real
+   * stop, but resumable: raise the budget / resume, never an infra-retry and
+   * never a product question). `errorClass` (taxonomy class) is infra-only —
+   * absent for a budget stop, since budget is not an infra class. Absent cause =
+   * pre-feature flags (read as human-owned).
    */
-  pendingQuestion?: { question: string; context?: string; cause?: 'human' | 'infra'; errorClass?: ErrorClass };
+  pendingQuestion?: { question: string; context?: string; cause?: 'human' | 'infra' | 'budget'; errorClass?: ErrorClass };
   /**
    * Opt-in bounded auto-retry of transient infra failures (#4b) — the attempt
    * budget. 0/absent ⇒ off (the default; behavior is byte-for-byte as before).
@@ -245,11 +259,32 @@ export function workflowOf(state: RunState): WorkflowName {
 /**
  * Whether a phase's exit gate is attended by the human (vs pre-authorized at
  * run start). Absent gatesAt means every gate is attended; the workflow's
- * force-attended gates (Full's Open-PR gate) are attended unconditionally.
+ * force-attended gates (none, currently — the generic non-pre-authorizable
+ * mechanism) are attended unconditionally.
  */
 export function gateAttended(state: RunState, phase: GatePhase): boolean {
   if ((WORKFLOWS[workflowOf(state)].forceAttend as readonly string[]).includes(phase)) return true;
   return state.gatesAt === undefined || state.gatesAt.includes(phase);
+}
+
+/**
+ * The effective per-turn budget caps for a phase — the one source every worker-
+ * and orchestrator-construction site reads, replacing direct
+ * `PHASE[phase].*BudgetUsd` reads. A cap is a number, or `undefined` when off.
+ * The opt-in knob (#3a) is `state.budget`: absent ⇒ OFF (both caps undefined,
+ * the maintainer's default), else the per-phase profile scaled by the frozen
+ * multiplier. Lives beside gateAttended: both resolve run-state policy against
+ * the phase registry.
+ */
+export function budgetFor(
+  state: RunState,
+  phase: PhaseName,
+): { worker: number | undefined; orchestrator: number | undefined } {
+  if (state.budget === undefined) return { worker: undefined, orchestrator: undefined };
+  return {
+    worker: PHASE[phase].workerBudgetUsd * state.budget,
+    orchestrator: PHASE[phase].orchestratorBudgetUsd * state.budget,
+  };
 }
 
 /**
@@ -299,12 +334,21 @@ export function createRun(opts: {
   framingRaw?: string;
   branch?: string;
   bindings: RoleBindings;
+  /** The resolved per-turn budget multiplier (frozen here; absent ⇒ off). */
+  budget?: number;
   gatesAt?: GatePhase[];
   retryInfra?: number;
 }): RunState {
   const now = new Date();
   const stamp = now.toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
   const runId = `${stamp}-${randomBytes(2).toString('hex')}`;
+  // Materialize the default gate posture at creation: an explicit gatesAt wins
+  // (including an explicit `[]` attend-none — nullish, not truthy), else the
+  // workflow's default-pre-authorized inverse. While defaultPreAuthorized is
+  // empty this stays undefined, so a default run keeps absent gatesAt = the
+  // pre-feature attend-all, written byte-for-byte as before.
+  const wf = opts.workflow ?? 'full';
+  const gatesAt = opts.gatesAt ?? defaultPosture(gatePhasesOf(wf), defaultPreAuthorizedOf(wf));
   const state: RunState = {
     runId,
     createdAt: now.toISOString(),
@@ -314,7 +358,8 @@ export function createRun(opts: {
     ...(opts.framing ? { framing: opts.framing } : {}),
     ...(opts.branch ? { branch: opts.branch } : {}),
     bindings: opts.bindings,
-    ...(opts.gatesAt ? { gatesAt: opts.gatesAt } : {}),
+    ...(opts.budget !== undefined ? { budget: opts.budget } : {}),
+    ...(gatesAt ? { gatesAt } : {}),
     ...(opts.retryInfra ? { retryInfra: opts.retryInfra } : {}),
     workerSessions: {},
     phaseStarted: {},
@@ -437,6 +482,22 @@ export function markWorkerDispatched(state: RunState): void {
   fresh.workerDispatched = true;
   saveRunState(fresh);
   state.workerDispatched = true;
+}
+
+/**
+ * Set the run's gate posture mid-run (#1/0b — the one mutable-posture write).
+ * Fresh-load → mutate THIS field → save, the markTurnActive discipline, so a
+ * step that saved the whole RunState between the caller's load and here (a
+ * staged approval rider) is not clobbered; the passed copy is re-synced so
+ * in-process reads after the call stay consistent. The cross-process race (a
+ * live headless driver) does not apply: the only caller is `duet afk`, which
+ * runs during the interactive arc and spawns the driver only AFTER this write.
+ */
+export function setGatesAt(state: RunState, gatesAt: GatePhase[]): void {
+  const fresh = loadRunState(state.cwd, state.runId);
+  fresh.gatesAt = gatesAt;
+  saveRunState(fresh);
+  state.gatesAt = gatesAt;
 }
 
 const OWNER_FILE = 'mcp-owner.json';
@@ -611,6 +672,17 @@ export function markSteersDelivered(state: RunState, steers: Steer[]): void {
 /** Whole percent of the context window in use (capped at 100). */
 export function contextPercent(usage: ContextUsage): number {
   return usage.windowTokens > 0 ? Math.min(100, Math.round((usage.usedTokens / usage.windowTokens) * 100)) : 0;
+}
+
+/**
+ * Compact token count for display: 2_000_000 → "2.0M", 1_500 → "2k", else the
+ * number. Shared by `duet status` (status.ts) and the per-turn footer
+ * (harness/tools.ts) so the two render Codex tokens identically.
+ */
+export function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+  return String(n);
 }
 
 /**

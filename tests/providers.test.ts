@@ -2,10 +2,11 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
-import { COMPACT_CONFIRMATION, ClaudeWorker, claudeExecaOptions, parseClaudeTurn } from '../src/providers/claude.ts';
+import { COMPACT_CONFIRMATION, ClaudeWorker, claudeArgs, claudeExecaOptions, parseClaudeTurn } from '../src/providers/claude.ts';
 import { parseRolloutContext } from '../src/providers/codex.ts';
 import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn } from '../src/providers/interactive-claude.ts';
 import { createWorkers } from '../src/providers/index.ts';
+import { BudgetCutoffError } from '../src/providers/types.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
 import { FakePane } from './helpers/fake-pane.ts';
 import {
@@ -16,6 +17,37 @@ import {
   userMessage,
   userTurn,
 } from './helpers/interactive-transcript.ts';
+
+// execa is the provider's true external boundary (mock allowed there). No test
+// in this file spawns the real `claude`/`tmux` (the InteractiveClaudeWorker
+// tests inject a FakePane), so a file-global mock is safe — it is configured
+// only by the ClaudeWorker.runTurn budget tests below.
+const mockExeca = vi.hoisted(() => vi.fn());
+vi.mock('execa', () => ({ execa: mockExeca }));
+
+// The captured real budget-cutoff shape (probe 2026-06-22, claude 2.1.185): exit
+// 1, and stdout is the full [system, assistant, result] array. The result element
+// has subtype error_max_budget_usd, is_error true, NO `result` field, but
+// session_id + total_cost_usd + modelUsage present; the partial text lives in the
+// assistant element. A future CLI change to this shape should fail these loudly.
+const budgetResultElement = (sessionId: string | null) => ({
+  type: 'result',
+  subtype: 'error_max_budget_usd',
+  is_error: true,
+  ...(sessionId !== null ? { session_id: sessionId } : {}),
+  total_cost_usd: 0.1776,
+  modelUsage: { 'claude-opus-4-8[1m]': { contextWindow: 1_000_000 } },
+  errors: ['Reached maximum budget ($0.000001)'],
+});
+const budgetAssistantElement = {
+  type: 'assistant',
+  message: {
+    content: [{ type: 'text', text: 'committed the partial work before the cap' }],
+    usage: { input_tokens: 8491, cache_read_input_tokens: 15626, cache_creation_input_tokens: 12597, output_tokens: 55 },
+  },
+};
+const budgetStdout = (sessionId: string | null): string =>
+  JSON.stringify([{ type: 'system' }, budgetAssistantElement, budgetResultElement(sessionId)]);
 
 describe('parseClaudeTurn (the CLI output boundary)', () => {
   const result = {
@@ -42,9 +74,22 @@ describe('parseClaudeTurn (the CLI output boundary)', () => {
     expect(parseClaudeTurn(JSON.stringify(result), 'prompt').text).toBe('the worker said this');
   });
 
-  test('a failed turn surfaces the subtype and the partial result', () => {
-    const stdout = JSON.stringify([{ ...result, subtype: 'error_max_budget_usd', is_error: true, result: 'ran out' }]);
-    expect(() => parseClaudeTurn(stdout, 'prompt')).toThrow('claude worker turn failed (error_max_budget_usd): ran out');
+  test('a non-budget failed turn surfaces the subtype and the partial result (still throws)', () => {
+    const stdout = JSON.stringify([{ ...result, subtype: 'error_during_execution', is_error: true, result: 'crashed' }]);
+    expect(() => parseClaudeTurn(stdout, 'prompt')).toThrow('claude worker turn failed (error_during_execution): crashed');
+  });
+
+  test('a budget cutoff WITH a session id returns a budget-truncated checkpoint, not a throw', () => {
+    const turn = parseClaudeTurn(budgetStdout('sess-budget'), 'do it');
+    expect.soft(turn.budgetTruncated).toBe(true);
+    expect.soft(turn.sessionId).toBe('sess-budget');
+    expect.soft(turn.costUsd).toBe(0.1776);
+    expect.soft(turn.text).toBe('committed the partial work before the cap'); // recovered from the assistant element
+    expect.soft(turn.context).toEqual({ usedTokens: 8491 + 15626 + 12597 + 55, windowTokens: 1_000_000 });
+  });
+
+  test('a budget cutoff with NO session id throws BudgetCutoffError (the fallback tier), not generic infra', () => {
+    expect(() => parseClaudeTurn(budgetStdout(null), 'do it')).toThrow(BudgetCutoffError);
   });
 
   test('output with no result message names the problem', () => {
@@ -479,11 +524,66 @@ describe('context-window probes (per-provider math, one shape)', () => {
   });
 });
 
+describe('ClaudeWorker.runTurn (budget cutoff handling at the execa boundary)', () => {
+  // A budget cutoff exits non-zero, so execa throws before parseClaudeTurn runs;
+  // runTurn re-parses the captured stdout. execa is mocked (the true boundary).
+  const worker = () => new ClaudeWorker({ model: 'claude-opus-4-8', maxBudgetUsd: 0.01 });
+  const execaExit1 = (stdout: string) =>
+    Object.assign(new Error('Command failed with exit code 1'), { stdout });
+
+  test('a budget cutoff (with session) in the thrown error stdout returns the checkpoint turn', async () => {
+    mockExeca.mockRejectedValueOnce(execaExit1(budgetStdout('sess-budget')));
+    const turn = await worker().runTurn({ prompt: 'do it', cwd: '/x' });
+    expect.soft(turn.budgetTruncated).toBe(true);
+    expect.soft(turn.sessionId).toBe('sess-budget');
+  });
+
+  test('a budget cutoff with no recoverable session propagates BudgetCutoffError (the fallback tier)', async () => {
+    mockExeca.mockRejectedValueOnce(execaExit1(budgetStdout(null)));
+    await expect(worker().runTurn({ prompt: 'do it', cwd: '/x' })).rejects.toBeInstanceOf(BudgetCutoffError);
+  });
+
+  test('a genuine infra failure (empty stdout) re-throws the ORIGINAL execa error', async () => {
+    mockExeca.mockRejectedValueOnce(Object.assign(new Error('spawn claude ENOENT'), { stdout: '' }));
+    await expect(worker().runTurn({ prompt: 'do it', cwd: '/x' })).rejects.toThrow('spawn claude ENOENT');
+  });
+
+  test('a non-budget error envelope in stdout re-throws the original execa error, not budget', async () => {
+    const stdout = JSON.stringify([
+      { type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 's', result: 'crashed' },
+    ]);
+    mockExeca.mockRejectedValueOnce(execaExit1(stdout));
+    await expect(worker().runTurn({ prompt: 'do it', cwd: '/x' })).rejects.toThrow('Command failed with exit code 1');
+  });
+});
+
+describe('claudeArgs (the budget-cap omission seam)', () => {
+  test('passes --max-budget-usd when the cap is a number', () => {
+    const args = claudeArgs({}, { model: 'claude-opus-4-8', maxBudgetUsd: 10 });
+    expect.soft(args).toContain('--max-budget-usd');
+    expect.soft(args[args.indexOf('--max-budget-usd') + 1]).toBe('10');
+  });
+
+  test('omits --max-budget-usd entirely when the cap is undefined (budgets off)', () => {
+    const args = claudeArgs({}, { model: 'claude-opus-4-8', maxBudgetUsd: undefined });
+    expect(args).not.toContain('--max-budget-usd');
+  });
+});
+
 describe('createWorkers', () => {
   test('binds each role to its provider with the phase rails applied', () => {
     const workers = createWorkers(DEFAULT_BINDINGS, { workerBudgetUsd: 10, timeoutMs: 60_000 });
     expect.soft(workers.implementer.name).toBe('claude');
     expect.soft(workers.reviewer.name).toBe('codex');
+  });
+
+  test('a workerBudgetUsd: undefined rail builds a ClaudeWorker (off → the cap is omitted downstream)', () => {
+    // The undefined cap is now a legal rail (budgets off); it flows to the
+    // ClaudeWorker's config, where claudeArgs leaves --max-budget-usd off the
+    // argv (pinned directly by the claudeArgs omission test above).
+    const workers = createWorkers(DEFAULT_BINDINGS, { workerBudgetUsd: undefined, timeoutMs: 60_000 });
+    expect.soft(workers.implementer).toBeInstanceOf(ClaudeWorker);
+    expect.soft(workers.implementer.name).toBe('claude');
   });
 
   test('an interactive claude binding builds the interactive transport; headless stays ClaudeWorker', () => {

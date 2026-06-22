@@ -4,11 +4,11 @@ import { join } from 'node:path';
 import { parse } from 'smol-toml';
 
 /**
- * Role bindings — the one config duet ships (docs/automation-design.md
+ * Run config — the one config duet ships (docs/automation-design.md
  * §"Roles are decoupled from providers"). Scoped to role→provider/model
- * bindings and nothing else; project knowledge never goes here. If a key
- * that isn't a role binding is about to land in this file, that's the
- * design failing.
+ * bindings AND account/billing posture (transport, budget) — and nothing else;
+ * project knowledge never goes here. If a key that isn't a role binding or
+ * billing posture is about to land in this file, that's the design failing.
  */
 
 export type Role = 'orchestrator' | 'implementer' | 'reviewer';
@@ -138,25 +138,59 @@ export function parseRoleOverride(role: Role, spec: string): RoleOverride {
   return parseProviderModel(role, model === undefined ? { provider } : { provider, model });
 }
 
-export function loadRoleBindings(
-  overrides?: Partial<Record<Role, string>>,
+/**
+ * Parse the opt-in budget knob — account/billing posture, the same family as
+ * `transport`. Accepts the config-file value (a TOML number or string) and the
+ * `--budget` flag string. Returns the resolved per-turn cost multiplier, or
+ * `undefined` when OFF — never `0`: the whole plan keys "disabled" off an absent
+ * budget (budgetFor returns undefined caps), and a `0` would read as a real
+ * zero-dollar cap that cuts every turn instantly.
+ *
+ *   "off"      → undefined (unbounded — the flat-quota maintainer's posture)
+ *   "default"  → 1 (today's per-phase profile, unchanged)
+ *   <positive> → that multiplier, scaling the profile (e.g. 0.5, 2)
+ */
+export function parseBudget(value: unknown): number | undefined {
+  if (value === 'off') return undefined;
+  if (value === 'default') return 1;
+  const n = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(
+      `budget must be "off", "default", or a positive multiplier (e.g. 0.5, 2), got ${JSON.stringify(value)}`,
+    );
+  }
+  return n;
+}
+
+/**
+ * Load a run's config: the role bindings AND the resolved per-turn budget. The
+ * single config entry point — `loadRoleBindings` is a bindings-only wrapper over
+ * it (so existing callers stay unchanged). Budget precedence: the `--budget`
+ * flag (`budgetOverride`) wins over the config `budget` key, which wins over the
+ * absent default (off). An absent result means OFF (budgetFor reads undefined
+ * caps); it is never `0`.
+ */
+export function loadRunConfig(
+  opts: { roleOverrides?: Partial<Record<Role, string>>; budgetOverride?: string } = {},
   configPath: string = CONFIG_PATH,
-): RoleBindings {
+): { bindings: RoleBindings; budget?: number } {
   const bindings: RoleBindings = { ...DEFAULT_BINDINGS };
+  let configBudget: number | undefined;
 
   if (existsSync(configPath)) {
-    const config = parse(readFileSync(configPath, 'utf8'));
-    const roles = (config as Record<string, unknown>)['roles'];
+    const config = parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+    const roles = config['roles'];
     if (typeof roles === 'object' && roles !== null) {
       for (const role of ['orchestrator', 'implementer', 'reviewer'] as const) {
         const raw = (roles as Record<string, unknown>)[role];
         if (raw !== undefined) bindings[role] = parseBinding(role, raw);
       }
     }
+    if (config['budget'] !== undefined) configBudget = parseBudget(config['budget']);
   }
 
   for (const role of ['orchestrator', 'implementer', 'reviewer'] as const) {
-    const spec = overrides?.[role];
+    const spec = opts.roleOverrides?.[role];
     if (!spec) continue;
     const override = parseRoleOverride(role, spec);
     const prev = bindings[role];
@@ -184,5 +218,16 @@ export function loadRoleBindings(
     );
   }
 
-  return bindings;
+  // Flag overrides config; config overrides the off default. parseBudget("off")
+  // is undefined, so an explicit `--budget off` overrides a config budget to off.
+  const budget = opts.budgetOverride !== undefined ? parseBudget(opts.budgetOverride) : configBudget;
+  return { bindings, ...(budget !== undefined ? { budget } : {}) };
+}
+
+/** Bindings-only view of loadRunConfig — the compatibility wrapper existing callers use. */
+export function loadRoleBindings(
+  overrides?: Partial<Record<Role, string>>,
+  configPath: string = CONFIG_PATH,
+): RoleBindings {
+  return loadRunConfig({ roleOverrides: overrides }, configPath).bindings;
 }

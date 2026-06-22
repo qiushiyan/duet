@@ -3,8 +3,10 @@ import { join } from 'node:path';
 import { describe, expect } from 'vitest';
 import type { Snapshot } from 'xstate';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
+import { claudeArgs } from '../src/providers/claude.ts';
 import {
   acquireMcpOwner,
+  budgetFor,
   consumeHumanInput,
   createRun,
   gateAttended,
@@ -75,6 +77,46 @@ describe('run creation', () => {
 
   test('loading an unknown run names the path and the likely mistake', ({ projectDir }) => {
     expect(() => loadRunState(projectDir, 'nope')).toThrow(/is nope a run of this project/);
+  });
+
+  test('createRun without gatesAt leaves it absent when defaultPreAuthorized is empty (rir — legacy attend-all)', ({
+    projectDir,
+  }) => {
+    // rir ships defaultPreAuthorized: [] → defaultPosture returns undefined →
+    // gatesAt stays absent (attend-all). (full now materializes ['pr'] out — see
+    // the Open-PR auto-open test below.)
+    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir' });
+    expect.soft(created.gatesAt).toBeUndefined();
+    expect.soft(loadRunState(projectDir, created.runId).gatesAt).toBeUndefined();
+  });
+
+  test('createRun persists an explicit gatesAt unchanged (materialization does not override it)', ({ projectDir }) => {
+    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, gatesAt: ['frame', 'spec'] });
+    expect.soft(created.gatesAt).toEqual(['frame', 'spec']);
+    expect.soft(loadRunState(projectDir, created.runId).gatesAt).toEqual(['frame', 'spec']);
+  });
+
+  test('createRun persists an explicit empty gatesAt ([]) as first-class attend-none (bare duet afk relies on it)', ({
+    projectDir,
+  }) => {
+    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, gatesAt: [] });
+    expect.soft(created.gatesAt).toEqual([]); // not coerced to absent — [] is a real "attend none" posture
+    expect.soft(loadRunState(projectDir, created.runId).gatesAt).toEqual([]);
+  });
+
+  test('createRun freezes the resolved budget; a later budgetFor reads it back (scaled)', ({ projectDir }) => {
+    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, budget: 2 });
+    expect.soft(created.budget).toBe(2);
+    const reloaded = loadRunState(projectDir, created.runId);
+    expect.soft(reloaded.budget).toBe(2);
+    expect.soft(budgetFor(reloaded, 'impl')).toEqual({ worker: 50, orchestrator: 60 });
+  });
+
+  test('createRun omits budget when off (absent) ⇒ budgetFor reads off', ({ projectDir }) => {
+    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
+    expect.soft(created.budget).toBeUndefined();
+    expect.soft('budget' in loadRunState(projectDir, created.runId)).toBe(false);
+    expect.soft(budgetFor(created, 'impl')).toEqual({ worker: undefined, orchestrator: undefined });
   });
 });
 
@@ -185,22 +227,56 @@ describe('gate attendance', () => {
     expect(gateAttended(run, 'impl')).toBe(true);
   });
 
-  test('listed phases are attended, unlisted are pre-authorized, pr is unconditional', ({ run }) => {
+  test('listed phases are attended, unlisted are pre-authorized', ({ run }) => {
     run.gatesAt = ['frame', 'spec', 'pr'];
     expect.soft(gateAttended(run, 'frame')).toBe(true);
     expect.soft(gateAttended(run, 'plan')).toBe(false);
     expect.soft(gateAttended(run, 'impl')).toBe(false);
-    expect.soft(gateAttended(run, 'pr')).toBe(true);
-
-    run.gatesAt = ['frame'];
-    expect(gateAttended(run, 'pr')).toBe(true);
+    expect.soft(gateAttended(run, 'pr')).toBe(true); // attended because explicitly listed
   });
 
-  test('pr stays force-attended through forceAttend even when gates_at excludes it', ({ run }) => {
-    // The pr unconditional above now flows through WORKFLOWS.full.forceAttend,
-    // not a hardcoded phase check — a gates_at that omits pr still attends it.
-    run.gatesAt = ['frame', 'spec'];
-    expect(gateAttended(run, 'pr')).toBe(true);
+  test('the Open-PR gate auto-opens by default, and is attended only when pr is listed (#2)', ({ projectDir }) => {
+    // A new default Full run materializes gatesAt without pr → the PR auto-opens.
+    const fresh = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
+    expect.soft(fresh.gatesAt).toEqual(['frame', 'spec', 'plan', 'impl', 'docs']);
+    expect.soft(gateAttended(fresh, 'pr')).toBe(false);
+
+    // Listing pr restores the pre-open stop (opt-in).
+    const attended = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, gatesAt: ['pr'] });
+    expect.soft(gateAttended(attended, 'pr')).toBe(true);
+
+    // A legacy run (absent gatesAt, predating the change) still attends pr —
+    // the auto-open default never reaches an in-flight legacy run.
+    const legacy = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
+    delete legacy.gatesAt;
+    expect.soft(gateAttended(legacy, 'pr')).toBe(true);
+  });
+});
+
+describe('budgetFor — the opt-in knob', () => {
+  test('budget absent ⇒ OFF: both caps undefined (the maintainer default)', ({ run }) => {
+    expect.soft(run.budget).toBeUndefined();
+    expect.soft(budgetFor(run, 'impl')).toEqual({ worker: undefined, orchestrator: undefined });
+    expect.soft(budgetFor(run, 'open')).toEqual({ worker: undefined, orchestrator: undefined });
+  });
+
+  test('budget ×1 ("default") reproduces the registry profile verbatim', ({ run }) => {
+    run.budget = 1;
+    expect.soft(budgetFor(run, 'impl')).toEqual({ worker: 25, orchestrator: 30 });
+    expect.soft(budgetFor(run, 'open')).toEqual({ worker: 5, orchestrator: 5 });
+    expect.soft(budgetFor(run, 'frame')).toEqual({ worker: 10, orchestrator: 15 });
+  });
+
+  test('a scalar scales BOTH the worker and orchestrator caps (one knob, both roles)', ({ run }) => {
+    run.budget = 0.5;
+    expect.soft(budgetFor(run, 'impl')).toEqual({ worker: 12.5, orchestrator: 15 });
+    expect.soft(budgetFor(run, 'frame')).toEqual({ worker: 5, orchestrator: 7.5 });
+  });
+
+  test('off ⇒ a worker built from the resolved cap omits --max-budget-usd', ({ run }) => {
+    const cap = budgetFor(run, 'impl').worker; // off → undefined
+    expect.soft(cap).toBeUndefined();
+    expect.soft(claudeArgs({}, { model: 'claude-opus-4-8', maxBudgetUsd: cap })).not.toContain('--max-budget-usd');
   });
 });
 

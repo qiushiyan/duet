@@ -6,7 +6,7 @@ import { PHASE, phasesOf } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
 import { createWorkers } from '../providers/index.ts';
 import type { WorkerProvider, WorkerRole } from '../providers/types.ts';
-import { acquireMcpOwner, holdsMcpOwner, loadRunState, workflowOf } from '../run-store.ts';
+import { acquireMcpOwner, budgetFor, holdsMcpOwner, loadRunState, workflowOf } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
 import { probeRunPosition } from './lifecycle.ts';
 import type { RunPosition } from './lifecycle.ts';
@@ -52,7 +52,7 @@ export function buildKernelTools(cwd: string, runId: string, phaseRaw: string): 
     state,
     phase,
     providers: createWorkers(state.bindings, {
-      workerBudgetUsd: PHASE[phase].workerBudgetUsd,
+      workerBudgetUsd: budgetFor(state, phase).worker,
       timeoutMs: PHASE[phase].workerTurnTimeoutMs,
     }),
     log: (line) => console.error(line),
@@ -136,7 +136,7 @@ export type WorkerFactory = (state: RunState, phase: PhaseName) => Record<Worker
 
 const defaultWorkerFactory: WorkerFactory = (state, phase) =>
   createWorkers(state.bindings, {
-    workerBudgetUsd: PHASE[phase].workerBudgetUsd,
+    workerBudgetUsd: budgetFor(state, phase).worker,
     timeoutMs: PHASE[phase].workerTurnTimeoutMs,
   });
 

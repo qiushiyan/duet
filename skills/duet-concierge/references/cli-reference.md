@@ -8,7 +8,7 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 |---|---|
 | `duet new --framing <file>` | Start a run from a framing file (the project briefing — the only place project knowledge enters). Returns immediately; the first phase runs in a detached driver. Runs the **full** arc unless `--workflow` says otherwise. |
 | `duet new --workflow <full\|rir> --framing <file>` | Pick the arc. **full** (default): frame → spec → plan → implementation → docs → PR. **rir**: research → implement → one review round → Ship, with no spec, plan, docs, or PR — for small, well-understood work. Also settable as `workflow:` in the framing frontmatter; the flag wins. |
-| `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates; the rest are pre-authorized and auto-cross with their packets recorded. Phases and presets are **workflow-specific**. full: gates `frame, spec, plan, impl, docs, pr` — or a preset `skip-plan` (= walk away at spec approval, return at the Ship gate) / `overnight` (= frame,spec); `pr` is always attended. rir: gates `research, implement` — or the preset `afk` (= attend none, run straight to done). |
+| `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates; the rest are pre-authorized and auto-cross with their packets recorded. Phases and presets are **workflow-specific**. full: gates `frame, spec, plan, impl, docs, pr` — or a preset `skip-plan` (= walk away at spec approval, return at the Ship gate) / `overnight` (= frame,spec); `pr` auto-opens by default (pre-authorized) — list it to attend a pre-open stop. rir: gates `research, implement` — or the preset `afk` (= attend none, run straight to done). |
 | `duet new --spec <path>` | Start at the spec review loop from a draft spec (skips the FRAME phase). **full-only** — rir has no spec phase and rejects `--spec`. |
 | `duet new --framing <file> --retry-infra <n>` | Opt the headless run into bounded auto-retry of transient infra failures (network/server/rate-limit), default-off; or set `retry_infra:` in the framing frontmatter (the flag wins). `auth` retries once then escalates; login/quota/dns/unknown never retry; exhaustion flags. |
 | `duet continue <run-id> --approve` | Approve the current gate. |
@@ -32,6 +32,7 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | `duet view [run-id]` | Open a tmux viewer (one pane per voice). Terminal-side; not useful remotely. |
 | `duet takeover <role> [run-id]` | Hand a role's session to the human in the provider's own interactive CLI. Terminal-only by nature — never the concierge's verb. |
 | `duet orchestrate [run-id]` | Bring up the human's local interactive `/duet` orchestrator for a run over its attended arc (full: FRAME → PLAN; rir: RESEARCH). Terminal-only — never the concierge's verb. Relevant to know about: a run started with `duet new --interactive` is driven by that local session until the handoff gate (full: plan-approval; rir: Direction), after which AFK implementation runs headless and the concierge supervises it exactly as any other run. |
+| `duet afk [preset] [run-id]` | The human's one-tap mid-session handoff from an interactive gate: re-set the downstream gate posture (bare = attend none; a preset/list otherwise) and drop the run to the headless driver. Terminal-only — never the concierge's verb. Relevant to know about: after it runs, the run is an ordinary headless run the concierge supervises like any other, auto-crossing the now-pre-authorized gates and stopping only at a still-attended gate, a queued question, or done. |
 
 Every command defaults to the latest run in the project when `[run-id]` is omitted.
 
@@ -85,7 +86,7 @@ Top-level fields:
 }
 ```
 
-**`flag`** — the orchestrator queued a question and the run is paused on it. Present `question` and `context` whole. `cause` distinguishes a `human` question (a real product/environment call — relay it) from an `infra` failure (`cause:"infra"` plus an `errorClass` such as `network` / `auth` / `quota-billing` — report it as broken, not a question; `duet doctor` shows what broke). The `crashed` stop below is the separate driver-death signal.
+**`flag`** — the orchestrator queued a question and the run is paused on it. Present `question` and `context` whole. `cause` distinguishes a `human` question (a real product/environment call — relay it), an `infra` failure (`cause:"infra"` plus an `errorClass` such as `network` / `auth` / `quota-billing` — report it as broken, not a question; `duet doctor` shows what broke), and a `budget` stop (a cost cap was hit — resumable: raise the budget or resume, not an outage; no `errorClass`). The `crashed` stop below is the separate driver-death signal.
 
 ```json
 {

@@ -33,6 +33,32 @@ export interface WorkerTurn {
   tokens?: { input: number; output: number };
   /** Context-window fill after this turn, when the provider can tell (best-effort, never load-bearing). */
   context?: ContextUsage;
+  /**
+   * The turn was cut short by the worker's budget cap, but a recoverable result
+   * arrived (a session id is present, so this is a settleable WorkerTurn). A
+   * resumable CHECKPOINT — committed work is on disk, the session resumes for
+   * the remainder — never an infra failure. The session-less cutoff is the
+   * distinct `BudgetCutoffError` (no WorkerTurn, since sessionId is required).
+   */
+  budgetTruncated?: true;
+}
+
+/**
+ * A budget cutoff with NO recoverable result — the fallback tier. A typed error
+ * (NOT a WorkerTurn, whose `sessionId` is required and which `settleTurn` writes
+ * unconditionally), so the harness distinguishes a budget-control stop from
+ * generic infra and never routes it to the retry/auto-retry/errorClass path:
+ * the worker ran and committed work may be on disk, but no session id was
+ * recovered to settle or resume from. Lives here (provider-agnostic types), not
+ * in the claude adapter, so the harness can `instanceof`-check it without
+ * value-importing a concrete provider.
+ */
+export class BudgetCutoffError extends Error {
+  readonly kind = 'budget' as const;
+  constructor(message: string) {
+    super(message);
+    this.name = 'BudgetCutoffError';
+  }
 }
 
 export interface RunTurnOptions {
