@@ -388,6 +388,43 @@ function footerWorkerCost(costs: RunState['costs']): string {
   return parts.length > 0 ? parts.join(' · ') : `claude $${costs.claudeWorkersUsd.toFixed(2)}`;
 }
 
+/** "implementer and reviewer" / "a, b and c" — the human-legible role list. */
+function joinRoles(roles: WorkerRole[]): string {
+  if (roles.length <= 1) return roles[0] ?? '';
+  return `${roles.slice(0, -1).join(', ')} and ${roles[roles.length - 1]}`;
+}
+
+/**
+ * The interactive-host "dispatched" result for a send (single or fan-out). A
+ * single role keeps today's exact text; a fan-out reports the set and pluralizes
+ * the collect/wake nudge (convention 5 — says what to do next). check_turns
+ * already collects every settled role, so the fan-out needs no new collect verb.
+ */
+function dispatchedMessage(roles: WorkerRole[]): string {
+  if (roles.length === 1) {
+    return `Dispatched to the ${roles[0]} — the turn runs in the background and this session stays live: keep talking with the human, steer, check status, or fire the other role meanwhile, then pull the result with check_turns once it lands (it returns the moment the turn settles; a phase can't advance while a turn is uncollected). If you've nothing to do meanwhile and are about to end your turn, start \`duet status --wait\` in the background first — it wakes you the moment the turn settles, so the result gets collected instead of sitting idle while the run stalls. A turn to the other role can run in parallel.`;
+  }
+  return `Dispatched to the ${joinRoles(roles)} — the turns run in the background and this session stays live: keep talking with the human, steer, or check status meanwhile, then pull them with check_turns once they land (it returns the moment a turn settles; a phase can't advance while any turn is uncollected). If you've nothing to do meanwhile and are about to end your turn, start \`duet status --wait\` in the background first — it wakes you the moment a turn settles, so the results get collected instead of sitting idle while the run stalls.`;
+}
+
+/**
+ * Combine the per-role blocking results of a headless fan-out into one tool
+ * result: each role's blocks under a `── <role> ──` header, in send order, so the
+ * orchestrator reads them as one labeled batch. isError if any role's turn
+ * errored. Used only on the headless host's array send; a single role returns its
+ * own result unwrapped.
+ */
+function combineFanoutResults(parts: Array<{ role: WorkerRole; result: CallToolResult }>): CallToolResult {
+  const content: Array<{ type: 'text'; text: string }> = [];
+  for (const { role, result } of parts) {
+    content.push({ type: 'text' as const, text: `── ${role} ──` });
+    for (const c of result.content) {
+      if (c.type === 'text') content.push({ type: 'text' as const, text: c.text });
+    }
+  }
+  return parts.some((p) => p.result.isError) ? { content, isError: true } : { content };
+}
+
 export function createPhaseTools({ state, phase, providers, log, stagedAnswer: initialAnswer, rails, home, async: asyncDeps }: PhaseToolsDeps): PhaseTools {
   let stagedAnswer = initialAnswer ?? null;
 
@@ -516,9 +553,13 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   // cannot route to a role that does not exist.
   const workerRoles = workerRolesFor(state);
   const consultantBound = workerRoles.includes('consultant');
+  // send_prompt's role accepts a single role (a normal turn) or an array (fan one
+  // identical body to several workers at once — the framing analysis pass). One
+  // enum, reused for both arms of the union.
+  const roleEnum = z.enum(workerRoles as [WorkerRole, ...WorkerRole[]]);
   const sendPromptRoleDescribe = consultantBound
-    ? 'implementer produces and revises artifacts (write access); reviewer critiques them (read-only); consultant is the independent cross-family second reviewer — read-only, and a fresh seeded session each turn (it does not accumulate the run’s context the way the persistent implementer and reviewer do).'
-    : 'implementer produces and revises artifacts (write access); reviewer critiques them (read-only).';
+    ? 'implementer produces and revises artifacts (write access); reviewer critiques them (read-only); consultant is the independent cross-family second reviewer — read-only, and a fresh seeded session each turn (it does not accumulate the run’s context the way the persistent implementer and reviewer do). Pass one role for a normal turn, or an array to send this identical body to several workers at once (the framing analysis pass: ["implementer", "reviewer"]) — use the array only when the read is genuinely role-neutral. The consultant’s read is different, so send it on its own, never inside the array.'
+    : 'implementer produces and revises artifacts (write access); reviewer critiques them (read-only). Pass one role for a normal turn, or an array to send this identical body to several workers at once (the framing analysis pass: ["implementer", "reviewer"]) — use the array only when the read is genuinely role-neutral.';
   // The session paragraph, reconciled by binding so persistent-vs-ephemeral reads
   // as one coherent rule (not a persistent claim with a later exception). Unbound,
   // it is byte-for-byte today's text; bound, it scopes "persistent" to the
@@ -581,10 +622,15 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
 
     kernelTool(
       'send_prompt',
-      `Send a prompt to a worker agent and return its final response. ${sendPromptSessionParagraph} Worker turns are slow (often minutes) and a sent prompt becomes a permanent part of the session — there is no unsend — so compose the full body before calling and send one well-formed prompt rather than iterating by sending. Independent turns to different roles can be issued as parallel tool calls in one message and run concurrently — the frame phase’s ${consultantBound ? 'three' : 'two'} unshared analyses are the canonical case; a second turn to the same role while one is in flight is refused until the first returns (one session is one conversation). Sending the reviewer a prompt whose tag starts with "review" counts as a review round against the phase’s backstop cap. A claude-bound worker’s context can be deliberately compacted: a body that is literally "/compact " followed by your instructions (e.g. an adapted compact-for-* snippet) resets that session in place, keeping what the instructions name; codex-bound workers compact themselves automatically, so this applies only to claude.`,
+      `Send a prompt to a worker agent and return its final response. ${sendPromptSessionParagraph} Worker turns are slow (often minutes) and a sent prompt becomes a permanent part of the session — there is no unsend — so compose the full body before calling and send one well-formed prompt rather than iterating by sending. To run the same body on several workers at once, pass role as an array — the framing analysis pass is the canonical case: one role-neutral problem read to ["implementer", "reviewer"], each analyzing it independently and in parallel${consultantBound ? '; the consultant’s framing read is deliberately different, so send it on its own, never inside the array' : ''}. (Independent single-role turns to different workers can also be issued as parallel tool calls.) A second turn to a role while one is in flight is refused until it returns (one session is one conversation). Sending the reviewer a prompt whose tag starts with "review" counts as a review round against the phase’s backstop cap. A claude-bound worker’s context can be deliberately compacted: a body that is literally "/compact " followed by your instructions (e.g. an adapted compact-for-* snippet) resets that session in place, keeping what the instructions name; codex-bound workers compact themselves automatically, so this applies only to claude.`,
       {
         role: z
-          .enum(workerRoles as [WorkerRole, ...WorkerRole[]])
+          // A single role or an array of them. Non-emptiness is enforced in the
+          // handler, not as a zod .min(1): the two transports' zod→JSON-schema
+          // converters disagree on minItems (the Agent SDK emits it, the MCP SDK
+          // drops it), which would break the one-source-of-truth schema parity —
+          // and the stdio path the interactive host actually uses drops it anyway.
+          .union([roleEnum, z.array(roleEnum)])
           .describe(sendPromptRoleDescribe),
         tag: z
           .string()
@@ -596,121 +642,152 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           ),
       },
       async (args) => {
-        // Same-role guard (host-divergent). Blocking: the in-memory
-        // turnsInFlight set. Async: the pending-turn record IS the guard — a
-        // live running/settled-uncollected record refuses a re-send, AND a
-        // reconnect orphan (a record on disk this fresh server doesn't own)
-        // keeps the role closed until the human recovers it (slice 4 refines).
-        const inFlight = dispatcher ? dispatcher.statusOf(args.role) !== undefined : turnsInFlight.has(args.role);
-        if (inFlight) {
+        const { tag, body } = args;
+        // Normalize role to a deduped list: a single role is a 1-element fan-out,
+        // so one path serves both — a single role behaves exactly as before, an
+        // array fans the SAME body to each worker (the framing analysis pass).
+        // Dedupe so ["implementer","implementer"] can't self-race.
+        const roles = [...new Set(Array.isArray(args.role) ? args.role : [args.role])];
+        if (roles.length === 0) {
           return {
-            content: [
-              {
-                type: 'text' as const,
-                text: `A turn to the ${args.role} is already in flight — each role is one persistent session, a single conversation that cannot take two turns at once (a parallel send to the same worker would race its session). Wait for that turn's result; if this prompt is a follow-up, fold it into your next message to the ${args.role} after the response arrives. A turn to the other role can run concurrently — that is what parallel send_prompt calls are for.`,
-              },
-            ],
+            content: [{ type: 'text' as const, text: 'role was an empty array — name at least one worker to send to (a single role, or several to fan the same body to each).' }],
             isError: true,
           };
         }
-        if (dispatcher && state.pendingTurns?.[args.role]) {
-          // A non-collected record with no live owner is an orphan, not a live
-          // turn. A `takeover` role refuses the re-send (it would race the
-          // orphaned worker); a `discard-and-reseed` role (the ephemeral,
-          // read-only consultant) clears the stale record and re-dispatches the
-          // newly supplied body in this same call — the durable record holds no
-          // body (run-store.ts), so recovery is a fresh send, not a replay.
-          if (orphanRecoveryFor(args.role) === 'discard-and-reseed') {
-            clearPendingTurn(state, args.role);
-            log(`[send_prompt] discarded an orphaned ${args.role} turn — reseeding with the newly supplied body`);
-          } else {
-            return { content: [{ type: 'text' as const, text: orphanRefusalText(args.role) }], isError: true };
-          }
-        }
-        const isReviewRound = countsReviewRound(args.role, args.tag);
         const cap = PHASE[phase].roundCap;
-        const used = state.rounds[phase] ?? 0;
-        if (isReviewRound && used >= cap) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: `The ${phase} phase has hit its backstop cap of ${cap} review rounds — this cap exists as runaway protection, and reaching it means the loop has not converged by judgment alone. Stop starting new rounds: either call advance_phase if the loop has actually converged and you were re-checking out of caution, or call ask_human so the human can decide how to proceed.`,
-              },
-            ],
-            isError: true,
-          };
-        }
+        const isReviewRoundFor = (role: WorkerRole): boolean => countsReviewRound(role, tag);
 
-        if (isBaseTemplate(args.tag) && sentThisPhase(args.role).includes(args.tag)) {
-          const warnKey = `${args.role}:${args.tag}`;
-          if (!resendWarned.has(warnKey)) {
-            resendWarned.add(warnKey);
-            const again = `${args.tag}-again`;
-            const hasAgain = getSnippet(again) !== undefined;
+        // Validate EVERY target before dispatching ANY: the rails (same-role
+        // guard, reconnect orphan, review-round backstop, warn-once template
+        // economy) run per role, and the first refusal returns before a single
+        // turn launches — a half-dispatched fan-out would strand turns. Returns a
+        // refusal CallToolResult, or null when the role is clear to send.
+        const validateRole = (role: WorkerRole): CallToolResult | null => {
+          // Same-role guard (host-divergent). Blocking: the in-memory turnsInFlight
+          // set. Async: a live running/settled-uncollected record IS the guard.
+          const inFlight = dispatcher ? dispatcher.statusOf(role) !== undefined : turnsInFlight.has(role);
+          if (inFlight) {
             return {
               content: [
                 {
                   type: 'text' as const,
-                  text: `You already sent ${args.tag} to the ${args.role} this phase, and that session still holds its instructions — a full re-send makes the worker restart the exercise instead of continuing it, and spends a minutes-long turn re-covering ground. Send the delta instead: ${
-                    hasAgain ? `the ${again} variant, or ` : ''
-                  }a short follow-up that references the established frame and states only what changed. If the full template is genuinely warranted (the human re-scoped the problem, or the prior turn was lost), repeat this exact call and it will go through.`,
+                  text: `A turn to the ${role} is already in flight — each role is one persistent session, a single conversation that cannot take two turns at once (a parallel send to the same worker would race its session). Wait for that turn's result; if this prompt is a follow-up, fold it into your next message to the ${role} after the response arrives. A turn to another role can run concurrently — that is what an array role (or parallel send_prompt calls) is for.`,
                 },
               ],
               isError: true,
             };
           }
-          log(`[send_prompt] resend of ${args.tag} → ${args.role} allowed after steering (deliberate)`);
+          if (dispatcher && state.pendingTurns?.[role]) {
+            // A non-collected record with no live owner is a reconnect orphan, not
+            // a live turn. A `takeover` role refuses the re-send (it would race the
+            // orphaned worker); a `discard-and-reseed` role (the ephemeral,
+            // read-only consultant) clears the stale record and re-dispatches the
+            // newly supplied body — the durable record holds no body (run-store.ts),
+            // so recovery is a fresh send, not a replay.
+            if (orphanRecoveryFor(role) === 'discard-and-reseed') {
+              clearPendingTurn(state, role);
+              log(`[send_prompt] discarded an orphaned ${role} turn — reseeding with the newly supplied body`);
+            } else {
+              return { content: [{ type: 'text' as const, text: orphanRefusalText(role) }], isError: true };
+            }
+          }
+          if (isReviewRoundFor(role) && (state.rounds[phase] ?? 0) >= cap) {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `The ${phase} phase has hit its backstop cap of ${cap} review rounds — this cap exists as runaway protection, and reaching it means the loop has not converged by judgment alone. Stop starting new rounds: either call advance_phase if the loop has actually converged and you were re-checking out of caution, or call ask_human so the human can decide how to proceed.`,
+                },
+              ],
+              isError: true,
+            };
+          }
+          if (isBaseTemplate(tag) && sentThisPhase(role).includes(tag)) {
+            const warnKey = `${role}:${tag}`;
+            if (!resendWarned.has(warnKey)) {
+              resendWarned.add(warnKey);
+              const again = `${tag}-again`;
+              const hasAgain = getSnippet(again) !== undefined;
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: `You already sent ${tag} to the ${role} this phase, and that session still holds its instructions — a full re-send makes the worker restart the exercise instead of continuing it, and spends a minutes-long turn re-covering ground. Send the delta instead: ${
+                      hasAgain ? `the ${again} variant, or ` : ''
+                    }a short follow-up that references the established frame and states only what changed. If the full template is genuinely warranted (the human re-scoped the problem, or the prior turn was lost), repeat this exact call and it will go through.`,
+                  },
+                ],
+                isError: true,
+              };
+            }
+            log(`[send_prompt] resend of ${tag} → ${role} allowed after steering (deliberate)`);
+          }
+          return null;
+        };
+        for (const role of roles) {
+          const refusal = validateRole(role);
+          if (refusal) return refusal;
         }
 
-        const provider = providerFor(providers, args.role);
-        log(`[send_prompt] → ${args.role} (${provider.name})  tag=${args.tag}  body=${args.body.length} chars`);
-        appendVoiceLog(state, args.role, `◀ prompt (tag=${args.tag}, from orchestrator)`, args.body);
+        // All targets clear: log + voice-log each, then dispatch (interactive) or
+        // run them concurrently (headless).
+        for (const role of roles) {
+          log(`[send_prompt] → ${role} (${providerFor(providers, role).name})  tag=${tag}  body=${body.length} chars`);
+          appendVoiceLog(state, role, `◀ prompt (tag=${tag}, from orchestrator)`, body);
+        }
 
-        // Async (interactive host): dispatch the turn into the background and
+        // Async (interactive host): dispatch each turn into the background and
         // return at once, so the session stays live. The dispatcher takes the
-        // pending-turn record, the branch-fixed flag, the activeTurns hint, and
-        // the heartbeat; the turn settles (durable bookkeeping commits) when its
-        // promise resolves; check_turns collects the result later.
+        // pending-turn record, the branch-fixed flag, the activeTurns hint, and the
+        // heartbeat per role; each turn settles (durable bookkeeping commits) when
+        // its promise resolves; check_turns collects the results later.
         if (dispatcher) {
-          dispatcher.dispatch({ role: args.role, tag: args.tag, body: args.body, isReviewRound });
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: `Dispatched to the ${args.role} — the turn runs in the background and this session stays live: keep talking with the human, steer, check status, or fire the other role meanwhile, then pull the result with check_turns once it lands (it returns the moment the turn settles; a phase can't advance while a turn is uncollected). If you've nothing to do meanwhile and are about to end your turn, start \`duet status --wait\` in the background first — it wakes you the moment the turn settles, so the result gets collected instead of sitting idle while the run stalls. A turn to the other role can run in parallel.`,
-              },
-            ],
-          };
+          for (const role of roles) {
+            dispatcher.dispatch({ role, tag, body, isReviewRound: isReviewRoundFor(role) });
+          }
+          return { content: [{ type: 'text' as const, text: dispatchedMessage(roles) }] };
         }
 
-        // Blocking (headless host): run dispatch → settle → collect in one call.
-        // Persist the in-flight hint (a separate doctor process reads it to tell
-        // long-inference from idle). Best-effort like all of state.json.
-        turnsInFlight.add(args.role);
-        markTurnActive(state, args.role, args.tag);
-        const startedAt = Date.now();
-        const stopHeartbeat = startHeartbeat({ state, log, ...(home !== undefined ? { home } : {}) }, { role: args.role, tag: args.tag, startedAt });
-        // settleTurn + renderTurnResult are kept INSIDE this try/catch (in both
-        // arms) so a throw during the merge renders as an infra failure exactly
-        // as the inline block did — the await and the settle share one boundary.
-        try {
-          const turn = await provider.runTurn({
-            prompt: args.body,
-            sessionId: sessionIdFor(state, args.role),
-            readOnly: readOnlyFor(args.role),
-            cwd: state.cwd,
-          });
-          settleTurn({ state, phase, providers, log }, { role: args.role, tag: args.tag, isReviewRound }, turn);
-          return renderTurnResult({ state, phase }, { role: args.role, isReviewRound, cap }, turn);
-        } catch (err) {
-          const outcome = err instanceof Error ? err : new Error(String(err));
-          settleTurn({ state, phase, providers, log }, { role: args.role, tag: args.tag, isReviewRound }, outcome);
-          return renderTurnResult({ state, phase }, { role: args.role, isReviewRound, cap }, outcome);
-        } finally {
-          turnsInFlight.delete(args.role);
-          stopHeartbeat();
-        }
+        // Blocking (headless host): run dispatch → settle → collect per role. A
+        // single role keeps today's one-await path; an array runs the worker turns
+        // CONCURRENTLY (Promise.all) so a fan-out never serializes two minutes-long
+        // turns — the regression the readOnlyHint scheduler hint fixed for parallel
+        // single-role calls. settleTurn merges against fresh disk, so concurrent
+        // cross-role settles don't clobber each other.
+        const runBlockingTurn = async (role: WorkerRole): Promise<WorkerTurn | Error> => {
+          const isReviewRound = isReviewRoundFor(role);
+          turnsInFlight.add(role);
+          markTurnActive(state, role, tag);
+          const startedAt = Date.now();
+          const stopHeartbeat = startHeartbeat({ state, log, ...(home !== undefined ? { home } : {}) }, { role, tag, startedAt });
+          // settleTurn is kept INSIDE this try/catch (both arms) so a throw during
+          // the merge renders as an infra failure exactly as a runTurn throw does.
+          try {
+            const turn = await providerFor(providers, role).runTurn({
+              prompt: body,
+              sessionId: sessionIdFor(state, role),
+              readOnly: readOnlyFor(role),
+              cwd: state.cwd,
+            });
+            settleTurn({ state, phase, providers, log }, { role, tag, isReviewRound }, turn);
+            return turn;
+          } catch (err) {
+            const outcome = err instanceof Error ? err : new Error(String(err));
+            settleTurn({ state, phase, providers, log }, { role, tag, isReviewRound }, outcome);
+            return outcome;
+          } finally {
+            turnsInFlight.delete(role);
+            stopHeartbeat();
+          }
+        };
+        const settled = await Promise.all(roles.map(async (role) => ({ role, outcome: await runBlockingTurn(role) })));
+        // Render AFTER every settle so each role's footer/near-cap nudge reflects
+        // the final round/cost state (settleTurn re-syncs `state` on each commit).
+        const rendered = settled.map(({ role, outcome }) => ({
+          role,
+          result: renderTurnResult({ state, phase }, { role, isReviewRound: isReviewRoundFor(role), cap }, outcome),
+        }));
+        return rendered.length === 1 ? rendered[0]!.result : combineFanoutResults(rendered);
       },
       // CLI quirk, load-bearing: readOnlyHint here is a CONCURRENCY HINT, not
       // a purity claim — send_prompt plainly has side effects. The claude CLI

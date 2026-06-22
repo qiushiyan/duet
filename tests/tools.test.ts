@@ -291,6 +291,96 @@ describe('send_prompt', () => {
   });
 });
 
+describe('send_prompt fan-out (role array — the framing analysis pass)', () => {
+  test('headless: fans one body to both build-analysts and returns a combined, role-labeled result', async ({ projectDir, run }) => {
+    const impl = new FakeWorker('claude');
+    const rev = new FakeWorker('codex');
+    const { call } = harness(run, { phase: 'frame', implementer: impl, reviewer: rev });
+
+    const result = await call('send_prompt', { role: ['implementer', 'reviewer'], tag: 'think-holistic', body: 'analyze the problem' });
+
+    // One body reaches each worker verbatim — the whole point of the fan-out.
+    expect.soft(impl.calls).toHaveLength(1);
+    expect.soft(rev.calls).toHaveLength(1);
+    expect.soft(impl.calls[0]?.prompt).toBe('analyze the problem');
+    expect.soft(rev.calls[0]?.prompt).toBe('analyze the problem');
+
+    // The combined result labels each role's blocks under its own header.
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+    expect.soft(joined).toContain('── implementer ──');
+    expect.soft(joined).toContain('── reviewer ──');
+    expect.soft(result.isError).toBeUndefined();
+
+    // Both turns settled (each session persisted) and each tag registered — the
+    // template-economy bookkeeping is per role.
+    const persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.workerSessions.implementer).toBeDefined();
+    expect.soft(persisted.workerSessions.reviewer).toBeDefined();
+    expect.soft(persisted.sentSnippets?.frame?.implementer).toContain('think-holistic');
+    expect.soft(persisted.sentSnippets?.frame?.reviewer).toContain('think-holistic');
+  });
+
+  test('headless: the two worker turns run concurrently, not one-after-the-other', async ({ run }) => {
+    const impl = new DeferredWorker('claude');
+    const rev = new DeferredWorker('codex');
+    const { call } = harness(run, { phase: 'frame', implementer: impl, reviewer: rev });
+
+    const pending = call('send_prompt', { role: ['implementer', 'reviewer'], tag: 'think-holistic', body: 'analyze' });
+    await flush();
+    // Both turns are in flight before EITHER has resolved — the fan-out launched
+    // them concurrently rather than awaiting the first before starting the second
+    // (the regression the readOnlyHint scheduler hint fixed for parallel sends).
+    expect.soft(impl.calls).toHaveLength(1);
+    expect.soft(rev.calls).toHaveLength(1);
+
+    impl.resolve();
+    rev.resolve();
+    expect.soft((await pending).isError).toBeUndefined();
+  });
+
+  test('interactive: a fan-out dispatches each role into the background; check_turns collects them', async ({ run }) => {
+    const impl = new FakeWorker('claude');
+    const rev = new FakeWorker('codex');
+    const { call } = harness(run, { phase: 'frame', implementer: impl, reviewer: rev, async: true });
+
+    const dispatched = await call('send_prompt', { role: ['implementer', 'reviewer'], tag: 'think-holistic', body: 'analyze' });
+    expect.soft(text(dispatched)).toContain('Dispatched to the implementer and reviewer');
+    expect.soft(impl.calls).toHaveLength(1);
+    expect.soft(rev.calls).toHaveLength(1);
+
+    await flush();
+    const collected = await call('check_turns');
+    const joined = collected.content.map((c) => (c as { text?: string }).text ?? '').join('\n');
+    expect.soft(joined).toContain('── implementer ──');
+    expect.soft(joined).toContain('── reviewer ──');
+  });
+
+  test('a busy role anywhere in the array refuses the whole fan-out — no turn is dispatched (validate-all-first)', async ({ run }) => {
+    const impl = new DeferredWorker('claude');
+    const rev = new FakeWorker('codex');
+    const { call } = harness(run, { phase: 'frame', implementer: impl, reviewer: rev, async: true });
+
+    // The implementer is dispatched and uncollected (running) on the interactive host.
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'first' });
+    const refused = await call('send_prompt', { role: ['implementer', 'reviewer'], tag: 'think-holistic', body: 'analyze' });
+
+    expect.soft(refused.isError).toBe(true);
+    expect.soft(text(refused)).toContain('already in flight');
+    // The reviewer was never sent — validation runs over every target before any dispatch.
+    expect.soft(rev.calls).toHaveLength(0);
+
+    impl.resolve(); // let the in-flight turn settle so no interval leaks
+    await flush();
+  });
+
+  test('an empty role array is refused with a prescribed fix', async ({ run }) => {
+    const { call } = harness(run, { phase: 'frame' });
+    const refused = await call('send_prompt', { role: [], tag: 'think-holistic', body: 'x' });
+    expect.soft(refused.isError).toBe(true);
+    expect.soft(text(refused)).toContain('at least one worker');
+  });
+});
+
 describe('send_prompt activeTurns hint (the persisted in-flight signal, #2)', () => {
   test('sets activeTurns at turn start and clears it in finally', async ({ run, projectDir }) => {
     let finish!: (t: { text: string; sessionId: string }) => void;
@@ -740,8 +830,10 @@ describe('send_prompt enum visibility (consultant only when bound)', () => {
     expect.soft(schema.safeParse({ role: 'reviewer', tag: 't', body: 'b' }).success).toBe(true);
     expect.soft(tool.description).not.toContain('consultant');
     expect.soft(tool.description).not.toContain('ephemeral');
-    // Finding 3: the description doesn't hardcode "two" — unbound it says two.
-    expect.soft(tool.description).toContain('two unshared analyses');
+    // The description teaches the array fan-out; unbound, the canonical case is
+    // the two build-analysts and the consultant is never named.
+    expect.soft(tool.description).toContain('role as an array');
+    expect.soft(tool.description).toContain('["implementer", "reviewer"]');
   });
 
   test('bound: consultant becomes a routable role and the description names its ephemerality', ({ consultantRun }) => {
@@ -750,9 +842,10 @@ describe('send_prompt enum visibility (consultant only when bound)', () => {
     expect.soft(schema.safeParse({ role: 'consultant', tag: 't', body: 'b' }).success).toBe(true);
     expect.soft(tool.description).toContain('consultant');
     expect.soft(tool.description.toLowerCase()).toContain('ephemeral');
-    // Bound: the canonical-case count tracks the third analysis.
-    expect.soft(tool.description).toContain('three unshared analyses');
-    expect.soft(tool.description).not.toContain('two unshared analyses');
+    // Bound: the description still teaches the fan-out, and adds that the
+    // consultant is a SEPARATE send, never inside the array.
+    expect.soft(tool.description).toContain('["implementer", "reviewer"]');
+    expect.soft(tool.description).toContain('never inside the array');
   });
 });
 
@@ -830,34 +923,32 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
   // says "two". So the bound brief's analysis/synthesis steps change shape.
   test('the frame brief makes the consultant a primary send step when bound — three sends, not an appended note', ({ run, consultantRun }) => {
     const bound = buildPhaseBrief(consultantRun, 'frame');
-    // The numbered steps now instruct three sends + two anonymized peers.
-    expect.soft(bound).toContain('three independent analyses');
+    // The build-analysts share one fan-out send; the consultant is a separate
+    // send (its own consultant-frame body), and compare-notes still anonymizes.
+    expect.soft(bound).toContain('one fan-out call');
     expect.soft(bound).toContain('consultant-frame');
+    expect.soft(bound).toContain('separate send');
     expect.soft(bound).toContain('anonymized peers');
-    // And the "two" framing is GONE when bound — the fragility the append-only
-    // shape risked (the list says two, the footnote says also a third).
-    expect.soft(bound).not.toContain('two unshared analyses');
-    expect.soft(bound).not.toContain('both send_prompt calls');
 
     const unbound = buildPhaseBrief(run, 'frame');
     expect.soft(unbound.toLowerCase()).not.toContain('consultant');
-    // Unbound is today's text: the two-analysis framing is intact.
-    expect.soft(unbound).toContain('two unshared analyses');
-    expect.soft(unbound).toContain('both send_prompt calls');
+    // Unbound: the fan-out to the two build-analysts, no consultant send.
+    expect.soft(unbound).toContain('one fan-out call');
+    expect.soft(unbound).toContain('["implementer", "reviewer"]');
   });
 
   test('the RIR research brief takes the same conditional shape, keeping its use-latest-docs sentence', ({ run, consultantRun }) => {
     const bound = buildPhaseBrief(consultantRun, 'research');
-    expect.soft(bound).toContain('three independent analyses');
+    expect.soft(bound).toContain('one fan-out call');
     expect.soft(bound).toContain('consultant-frame'); // research maps to the frame checkpoint mode
+    expect.soft(bound).toContain('separate send');
     expect.soft(bound).toContain('anonymized peers');
-    expect.soft(bound).not.toContain('two unshared analyses');
     // The research-specific use-latest-docs guidance survives the rewrite.
     expect.soft(bound).toContain('use-latest-docs');
 
     const unbound = buildPhaseBrief(run, 'research');
     expect.soft(unbound.toLowerCase()).not.toContain('consultant');
-    expect.soft(unbound).toContain('two unshared analyses');
+    expect.soft(unbound).toContain('one fan-out call');
     expect.soft(unbound).toContain('use-latest-docs');
   });
 

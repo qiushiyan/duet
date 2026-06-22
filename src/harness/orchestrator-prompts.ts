@@ -213,9 +213,9 @@ Branch: the run works on exactly one branch, fixed before your first worker prom
 function analysisSendStep(state: RunState, phase: PhaseName): string {
   const snippet = consultantSnippetFor(phase);
   if (!state.bindings.consultant || !snippet) {
-    return 'Send think-holistic to each worker independently — same problem, two unshared analyses. Issue both send_prompt calls in one message: turns to different workers run concurrently, and these two share no inputs, so there is nothing to wait for.';
+    return `Send think-holistic to both build-analysts in one fan-out call — send_prompt with role ["implementer", "reviewer"] — so one role-neutral problem read reaches each, and they analyze it independently and in parallel. Keep that body role-neutral: the two reads differ by model and session, not by a label you write in, so don't add "you are the implementer/reviewer" framing — just the shared problem and the analysis ask.`;
   }
-  return `Send three independent analyses in one message — think-holistic to the implementer and to the reviewer, and ${snippet} to the consultant (a third, cross-family read on its bet-level-outsider lane). Same problem, three unshared analyses that share no inputs, so issue all three send_prompt calls together — turns to different workers run concurrently and there is nothing to wait for.`;
+  return `Send think-holistic to both build-analysts in one fan-out call — send_prompt with role ["implementer", "reviewer"], one role-neutral problem read they each analyze independently — and, separately, ${snippet} to the consultant (its own cross-family, bet-level body, deliberately different, so a separate send rather than part of the fan-out). Keep the build-analysts' body role-neutral: they differ by model and session, not by a label, so no "you are the implementer/reviewer" framing.`;
 }
 
 function synthesisStep(state: RunState): string {
