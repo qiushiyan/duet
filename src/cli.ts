@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { Command } from 'commander';
@@ -87,6 +87,53 @@ export const program = new Command();
 function fail(message: string): never {
   return program.error(message);
 }
+
+/**
+ * Build `resolveRunInputs`'s option object from `duet new`'s raw flags. The one
+ * subtlety the bare spread got wrong: `gatesAt` is forwarded KEY-PRESENT, not
+ * truthy, so an explicit `--gates-at ""` reaches the parser and is rejected as
+ * empty (its documented contract, framing.ts) instead of being silently dropped
+ * to attend-all. spec/framing/template/workflow stay truthy-gated — they carry
+ * no empty-value semantics, so an empty string there is just an omitted flag.
+ * Pure and exported so the forward is testable without driving the whole action.
+ */
+export function newRunInputOpts(opts: {
+  spec?: string;
+  framing?: string;
+  template?: string;
+  workflow?: string;
+  gatesAt?: string;
+  retryInfra?: string;
+}): { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string } {
+  return {
+    ...(opts.spec ? { spec: opts.spec } : {}),
+    ...(opts.framing ? { framing: opts.framing } : {}),
+    ...(opts.template ? { template: opts.template } : {}),
+    ...(opts.workflow ? { workflow: opts.workflow } : {}),
+    ...(opts.gatesAt !== undefined ? { gatesAt: opts.gatesAt } : {}),
+    ...(opts.retryInfra !== undefined ? { retryInfra: opts.retryInfra } : {}),
+  };
+}
+
+/**
+ * Disambiguate `duet afk`'s two optional positionals. `duet afk <runId>` (bare
+ * attend-none posture for a specific run) and `duet afk <preset>` (a posture for
+ * the latest run) are indistinguishable to commander when only one is given, so
+ * resolve here: a lone first arg that names an existing run dir is the runId;
+ * otherwise it is the preset/list. Run ids (YYYYMMDD-HHMM-hhhh) and preset/phase
+ * names are disjoint by shape, so this never misreads one for the other. Pure
+ * (modulo the run-dir probe) and exported for test.
+ */
+export function resolveAfkArgs(
+  cwd: string,
+  preset: string | undefined,
+  runId: string | undefined,
+): { preset?: string; runId?: string } {
+  if (runId === undefined && preset !== undefined && existsSync(runDirOf(cwd, preset))) {
+    return { runId: preset };
+  }
+  return { ...(preset !== undefined ? { preset } : {}), ...(runId !== undefined ? { runId } : {}) };
+}
 program
   .name('duet')
   .description(
@@ -149,14 +196,7 @@ program
     // body plus the posture instructions the harness renders from the values.
     let inputs;
     try {
-      inputs = await resolveRunInputs(cwd, {
-        ...(opts.spec ? { spec: opts.spec } : {}),
-        ...(opts.framing ? { framing: opts.framing } : {}),
-        ...(opts.template ? { template: opts.template } : {}),
-        ...(opts.workflow ? { workflow: opts.workflow } : {}),
-        ...(opts.gatesAt ? { gatesAt: opts.gatesAt } : {}),
-        ...(opts.retryInfra !== undefined ? { retryInfra: opts.retryInfra } : {}),
-      });
+      inputs = await resolveRunInputs(cwd, newRunInputOpts(opts));
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
     }
@@ -375,13 +415,16 @@ program
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
   .action((preset: string | undefined, runId: string | undefined) => {
     const cwd = process.cwd();
-    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
+    // `duet afk <runId>` (bare posture, specific run) and `duet afk <preset>`
+    // (posture, latest run) share the first positional — resolveAfkArgs sorts it.
+    const { preset: presetArg, runId: runIdArg } = resolveAfkArgs(cwd, preset, runId);
+    const state = runIdArg ? loadRunState(cwd, runIdArg) : latestRun(cwd);
     if (!state) fail('no runs found in this project — start one with duet new');
     let split;
     try {
       // Bare afk → the empty "attend none" posture; a named arg → an existing
       // preset/list (no new presets). parseGatesAt validates against the workflow.
-      const posture = preset ? parseGatesAt(preset, workflowOf(state)) : [];
+      const posture = presetArg ? parseGatesAt(presetArg, workflowOf(state)) : [];
       split = enterAfk(state, posture);
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
