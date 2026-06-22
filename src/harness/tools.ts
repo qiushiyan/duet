@@ -23,9 +23,10 @@ import {
   workflowOf,
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
-import { readRoleTranscriptTail } from '../sessions.ts';
+import { readRoleTranscriptTail, readTranscriptTailAtPath } from '../sessions.ts';
 import type { TurnDispatcher } from './turn-dispatcher.ts';
 import { formatAge, probeRole } from '../worker-health.ts';
+import { activityLine, latestActivity } from '../worker-activity.ts';
 import {
   answerResumePrompt,
   approvalRiderBlock,
@@ -163,11 +164,23 @@ export function isBaseTemplate(tag: string): boolean {
 // after the send_prompt call that dispatched the turn has returned. The rails
 // and bookkeeping are therefore written exactly once, host-agnostic.
 
+/** How often the activity poll samples the worker's transcript for its current
+ *  action — finer than the 5-minute heartbeat so a long quiet turn shows
+ *  progress, change-detected so it never floods (≤1 line per tick per role). */
+const ACTIVITY_POLL_MS = 30_000;
+
 /**
- * The 5-minute heartbeat: worker turns are non-streaming and can run 30+
- * minutes, so these voice-log lines keep the log (and its tmux pane) visibly
- * alive, enriched with the worker's own transcript recency + retry count once a
- * session id exists. Returns its own stop fn (clearInterval).
+ * The voice-log keep-alive for a long, non-streaming worker turn — two cadences
+ * off one timer pair, both best-effort:
+ *   - every 5 min, a `⏳` heartbeat (elapsed + transcript recency/retries via
+ *     heartbeatHealth) so the pane never looks hung;
+ *   - every 30s, a `⋯` activity line naming the worker's current action (the
+ *     file it is reading, that an edit happened), read from the same transcript
+ *     tail and emitted only when it changed since the last tick — so a healthy
+ *     worker grinding for 30 minutes reads differently from a stalled one.
+ * Both cadences degrade to silence on the first turn (no session id yet) or any
+ * read/parse failure — telemetry never throws into a worker turn. Returns one
+ * stop fn that clears both intervals.
  */
 export function startHeartbeat(
   deps: { state: RunState; log: (line: string) => void; home?: string },
@@ -181,7 +194,36 @@ export function startHeartbeat(
     log(`[send_prompt] ⏳ ${role} turn running — ${mins}m elapsed (tag=${tag})${health}`);
     appendVoiceLog(state, role, `⏳ turn running — ${mins}m elapsed (tag=${tag})${health}`);
   }, 5 * 60_000);
-  return () => clearInterval(heartbeat);
+  let lastActivityId: string | undefined;
+  // Cache the located transcript path/schema after the first successful read so
+  // the 30s poll does not re-scan the sessions dir every tick (codex's locate is
+  // a recursive readdir). The path is stable across a turn (resume appends to the
+  // same file); if it ever vanishes the cached read returns undefined and we
+  // re-locate. The full locate stays as the fallback / first read.
+  let located: { path: string; schema: 'claude' | 'codex' } | undefined;
+  const activity = setInterval(() => {
+    try {
+      if (!state.workerSessions[role]) return; // first turn — session id learned only on return
+      let tail = located ? readTranscriptTailAtPath(located.path, located.schema) : undefined;
+      if (!tail) {
+        tail = readRoleTranscriptTail(state, role, home !== undefined ? { home } : {});
+        located = tail ? { path: tail.path, schema: tail.schema } : undefined;
+      }
+      if (!tail) return;
+      const act = latestActivity(tail.jsonl, tail.schema);
+      if (!act || act.id === lastActivityId) return; // nothing new since the last tick
+      lastActivityId = act.id;
+      const line = activityLine(act);
+      log(`[send_prompt] ${line} (${role})`);
+      appendVoiceLog(state, role, line);
+    } catch {
+      // best-effort: an unreadable/parse failure degrades to no line, never throws
+    }
+  }, ACTIVITY_POLL_MS);
+  return () => {
+    clearInterval(heartbeat);
+    clearInterval(activity);
+  };
 }
 
 /**

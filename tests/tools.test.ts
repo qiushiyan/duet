@@ -15,7 +15,7 @@ import { createRun, listPendingSteers, loadRunState, runDirOf, saveRunState, sta
 import type { RunState } from '../src/run-store.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
 import { DeferredWorker, FakeWorker, SyncThrowWorker, test } from './helpers/fixtures.ts';
-import { claudeApiRetry, claudeUserToolResult, jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
+import { claudeApiRetry, claudeToolUse, claudeUserToolResult, jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
 
 /**
  * The protocol rails, tested through the orchestrator's real interface: the
@@ -409,6 +409,103 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
     expect.soft(hb).toBeDefined();
     expect.soft(hb).not.toContain('last activity'); // no readable transcript → no suffix, no throw
 
+    finish({ text: 'done', sessionId: 'impl-1' });
+    const result = await pending;
+    expect.soft(result.isError).toBeFalsy();
+  });
+});
+
+describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
+  /** Plant a transcript, run a slow turn, advance time, return the activity lines seen. */
+  async function activityLines(
+    run: RunState,
+    projectDir: string,
+    plant: (home: string, base: number) => void,
+    advanceMs: number,
+  ): Promise<{ lines: string[]; finish: () => void; pending: Promise<ToolResult> }> {
+    const base = Date.parse('2026-06-20T12:00:00.000Z');
+    vi.setSystemTime(base);
+    const home = join(projectDir, 'home');
+    run.workerSessions = { implementer: 'impl-1' }; // not the first turn
+    saveRunState(run);
+    plant(home, base);
+
+    let finish!: (t: { text: string; sessionId: string }) => void;
+    const slow = new FakeWorker('claude');
+    slow.runTurn = () => new Promise((r) => (finish = r));
+    const { call, lines } = harness(run, { implementer: slow, home });
+    const pending = call('send_prompt', { role: 'implementer', tag: 'tdd-plan', body: 'build' });
+    await vi.advanceTimersByTimeAsync(advanceMs);
+    return {
+      lines: lines.filter((l) => l.includes('⋯')),
+      finish: () => finish({ text: 'done', sessionId: 'impl-1' }),
+      pending,
+    };
+  }
+
+  test('surfaces the worker’s current action into the voice log within a poll tick', async ({ run, projectDir, onTestFinished }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const { lines, finish, pending } = await activityLines(
+      run,
+      projectDir,
+      (home, base) => plantClaudeTranscript(home, 'impl-1', jsonl(claudeToolUse([{ name: 'Read', input: { file_path: '/repo/src/foo.ts' }, id: 'toolu_1' }], { ts: new Date(base).toISOString() }))),
+      30_000,
+    );
+    expect(lines.some((l) => l.includes('⋯ reading /repo/src/foo.ts'))).toBe(true);
+    finish();
+    await pending;
+  });
+
+  test('does not re-emit an unchanged action across ticks (change-detected)', async ({ run, projectDir, onTestFinished }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const { lines, finish, pending } = await activityLines(
+      run,
+      projectDir,
+      (home, base) => plantClaudeTranscript(home, 'impl-1', jsonl(claudeToolUse([{ name: 'Read', input: { file_path: '/repo/a.ts' }, id: 'toolu_a' }], { ts: new Date(base).toISOString() }))),
+      90_000, // three ticks, same transcript
+    );
+    expect(lines.filter((l) => l.includes('⋯ reading /repo/a.ts')).length).toBe(1);
+    finish();
+    await pending;
+  });
+
+  test('the first turn (no session id) emits no activity line', async ({ run, onTestFinished }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    let finish!: (t: { text: string; sessionId: string }) => void;
+    const slow = new FakeWorker('claude');
+    slow.runTurn = () => new Promise((r) => (finish = r));
+    const { call, lines } = harness(run, { implementer: slow }); // fresh run: no workerSessions
+    const pending = call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(lines.some((l) => l.includes('⋯'))).toBe(false);
+    finish({ text: 'done', sessionId: 'impl-1' });
+    await pending;
+  });
+
+  test('an unreadable transcript degrades to no line and the turn still succeeds', async ({ run, projectDir, onTestFinished }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const home = join(projectDir, 'home'); // nothing planted
+    run.workerSessions = { implementer: 'missing' };
+    saveRunState(run);
+    let finish!: (t: { text: string; sessionId: string }) => void;
+    const slow = new FakeWorker('claude');
+    slow.runTurn = () => new Promise((r) => (finish = r));
+    const { call, lines } = harness(run, { implementer: slow, home });
+    const pending = call('send_prompt', { role: 'implementer', tag: 'tdd-plan', body: 'x' });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(lines.some((l) => l.includes('⋯'))).toBe(false);
     finish({ text: 'done', sessionId: 'impl-1' });
     const result = await pending;
     expect.soft(result.isError).toBeFalsy();
