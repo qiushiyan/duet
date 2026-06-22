@@ -186,6 +186,8 @@ key = "tdd-plan"
 expand = '''
 Plan the implementation as vertical slices based on the latest spec. Reread the spec first.
 
+Write this plan so that it is complementary to the spec, not overlapping. Don't re-summarize the spec's goals or re-argue its approach — point to it, and spend the tokens on the tactics it deferred (answer its open questions here). The relay that earns its tokens is a load-bearing gotcha, invariant, or constraint **bolded in the exact slice that must honor it** — surfaced at the point of action, where rereading the spec wouldn't put it in front of you.
+
 Go detailed — name each slice, list specific test cases, sketch helpers and fixtures, cite line numbers for changes in existing code. **Don't pre-write full code bodies** — describe tests and helpers; actual code happens during red-green-refactor.
 
 Read these as a lens, not a checklist (adapt; drop what doesn't fit):
