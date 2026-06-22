@@ -21,6 +21,17 @@ describe('the snippet library', () => {
     }
   });
 
+  test('snippet paths are project-neutral: no foreign spec path, skill roots unified on ~/.claude (F7)', () => {
+    const bodies = loadSnippets()
+      .map((s) => s.expand)
+      .join('\n');
+    expect.soft(bodies).not.toContain('docs/superpowers/'); // the tabtype-port's foreign spec path
+    expect.soft(bodies).not.toContain('~/.agents/skills/'); // the outlier skill root
+    // The skill references that remain all sit under the single ~/.claude/skills root.
+    expect.soft(bodies).toContain('~/.claude/skills/tdd/');
+    expect.soft(bodies).toContain('~/.claude/skills/improve-codebase-architecture/');
+  });
+
   test('carries the templates the orchestrator prompts name', () => {
     // Entry prompts reference these by name (src/harness/orchestrator-prompts.ts);
     // a library missing them would strand the orchestrator mid-phase.
