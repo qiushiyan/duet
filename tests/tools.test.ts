@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, vi } from 'vitest';
 import { z } from 'zod';
-import { buildPhaseBrief } from '../src/harness/orchestrator-prompts.ts';
+import { ORCHESTRATOR_SYSTEM_PROMPT, buildPhaseBrief, orchestratorSystemPrompt } from '../src/harness/orchestrator-prompts.ts';
 import { createPhaseTools } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
 import { createTurnDispatcher } from '../src/harness/turn-dispatcher.ts';
@@ -643,6 +643,8 @@ describe('send_prompt enum visibility (consultant only when bound)', () => {
     expect.soft(schema.safeParse({ role: 'reviewer', tag: 't', body: 'b' }).success).toBe(true);
     expect.soft(tool.description).not.toContain('consultant');
     expect.soft(tool.description).not.toContain('ephemeral');
+    // Finding 3: the description doesn't hardcode "two" — unbound it says two.
+    expect.soft(tool.description).toContain('two unshared analyses');
   });
 
   test('bound: consultant becomes a routable role and the description names its ephemerality', ({ consultantRun }) => {
@@ -651,6 +653,24 @@ describe('send_prompt enum visibility (consultant only when bound)', () => {
     expect.soft(schema.safeParse({ role: 'consultant', tag: 't', body: 'b' }).success).toBe(true);
     expect.soft(tool.description).toContain('consultant');
     expect.soft(tool.description.toLowerCase()).toContain('ephemeral');
+    // Bound: the canonical-case count tracks the third analysis.
+    expect.soft(tool.description).toContain('three unshared analyses');
+    expect.soft(tool.description).not.toContain('two unshared analyses');
+  });
+});
+
+describe('orchestratorSystemPrompt (the bound-only identity clause)', () => {
+  test('unbound: byte-for-byte the base prompt — no consultant at identity altitude', ({ run }) => {
+    expect.soft(orchestratorSystemPrompt(run)).toBe(ORCHESTRATOR_SYSTEM_PROMPT);
+    expect.soft(orchestratorSystemPrompt(run).toLowerCase()).not.toContain('consultant');
+  });
+
+  test('bound: appends the consultant clause, naming it additive and ephemeral', ({ consultantRun }) => {
+    const prompt = orchestratorSystemPrompt(consultantRun);
+    expect.soft(prompt.startsWith(ORCHESTRATOR_SYSTEM_PROMPT)).toBe(true); // base preserved, clause appended
+    expect.soft(prompt).toContain('<consultant>');
+    expect.soft(prompt.toLowerCase()).toContain('ephemeral');
+    expect.soft(prompt.toLowerCase()).toContain('additive, never substitutive');
   });
 });
 
@@ -708,13 +728,40 @@ describe('consultant enumeration (both hosts surface it)', () => {
 describe('consultant checkpoint brief injection (orchestrator-only, additive)', () => {
   // The cohort lives in the orchestrator brief (F3) — so buildPhaseBrief DOES
   // name the consultant when bound, and is byte-for-byte today's when not.
-  test('the frame brief becomes a three-voice analysis when bound; unbound names no consultant', ({ run, consultantRun }) => {
+  // Finding 3: the consultant is a PRIMARY numbered step when bound (a model
+  // executing the list can't skip it), not an appended note after a step that
+  // says "two". So the bound brief's analysis/synthesis steps change shape.
+  test('the frame brief makes the consultant a primary send step when bound — three sends, not an appended note', ({ run, consultantRun }) => {
     const bound = buildPhaseBrief(consultantRun, 'frame');
-    expect.soft(bound).toContain('Consultant checkpoint');
-    expect.soft(bound).toContain('three-voice');
+    // The numbered steps now instruct three sends + two anonymized peers.
+    expect.soft(bound).toContain('three independent analyses');
     expect.soft(bound).toContain('consultant-frame');
     expect.soft(bound).toContain('anonymized peers');
-    expect.soft(buildPhaseBrief(run, 'frame').toLowerCase()).not.toContain('consultant');
+    // And the "two" framing is GONE when bound — the fragility the append-only
+    // shape risked (the list says two, the footnote says also a third).
+    expect.soft(bound).not.toContain('two unshared analyses');
+    expect.soft(bound).not.toContain('both send_prompt calls');
+
+    const unbound = buildPhaseBrief(run, 'frame');
+    expect.soft(unbound.toLowerCase()).not.toContain('consultant');
+    // Unbound is today's text: the two-analysis framing is intact.
+    expect.soft(unbound).toContain('two unshared analyses');
+    expect.soft(unbound).toContain('both send_prompt calls');
+  });
+
+  test('the RIR research brief takes the same conditional shape, keeping its use-latest-docs sentence', ({ run, consultantRun }) => {
+    const bound = buildPhaseBrief(consultantRun, 'research');
+    expect.soft(bound).toContain('three independent analyses');
+    expect.soft(bound).toContain('consultant-frame'); // research maps to the frame checkpoint mode
+    expect.soft(bound).toContain('anonymized peers');
+    expect.soft(bound).not.toContain('two unshared analyses');
+    // The research-specific use-latest-docs guidance survives the rewrite.
+    expect.soft(bound).toContain('use-latest-docs');
+
+    const unbound = buildPhaseBrief(run, 'research');
+    expect.soft(unbound.toLowerCase()).not.toContain('consultant');
+    expect.soft(unbound).toContain('two unshared analyses');
+    expect.soft(unbound).toContain('use-latest-docs');
   });
 
   test('the spec brief gains the bet-audit step (folding severity into human_decisions) when bound; unbound is clean', ({

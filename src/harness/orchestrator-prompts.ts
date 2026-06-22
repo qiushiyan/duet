@@ -64,6 +64,33 @@ Call write_note when you notice friction worth remembering — a snippet that di
 When a phase's exit criteria are met, call advance_phase with an honest summary — it always lands on a human gate, so the summary is what the human decides from. When the gate carries genuine decisions for the human — a product or direction call you deliberately did not make yourself — also pass them as advance_phase's structured human_decisions (each a short title plus severity: high for a real call the human must make, low for notable-but-not-blocking). It helps whoever relays the gate decide whether to hold for the human or relay an approval — and a high also holds a non-explicit crossing: a pre-authorized gate will not auto-cross over it and a one-tap afk handoff is refused, so an overnight or walk-away run stops for it rather than shipping past it (an explicit human approval still crosses). It does not replace the prose summary, which still carries the full picture. A routine convergence with nothing for the human to weigh needs no decisions list.`;
 
 /**
+ * The bound-only consultant clause appended to the system prompt — identity
+ * altitude, naming the optional third voice without rewriting the "two-agent"
+ * opening (the persistent spine genuinely IS the implementer + reviewer; the
+ * consultant is ephemeral, checkpoint-only, and optional). Behavior is driven by
+ * the phase brief (the conditional three-send shape), which get_task serves on
+ * both hosts; this clause only keeps the orchestrator's standing mental model in
+ * step with that brief when a consultant is bound.
+ */
+const CONSULTANT_IDENTITY_CLAUSE = `<consultant>
+This run also binds a consultant — an optional third voice the workflow consults at specific gate-adjacent checkpoints (your phase brief names exactly when and how). It is read-only and ephemeral: a fresh, low-context session each time, carrying no run history, so it questions the bet (assumptions, product fit) rather than the build. It is additive, never substitutive — it never stands in for a reviewer round, and its findings inform a direction or a gate packet, they do not by themselves hold a gate. The implementer and reviewer remain the persistent spine described above.
+</consultant>`;
+
+/**
+ * The orchestrator system prompt for a run — the base prompt, plus the
+ * consultant clause only when one is bound. Unbound it returns
+ * ORCHESTRATOR_SYSTEM_PROMPT verbatim (the headless default-off byte-for-byte).
+ * The headless driver builds the prompt from run state, so the clause lands
+ * there; the interactive identity is a shipped static file with no clean
+ * per-run injection seam (orchestrate.ts feeds it via
+ * --append-system-prompt-file), so it carries the lighter touch — its behavior
+ * is driven by the same conditional get_task brief regardless.
+ */
+export function orchestratorSystemPrompt(state: RunState): string {
+  return state.bindings.consultant ? `${ORCHESTRATOR_SYSTEM_PROMPT}\n\n${CONSULTANT_IDENTITY_CLAUSE}` : ORCHESTRATOR_SYSTEM_PROMPT;
+}
+
+/**
  * Few-shot example blocks for the phases with genuine judgment latitude. Each
  * teaches a read the rule can only state abstractly — what the instruction
  * leaves implicit — and carries an anti-example, per
@@ -171,22 +198,31 @@ Branch: the run works on exactly one branch, fixed before your first worker prom
 }
 
 /**
- * The consultant-checkpoint injections — orchestrator-facing, and ADDITIVE: each
- * returns '' when no consultant is bound, so an unbound run's brief is
- * byte-for-byte today's (the byte-for-byte / information-hiding invariant). They
- * teach only the orchestrator (the worker-directed snippets never name the
- * consultant); the cohort legitimately lives in the orchestrator brief.
+ * The generative-mode (frame/research) consultant integration. NOT an appended
+ * note: the consultant is a primary numbered step that a model executing the
+ * list cannot skip (the failure the append-only shape risked — framing has no
+ * mechanical gate proving the third send ran). So the analysis and synthesis
+ * STEPS THEMSELVES are conditional on the binding: unbound returns today's
+ * two-analysis text byte-for-byte; bound returns a three-send / three-voice
+ * shape. The snippet name comes from the registry (consultantSnippetFor).
  *
- * `framingConsultantNote` is the generative-mode augmentation (frame/research):
- * make the framing a three-voice analysis and synthesize anonymized peers. The
- * snippet name comes from the registry (consultantSnippetFor), the single source.
+ * The two critical-mode injections (spec/impl, consultantAuditStep below) stay
+ * append-style: there the audit is its own gate-adjacent step, not a rewrite of
+ * an existing one.
  */
-function framingConsultantNote(state: RunState, phase: PhaseName): string {
+function analysisSendStep(state: RunState, phase: PhaseName): string {
   const snippet = consultantSnippetFor(phase);
-  if (!state.bindings.consultant || !snippet) return '';
-  return `
+  if (!state.bindings.consultant || !snippet) {
+    return 'Send think-holistic to each worker independently — same problem, two unshared analyses. Issue both send_prompt calls in one message: turns to different workers run concurrently, and these two share no inputs, so there is nothing to wait for.';
+  }
+  return `Send three independent analyses in one message — think-holistic to the implementer and to the reviewer, and ${snippet} to the consultant (a third, cross-family read on its bet-level-outsider lane). Same problem, three unshared analyses that share no inputs, so issue all three send_prompt calls together — turns to different workers run concurrently and there is nothing to wait for.`;
+}
 
-Consultant checkpoint (the consultant is bound for this run): make framing a three-voice analysis, not the usual two. In the analysis step, also send the consultant a ${snippet} prompt — a third, independent, cross-family read on its bet-level-outsider lane, issued alongside the other two (it shares no inputs with them). In the synthesis step, give the implementer the reviewer's and the consultant's analyses via compare-notes, presented as two anonymized peers (do not label either by role, so the implementer stays blind to reviewer identity): synthesize across all three voices, don't average them. The consultant's analysis is a synthesis input to the direction, like the reviewer's — not a gate-holding finding.`;
+function synthesisStep(state: RunState): string {
+  if (!state.bindings.consultant) {
+    return "Send the reviewer's analysis to the implementer with compare-notes: critique, synthesize, don't capitulate.";
+  }
+  return "Send the reviewer's AND the consultant's analyses to the implementer with compare-notes, presented as two anonymized peers (do not label either by role, so the implementer stays blind to reviewer identity): critique and synthesize across all three voices, don't capitulate or average. The consultant's analysis is a synthesis input to the direction, like the reviewer's — not a gate-holding finding.";
 }
 
 /**
@@ -222,9 +258,9 @@ ${branchPolicyParagraph(state)}${attendancePosture(state, 'frame')}
 The shape of the phase:
 1. Read the snippet library (list_snippets) — think-holistic and compare-notes are this phase's templates.
 2. Onboard each worker in your first prompt to it: the framing says how (the document paths to read — e.g. an onboarding or skill file named by path). Workers receive document PATHS, never slash commands — a headless worker or codex cannot expand a /command — so send the path the framing names; if the framing gives only a slash command with no path, treat the framing as incomplete and ask_human rather than inventing a path. Fold the onboarding, the working branch, and the problem statement from the framing into that first prompt.
-3. Send think-holistic to each worker independently — same problem, two unshared analyses. Issue both send_prompt calls in one message: turns to different workers run concurrently, and these two share no inputs, so there is nothing to wait for.
-4. Send the reviewer's analysis to the implementer with compare-notes: critique, synthesize, don't capitulate.
-5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)${framingConsultantNote(state, 'frame')}
+3. ${analysisSendStep(state, 'frame')}
+4. ${synthesisStep(state)}
+5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
 
@@ -423,9 +459,9 @@ ${branchPolicyParagraph(state)}${attendancePosture(state, 'research')}
 The shape of the phase:
 1. Read the snippet library (list_snippets) — think-holistic, compare-notes, and use-latest-docs are this phase's templates.
 2. Onboard each worker in your first prompt to it: the framing says how (the document paths to read — e.g. an onboarding or skill file named by path). Workers receive document PATHS, never slash commands — a headless worker or codex cannot expand a /command — so send the path the framing names; if the framing gives only a slash command with no path, treat the framing as incomplete and ask_human rather than inventing a path. Fold the onboarding, the working branch, and the problem statement from the framing into that first prompt.
-3. Send think-holistic to each worker independently — same problem, two unshared analyses. Issue both send_prompt calls in one message: turns to different workers run concurrently, and these two share no inputs, so there is nothing to wait for. When the work leans on an external library or SDK, fold use-latest-docs into the prompt so the analysis is grounded in current APIs rather than stale memory.
-4. Send the reviewer's analysis to the implementer with compare-notes: critique, synthesize, don't capitulate.
-5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The implementer builds directly from these decisions, so the summary must carry enough that the build can proceed without a spec. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)${framingConsultantNote(state, 'research')}
+3. ${analysisSendStep(state, 'research')} When the work leans on an external library or SDK, fold use-latest-docs into the prompt so the analysis is grounded in current APIs rather than stale memory.
+4. ${synthesisStep(state)}
+5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The implementer builds directly from these decisions, so the summary must carry enough that the build can proceed without a spec. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
 
