@@ -229,7 +229,7 @@ describe('phase-event mapping', () => {
     expect(loadRunState(projectDir, run.runId).pendingQuestion?.question).toBe('which scope?');
   });
 
-  test('an abnormal session end flags the human with the subtype, keeping cost and session id', async ({
+  test('an orchestrator budget cap queues a resumable budget stop (cause budget, no errorClass), keeping cost and session id', async ({
     projectDir,
     run,
   }) => {
@@ -240,7 +240,9 @@ describe('phase-event mapping', () => {
     const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
     expect(result).toEqual({ type: 'phase.flag' });
     const state = loadRunState(projectDir, run.runId);
-    expect.soft(state.pendingQuestion?.question).toContain('ended abnormally (error_max_budget_usd)');
+    expect.soft(state.pendingQuestion?.question).toContain('budget cap');
+    expect.soft(state.pendingQuestion?.cause).toBe('budget'); // its own cause — resumable, not infra
+    expect.soft(state.pendingQuestion?.errorClass).toBeUndefined(); // budget is not an infra taxonomy class
     expect.soft(state.orchestratorSessionId).toBe('orc-9');
     expect.soft(state.costs.orchestratorUsd).toBe(15);
   });

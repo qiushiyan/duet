@@ -306,15 +306,25 @@ async function drivePhase(
         }
         saveRunState(state);
         if (message.subtype !== 'success') {
-          // Budget/turn caps and execution errors become flags, not crashes —
-          // the human decides whether to top up and continue. Infra-caused, but
-          // not a taxonomy class (a budget cap is not network/auth), so it is
-          // never auto-retried — errorClass:'unknown'.
-          state.pendingQuestion = {
-            question: `The orchestrator run ended abnormally (${message.subtype}). Check the orchestrator log; answer with how to proceed (the session resumes from where it stopped).`,
-            cause: 'infra',
-            errorClass: 'unknown',
-          };
+          // Abnormal exits become flags, not crashes — the human decides how to
+          // proceed. An orchestrator budget cap is its OWN cause: a real stop,
+          // but resumable (raise the budget / resume), distinct from both an
+          // infra-retry and a human-product question — so it carries cause:
+          // 'budget' and no errorClass (budget is not an infra taxonomy class).
+          // Every other abnormal subtype stays infra-caused but not a taxonomy
+          // class (a turn/execution error is not network/auth), so it is never
+          // auto-retried — errorClass:'unknown'.
+          state.pendingQuestion =
+            message.subtype === 'error_max_budget_usd'
+              ? {
+                  question: `The orchestrator reached its budget cap (${message.subtype}). This is a budget-control stop, not an infrastructure failure: raise the budget or resume, and the session continues from where it stopped.`,
+                  cause: 'budget',
+                }
+              : {
+                  question: `The orchestrator run ended abnormally (${message.subtype}). Check the orchestrator log; answer with how to proceed (the session resumes from where it stopped).`,
+                  cause: 'infra',
+                  errorClass: 'unknown',
+                };
           saveRunState(state);
           return 'flagged';
         }

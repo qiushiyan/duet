@@ -190,11 +190,14 @@ export interface RunState {
    * A queued flag awaiting `duet continue --answer`. `cause` distinguishes the
    * supervisor's actual decision — escalate vs resume/retry: `human` (an
    * ask_human-originated question — product, environment, blocker, or
-   * "asked twice" escalation, all human-owned) vs `infra` (a caught
-   * infrastructure failure), with `errorClass` (taxonomy class, infra only)
-   * naming what failed. Absent cause = pre-feature flags (read as human-owned).
+   * "asked twice" escalation, all human-owned), `infra` (a caught infrastructure
+   * failure), or `budget` (the orchestrator itself hit its cost cap — a real
+   * stop, but resumable: raise the budget / resume, never an infra-retry and
+   * never a product question). `errorClass` (taxonomy class) is infra-only —
+   * absent for a budget stop, since budget is not an infra class. Absent cause =
+   * pre-feature flags (read as human-owned).
    */
-  pendingQuestion?: { question: string; context?: string; cause?: 'human' | 'infra'; errorClass?: ErrorClass };
+  pendingQuestion?: { question: string; context?: string; cause?: 'human' | 'infra' | 'budget'; errorClass?: ErrorClass };
   /**
    * Opt-in bounded auto-retry of transient infra failures (#4b) — the attempt
    * budget. 0/absent ⇒ off (the default; behavior is byte-for-byte as before).

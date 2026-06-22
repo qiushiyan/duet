@@ -110,7 +110,7 @@ export type StopModel =
       packet?: { summary: string; artifacts: string[]; humanDecisions?: HumanDecision[] };
       commands: { approve: string; reject: string };
     }
-  | { kind: 'flag'; question: string; context?: string; command: string; cause?: 'human' | 'infra'; errorClass?: ErrorClass }
+  | { kind: 'flag'; question: string; context?: string; command: string; cause?: 'human' | 'infra' | 'budget'; errorClass?: ErrorClass }
   | { kind: 'crashed'; phase: PhaseName; command: string }
   | { kind: 'abandoned'; at: string; revive: string; purge: string }
   | { kind: 'done'; summary?: string };
@@ -350,6 +350,9 @@ export function renderStatus(model: StatusModel): string {
     lines.push(`\nQUEUED QUESTION for you:`);
     lines.push(`  ${stop.question}`);
     if (stop.context) lines.push(`  context: ${stop.context}`);
+    // A budget stop is resumable, not an infra failure — name that so the human
+    // reaches for "raise the budget / resume" rather than triaging an outage.
+    if (stop.cause === 'budget') lines.push(`  (budget-control stop — resumable: raise the budget or resume, not an infra failure)`);
     lines.push(`\nanswer with:  ${stop.command}`);
     return lines.join('\n');
   }

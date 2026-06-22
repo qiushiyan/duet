@@ -213,6 +213,15 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     }
   });
 
+  test('a budget-cause flag carries cause budget with no errorClass (the enum-widening, #3b)', ({ run }) => {
+    run.pendingQuestion = { question: 'orchestrator capped?', cause: 'budget' };
+    const budget = buildStatusModel(run, { kind: 'flag', phase: 'impl' }, []).stop;
+    if (budget.kind === 'flag') {
+      expect.soft(budget.cause).toBe('budget');
+      expect.soft(budget.errorClass).toBeUndefined(); // budget is not an infra taxonomy class
+    }
+  });
+
   test('the gate packet carries humanDecisions only when present (additive)', ({ run }) => {
     run.phaseSummaries.impl = { summary: 's', artifacts: [] };
     const without = buildStatusModel(run, { kind: 'gate', phase: 'impl' }, []).stop;
@@ -360,6 +369,17 @@ describe('renderStatus', () => {
     expect.soft(out).toContain('context: schema change in slice 3');
     expect.soft(out).toContain(`duet continue ${run.runId} --answer`);
     expect.soft(out).not.toContain('decide with:');
+  });
+
+  test('a budget-cause flag names the stop resumable; an infra flag does not', ({ run }) => {
+    run.machineState = 'implFlagWait';
+    run.pendingQuestion = { question: 'orchestrator capped', cause: 'budget' };
+    const budget = render(run, { kind: 'flag', phase: 'impl' });
+    expect.soft(budget).toContain('budget-control stop');
+    expect.soft(budget).toContain('resumable');
+
+    run.pendingQuestion = { question: 'down?', cause: 'infra', errorClass: 'network' };
+    expect.soft(render(run, { kind: 'flag', phase: 'impl' })).not.toContain('budget-control stop');
   });
 
   test('the while-you-were-away section lists auto-crossed gates with packet headlines', ({ run }) => {
