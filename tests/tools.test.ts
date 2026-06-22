@@ -759,7 +759,7 @@ describe('consultant orphan recovery (discard-and-reseed)', () => {
     expect.soft(consultant.calls[0]?.prompt).toBe('reseeded body'); // the fresh body the orchestrator re-supplied
   });
 
-  test('a consultant orphan still blocks advance_phase — it is not exempt from the phase-exit gate', async ({
+  test('a consultant orphan blocks advance_phase, and the refusal gives the reseed recovery — not takeover as the only path (finding 2)', async ({
     consultantRun,
   }) => {
     markPendingTurn(consultantRun, 'consultant', 'consultant-spec');
@@ -768,7 +768,41 @@ describe('consultant orphan recovery (discard-and-reseed)', () => {
 
     const blocked = await call('advance_phase', { summary: 's', artifacts: [] });
     expect.soft(blocked.isError).toBe(true);
-    expect.soft(text(blocked)).toContain("can't advance the phase");
+    expect.soft(text(blocked)).toContain("can't advance the phase"); // still gated — not exempt
+    // The policy-aware recovery: resend reseeds, no human action needed — the
+    // gate no longer steers a discard-and-reseed orphan to a takeover it doesn't need.
+    expect.soft(text(blocked)).toContain('resend');
+    expect.soft(text(blocked).toLowerCase()).toContain('ephemeral');
+    expect.soft(text(blocked)).toContain('no human action is needed');
+  });
+
+  test('a consultant orphan blocks ask_human with the same reseed recovery copy (finding 2)', async ({
+    consultantRun,
+  }) => {
+    markPendingTurn(consultantRun, 'consultant', 'consultant-spec');
+    const consultant = new DeferredWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant, async: true });
+
+    const blocked = await call('ask_human', { question: 'q' });
+    expect.soft(blocked.isError).toBe(true);
+    expect.soft(text(blocked)).toContain("can't queue a question");
+    expect.soft(text(blocked)).toContain('resend');
+    expect.soft(text(blocked).toLowerCase()).toContain('ephemeral');
+  });
+
+  test('a persistent-role orphan still gets the takeover recovery (the policy branch is real)', async ({
+    run,
+  }) => {
+    // A reviewer orphan on disk (persistent role) → takeover, not reseed.
+    markPendingTurn(run, 'reviewer', 'review-spec');
+    const { call } = harness(run, { phase: 'spec', async: true });
+
+    const blocked = await call('advance_phase', { summary: 's', artifacts: [] });
+    expect.soft(blocked.isError).toBe(true);
+    expect.soft(text(blocked)).toContain('duet takeover reviewer');
+    expect.soft(text(blocked).toLowerCase()).toContain('resumable');
+    // The reviewer is not ephemeral — the reseed framing must NOT appear for it.
+    expect.soft(text(blocked)).not.toContain('reseeds');
   });
 
   test('check_turns surfaces a consultant orphan as "just resend", read-only-framed (not the takeover refusal)', async ({

@@ -434,18 +434,34 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   // dispatcher owns it) OR on disk (a reconnect orphan the fresh dispatcher
   // doesn't). A turn dispatched-but-uncollected means the phase isn't done;
   // advancing would strand the turn and its bookkeeping, and the disk half also
-  // keeps the per-phase ctx registry safe to rebuild at a boundary. Returns a
-  // prescribed-recovery refusal, or null when nothing is outstanding.
+  // keeps the per-phase ctx registry safe to rebuild at a boundary.
+  //
+  // The recovery is per-role and policy-aware, not one generic line: a live turn
+  // collects with check_turns; an orphan recovers by its role's orphan POLICY
+  // (orphanRecoveryFor) — a `takeover` role refuses until `duet takeover`, but a
+  // `discard-and-reseed` role (the ephemeral consultant) just resends (or clears
+  // by hand), needing no human escalation. The generic "duet takeover <role>"
+  // copy steered a consultant orphan to a takeover it doesn't need — this is the
+  // third orphan-recovery surface, aligned with send_prompt's branch and
+  // check_turns. Returns the refusal, or null when nothing is outstanding.
   const pendingTurnGate = (verb: 'advance the phase' | 'queue a question'): CallToolResult | null => {
     if (!dispatcher) return null;
-    const live = dispatcher.hasPending();
-    const onDisk = state.pendingTurns !== undefined && Object.keys(state.pendingTurns).length > 0;
-    if (!live && !onDisk) return null;
+    const outstanding = ROLES.filter((r) => dispatcher.statusOf(r) !== undefined || state.pendingTurns?.[r]);
+    if (outstanding.length === 0) return null;
+    const recovery = (role: WorkerRole): string => {
+      // Live: the dispatcher owns the turn (running, or settled-but-uncollected) — collect it.
+      if (dispatcher.statusOf(role) !== undefined) return `Collect the ${role}'s turn with check_turns.`;
+      // On-disk orphan with no live owner — recover by the role's policy.
+      return orphanRecoveryFor(role) === 'discard-and-reseed'
+        ? `The ${role} turn was orphaned, but the ${role} is ephemeral and read-only — resend to it (your next send_prompt clears the stale record and reseeds), or run \`duet takeover ${role}\` to clear it; no human action is needed.`
+        : `The ${role} turn was orphaned when its session ended — recover it with \`duet takeover ${role}\` (its session may still be resumable), then re-send.`;
+    };
+    const action = verb === 'advance the phase' ? 'advance' : 'ask';
     return {
       content: [
         {
           type: 'text' as const,
-          text: `A worker turn dispatched in this phase has not been collected yet, so you can't ${verb} — advancing or flagging now would strand the turn and its bookkeeping. Collect it with check_turns first (or, if it was orphaned when a prior session ended, recover it with duet takeover <role>), then ${verb === 'advance the phase' ? 'advance' : 'ask'} once nothing is outstanding.`,
+          text: `A worker turn dispatched in this phase has not been collected yet, so you can't ${verb} — doing so would strand the turn and its bookkeeping. ${outstanding.map(recovery).join(' ')} Then ${action} once nothing is outstanding.`,
         },
       ],
       isError: true,
