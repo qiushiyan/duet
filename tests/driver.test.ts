@@ -10,6 +10,7 @@ import {
   feedbackResumePrompt,
   framePhaseEntryPrompt,
   implementPhaseEntryPrompt,
+  openPhaseEntryPrompt,
   planPhaseEntryPrompt,
   researchPhaseEntryPrompt,
   specPhaseEntryPrompt,
@@ -89,6 +90,16 @@ describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)
   // still surface here.
   test.for(Object.keys(PHASE) as PhaseName[])('%s builds a non-empty brief', (phase, { run }) => {
     expect(buildPhaseBrief(run, phase).trim().length).toBeGreaterThan(0);
+  });
+
+  test('the open-phase prompt is honest about how the Open-PR gate was crossed (#2)', ({ run }) => {
+    run.gatesAt = ['pr']; // attended: the human approved opening the PR
+    expect.soft(openPhaseEntryPrompt(run)).toContain('The human approved opening the PR');
+
+    run.gatesAt = ['frame']; // pr not listed → pre-authorized, auto-opened (no human tap)
+    const preAuth = openPhaseEntryPrompt(run);
+    expect.soft(preAuth).toContain('pre-authorized');
+    expect.soft(preAuth).not.toContain('The human approved opening the PR');
   });
 });
 

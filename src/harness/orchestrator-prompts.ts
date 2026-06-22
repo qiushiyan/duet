@@ -355,9 +355,14 @@ Throughout: flag product or direction questions with ask_human; tactical questio
 </task>`;
 }
 
-export function openPhaseEntryPrompt(): string {
+export function openPhaseEntryPrompt(state: RunState): string {
   return `<task>
-The human approved opening the PR — that approval covers the mechanics, so run them:
+${approvalClause(
+    state,
+    'pr',
+    'The human approved opening the PR — that approval covers the mechanics, so run them:',
+    'The Open-PR gate was pre-authorized (the PR auto-opens by default), so no human tap was needed — run the mechanics:',
+  )}
 
 1. Have the implementer push the working branch and open the PR with gh pr create, using the approved title and description, and report the PR URL.
 2. Call advance_phase with the PR URL leading the summary — this completes the run.
@@ -440,7 +445,7 @@ const phaseBriefBuilders = {
   impl: implPhaseEntryPrompt,
   docs: docsPhaseEntryPrompt,
   pr: prPhaseEntryPrompt,
-  open: (_state: RunState, _cap: number) => openPhaseEntryPrompt(),
+  open: (state: RunState, _cap: number) => openPhaseEntryPrompt(state),
   research: researchPhaseEntryPrompt,
   implement: implementPhaseEntryPrompt,
 } satisfies Record<PhaseName, (state: RunState, cap: number) => string>;

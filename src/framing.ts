@@ -60,7 +60,8 @@ export const FRAMING_TEMPLATE = `---
 #                           skip-plan (walk away at spec approval, return at the
 #                           Ship gate) / overnight (= frame,spec); rir → afk
 #                           (attend none). Or a list, e.g. "frame, spec".
-#                           full's Open-PR gate is always attended. Default: every gate.
+#                           full's PR auto-opens by default; list "pr" to attend
+#                           a pre-open stop. Default: every gate.
 # spec: path/to/draft.md  — enter at the spec review loop (skips FRAME). full-only.
 ---
 
@@ -304,9 +305,10 @@ export function parseRetryInfra(value: string): number {
 
 /**
  * Parse a `--gates-at` value: a preset name or a comma/space-separated list
- * of gate-bearing phase names. The workflow's forceAttend gates are appended
- * (Full: the Open-PR gate, never pre-authorizable; RIR: none). Throws with the
- * full vocabulary on bad input.
+ * of gate-bearing phase names. Any workflow forceAttend gates are appended (the
+ * generic non-pre-authorizable mechanism; currently empty for both workflows —
+ * the Open-PR gate is pre-authorized-by-default now, attended only when `pr` is
+ * listed). Throws with the full vocabulary on bad input.
  */
 export function parseGatesAt(value: string, workflow: WorkflowName = "full"): GatePhase[] {
   const gatePhases = gatePhasesOf(workflow);

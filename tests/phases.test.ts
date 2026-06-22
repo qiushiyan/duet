@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   PHASE,
+  WORKFLOWS,
   defaultPosture,
   gateOf,
   gatePhasesOf,
@@ -133,6 +134,11 @@ describe("the Full workflow derives today's arc", () => {
 
   test('gatePhasesOf("full") is every phase but the open-ended one', () => {
     expect(gatePhasesOf('full')).toEqual(['frame', 'spec', 'plan', 'impl', 'docs', 'pr']);
+  });
+
+  test('full pre-authorizes the Open-PR gate by default and force-attends nothing (#2)', () => {
+    expect.soft(WORKFLOWS.full.forceAttend).toEqual([]); // pr dropped — opening a PR is reversible
+    expect.soft(WORKFLOWS.full.defaultPreAuthorized).toEqual(['pr']); // disjoint from forceAttend (validateRegistry guards it)
   });
 
   test('PHASE indexes every phase across all workflows, flat', () => {

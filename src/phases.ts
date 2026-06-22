@@ -201,7 +201,7 @@ export const WORKFLOWS = {
           state: 'openPrGate',
           heading: 'OPEN-PR gate — the PR description',
           ready: 'Open-PR gate — PR description ready',
-          hint: '(approving opens the PR: the implementer pushes the branch and runs gh pr create)',
+          hint: '(the PR auto-opens by default; this stop exists only when you list `pr` in gates_at — approving then opens it: the implementer pushes the branch and runs gh pr create)',
         },
         artifactLabel: 'PR description',
         reviewLoop: false,
@@ -234,8 +234,14 @@ export const WORKFLOWS = {
        */
       'skip-plan': ['frame', 'spec', 'impl', 'docs'],
     },
-    forceAttend: ['pr'],
-    defaultPreAuthorized: [],
+    // Opening a PR is non-destructive and reversible, so the Open-PR gate is no
+    // longer force-attended — it is pre-authorized by default (the PR auto-opens)
+    // and attended only when `pr` is listed in gates_at. forceAttend and
+    // defaultPreAuthorized must change together: validateRegistry rejects an
+    // overlap at module load, and the materialization (createRun) reads the new
+    // default-pre-authorized set.
+    forceAttend: [],
+    defaultPreAuthorized: ['pr'],
   },
   rir: {
     name: 'rir',

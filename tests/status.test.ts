@@ -356,7 +356,7 @@ describe('renderStatus', () => {
     expect(render(run, { kind: 'gate', phase: 'impl' })).toContain('verify in your environment before deciding');
 
     run.machineState = 'openPrGate';
-    expect(render(run, { kind: 'gate', phase: 'pr' })).toContain('approving opens the PR');
+    expect(render(run, { kind: 'gate', phase: 'pr' })).toContain('PR auto-opens by default');
   });
 
   test('a queued question takes over the action section', ({ run }) => {

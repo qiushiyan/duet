@@ -79,10 +79,13 @@ describe('run creation', () => {
     expect(() => loadRunState(projectDir, 'nope')).toThrow(/is nope a run of this project/);
   });
 
-  test('createRun without gatesAt leaves it absent while defaultPreAuthorized is empty (legacy attend-all)', ({
+  test('createRun without gatesAt leaves it absent when defaultPreAuthorized is empty (rir — legacy attend-all)', ({
     projectDir,
   }) => {
-    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
+    // rir ships defaultPreAuthorized: [] → defaultPosture returns undefined →
+    // gatesAt stays absent (attend-all). (full now materializes ['pr'] out — see
+    // the Open-PR auto-open test below.)
+    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir' });
     expect.soft(created.gatesAt).toBeUndefined();
     expect.soft(loadRunState(projectDir, created.runId).gatesAt).toBeUndefined();
   });
@@ -216,22 +219,29 @@ describe('gate attendance', () => {
     expect(gateAttended(run, 'impl')).toBe(true);
   });
 
-  test('listed phases are attended, unlisted are pre-authorized, pr is unconditional', ({ run }) => {
+  test('listed phases are attended, unlisted are pre-authorized', ({ run }) => {
     run.gatesAt = ['frame', 'spec', 'pr'];
     expect.soft(gateAttended(run, 'frame')).toBe(true);
     expect.soft(gateAttended(run, 'plan')).toBe(false);
     expect.soft(gateAttended(run, 'impl')).toBe(false);
-    expect.soft(gateAttended(run, 'pr')).toBe(true);
-
-    run.gatesAt = ['frame'];
-    expect(gateAttended(run, 'pr')).toBe(true);
+    expect.soft(gateAttended(run, 'pr')).toBe(true); // attended because explicitly listed
   });
 
-  test('pr stays force-attended through forceAttend even when gates_at excludes it', ({ run }) => {
-    // The pr unconditional above now flows through WORKFLOWS.full.forceAttend,
-    // not a hardcoded phase check — a gates_at that omits pr still attends it.
-    run.gatesAt = ['frame', 'spec'];
-    expect(gateAttended(run, 'pr')).toBe(true);
+  test('the Open-PR gate auto-opens by default, and is attended only when pr is listed (#2)', ({ projectDir }) => {
+    // A new default Full run materializes gatesAt without pr → the PR auto-opens.
+    const fresh = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
+    expect.soft(fresh.gatesAt).toEqual(['frame', 'spec', 'plan', 'impl', 'docs']);
+    expect.soft(gateAttended(fresh, 'pr')).toBe(false);
+
+    // Listing pr restores the pre-open stop (opt-in).
+    const attended = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, gatesAt: ['pr'] });
+    expect.soft(gateAttended(attended, 'pr')).toBe(true);
+
+    // A legacy run (absent gatesAt, predating the change) still attends pr —
+    // the auto-open default never reaches an in-flight legacy run.
+    const legacy = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
+    delete legacy.gatesAt;
+    expect.soft(gateAttended(legacy, 'pr')).toBe(true);
   });
 });
 

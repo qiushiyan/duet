@@ -105,9 +105,11 @@ export interface RunState {
   /**
    * Phases whose gates the human attends (gates_at — docs/automation-design.md
    * §"Gate pre-authorization"). Absent = every gate attended (the default and
-   * the pre-feature behavior). Gates of phases not listed are pre-authorized:
-   * the harness records the packet, notifies, and auto-approves. `pr` is
-   * always present — the Open-PR gate cannot be pre-authorized.
+   * the pre-feature behavior); a new run materializes a concrete default at
+   * createRun (gate phases − the workflow's defaultPreAuthorized). Gates of
+   * phases not listed are pre-authorized: the harness records the packet,
+   * notifies, and auto-approves. The Open-PR gate is pre-authorized by default
+   * now (the PR auto-opens), attended only when `pr` is listed here.
    */
   gatesAt?: GatePhase[];
   /** Gates auto-crossed under pre-authorization, for the morning review. */
@@ -257,7 +259,8 @@ export function workflowOf(state: RunState): WorkflowName {
 /**
  * Whether a phase's exit gate is attended by the human (vs pre-authorized at
  * run start). Absent gatesAt means every gate is attended; the workflow's
- * force-attended gates (Full's Open-PR gate) are attended unconditionally.
+ * force-attended gates (none, currently — the generic non-pre-authorizable
+ * mechanism) are attended unconditionally.
  */
 export function gateAttended(state: RunState, phase: GatePhase): boolean {
   if ((WORKFLOWS[workflowOf(state)].forceAttend as readonly string[]).includes(phase)) return true;
