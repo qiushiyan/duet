@@ -7,6 +7,7 @@ import { execa } from 'execa';
 import { createActor } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
 import { bindingFor, loadRunConfig } from './config.ts';
+import { voicesFor } from './roles.ts';
 import { DEFAULT_FRAMING_FILE, parseGatesAt, resolveHumanText, resolveRunInputs } from './framing.ts';
 import {
   aliveDriverPid,
@@ -792,7 +793,10 @@ program
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
     if (!state) fail('no runs found in this project');
     await openTmuxView(state);
-    console.log(`raw logs: ${join(runDirOf(state.cwd, state.runId))}/{orchestrator,implementer,reviewer,driver}.log`);
+    // The voice set is the run's bound voices (consultant included when bound),
+    // not a static list — the slice-3 enumeration rule reaches this hint too.
+    const logNames = [...voicesFor(state), 'driver'].join(',');
+    console.log(`raw logs: ${join(runDirOf(state.cwd, state.runId))}/{${logNames}}.log`);
   });
 
 program
