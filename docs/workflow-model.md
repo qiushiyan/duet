@@ -41,12 +41,12 @@ FINAL REVIEW (attended)
   VERIFY             human as environment proxy: migrations, smoke tests
   UPDATE_DOCS        skill; its internal gate surfaces as the Docs-plan gate
   PR_DESCRIPTION     implementer drafts for the PR body
-    ── Open-PR gate ──                  ← never auto-opened
+    ── Open-PR gate ──                  ← auto-opens by default; gates_at: pr adds a pre-open stop
 ```
 
 Observed round counts: spec 2, plan 1, impl review 1 in the original example session; the user's general description says impl review runs 2–3. Under the pivot these inform the orchestrator's judgment and the sizing of the harness's runaway backstops (see `docs/automation-design.md` §"Loop semantics"), not a fixed exit rule.
 
-Gates may be **pre-authorized per run** (`gates_at`, 2026-06-12 — `docs/automation-design.md` §"Gate pre-authorization"): the harness auto-crosses them on the human's standing approval, packet recorded and notification fired, and the orchestrator carries the would-be gate questions forward as encoded recommendations (with an `ask_human` escape hatch for calls that would make downstream work throwaway). The Open-PR gate is never pre-authorizable. The orchestrator's posture instructions are rendered deterministically from the parsed value, never inferred from framing prose.
+Gates may be **pre-authorized per run** (`gates_at`, 2026-06-12 — `docs/automation-design.md` §"Gate pre-authorization"): the harness auto-crosses them on the human's standing approval, packet recorded and notification fired, and the orchestrator carries the would-be gate questions forward as encoded recommendations (with an `ask_human` escape hatch for calls that would make downstream work throwaway). The Open-PR gate is pre-authorized by default (the PR auto-opens; reversed 2026-06-22) — list `pr` in `gates_at` for a pre-open stop. The orchestrator's posture instructions are rendered deterministically from the parsed value, never inferred from framing prose.
 
 ## The snippet vocabulary
 

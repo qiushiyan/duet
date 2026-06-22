@@ -27,7 +27,7 @@ rir   research → DIRECTION (walk away) → implementation (AFK) → SHIP → d
 
 **full** is the thorough arc — settle the design on paper, end in a pull request. **rir** (Research → Implement → Review) is lighter: the research decisions are the design, so it skips the spec, plan, docs, and PR and ends at a verified Ship. Use full when the work is epic-shaped; rir for small, well-understood changes.
 
-The gates are enforced in code (an XState statechart) — they aren't a prompt the orchestrator could be talked out of. Between stops a detached background process drives the phase; nothing runs while a run is parked, and you get a desktop notification at every stop.
+The gates are enforced in code (an XState statechart) — they aren't a prompt the orchestrator could be talked out of. Between stops a detached background process drives the phase; nothing runs while a run is parked, and you get a desktop notification at every stop. The final **OPEN-PR** gate opens the PR for you by default — list `pr` in `--gates-at` if you want a pre-open stop to read the description first; the merge is always yours.
 
 ## What it is — and isn't
 
@@ -42,7 +42,7 @@ Four ideas shape every design choice:
 
 ## Status
 
-Early and experimental. The full arc is implemented; the framing-through-ship path has been driven end-to-end on real features. The later phases (docs, PR) and overnight gate pre-authorization are built but not yet battle-tested. A second, lighter arc — **rir** (research → implement → ship, no spec/plan/docs/PR), selectable with `--workflow rir` — is implemented and unit/integration-verified (530 tests), but has not had a live end-to-end run (deferred to the same auth gate as the interactive orchestrator) and the environment smoke tests are still pending. An opt-in interactive-Claude transport for the implementer (which bills the flat subscription quota) is built as a spike, pending one live-auth check — [`docs/interactive-transport.md`](docs/interactive-transport.md). Running Claude Code itself as the orchestrator — your own interactive session driving a run over framing, spec, and planning while you steer in chat, before it hands off to the headless driver for implementation — is now built (`duet orchestrate` / `duet new --interactive`) and verified by the test suite; worker turns there are asynchronous, so a worker running for minutes no longer freezes your session (it dispatches and you collect the result when it lands). But no real Claude Code session has driven a live run yet (that end-to-end check is deferred to its auth gate) and the environment smoke tests are still pending ([`docs/future-directions.md`](docs/future-directions.md) §A). Supervising a run from outside it — a `duet doctor` health view, machine-readable triage signals, a lean `status --brief`, a hardened headless write path, and opt-in bounded retry of transient infra failures — is implemented and test-verified, its first live end-to-end run and the environment smoke tests still pending (one residual gap: the codex error-envelope classification is checked synthetically only, with no real codex error transcript yet). Expect rough edges. See [`docs/open-questions.md`](docs/open-questions.md) for what's verified versus still open.
+Early and experimental. The full arc is implemented; the framing-through-ship path has been driven end-to-end on real features. The later phases (docs, PR) and overnight gate pre-authorization are built but not yet battle-tested. A second, lighter arc — **rir** (research → implement → ship, no spec/plan/docs/PR), selectable with `--workflow rir` — is implemented and unit/integration-verified (594 tests), but has not had a live end-to-end run (deferred to the same auth gate as the interactive orchestrator) and the environment smoke tests are still pending. An opt-in interactive-Claude transport for the implementer (which bills the flat subscription quota) is built as a spike, pending one live-auth check — [`docs/interactive-transport.md`](docs/interactive-transport.md). Running Claude Code itself as the orchestrator — your own interactive session driving a run over framing, spec, and planning while you steer in chat, before it hands off to the headless driver for implementation — is now built (`duet orchestrate` / `duet new --interactive`) and verified by the test suite; worker turns there are asynchronous, so a worker running for minutes no longer freezes your session (it dispatches and you collect the result when it lands). But no real Claude Code session has driven a live run yet (that end-to-end check is deferred to its auth gate) and the environment smoke tests are still pending ([`docs/future-directions.md`](docs/future-directions.md) §A). Supervising a run from outside it — a `duet doctor` health view, machine-readable triage signals, a lean `status --brief`, a hardened headless write path, and opt-in bounded retry of transient infra failures — is implemented and test-verified, its first live end-to-end run and the environment smoke tests still pending (one residual gap: the codex error-envelope classification is checked synthetically only, with no real codex error transcript yet). The latest work — the rails-and-UX bundle — makes duet's rails opt-in with friction-free defaults: the full arc's PR auto-opens by default (an opt-in pre-open stop), `duet afk` hands a run off mid-session from any gate, and per-turn budget caps are opt-in and degrade to a resumable checkpoint instead of crashing — implemented and unit/integration-verified (594 tests), with the environment smoke tests and a live interactive→headless `duet afk` handoff still pending (auth-gated). Expect rough edges. See [`docs/open-questions.md`](docs/open-questions.md) for what's verified versus still open.
 
 ## Requirements
 
@@ -66,6 +66,8 @@ pnpm add -g .   # links the global `duet` command
 duet ships sensible defaults, so config is optional. To change which provider/model backs each role, create `~/.config/duet/config.toml`:
 
 ```toml
+budget = "off"              # opt-in per-turn cost caps: "off" (default), "default", or a multiplier like 0.5/2
+
 [roles.orchestrator]
 provider = "claude"
 model = "claude-opus-4-8"   # any Anthropic model id
@@ -78,7 +80,7 @@ model = "claude-opus-4-8"
 provider = "codex"          # no model key — your ~/.codex/config.toml governs
 ```
 
-That's the only config duet has — role-to-provider bindings, nothing else. Project knowledge never lives here; it goes in the framing turn.
+That's the only config duet has — role-to-provider bindings plus account/billing posture (`transport`, `budget`), nothing else. Project knowledge never lives here; it goes in the framing turn.
 
 **Advanced (opt-in, experimental):** the claude implementer can drive the interactive `claude` TUI instead of headless `claude -p`, so its turns bill your **flat subscription quota** rather than the metered Agent-SDK credit pool — add `transport = "interactive"` under `[roles.implementer]`. It's a tmux-driven spike: implementer-only, requires a running tmux, and is still pending one live-auth check. See [`docs/interactive-transport.md`](docs/interactive-transport.md).
 
@@ -92,9 +94,12 @@ duet new --template bug        # seed that draft from .duet/templates/bug.md, th
 duet new --spec spec.md        # start from a spec you already wrote (full arc)
 duet new --gates-at overnight  # pre-authorize later gates: approve the spec, then walk away
 duet new --workflow rir        # the lighter arc: research → implement → ship (--gates-at afk to run unattended)
+duet new --budget default      # opt in to per-turn cost caps (off by default); a multiplier like 0.5/2 scales them
 ```
 
 The framing you write is duet's only briefing — the issue text, product context, which skills to invoke, where artifacts go. Save it and the run kicks off in the background.
+
+`--gates-at` names the *complete* set of gates you attend — not a delta on the default. The PR now auto-opens by default, so `--gates-at pr` attends **only** the Open-PR gate (everything else auto-crosses); to keep the usual stops *and* add a pre-open PR stop, list them all.
 
 ### Templates
 
@@ -121,6 +126,7 @@ duet continue --reject "..."   # send the artifact back; your words reach the or
 duet continue --answer "..."   # answer a queued question
 
 duet steer "..."               # nudge the orchestrator mid-phase, without pausing the run
+duet afk                       # from an interactive gate, hand the rest of the run to the headless driver
 duet takeover reviewer         # drop into the raw CLI session yourself; pick duet back up after
 duet abandon                   # stop a run for good (kills its driver); --purge also deletes its sessions
 ```
