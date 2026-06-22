@@ -11,7 +11,7 @@ import type { TurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import { BudgetCutoffError } from '../src/providers/types.ts';
 import { PHASE } from '../src/phases.ts';
 import type { PhaseName } from '../src/phases.ts';
-import { createRun, listPendingSteers, loadRunState, runDirOf, saveRunState, stageHumanInput, stageSteer } from '../src/run-store.ts';
+import { createRun, listPendingSteers, loadRunState, markPendingTurn, runDirOf, saveRunState, stageHumanInput, stageSteer } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
 import { DeferredWorker, FakeWorker, SyncThrowWorker, test } from './helpers/fixtures.ts';
@@ -719,6 +719,50 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
   test('a non-checkpoint phase (plan) never injects, bound or not', ({ run, consultantRun }) => {
     expect.soft(buildPhaseBrief(consultantRun, 'plan').toLowerCase()).not.toContain('consultant');
     expect.soft(buildPhaseBrief(run, 'plan').toLowerCase()).not.toContain('consultant');
+  });
+});
+
+describe('consultant orphan recovery (discard-and-reseed)', () => {
+  const allText = (result: ToolResult): string => result.content.map((c) => (c as { text?: string }).text ?? '').join('\n');
+
+  test('a stale consultant record is cleared and the new body re-dispatched in one call — no refusal', async ({
+    consultantRun,
+  }) => {
+    // An orphan on disk the fresh dispatcher does not own (a prior server died).
+    markPendingTurn(consultantRun, 'consultant', 'consultant-spec');
+    const consultant = new DeferredWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant, async: true });
+
+    const result = await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'reseeded body' });
+
+    expect.soft(result.isError).toBeUndefined();
+    expect.soft(allText(result)).toContain('Dispatched to the consultant'); // dispatched, not refused
+    expect.soft(consultant.calls[0]?.prompt).toBe('reseeded body'); // the fresh body the orchestrator re-supplied
+  });
+
+  test('a consultant orphan still blocks advance_phase — it is not exempt from the phase-exit gate', async ({
+    consultantRun,
+  }) => {
+    markPendingTurn(consultantRun, 'consultant', 'consultant-spec');
+    const consultant = new DeferredWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant, async: true });
+
+    const blocked = await call('advance_phase', { summary: 's', artifacts: [] });
+    expect.soft(blocked.isError).toBe(true);
+    expect.soft(text(blocked)).toContain("can't advance the phase");
+  });
+
+  test('check_turns surfaces a consultant orphan as "just resend", read-only-framed (not the takeover refusal)', async ({
+    consultantRun,
+  }) => {
+    markPendingTurn(consultantRun, 'consultant', 'consultant-spec');
+    const consultant = new DeferredWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant, async: true });
+
+    const checked = await call('check_turns');
+    const joined = allText(checked);
+    expect.soft(joined).toContain('just resend');
+    expect.soft(joined).toContain('ephemeral and read-only'); // distinct from the persistent "may still be editing the repo"
   });
 });
 

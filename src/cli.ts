@@ -7,7 +7,8 @@ import { execa } from 'execa';
 import { createActor } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
 import { bindingFor, loadRunConfig } from './config.ts';
-import { voicesFor } from './roles.ts';
+import type { BindableRole } from './config.ts';
+import { sessionPolicyFor, voicesFor } from './roles.ts';
 import { DEFAULT_FRAMING_FILE, parseGatesAt, resolveHumanText, resolveRunInputs } from './framing.ts';
 import {
   aliveDriverPid,
@@ -134,6 +135,30 @@ export function resolveAfkArgs(
     return { runId: preset };
   }
   return { ...(preset !== undefined ? { preset } : {}), ...(runId !== undefined ? { runId } : {}) };
+}
+
+/**
+ * The takeover decision, pure and exported for test (the action is thin IO over
+ * it — console + execa). It sorts a role into: a captured session to `open` (the
+ * persistent roles RESUME it; an ephemeral role only INSPECTS — `ephemeral`
+ * carries that distinction into the copy), a `clear-orphan` (a pending record
+ * with no session — read-only-safe for an ephemeral role, an ABANDON for a
+ * persistent one), or `no-session`. Ephemerality keys on the session policy
+ * (sessionPolicyFor), never a `role === 'consultant'` check.
+ */
+export type TakeoverPlan =
+  | { kind: 'open'; sessionId: string; ephemeral: boolean }
+  | { kind: 'clear-orphan'; ephemeral: boolean }
+  | { kind: 'no-session' };
+
+export function takeoverPlan(state: RunState, role: BindableRole): TakeoverPlan {
+  const ephemeral = role !== 'orchestrator' && sessionPolicyFor(role) === 'ephemeral';
+  const sessionId = role === 'orchestrator' ? state.orchestratorSessionId : state.workerSessions[role];
+  if (!sessionId) {
+    if (role !== 'orchestrator' && state.pendingTurns?.[role]) return { kind: 'clear-orphan', ephemeral };
+    return { kind: 'no-session' };
+  }
+  return { kind: 'open', sessionId, ephemeral };
 }
 program
   .name('duet')
@@ -819,33 +844,44 @@ program
       );
     }
 
-    const sessionId = role === 'orchestrator' ? state.orchestratorSessionId : state.workerSessions[role];
-    if (!sessionId) {
-      // No session captured. A worker role may still have an ORPHANED pending
-      // turn — its interactive session died before settle persisted an id. There
-      // is nothing to resume, but the old worker process may still be running and
-      // editing the repo, so dropping the orphan ABANDONS that in-flight turn.
-      // takeover is the single resolution affordance: say so honestly, clear the
-      // orphan, and re-open the role.
-      if (role !== 'orchestrator' && state.pendingTurns?.[role]) {
-        console.log(
-          `no session was captured for the ${role}'s interrupted turn — the old worker process may still be running and touching the repo. Dropping the orphan abandons that in-flight turn so you can re-send.`,
-        );
-        clearPendingTurn(state, role);
-        console.log(`orphan cleared — the ${role} is re-opened for the next send_prompt.`);
-        return;
-      }
-      fail(`the ${role} has no session yet in run ${state.runId}`);
+    const plan = takeoverPlan(state, role);
+    if (plan.kind === 'no-session') fail(`the ${role} has no session yet in run ${state.runId}`);
+
+    if (plan.kind === 'clear-orphan') {
+      // §7 — a pending record with no captured session. Clear it without a resume
+      // target. The hazard differs by policy: a persistent role's old worker may
+      // still be editing the repo (a deliberate ABANDON); the ephemeral consultant
+      // is read-only, so the discard is benign.
+      console.log(
+        plan.ephemeral
+          ? `the ${role}'s interrupted turn left no session — it is ephemeral and read-only, so there is nothing to resume and no repo write to race. Clearing the orphan re-opens the role; the next send_prompt seeds a fresh session.`
+          : `no session was captured for the ${role}'s interrupted turn — the old worker process may still be running and touching the repo. Dropping the orphan abandons that in-flight turn so you can re-send.`,
+      );
+      if (role !== 'orchestrator') clearPendingTurn(state, role);
+      console.log(`orphan cleared — the ${role} is re-opened for the next send_prompt.`);
+      return;
     }
 
+    // §4 — a captured session exists. A persistent role RESUMES it (duet picks the
+    // session back up); the ephemeral consultant only INSPECTS its latest
+    // checkpoint — duet will not resume it, so the messaging must not imply
+    // continuity.
     const provider = role === 'orchestrator' ? state.bindings.orchestrator.provider : bindingFor(state.bindings, role).provider;
-    const cmd = provider === 'claude' ? ['claude', '--resume', sessionId] : ['codex', 'resume', sessionId];
-    console.log(`handing over the ${role} session (${sessionId})`);
+    const cmd = provider === 'claude' ? ['claude', '--resume', plan.sessionId] : ['codex', 'resume', plan.sessionId];
+    console.log(
+      plan.ephemeral
+        ? `opening the ${role}'s latest checkpoint session (${plan.sessionId}) for inspection — it is ephemeral, so duet will NOT resume it: the next ${role} turn seeds a fresh session.`
+        : `handing over the ${role} session (${plan.sessionId})`,
+    );
     console.log(`  ${cmd.join(' ')}`);
-    console.log(`your turns append to the run's transcript; pick duet back up afterwards with duet continue.\n`);
+    console.log(
+      plan.ephemeral
+        ? `inspect freely — anything you do here stays in this checkpoint's session and won't carry into the next ${role} turn.\n`
+        : `your turns append to the run's transcript; pick duet back up afterwards with duet continue.\n`,
+    );
     await execa(cmd[0]!, cmd.slice(1), { cwd: state.cwd, stdio: 'inherit', reject: false });
-    // A session orphan the human has now inspected/finished: clear its pending
-    // record so the role re-opens for the next send_prompt.
+    // Clear any pending record the human has now inspected/finished, re-opening
+    // the role for the next send_prompt.
     if (role !== 'orchestrator' && state.pendingTurns?.[role]) clearPendingTurn(state, role);
   });
 

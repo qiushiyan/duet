@@ -58,6 +58,27 @@ export function readOnlyFor(role: WorkerRole): boolean {
 }
 
 /**
+ * How a turn orphaned by a session quit is recovered — `takeover` for the
+ * persistent roles, `discard-and-reseed` for the ephemeral consultant. The
+ * single discriminator the orphan paths read (send_prompt's orphan branch,
+ * check_turns' copy), so the discard-vs-takeover decision stays data — never a
+ * re-sprinkled `role === 'consultant'` check.
+ */
+export function orphanRecoveryFor(role: WorkerRole): 'takeover' | 'discard-and-reseed' {
+  return POLICY[role].orphan;
+}
+
+/**
+ * Whether duet resumes a role's session (`persistent`) or seeds a fresh one each
+ * turn (`ephemeral`). The discriminator `duet takeover` reads to decide
+ * resume-vs-inspect: the latest ephemeral checkpoint is inspectable but never a
+ * resume target, since the next turn starts clean.
+ */
+export function sessionPolicyFor(role: WorkerRole): 'persistent' | 'ephemeral' {
+  return POLICY[role].session;
+}
+
+/**
  * Whether a turn counts as a review round against the phase's backstop cap: the
  * reviewer on a `review*`-tagged prompt, and only the reviewer. A consultant
  * turn NEVER counts — it is additive, never substitutive, so advance_phase's

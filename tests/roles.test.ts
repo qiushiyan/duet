@@ -1,5 +1,13 @@
 import { describe, expect } from 'vitest';
-import { countsReviewRound, readOnlyFor, sessionIdFor, voicesFor, workerRolesFor } from '../src/roles.ts';
+import {
+  countsReviewRound,
+  orphanRecoveryFor,
+  readOnlyFor,
+  sessionIdFor,
+  sessionPolicyFor,
+  voicesFor,
+  workerRolesFor,
+} from '../src/roles.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**
@@ -40,5 +48,17 @@ describe('role policy helpers', () => {
     expect.soft(sessionIdFor(run, 'implementer')).toBe('i-1');
     expect.soft(sessionIdFor(run, 'reviewer')).toBe('r-1');
     expect.soft(sessionIdFor(run, 'consultant')).toBeUndefined(); // ephemeral, despite a tracked id
+  });
+
+  test('orphanRecoveryFor: takeover for the persistent roles, discard-and-reseed for the consultant', () => {
+    expect.soft(orphanRecoveryFor('implementer')).toBe('takeover');
+    expect.soft(orphanRecoveryFor('reviewer')).toBe('takeover');
+    expect.soft(orphanRecoveryFor('consultant')).toBe('discard-and-reseed');
+  });
+
+  test('sessionPolicyFor: persistent for implementer/reviewer, ephemeral for the consultant', () => {
+    expect.soft(sessionPolicyFor('implementer')).toBe('persistent');
+    expect.soft(sessionPolicyFor('reviewer')).toBe('persistent');
+    expect.soft(sessionPolicyFor('consultant')).toBe('ephemeral');
   });
 });
