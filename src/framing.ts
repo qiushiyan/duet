@@ -61,7 +61,8 @@ export const FRAMING_TEMPLATE = `---
 #                           Ship gate) / overnight (= frame,spec); rir → afk
 #                           (attend none). Or a list, e.g. "frame, spec".
 #                           full's PR auto-opens by default; list "pr" to attend
-#                           a pre-open stop. Default: every gate.
+#                           a pre-open stop. Default: attend every gate except
+#                           full's auto-opening PR; rir attends both its gates.
 # spec: path/to/draft.md  — enter at the spec review loop (skips FRAME). full-only.
 ---
 

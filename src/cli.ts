@@ -126,7 +126,7 @@ program
   .option('--workflow <name>', 'which arc to run: full (spec → plan → implement → ship → docs → PR) or rir (research → implement → review); default full. Also settable via a workflow: framing key (flag wins)')
   .option(
     '--gates-at <phases>',
-    'phases whose gates you attend — the set and presets are workflow-specific (full gates: frame, spec, plan, impl, docs, pr; presets "skip-plan" = walk away at spec approval, return at the Ship gate, "overnight" = frame,spec, and full\'s PR auto-opens by default — list `pr` to attend a pre-open stop. rir gates: research, implement; preset "afk" = attend none). The rest are pre-authorized and auto-cross with their packets recorded; default: every gate',
+    'phases whose gates you attend — the set and presets are workflow-specific (full gates: frame, spec, plan, impl, docs, pr; presets "skip-plan" = walk away at spec approval, return at the Ship gate, "overnight" = frame,spec, and full\'s PR auto-opens by default — list `pr` to attend a pre-open stop. rir gates: research, implement; preset "afk" = attend none). The rest are pre-authorized and auto-cross with their packets recorded; default: attend every gate except full\'s auto-opening PR (list `pr` to add a pre-open stop); rir attends both its gates',
   )
   .option(
     '--retry-infra <n>',
