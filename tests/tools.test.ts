@@ -8,6 +8,7 @@ import { createPhaseTools } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
 import { createTurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import type { TurnDispatcher } from '../src/harness/turn-dispatcher.ts';
+import { BudgetCutoffError } from '../src/providers/types.ts';
 import { PHASE } from '../src/phases.ts';
 import type { PhaseName } from '../src/phases.ts';
 import { createRun, listPendingSteers, loadRunState, runDirOf, saveRunState, stageHumanInput, stageSteer } from '../src/run-store.ts';
@@ -184,6 +185,46 @@ describe('send_prompt', () => {
     const persisted = loadRunState(projectDir, run.runId);
     expect.soft(persisted.rounds.spec ?? 0).toBe(0);
     expect.soft(persisted.sentSnippets?.spec?.reviewer ?? []).toEqual([]);
+  });
+
+  test('a budget-truncated turn settles normally (session, cost, round) and renders a checkpoint, not infra', async ({
+    projectDir,
+    run,
+  }) => {
+    const reviewer = new FakeWorker('codex', [{ budgetTruncated: true, sessionId: 'sess-b', costUsd: 0.18, text: 'committed work' }]);
+    const { call } = harness(run, { reviewer });
+    const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+
+    expect.soft(result.isError).toBeFalsy(); // a checkpoint is not an error
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+    expect.soft(joined).toContain('budget reached'); // the checkpoint note (content[1])
+    expect.soft(joined).not.toContain('never saw your prompt');
+    expect.soft(joined).not.toContain('Retry this same send_prompt');
+
+    // The work is on disk and the session is resumable — settled like any turn.
+    const persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.workerSessions.reviewer).toBe('sess-b');
+    expect.soft(persisted.costs.claudeWorkersUsd).toBeGreaterThan(0);
+    expect.soft(persisted.rounds.spec).toBe(1);
+  });
+
+  test('a BudgetCutoffError settles nothing and renders a budget-control recovery, distinct from infra', async ({
+    projectDir,
+    run,
+  }) => {
+    const reviewer = new FakeWorker('codex', [new BudgetCutoffError('cap reached with no recoverable session')]);
+    const { call } = harness(run, { reviewer });
+    const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+
+    expect.soft(text(result)).toContain('budget-control stop');
+    expect.soft(text(result)).not.toContain('infrastructure layer'); // not the infra envelope
+    expect.soft(text(result)).not.toContain('Retry this same send_prompt');
+
+    // No settlement: no session, no round, no cost.
+    const persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.workerSessions.reviewer).toBeUndefined();
+    expect.soft(persisted.rounds.spec ?? 0).toBe(0);
+    expect.soft(persisted.costs.claudeWorkersUsd).toBe(0);
   });
 
   test('emits a heartbeat while a long worker turn runs', async ({ run, onTestFinished }) => {

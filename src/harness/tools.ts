@@ -3,6 +3,7 @@ import { execa } from 'execa';
 import { z } from 'zod';
 import { PHASE, isGatePhase } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
+import { BudgetCutoffError } from '../providers/types.ts';
 import type { WorkerProvider, WorkerRole, WorkerTurn } from '../providers/types.ts';
 import { getSnippet, renderSnippetLibrary } from '../snippets.ts';
 import {
@@ -199,8 +200,17 @@ export function settleTurn(
   const { state, phase, providers, log } = deps;
   const { role, tag, isReviewRound } = meta;
   if (outcome instanceof Error) {
-    log(`[send_prompt] ✗ ${role} turn failed: ${outcome.message}`);
-    appendVoiceLog(state, role, `✗ turn failed: ${outcome.message}`);
+    // A budget cutoff with no recoverable session is a budget-control stop, not
+    // an infra failure — the log/voice must say so (the work ran and may be on
+    // disk), so the driver log reads honestly when no reviewer is watching. It
+    // still commits no bookkeeping (no session/round/cost): "no settlement".
+    if (outcome instanceof BudgetCutoffError) {
+      log(`[send_prompt] ◼ ${role} turn stopped at its budget cap: ${outcome.message}`);
+      appendVoiceLog(state, role, `◼ budget-control stop: ${outcome.message}`);
+    } else {
+      log(`[send_prompt] ✗ ${role} turn failed: ${outcome.message}`);
+      appendVoiceLog(state, role, `✗ turn failed: ${outcome.message}`);
+    }
     clearTurnActive(state, role);
     return;
   }
@@ -249,6 +259,21 @@ export function renderTurnResult(
 ): CallToolResult {
   const { state, phase } = deps;
   const { role, isReviewRound, cap } = meta;
+  // A budget cutoff with no recoverable session — a budget-control recovery, NOT
+  // the infra envelope and NOT the retry path: the worker ran (committed work may
+  // be on disk), but nothing settled, so resume manually / raise the budget /
+  // surface to the human. Checked before the generic Error arm (it is an Error).
+  if (outcome instanceof BudgetCutoffError) {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `The ${role} worker reached its budget cap — a budget-control stop, not an infrastructure failure. The worker ran and committed work may be on disk (check git), but no resumable session id was recovered. Do NOT retry this send_prompt as infra: resume the work manually once you have a session id, raise the budget, or surface it to the human via ask_human.`,
+        },
+      ],
+      isError: true,
+    };
+  }
   if (outcome instanceof Error) {
     return {
       content: [
@@ -261,6 +286,14 @@ export function renderTurnResult(
     };
   }
   const content: Array<{ type: 'text'; text: string }> = [{ type: 'text' as const, text: outcome.text }];
+  // A budget-truncated turn DID settle (session/cost committed) — surface it as a
+  // resumable checkpoint, never the infra "retry this same call" envelope.
+  if (outcome.budgetTruncated) {
+    content.push({
+      type: 'text' as const,
+      text: `(budget reached — the worker saw your prompt and committed work is on disk; its session is resumable. Resume that session for the remainder, or raise the budget. This is a checkpoint, not a failure — do not re-send the original prompt.)`,
+    });
+  }
   // Reactive state-triggered nudge (docs/prompting-and-tool-design.md
   // §"Results nudge the next step"): when this review round leaves exactly one
   // before the backstop cap, say so once — the cap is runaway protection, not a

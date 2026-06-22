@@ -1,5 +1,6 @@
 import { execa } from 'execa';
 import { z } from 'zod';
+import { BudgetCutoffError } from './types.ts';
 import type { RunTurnOptions, WorkerProvider, WorkerTurn } from './types.ts';
 
 /**
@@ -34,6 +35,22 @@ const resultEnvelope = z.looseObject({
   modelUsage: z
     .record(z.string(), z.looseObject({ contextWindow: z.number().optional() }))
     .optional(),
+});
+
+/**
+ * A budget-cutoff result element, parsed LOOSELY — `session_id` is OPTIONAL here
+ * (it is required on `resultEnvelope`). A budget cutoff is a checkpoint, not a
+ * failure, so it must be recognized BEFORE the strict parse that would Zod-throw
+ * on a session-less cutoff and misread it as infra. Empirically (claude 2.1.185)
+ * the cutoff carries a session id + total_cost_usd + modelUsage but NO `result`
+ * field; the partial text lives in the preceding assistant element.
+ */
+const budgetCutoffEnvelope = z.looseObject({
+  type: z.literal('result'),
+  subtype: z.literal('error_max_budget_usd'),
+  session_id: z.string().optional(),
+  total_cost_usd: z.number().optional(),
+  modelUsage: z.record(z.string(), z.looseObject({ contextWindow: z.number().optional() })).optional(),
 });
 
 /** Per-request usage on an assistant message — the context-window arithmetic's input. */
@@ -73,6 +90,32 @@ export function claudeContextUsage(
 }
 
 /**
+ * The last assistant message's text, joined across its text blocks. Used for a
+ * budget cutoff's best-effort partial text — the budget `result` element carries
+ * no `result` field, so what the worker produced before the cap lives in the
+ * assistant element(s). Undefined when there is no assistant text to recover.
+ */
+function lastAssistantText(candidates: unknown[]): string | undefined {
+  let text: string | undefined;
+  for (const m of candidates) {
+    if (typeof m !== 'object' || m === null) continue;
+    const msg = m as { type?: unknown; message?: { content?: unknown } };
+    if (msg.type !== 'assistant' || !Array.isArray(msg.message?.content)) continue;
+    const parts = msg.message.content
+      .filter(
+        (b): b is { type: 'text'; text: string } =>
+          typeof b === 'object' &&
+          b !== null &&
+          (b as { type?: unknown }).type === 'text' &&
+          typeof (b as { text?: unknown }).text === 'string',
+      )
+      .map((b) => b.text);
+    if (parts.length > 0) text = parts.join('');
+  }
+  return text;
+}
+
+/**
  * Parse one `--output-format json` invocation's stdout into a WorkerTurn.
  * Current CLI versions emit an array of all session messages (older versions
  * emitted the result object alone); the envelope is the element with
@@ -89,6 +132,29 @@ export function parseClaudeTurn(stdout: string, prompt: string): WorkerTurn {
   const raw = candidates.find((m) => typeof m === 'object' && m !== null && (m as { type?: unknown }).type === 'result');
   if (!raw) {
     throw new Error(`claude worker output contained no result message (${stdout.length} bytes)`);
+  }
+  // A budget cutoff is a checkpoint, not a failure — recognize it BEFORE the
+  // strict envelope parse (which requires session_id and would Zod-throw on a
+  // session-less cutoff, misreading it as infra). With a session id it settles
+  // as a budgetTruncated WorkerTurn; without one it is the BudgetCutoffError
+  // fallback (no settleable turn). Never the infra/retry path either way.
+  if ((raw as { subtype?: unknown }).subtype === 'error_max_budget_usd') {
+    const budget = budgetCutoffEnvelope.safeParse(raw);
+    const sessionId = budget.success ? budget.data.session_id : undefined;
+    if (sessionId === undefined) {
+      throw new BudgetCutoffError(
+        'the worker reached its budget cap with no recoverable session id — committed work may be on disk (check git); resume manually once a session id is available, or raise the budget',
+      );
+    }
+    const text = lastAssistantText(candidates) ?? '';
+    const context = claudeContextUsage(candidates, budget.success ? budget.data.modelUsage : undefined);
+    return {
+      text,
+      sessionId,
+      budgetTruncated: true,
+      ...(budget.success && budget.data.total_cost_usd !== undefined ? { costUsd: budget.data.total_cost_usd } : {}),
+      ...(context ? { context } : {}),
+    };
   }
   const envelope = resultEnvelope.parse(raw);
   if (envelope.is_error || envelope.subtype !== 'success') {
@@ -191,8 +257,28 @@ export class ClaudeWorker implements WorkerProvider {
     // builder; execa options (incl. the load-bearing `cleanup` default) come
     // from the pinned claudeExecaOptions builder.
     const args = claudeArgs(opts, this.config);
-    const { stdout } = await execa('claude', args, claudeExecaOptions(opts, this.config));
-
-    return parseClaudeTurn(stdout, opts.prompt);
+    try {
+      const { stdout } = await execa('claude', args, claudeExecaOptions(opts, this.config));
+      return parseClaudeTurn(stdout, opts.prompt);
+    } catch (err) {
+      // A budget cutoff exits non-zero, so execa throws BEFORE parseClaudeTurn
+      // sees stdout. Re-parse the captured stdout: a budget-truncated turn is a
+      // checkpoint (return it); a session-less cutoff is a BudgetCutoffError
+      // (propagate it). Anything else — a non-budget result, or no parseable
+      // result — is genuine infra: re-throw the ORIGINAL execa error, message
+      // preserved, so the infra/retry path stays intact.
+      if (err instanceof BudgetCutoffError) throw err;
+      const stdout = (err as { stdout?: unknown }).stdout;
+      if (typeof stdout === 'string' && stdout.length > 0) {
+        try {
+          const turn = parseClaudeTurn(stdout, opts.prompt);
+          if (turn.budgetTruncated) return turn;
+        } catch (parseErr) {
+          if (parseErr instanceof BudgetCutoffError) throw parseErr;
+          // a non-budget parse failure — fall through to re-throw the original
+        }
+      }
+      throw err;
+    }
   }
 }
