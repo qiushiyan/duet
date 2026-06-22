@@ -249,8 +249,8 @@ export const WORKFLOWS = {
     phases: [
       {
         name: 'research',
-        // Shared with Full's frame; use-latest-docs is RIR-only this run.
-        snippets: ['think-holistic', 'compare-notes', 'use-latest-docs'],
+        // Shared with Full's frame; use-latest-docs rides in as an anytime helper.
+        snippets: ['think-holistic', 'compare-notes'],
         gate: {
           // Gate-state name reused from Full — legal because resolution is
           // workflow-scoped (phaseOfGateState(workflow, …)).
@@ -533,6 +533,7 @@ export const ANYTIME_SNIPPETS: readonly string[] = [
   'trace-execution',
   'smart-adapt-skills',
   'technical-difficulty',
+  'use-latest-docs',
 ];
 
 /**

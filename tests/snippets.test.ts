@@ -111,7 +111,7 @@ describe('the snippet library', () => {
     }
   });
 
-  test('the five RIR snippets exist with non-empty bodies; review-direct keeps the review- prefix', () => {
+  test('the RIR arc snippets + the shared doc-currency helper exist with non-empty bodies; review-direct keeps the review- prefix', () => {
     for (const key of ['use-latest-docs', 'implement-direct', 'handoff-direct', 'review-direct', 'apply-review']) {
       const snippet = getSnippet(key);
       expect.soft(snippet, `snippet "${key}"`).toBeDefined();
@@ -135,7 +135,7 @@ describe('the snippet library', () => {
   test('the phase-grouped view renders a RIR phase against the RIR arc', () => {
     const rendered = renderSnippetLibrary({ phase: 'research', workflow: 'rir' });
     expect.soft(rendered.startsWith('<snippet_library phase="research">')).toBe(true);
-    // research's own templates, in full
+    // anytime doc-currency helper, in full (reclassified from RIR-only)
     expect.soft(rendered).toContain('<snippet key="use-latest-docs">');
     // anytime helper, in full
     expect.soft(rendered).toContain('<snippet key="reread-context">');
