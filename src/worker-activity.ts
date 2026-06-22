@@ -19,15 +19,20 @@
  * Two roles, two formats:
  *   - claude implementer — `assistant` records carry `message.content[].tool_use`
  *     with a structured `input.file_path`: a clean read/write signal.
- *   - codex reviewer (read-only) — reads are shell commands (`exec_command` with
- *     `arguments.cmd` = `sed -n '1,260p' CLAUDE.md`), so the file is embedded in
- *     the command string. We pull a path only from a known single-file read
- *     command and fall back to showing the (truncated) command otherwise —
- *     conservative skip-on-uncertainty, never a guessed path.
+ *   - codex (reviewer by default, read-only; implementer when bound there) —
+ *     reads are shell commands (`exec_command` with `arguments.cmd` =
+ *     `sed -n '1,260p' CLAUDE.md`), so the file is embedded in the command
+ *     string: we surface a path only when the command is confidently a single
+ *     known read file (`sed`/`cat`/`head`/`tail`) and otherwise emit no line —
+ *     a search, a pipeline, or a multi-file read is skipped, never a guessed,
+ *     partial, or raw-command line (tool inputs beyond the file path are out of
+ *     scope). Writes come from an `apply_patch` custom_tool_call, from whose
+ *     patch text we read the first file HEADER path, never a hunk.
  *
- * A changed-line count is deliberately dropped: neither provider hands one over
- * for free (claude only a `structuredPatch` needing correlation+summing, codex
- * nothing), and computing it by hand is out of scope.
+ * Scope is bounded to the file path: no message text, no tool inputs/outputs
+ * beyond the path, no diffs. A changed-line count is deliberately dropped too —
+ * neither provider hands one over for free (claude only a `structuredPatch`
+ * needing correlation+summing, codex nothing).
  */
 
 import { parseRecords } from './worker-health.ts';
@@ -39,21 +44,18 @@ import type { JsonRecord, Schema } from './worker-health.ts';
  * heartbeat poll dedups on, so the same action is never re-emitted across ticks.
  *  - `read`  — a file read; the path is the whole signal.
  *  - `write` — an edit/write happened; the path, never its contents.
- *  - `run`   — a codex shell command we could not pin to a single read file
- *              (a search, a pipeline); the label is the command, truncated.
+ * Anything that can't be pinned to a single file path surfaces no activity —
+ * the scope is the path, never a command or its arguments.
  */
 export type WorkerActivity =
   | { id: string; kind: 'read'; path: string }
-  | { id: string; kind: 'write'; path: string }
-  | { id: string; kind: 'run'; label: string };
+  | { id: string; kind: 'write'; path: string };
 
 /** The marker that prefixes an activity voice-log line. The colorizer keys on
  *  it (src/colorize.ts dims `⋯` lines, like the `⏳` heartbeat) — a
  *  producer/colorizer contract, kept as a matching literal in both places the
  *  way `⏳`/`✗` already are. */
 const ACTIVITY_MARKER = '⋯';
-
-const RUN_LABEL_MAX = 80;
 
 /** The one human-facing line shape for an activity — exported so it is testable
  *  alongside the parser and shared by the heartbeat poll. Plain text; the
@@ -64,8 +66,6 @@ export function activityLine(activity: WorkerActivity): string {
       return `${ACTIVITY_MARKER} reading ${activity.path}`;
     case 'write':
       return `${ACTIVITY_MARKER} editing ${activity.path}`;
-    case 'run':
-      return `${ACTIVITY_MARKER} running ${activity.label}`;
   }
 }
 
@@ -110,34 +110,51 @@ function claudeActivity(records: JsonRecord[]): WorkerActivity | undefined {
   return undefined;
 }
 
-// ── codex: function_call records; reads are shell commands ─────────────────
+// ── codex: function_call (shell reads) + apply_patch custom_tool_call (writes) ──
 
-/** Read commands that take their target file as a plain argument. */
-const READ_COMMANDS = new Set(['cat', 'sed', 'head', 'tail', 'nl', 'bat', 'less', 'more']);
+/** Read commands that take their target file(s) as plain argument(s). */
+const READ_COMMANDS = new Set(['cat', 'sed', 'head', 'tail']);
 /** Shell metacharacters that make a command a pipeline/redirect/compound — too
- *  ambiguous to pin to one read file, so we fall back to the raw command. */
+ *  ambiguous to pin to one read file, so it surfaces no path. */
 const SHELL_META = /[|<>;`&]|\$\(/;
+const ENV_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
+/** The first file header in an apply_patch body (`*** Update/Add/Delete File: <p>`). */
+const PATCH_FILE_HEADER = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/m;
 
 function codexActivity(records: JsonRecord[]): WorkerActivity | undefined {
   for (let i = records.length - 1; i >= 0; i--) {
     const payload = records[i]?.['payload'];
     if (!payload || typeof payload !== 'object') continue;
     const p = payload as JsonRecord;
-    if (p['type'] !== 'function_call') continue;
-    const name = p['name'];
+    const type = p['type'];
     const id = p['call_id'];
     if (typeof id !== 'string') continue;
-    // Only shell-exec calls carry read activity; other function names (MCP
-    // tools, apply_patch) are not the read signal this surfaces — skip them and
-    // keep scanning older.
-    if (name !== 'exec_command' && name !== 'shell') continue;
-    const cmd = commandString(p['arguments']);
-    if (cmd === undefined) continue;
-    const path = readPathFromCommand(cmd);
-    if (path !== undefined) return { id, kind: 'read', path };
-    return { id, kind: 'run', label: truncate(cmd, RUN_LABEL_MAX) };
+    // A write: codex applies edits via an apply_patch custom_tool_call whose
+    // `input` is the patch text. Surface only the first file HEADER path, never
+    // a hunk — the path, not the contents.
+    if (type === 'custom_tool_call' && p['name'] === 'apply_patch') {
+      const path = patchHeaderPath(typeof p['input'] === 'string' ? p['input'] : '');
+      if (path !== undefined) return { id, kind: 'write', path };
+      continue; // a malformed patch → keep scanning older
+    }
+    // A read: a shell-exec call (`exec_command`/`shell`) confidently targeting
+    // one known read file. A search, a pipeline, or a multi-file read surfaces
+    // no path — we keep scanning older for the last confident single-file read,
+    // never a guessed/partial path and never the raw command (out of scope).
+    if (type === 'function_call' && (p['name'] === 'exec_command' || p['name'] === 'shell')) {
+      const cmd = commandString(p['arguments']);
+      const path = cmd !== undefined ? readPathFromCommand(cmd) : undefined;
+      if (path !== undefined) return { id, kind: 'read', path };
+      continue;
+    }
   }
   return undefined;
+}
+
+/** The first file path in an apply_patch body, or undefined when none parses. */
+function patchHeaderPath(patch: string): string | undefined {
+  const m = PATCH_FILE_HEADER.exec(patch);
+  return m ? (m[1] ?? '').trim() || undefined : undefined;
 }
 
 /** A function_call's `arguments` is a JSON string; pull the command out of it.
@@ -157,24 +174,46 @@ function commandString(args: unknown): string | undefined {
   return undefined;
 }
 
-/** The single file a known read command targets, or undefined when the command
- *  is a pipeline, a search, or otherwise not a confident single-file read. */
+/** The single file a known read command targets, or undefined unless the command
+ *  is confidently a one-file read — a pipeline, a search, an unsupported command,
+ *  or a multi-file read all return undefined (never a partial or guessed path). */
 function readPathFromCommand(cmd: string): string | undefined {
   if (SHELL_META.test(cmd)) return undefined; // pipeline/redirect/compound
   const tokens = tokenize(cmd);
   let i = 0;
-  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i] ?? '')) i++; // skip env assignments
-  const name = tokens[i];
-  if (name === undefined) return undefined;
-  const base = name.split('/').pop() ?? name; // /usr/bin/sed → sed
-  if (!READ_COMMANDS.has(base)) return undefined;
-  // The file is the last non-flag argument; a read command's other args (sed's
-  // script, a -n flag) precede it.
-  for (let j = tokens.length - 1; j > i; j--) {
-    const t = tokens[j] ?? '';
-    if (t && !t.startsWith('-')) return t;
+  while (i < tokens.length && ENV_ASSIGN.test(tokens[i] ?? '')) i++; // skip leading env assignments
+  const name = (tokens[i] ?? '').split('/').pop() ?? ''; // /usr/bin/sed → sed
+  if (!READ_COMMANDS.has(name)) return undefined;
+  const operands = fileOperands(name, tokens.slice(i + 1));
+  return operands.length === 1 ? operands[0] : undefined; // exactly one file, else ambiguous → no line
+}
+
+/** The file operands of a known read command — option flags removed (and the
+ *  separate numeric value of head/tail `-n`/`-c`), and sed's leading script
+ *  argument dropped. Returns every remaining operand so the caller can require
+ *  exactly one: a multi-file read is ambiguous and must not look single-file. */
+function fileOperands(cmd: string, args: string[]): string[] {
+  const operands: string[] = [];
+  let endOfOptions = false;
+  for (let k = 0; k < args.length; k++) {
+    const t = args[k] ?? '';
+    if (endOfOptions) {
+      operands.push(t);
+      continue;
+    }
+    if (t === '--') {
+      endOfOptions = true;
+      continue;
+    }
+    if (t.startsWith('-')) {
+      // head/tail take a separate numeric value for -n/-c when not attached.
+      if ((cmd === 'head' || cmd === 'tail') && /^-[nc]$/.test(t) && /^\d+$/.test(args[k + 1] ?? '')) k++;
+      continue;
+    }
+    operands.push(t);
   }
-  return undefined;
+  // sed's first non-option operand is the script (e.g. '1,260p'), not a file.
+  return cmd === 'sed' ? operands.slice(1) : operands;
 }
 
 /** A best-effort shell tokenizer: splits on whitespace, honoring single/double
@@ -185,8 +224,4 @@ function tokenize(s: string): string[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(s)) !== null) out.push(m[1] ?? m[2] ?? m[3] ?? '');
   return out;
-}
-
-function truncate(s: string, max: number): string {
-  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }

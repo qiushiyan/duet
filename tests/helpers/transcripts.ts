@@ -91,6 +91,23 @@ export function codexExecCommand(cmd: string, { callId = 'call_0', ts = BASE_TS 
   };
 }
 
+/** A codex `apply_patch` custom_tool_call — codex's write/edit signal, `input`
+ *  the patch text (`*** Begin Patch …`). Real on-disk shape. */
+export function codexApplyPatch(patch: string, { callId = 'call_p', ts = BASE_TS } = {}): Rec {
+  return {
+    type: 'response_item',
+    timestamp: ts,
+    payload: { type: 'custom_tool_call', status: 'completed', name: 'apply_patch', input: patch, call_id: callId },
+  };
+}
+
+/** Build an apply_patch body touching the given files (header-only; a trivial
+ *  one-line hunk per file). `kind` defaults to Update. */
+export function patchBody(...files: Array<{ path: string; kind?: 'Add' | 'Update' | 'Delete' }>): string {
+  const body = files.map((f) => `*** ${f.kind ?? 'Update'} File: ${f.path}\n@@\n-old line\n+new line`).join('\n');
+  return `*** Begin Patch\n${body}\n*** End Patch`;
+}
+
 // ── planting under a fake home (the environment seam) ──────────────────────
 
 function setMtime(path: string, mtime?: number): void {

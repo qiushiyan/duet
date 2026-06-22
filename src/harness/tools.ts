@@ -23,7 +23,7 @@ import {
   workflowOf,
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
-import { readRoleTranscriptTail } from '../sessions.ts';
+import { readRoleTranscriptTail, readTranscriptTailAtPath } from '../sessions.ts';
 import type { TurnDispatcher } from './turn-dispatcher.ts';
 import { formatAge, probeRole } from '../worker-health.ts';
 import { activityLine, latestActivity } from '../worker-activity.ts';
@@ -195,10 +195,20 @@ export function startHeartbeat(
     appendVoiceLog(state, role, `⏳ turn running — ${mins}m elapsed (tag=${tag})${health}`);
   }, 5 * 60_000);
   let lastActivityId: string | undefined;
+  // Cache the located transcript path/schema after the first successful read so
+  // the 30s poll does not re-scan the sessions dir every tick (codex's locate is
+  // a recursive readdir). The path is stable across a turn (resume appends to the
+  // same file); if it ever vanishes the cached read returns undefined and we
+  // re-locate. The full locate stays as the fallback / first read.
+  let located: { path: string; schema: 'claude' | 'codex' } | undefined;
   const activity = setInterval(() => {
     try {
       if (!state.workerSessions[role]) return; // first turn — session id learned only on return
-      const tail = readRoleTranscriptTail(state, role, home !== undefined ? { home } : {});
+      let tail = located ? readTranscriptTailAtPath(located.path, located.schema) : undefined;
+      if (!tail) {
+        tail = readRoleTranscriptTail(state, role, home !== undefined ? { home } : {});
+        located = tail ? { path: tail.path, schema: tail.schema } : undefined;
+      }
       if (!tail) return;
       const act = latestActivity(tail.jsonl, tail.schema);
       if (!act || act.id === lastActivityId) return; // nothing new since the last tick

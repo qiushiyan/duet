@@ -112,9 +112,28 @@ export function readRoleTranscriptTail(
   const paths = locateSessionTranscripts(session.provider, session.sessionId, home);
   const chosen = paths.map((p) => ({ p, mtime: statSync(p).mtimeMs })).sort((a, b) => b.mtime - a.mtime)[0];
   if (!chosen) return undefined;
-  const path = chosen.p;
+  return readTranscriptTailAtPath(chosen.p, session.provider, maxBytes);
+}
 
-  const size = statSync(path).size;
+/**
+ * Read the tail of a transcript at an ALREADY-LOCATED path — the locate-free
+ * half of `readRoleTranscriptTail`, so a fast repeated reader (the 30s heartbeat
+ * activity poll) can skip the directory scan after the first tick. Returns
+ * undefined when the path has vanished, so the caller re-locates. The partial
+ * leading line is discarded only when the read seeked past the file start, same
+ * as the locating reader.
+ */
+export function readTranscriptTailAtPath(
+  path: string,
+  schema: Provider,
+  maxBytes = 262_144,
+): { jsonl: string; schema: Provider; path: string } | undefined {
+  let size: number;
+  try {
+    size = statSync(path).size;
+  } catch {
+    return undefined; // the path disappeared (e.g. a purge) — caller re-locates
+  }
   const start = size > maxBytes ? size - maxBytes : 0;
   const fd = openSync(path, 'r');
   try {
@@ -125,7 +144,7 @@ export function readRoleTranscriptTail(
       const nl = jsonl.indexOf('\n');
       jsonl = nl === -1 ? '' : jsonl.slice(nl + 1);
     }
-    return { jsonl, schema: session.provider, path };
+    return { jsonl, schema, path };
   } finally {
     closeSync(fd);
   }

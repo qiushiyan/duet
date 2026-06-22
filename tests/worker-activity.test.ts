@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { activityLine, latestActivity } from '../src/worker-activity.ts';
 import type { WorkerActivity } from '../src/worker-activity.ts';
-import { claudeAssistantText, claudeToolUse, codexExecCommand, jsonl } from './helpers/transcripts.ts';
+import { claudeAssistantText, claudeToolUse, codexApplyPatch, codexExecCommand, jsonl, patchBody } from './helpers/transcripts.ts';
 
 /**
  * The pure activity parser — the testable seam, in the spirit of
@@ -53,45 +53,73 @@ describe('latestActivity — claude (structured tool_use)', () => {
   });
 });
 
-describe('latestActivity — codex (shell-command reads)', () => {
+describe('latestActivity — codex reads (single-file shell commands only)', () => {
   test.for<[string, string]>([
     ["sed -n '1,260p' CLAUDE.md", 'CLAUDE.md'],
+    ["sed '1,5p' a.ts", 'a.ts'],
     ['cat src/foo.ts', 'src/foo.ts'],
-    ['head -n 50 docs/automation-design.md', 'docs/automation-design.md'],
+    ['cat -- src/foo.ts', 'src/foo.ts'], // end-of-options marker
+    ['head -n 50 docs/x.md', 'docs/x.md'], // separate numeric value of -n
+    ['head -n50 docs/x.md', 'docs/x.md'], // attached value
+    ['head -50 docs/x.md', 'docs/x.md'], // legacy -N
     ['tail -f src/x.ts', 'src/x.ts'],
-    ['/usr/bin/sed -n 1,10p a.ts', 'a.ts'],
-  ])('a single-file read command surfaces the path: %s', ([cmd, path]) => {
-    expect(latestActivity(jsonl(codexExecCommand(cmd, { callId: 'call_r' })), 'codex')).toEqual({
-      id: 'call_r',
-      kind: 'read',
-      path,
-    });
+    ['cat "my file.ts"', 'my file.ts'], // quoted path with a space
+    ['/usr/bin/sed -n 1,10p a.ts', 'a.ts'], // absolute command path
+  ])('a confident single-file read surfaces the path: %s', ([cmd, path]) => {
+    expect(latestActivity(jsonl(codexExecCommand(cmd, { callId: 'call_r' })), 'codex')).toEqual({ id: 'call_r', kind: 'read', path });
   });
 
   test.for<[string]>([
-    ['rg "appendVoiceLog" src'], // a search — not a single-file read
+    ['cat a.ts b.ts'], // multi-file — must not look single-file
+    ["sed -n '1,5p' a.ts b.ts"],
+    ['head -n 50 a.ts b.ts'],
+    ['rg "appendVoiceLog" src'], // a search — not a read command, and the args are out of scope
     ['ls -la src'],
-    ["sed -n '1,5p' a.ts | grep foo"], // a pipeline — too ambiguous
+    ['pnpm test'],
+    ["sed -n '1,5p' a.ts | grep foo"], // a pipeline
     ['cat a.ts > b.ts'], // a redirect
-  ])('a search/pipeline/redirect falls back to the raw command, never a guessed path: %s', ([cmd]) => {
-    const act = latestActivity(jsonl(codexExecCommand(cmd, { callId: 'call_x' })), 'codex');
-    expect(act?.kind).toBe('run');
-    expect((act as Extract<WorkerActivity, { kind: 'run' }>).label).toContain(cmd.split(' ')[0]!);
+  ])('an ambiguous/multi-file/non-read command surfaces NO line (never a guessed or raw-command path): %s', ([cmd]) => {
+    expect(latestActivity(jsonl(codexExecCommand(cmd, { callId: 'call_x' })), 'codex')).toBeUndefined();
   });
 
-  test('a long command label is truncated', () => {
-    const long = `rg ${'x'.repeat(200)}`;
-    const act = latestActivity(jsonl(codexExecCommand(long, { callId: 'call_l' })), 'codex');
-    expect((act as Extract<WorkerActivity, { kind: 'run' }>).label.length).toBeLessThanOrEqual(80);
-    expect((act as Extract<WorkerActivity, { kind: 'run' }>).label.endsWith('…')).toBe(true);
+  test('a search after a read is skipped — the last confident read still shows', () => {
+    const tail = jsonl(
+      codexExecCommand('cat foo.ts', { callId: 'call_read', ts: '2026-06-20T00:00:00.000Z' }),
+      codexExecCommand('rg pattern src', { callId: 'call_search', ts: '2026-06-20T00:01:00.000Z' }),
+    );
+    expect(latestActivity(tail, 'codex')).toEqual({ id: 'call_read', kind: 'read', path: 'foo.ts' });
   });
 
-  test('newest function_call wins', () => {
+  test('newest read wins', () => {
     const tail = jsonl(
       codexExecCommand('cat old.ts', { callId: 'call_old', ts: '2026-06-20T00:00:00.000Z' }),
       codexExecCommand('cat new.ts', { callId: 'call_new', ts: '2026-06-20T00:01:00.000Z' }),
     );
     expect(latestActivity(tail, 'codex')).toEqual({ id: 'call_new', kind: 'read', path: 'new.ts' });
+  });
+});
+
+describe('latestActivity — codex writes (apply_patch, header-only)', () => {
+  test.for<[string, 'Add' | 'Update' | 'Delete']>([
+    ['src/x.ts', 'Update'],
+    ['src/new.ts', 'Add'],
+    ['src/gone.ts', 'Delete'],
+  ])('an apply_patch surfaces the file header path (%s, %s), never a hunk', ([path, kind]) => {
+    const tail = jsonl(codexApplyPatch(patchBody({ path, kind }), { callId: 'call_w' }));
+    expect(latestActivity(tail, 'codex')).toEqual({ id: 'call_w', kind: 'write', path });
+  });
+
+  test('a multi-file patch surfaces the first file header', () => {
+    const tail = jsonl(codexApplyPatch(patchBody({ path: 'a.ts' }, { path: 'b.ts', kind: 'Add' }), { callId: 'call_m' }));
+    expect(latestActivity(tail, 'codex')).toEqual({ id: 'call_m', kind: 'write', path: 'a.ts' });
+  });
+
+  test('a write after a read is the current action', () => {
+    const tail = jsonl(
+      codexExecCommand('cat foo.ts', { callId: 'call_read', ts: '2026-06-20T00:00:00.000Z' }),
+      codexApplyPatch(patchBody({ path: 'src/x.ts' }), { callId: 'call_write', ts: '2026-06-20T00:01:00.000Z' }),
+    );
+    expect(latestActivity(tail, 'codex')).toEqual({ id: 'call_write', kind: 'write', path: 'src/x.ts' });
   });
 });
 
@@ -113,7 +141,6 @@ describe('activityLine — the one voice-log line shape', () => {
   test.for<[WorkerActivity, string]>([
     [{ id: '1', kind: 'read', path: 'src/foo.ts' }, '⋯ reading src/foo.ts'],
     [{ id: '2', kind: 'write', path: 'src/foo.ts' }, '⋯ editing src/foo.ts'],
-    [{ id: '3', kind: 'run', label: 'rg foo src' }, '⋯ running rg foo src'],
   ])('renders %o', ([activity, line]) => {
     expect(activityLine(activity)).toBe(line);
   });
