@@ -14,7 +14,7 @@ Three roles, each bound to a provider (`claude` or `codex`):
 |---|---|---|
 | **Orchestrator** | Routes the protocol — never writes code, only triages and decides who answers what | `claude` (Opus) |
 | **Implementer** | Writes specs, plans, code, the PR | `claude` (Opus) |
-| **Reviewer** | Critiques each artifact, read-only | `codex` |
+| **Reviewer** | Critiques each artifact (review-only — never edits) | `codex` |
 
 A run moves through an arc you pick at the start (`--workflow`). Each `→` is a phase the agents work through; each **GATE** is a stop where the run waits for you:
 
