@@ -42,9 +42,9 @@ function tailCommand(state: RunState, voice: Voice): string {
  * ```
  * ┌──────────────┬──────────────┐
  * │ orchestrator │              │
- * │     60%      │ implementer  │
+ * │     55%      │ implementer  │
  * ├──────────────┤ full height  │
- * │ reviewer 40% │              │
+ * │ reviewer 45% │              │
  * └──────────────┴──────────────┘
  * ```
  *
@@ -55,10 +55,10 @@ function tailCommand(state: RunState, voice: Voice): string {
  */
 async function layoutPanes(state: RunState, orchestratorPane: string): Promise<void> {
   // New pane sizes are percentages of the pane being split: -h 50% peels
-  // the right column off the window, then -v 40% peels the reviewer off
+  // the right column off the window, then -v 45% peels the reviewer off
   // the left column's height.
   const implementer = await tmux('split-window', '-d', '-h', '-l', '50%', '-t', orchestratorPane, '-P', '-F', '#{pane_id}', tailCommand(state, 'implementer'));
-  const reviewer = await tmux('split-window', '-d', '-v', '-l', '40%', '-t', orchestratorPane, '-P', '-F', '#{pane_id}', tailCommand(state, 'reviewer'));
+  const reviewer = await tmux('split-window', '-d', '-v', '-l', '45%', '-t', orchestratorPane, '-P', '-F', '#{pane_id}', tailCommand(state, 'reviewer'));
   await tmux('set-option', '-w', '-t', orchestratorPane, 'pane-border-status', 'top');
   await tmux('select-pane', '-t', orchestratorPane, '-T', `${ROLE_GLYPH.orchestrator} orchestrator`);
   await tmux('select-pane', '-t', reviewer, '-T', `${ROLE_GLYPH.reviewer} reviewer`);
