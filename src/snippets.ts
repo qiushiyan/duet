@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'smol-toml';
 import { z } from 'zod';
-import { ANYTIME_SNIPPETS, phasesOf, workflowOfPhase } from './phases.ts';
+import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, phaseSnippetsFor, phasesOf, workflowOfPhase } from './phases.ts';
 import type { PhaseName, WorkflowName } from './phases.ts';
 
 /**
@@ -67,6 +67,14 @@ export interface SnippetRenderOpts {
   sentTo?: Record<string, string[]>;
   /** Render every snippet's full body, ungrouped — the escape hatch for a cross-phase template. */
   all?: boolean;
+  /**
+   * Whether a consultant is bound for this run. Gates the checkpoint snippets
+   * (CONSULTANT_SNIPPETS) on every render path: an unbound run's library is
+   * byte-for-byte today's (the consultant snippets never appear, body or key),
+   * a bound run sees each checkpoint snippet in its owning phase. Default false,
+   * so a context-less render (the no-arg menu) treats the run as unbound.
+   */
+  consultantBound?: boolean;
 }
 
 /**
@@ -80,8 +88,9 @@ export interface SnippetRenderOpts {
  * want the delta, not the template.
  */
 export function renderSnippetLibrary(opts: SnippetRenderOpts = {}): string {
-  if (opts.all || !opts.phase) return renderFlat(opts.sentTo, opts.all);
-  return renderForPhase(opts.phase, opts.workflow ?? workflowOfPhase(opts.phase), opts.sentTo);
+  const consultantBound = opts.consultantBound ?? false;
+  if (opts.all || !opts.phase) return renderFlat(opts.sentTo, opts.all, consultantBound);
+  return renderForPhase(opts.phase, opts.workflow ?? workflowOfPhase(opts.phase), opts.sentTo, consultantBound);
 }
 
 function snippetBlock(s: Snippet, sentTo?: Record<string, string[]>): string {
@@ -90,10 +99,14 @@ function snippetBlock(s: Snippet, sentTo?: Record<string, string[]>): string {
   return `<snippet key="${s.key}"${attr}>\n${s.expand}\n</snippet>`;
 }
 
-function renderFlat(sentTo?: Record<string, string[]>, all?: boolean): string {
+function renderFlat(sentTo?: Record<string, string[]>, all?: boolean, consultantBound = false): string {
+  // The flat library is the whole file, so the checkpoint snippets must be
+  // filtered out here too unless bound — else `all=true` would expose them on an
+  // unbound run, the very leak this gating closes.
+  const snippets = consultantBound ? loadSnippets() : loadSnippets().filter((s) => !CONSULTANT_SNIPPETS.has(s.key));
   return [
     all ? '<snippet_library all="true">' : '<snippet_library>',
-    ...loadSnippets().map((s) => snippetBlock(s, sentTo)),
+    ...snippets.map((s) => snippetBlock(s, sentTo)),
     '</snippet_library>',
   ].join('\n');
 }
@@ -102,16 +115,25 @@ function fullBodies(keys: readonly string[], sentTo?: Record<string, string[]>):
   return keys.map((k) => getSnippet(k)).filter((s): s is Snippet => s !== undefined).map((s) => snippetBlock(s, sentTo));
 }
 
-function renderForPhase(phase: PhaseName, workflow: WorkflowName, sentTo?: Record<string, string[]>): string {
+function renderForPhase(
+  phase: PhaseName,
+  workflow: WorkflowName,
+  sentTo: Record<string, string[]> | undefined,
+  consultantBound: boolean,
+): string {
   const phases = phasesOf(workflow);
   const i = phases.findIndex((p) => p.name === phase);
-  const current = phases[i]!;
+  // Each phase's ENABLED snippets — the always-on base plus its consultant
+  // checkpoint snippet only when bound, so the consultant snippet shows in its
+  // owning phase and nowhere else, and an unbound run never sees it.
+  const snippetsOf = (name: PhaseName): readonly string[] => phaseSnippetsFor(name, { consultant: consultantBound });
+  const current = snippetsOf(phase);
   const lines: string[] = [
     `<snippet_library phase="${phase}">`,
     'Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in arc order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).',
     `<phase_templates phase="${phase}">`,
-    ...(current.snippets.length > 0
-      ? fullBodies(current.snippets, sentTo)
+    ...(current.length > 0
+      ? fullBodies(current, sentTo)
       : ['(No library templates — this phase is skill- and mechanics-driven; compose from scratch or reach for a helper.)']),
     '</phase_templates>',
     '<anytime_helpers>',
@@ -119,22 +141,20 @@ function renderForPhase(phase: PhaseName, workflow: WorkflowName, sentTo?: Recor
     '</anytime_helpers>',
   ];
 
-  const next = phases.slice(i + 1).filter((p) => p.snippets.length > 0);
+  const indexLine = (p: { name: PhaseName }): string => `<phase name="${p.name}">${snippetsOf(p.name).join(', ')}</phase>`;
+
+  const next = phases.slice(i + 1).filter((p) => snippetsOf(p.name).length > 0);
   if (next.length > 0) {
     lines.push(
       '<coming_next note="the nominal arc — gate rejects loop back and pre-authorized gates skip the stop; orientation for forward-looking work, not a cue to reach ahead">',
-      ...next.map((p) => `<phase name="${p.name}">${p.snippets.join(', ')}</phase>`),
+      ...next.map(indexLine),
       '</coming_next>',
     );
   }
 
-  const done = phases.slice(0, i).filter((p) => p.snippets.length > 0);
+  const done = phases.slice(0, i).filter((p) => snippetsOf(p.name).length > 0);
   if (done.length > 0) {
-    lines.push(
-      '<already_done>',
-      ...done.map((p) => `<phase name="${p.name}">${p.snippets.join(', ')}</phase>`),
-      '</already_done>',
-    );
+    lines.push('<already_done>', ...done.map(indexLine), '</already_done>');
   }
 
   lines.push('</snippet_library>');

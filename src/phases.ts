@@ -120,7 +120,12 @@ export const WORKFLOWS = {
     phases: [
       {
         name: 'frame',
-        snippets: ['think-holistic', 'compare-notes', 'consultant-frame'],
+        // Base snippets are the run's ALWAYS-ON templates. The consultant
+        // checkpoint snippet is NOT listed here — it is registry data
+        // (consultantCheckpoint, below) folded in per-run by phaseSnippetsFor
+        // only when a consultant is bound, so list_snippets never exposes it on
+        // an unbound run (the default-off byte-for-byte invariant).
+        snippets: ['think-holistic', 'compare-notes'],
         gate: {
           state: 'directionGate',
           heading: 'DIRECTION gate — the synthesized direction',
@@ -137,7 +142,7 @@ export const WORKFLOWS = {
       },
       {
         name: 'spec',
-        snippets: ['write-spec', 'review-spec', 'update-spec', 'review-spec-again', 'update-spec-again', 'consultant-spec'],
+        snippets: ['write-spec', 'review-spec', 'update-spec', 'review-spec-again', 'update-spec-again'],
         gate: {
           state: 'commitSpecGate',
           heading: "SPEC gate — the orchestrator's summary",
@@ -182,7 +187,6 @@ export const WORKFLOWS = {
           'review-implementation-again',
           'respond-review-again',
           'ceo-summary',
-          'consultant-impl',
         ],
         gate: {
           state: 'shipGate',
@@ -270,7 +274,7 @@ export const WORKFLOWS = {
       {
         name: 'research',
         // Shared with Full's frame; use-latest-docs is RIR-only this run.
-        snippets: ['think-holistic', 'compare-notes', 'use-latest-docs', 'consultant-frame'],
+        snippets: ['think-holistic', 'compare-notes', 'use-latest-docs'],
         gate: {
           // Gate-state name reused from Full — legal because resolution is
           // workflow-scoped (phaseOfGateState(workflow, …)).
@@ -290,7 +294,7 @@ export const WORKFLOWS = {
       {
         name: 'implement',
         // The spine order: build, orient the reviewer, one writable review round.
-        snippets: ['implement-direct', 'handoff-direct', 'review-direct', 'apply-review', 'consultant-impl'],
+        snippets: ['implement-direct', 'handoff-direct', 'review-direct', 'apply-review'],
         gate: {
           state: 'shipGate',
           heading: 'SHIP gate — the implementation packet',
@@ -577,9 +581,31 @@ const CONSULTANT_CHECKPOINT_SNIPPET: Record<ConsultantCheckpoint, string> = {
   implGate: 'consultant-impl',
 };
 
+/**
+ * The consultant checkpoint snippets, as a set — every snippet that is enabled
+ * ONLY when a consultant is bound. The render layer (snippets.ts) filters the
+ * flat `all=true` library against this so an unbound run's library never exposes
+ * one; the classification test reads it as the consultant bucket rather than
+ * forcing these into the phases' always-on lists (which is what leaked them).
+ */
+export const CONSULTANT_SNIPPETS: ReadonlySet<string> = new Set(Object.values(CONSULTANT_CHECKPOINT_SNIPPET));
+
 /** A phase's consultant checkpoint mode, or undefined when it carries none. */
 export function consultantCheckpointOf(phase: PhaseName): ConsultantCheckpoint | undefined {
   return PHASE[phase].consultantCheckpoint;
+}
+
+/**
+ * A phase's snippets ENABLED for this run — the always-on base list, plus the
+ * phase's consultant checkpoint snippet appended (last, preserving today's bound
+ * order) only when a consultant is bound. The single source list_snippets reads,
+ * so "what the orchestrator may reach for" is base ∪ (checkpoint iff bound) on
+ * every render path: an unbound run sees byte-for-byte the base list, a bound run
+ * sees the checkpoint snippet in its owning phase.
+ */
+export function phaseSnippetsFor(phase: PhaseName, opts: { consultant: boolean }): readonly string[] {
+  const checkpoint = consultantSnippetFor(phase);
+  return opts.consultant && checkpoint ? [...PHASE[phase].snippets, checkpoint] : PHASE[phase].snippets;
 }
 
 /**

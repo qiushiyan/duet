@@ -654,6 +654,25 @@ describe('send_prompt enum visibility (consultant only when bound)', () => {
   });
 });
 
+// Finding 1: the run-facing guard the leak slipped through — list_snippets at
+// the tool altitude. An unbound run's library must name no consultant snippet
+// (body or key, in any section); a bound run shows the phase's checkpoint.
+describe('list_snippets default-off (consultant snippets are gated per-run)', () => {
+  test('unbound: the rendered library names no consultant snippet, default or all=true', async ({ run }) => {
+    const { call } = harness(run, { phase: 'frame' });
+    const def = text(await call('list_snippets'));
+    expect.soft(def).not.toContain('consultant');
+    const all = text(await call('list_snippets', { all: true }));
+    expect.soft(all).not.toContain('consultant');
+  });
+
+  test('bound: the owning phase’s checkpoint snippet surfaces as a full body', async ({ consultantRun }) => {
+    const { call } = harness(consultantRun, { phase: 'frame', consultant: new FakeWorker('claude') });
+    const def = text(await call('list_snippets'));
+    expect.soft(def).toContain('<snippet key="consultant-frame">');
+  });
+});
+
 describe('consultant enumeration (both hosts surface it)', () => {
   test('a settled consultant turn fixes the branch (the headless-settled case) and empties the branch paragraph', async ({
     projectDir,

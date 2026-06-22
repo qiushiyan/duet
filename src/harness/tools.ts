@@ -516,7 +516,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             (sent[tag] ??= []).push(role);
           }
         }
-        return { content: [{ type: 'text' as const, text: renderSnippetLibrary({ phase, workflow: workflowOf(state), sentTo: sent, all: args.all }) }] };
+        return { content: [{ type: 'text' as const, text: renderSnippetLibrary({ phase, workflow: workflowOf(state), sentTo: sent, all: args.all, consultantBound: Boolean(state.bindings.consultant) }) }] };
       },
       { annotations: { readOnlyHint: true } }, // genuinely read-only; also batches with parallel sends
     ),
