@@ -159,14 +159,43 @@ describe('send_prompt', () => {
       .toContain('▶ response (session session-1) · context 24%');
   });
 
-  test('every worker result carries a compact per-turn footer — context, cost, round (F5)', async ({ run }) => {
-    const reviewer = new FakeWorker('codex', [{ costUsd: 0.5, context: { usedTokens: 50, windowTokens: 200 } }]);
-    const { call } = harness(run, { reviewer });
-    const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'r' });
+  test('the footer reports a claude turn in dollars — context, cost, round (F5)', async ({ run }) => {
+    // A claude worker (the implementer) reports costUsd — the footer's $ figure.
+    const implementer = new FakeWorker('claude', [{ costUsd: 1.25, context: { usedTokens: 50, windowTokens: 200 } }]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
     expect.soft(joined).toContain('context 25%'); // 50/200
-    expect.soft(joined).toMatch(/workers \$0\.50/);
+    expect.soft(joined).toMatch(/claude \$1\.25/);
+    expect.soft(joined).toContain('round 0/'); // write-spec is not a review round
+  });
+
+  test('the footer reports a codex turn in TOKENS, never a phantom $0.00 (F5 — the codex fix)', async ({ run }) => {
+    // A real codex worker (the default reviewer) reports tokens and NO costUsd —
+    // the pre-fix footer read only claudeWorkersUsd and showed "workers $0.00"
+    // while codex tokens accumulated. The footer must surface the tokens instead.
+    const reviewer = new FakeWorker('codex', [{ tokens: { input: 1500, output: 300 }, context: { usedTokens: 50, windowTokens: 200 } }]);
+    const { call } = harness(run, { reviewer });
+    const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+    expect.soft(joined).toContain('codex 2k/300 tok'); // fmtTokens(1500)=2k, 300
+    expect.soft(joined).not.toContain('$0.00'); // no phantom claude dollars
+    expect.soft(joined).not.toContain('workers $'); // the misleading single-figure label is gone
     expect.soft(joined).toContain('round 1/'); // the review round just settled
+  });
+
+  test('the footer rides a budget-truncated checkpoint (F5 + #4)', async ({ run }) => {
+    // A budget cutoff only happens on a claude worker (the cap is a claude flag),
+    // so the checkpoint turn settles its claude cost and the footer reports it
+    // alongside the checkpoint note.
+    const implementer = new FakeWorker('claude', [
+      { budgetTruncated: true, sessionId: 'sess-b', costUsd: 0.18, text: 'committed work', context: { usedTokens: 80, windowTokens: 200 } },
+    ]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+    expect.soft(joined).toContain('budget reached'); // the checkpoint note still rides
+    expect.soft(joined).toMatch(/\[context 40% · claude \$0\.18 · round 0\/\d+\]/); // and the footer too
   });
 
   test('a worker failure names the layer, prescribes retry-then-flag, and counts nothing', async ({ run }) => {
@@ -1066,6 +1095,16 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     expect.soft(disk.costs.claudeWorkersUsd).toBe(1.25);
     expect.soft(disk.costs.codexTokens).toEqual({ input: 1000, output: 50 });
     expect.soft(disk.workerSessions).toMatchObject({ implementer: 'impl-1', reviewer: 'rev-1' });
+  });
+
+  test('check_turns delivers the per-turn footer too (F5 covers the async host)', async ({ run }) => {
+    const reviewer = new DeferredWorker('codex');
+    const { call } = harness(run, { reviewer, async: true });
+    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    reviewer.resolve({ sessionId: 'rev-1', tokens: { input: 2000, output: 400 }, context: { usedTokens: 100, windowTokens: 200 } });
+    await flush();
+    const collected = allText(await call('check_turns'));
+    expect.soft(collected).toMatch(/\[context 50% · codex 2k\/400 tok · round 1\/\d+\]/);
   });
 
   test('a failed settle commits no round and no sent tag; the retry of the same tag is clean (rail preserved)', async ({

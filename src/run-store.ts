@@ -675,6 +675,17 @@ export function contextPercent(usage: ContextUsage): number {
 }
 
 /**
+ * Compact token count for display: 2_000_000 → "2.0M", 1_500 → "2k", else the
+ * number. Shared by `duet status` (status.ts) and the per-turn footer
+ * (harness/tools.ts) so the two render Codex tokens identically.
+ */
+export function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+  return String(n);
+}
+
+/**
  * Record a voice's context-window fill: mutates the state (the caller owns
  * the save, as with every handler-side mutation) and refreshes the plain-text
  * sidecar `context/<voice>` ("41%") that the tmux pane titles re-read at

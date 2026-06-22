@@ -12,6 +12,7 @@ import {
   clearTurnActive,
   consumeHumanInput,
   contextPercent,
+  fmtTokens,
   gateAttended,
   listPendingSteers,
   loadRunState,
@@ -305,17 +306,38 @@ export function renderTurnResult(
     });
   }
   // F5: a compact per-turn footer — this role's context fill, the cumulative
-  // worker cost (with a `+` when partial/unmetered), and the round vs cap. Both
-  // hosts flow through here (blocking send_prompt and check_turns via the
-  // dispatcher's collect), so one edit covers both.
+  // worker cost, and the round vs cap. Both hosts flow through here (blocking
+  // send_prompt and check_turns via the dispatcher's collect), so one edit
+  // covers both.
   const ctxUsage = state.contextUsage?.[role];
   const footer = [
     ...(ctxUsage ? [`context ${contextPercent(ctxUsage)}%`] : []),
-    `workers $${state.costs.claudeWorkersUsd.toFixed(2)}${state.costs.claudeWorkersCostPartial ? '+' : ''}`,
+    footerWorkerCost(state.costs),
     `round ${state.rounds[phase] ?? 0}/${cap}`,
   ].join(' · ');
   content.push({ type: 'text' as const, text: `[${footer}]` });
   return { content };
+}
+
+/**
+ * The footer's cumulative worker-cost fragment — honest about BOTH providers,
+ * mirroring `duet status` semantics: Claude bills in dollars (with a `+` when
+ * the total is partial/unmetered — an interactive-transport turn reports no
+ * cost), Codex bills in tokens. Each side shows only when it has activity, so a
+ * Claude-only round reads `claude $1.25` and a Codex-only round reads
+ * `codex 2k/400 tok` — never the old `workers $0.00`, which implied no cost while
+ * Codex tokens accumulated. Falls back to `claude $0.00` only in the (post-settle
+ * unreachable) no-activity case, so the slot is never empty.
+ */
+function footerWorkerCost(costs: RunState['costs']): string {
+  const parts: string[] = [];
+  if (costs.claudeWorkersUsd > 0 || costs.claudeWorkersCostPartial) {
+    parts.push(`claude $${costs.claudeWorkersUsd.toFixed(2)}${costs.claudeWorkersCostPartial ? '+' : ''}`);
+  }
+  if (costs.codexTokens.input + costs.codexTokens.output > 0) {
+    parts.push(`codex ${fmtTokens(costs.codexTokens.input)}/${fmtTokens(costs.codexTokens.output)} tok`);
+  }
+  return parts.length > 0 ? parts.join(' · ') : `claude $${costs.claudeWorkersUsd.toFixed(2)}`;
 }
 
 export function createPhaseTools({ state, phase, providers, log, stagedAnswer: initialAnswer, rails, home, async: asyncDeps }: PhaseToolsDeps): PhaseTools {
@@ -828,7 +850,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     tools.push(
       kernelTool(
         'check_turns',
-        'Collect the results of worker turns dispatched with send_prompt. On the interactive host send_prompt returns immediately and the turn runs in the background; check_turns is how you pull a finished turn’s response back into the conversation — the worker’s text (or, if its turn failed at the infrastructure layer, the prescribed recovery), with the same bookkeeping a blocking turn would have done already committed. It is instant: it delivers whatever has settled, names any role whose turn is still running (call it again later — or background `duet status --wait` so its settling re-invokes you), and never waits. Collecting a role’s result re-opens it for the next send_prompt; a phase cannot advance while any dispatched turn is still uncollected.',
+        'Collect the results of worker turns dispatched with send_prompt. On the interactive host send_prompt returns immediately and the turn runs in the background; check_turns is how you pull a finished turn’s response back into the conversation — the worker’s text (with any checkpoint note if it hit its budget cap), or, if the turn stopped short, the prescribed recovery: a budget-control stop (resume the session / raise the budget) or an infrastructure failure (retry once, then ask_human). The same bookkeeping a blocking turn would have done is already committed. It is instant: it delivers whatever has settled, names any role whose turn is still running (call it again later — or background `duet status --wait` so its settling re-invokes you), and never waits. Collecting a role’s result re-opens it for the next send_prompt; a phase cannot advance while any dispatched turn is still uncollected.',
         {},
         async () => {
           const ready = dispatcher.collectReady();

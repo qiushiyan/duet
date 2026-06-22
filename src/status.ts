@@ -2,7 +2,7 @@ import type { RunPosition } from './harness/lifecycle.ts';
 import { WORKFLOWS, gateOf, phaseOfGateState, phasesOf } from './phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
 import type { WorkerRole } from './providers/types.ts';
-import { contextPercent, workflowOf } from './run-store.ts';
+import { contextPercent, fmtTokens, workflowOf } from './run-store.ts';
 import type { HumanDecision, RunState, Steer, Voice } from './run-store.ts';
 import { resolveSessions } from './sessions.ts';
 import type { SessionRef } from './sessions.ts';
@@ -248,12 +248,6 @@ function packetHeadline(state: RunState, gateState: string): string {
   const phase = phaseOfGateState(workflowOf(state), gateState);
   if (!phase) return '';
   return (state.phaseSummaries[phase]?.summary.split('\n').find((l) => l.trim()) ?? '').slice(0, 96);
-}
-
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
-  return String(n);
 }
 
 /** ISO timestamp → the short human form the status lists use. */
