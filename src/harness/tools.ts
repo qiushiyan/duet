@@ -914,7 +914,9 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     'list_snippets',
     'create_branch',
     'propose_snippet_edit',
-    'write_note',
+    // write_note is NOT here (F2): a pure append to notes.md has no statechart
+    // effect, so the quiescence rationale for refusing work tools doesn't apply
+    // — a friction observation can be recorded at the gate moment it crystallizes.
   ]);
   const phaseEnding = (toolName: string): CallToolResult => ({
     content: [

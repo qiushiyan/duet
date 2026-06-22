@@ -871,18 +871,23 @@ describe('the post-terminal quiescence rail', () => {
       ['list_snippets', {}],
       ['create_branch', { name: 'feat/nope' }],
       ['propose_snippet_edit', { snippet_key: 'k', proposed_body: 'b', rationale: 'r' }],
-      ['write_note', { observation: 'n' }],
     ] as const) {
       const result = await call(name, args);
       expect.soft(result.isError, name).toBe(true);
       expect.soft(text(result), name).toContain(`${name} is refused here`);
     }
-    // None of them ran: no worker turn, no branch, no proposal, no note.
+    // None of them ran: no worker turn, no branch, no proposal.
     expect.soft(implementer.calls).toHaveLength(0);
     expect.soft(reviewer.calls).toHaveLength(0);
     expect.soft(run.branch).toBeUndefined();
     const persisted = loadRunState(projectDir, run.runId);
     expect.soft(persisted.snippetProposals).toHaveLength(0);
+
+    // write_note is NOT refused (F2): a pure note append has no statechart
+    // effect, so it works at the gate moment a friction observation crystallizes.
+    const noted = await call('write_note', { observation: 'friction at the gate' });
+    expect.soft(noted.isError).toBeUndefined();
+    expect.soft(readFileSync(join(runDirOf(projectDir, run.runId), 'notes.md'), 'utf8')).toContain('friction at the gate');
 
     // The status/re-anchor read stays open.
     expect.soft((await call('get_task')).isError).toBeUndefined();
