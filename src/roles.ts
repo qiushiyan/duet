@@ -1,8 +1,8 @@
 import type { WorkerRole } from './providers/types.ts';
-// Type-only: importing RunState as a value would close a runtime cycle
-// (run-store.ts value-imports the harness, which reads this module). The
-// RunState edge is erased at build, so no cycle exists.
-import type { RunState } from './run-store.ts';
+// Type-only on BOTH imports, so this module compiles to a runtime leaf (it
+// value-imports nothing) — which is why run-store.ts and the harness can
+// value-import it without closing a cycle. The Voice edge is erased at build.
+import type { RunState, Voice } from './run-store.ts';
 
 /**
  * Run-state role POLICY — the consultant's three asymmetries expressed once, as
@@ -78,4 +78,14 @@ export function workerRolesFor(state: RunState): WorkerRole[] {
   return state.bindings.consultant
     ? ['implementer', 'reviewer', 'consultant']
     : ['implementer', 'reviewer'];
+}
+
+/**
+ * The run's bound VOICES — the orchestrator plus its worker roles. The companion
+ * of workerRolesFor for the surfaces that enumerate every voice (doctor's role
+ * rows, status' context, the tmux panes), not just the workers: routing those
+ * through workerRolesFor would silently drop the orchestrator.
+ */
+export function voicesFor(state: RunState): Voice[] {
+  return ['orchestrator', ...workerRolesFor(state)];
 }

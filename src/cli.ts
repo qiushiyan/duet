@@ -6,7 +6,7 @@ import { Command } from 'commander';
 import { execa } from 'execa';
 import { createActor } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
-import { loadRunConfig } from './config.ts';
+import { bindingFor, loadRunConfig } from './config.ts';
 import { DEFAULT_FRAMING_FILE, parseGatesAt, resolveHumanText, resolveRunInputs } from './framing.ts';
 import {
   aliveDriverPid,
@@ -798,11 +798,11 @@ program
 program
   .command('takeover')
   .description('Hand a role’s session to you: opens the provider’s interactive CLI resumed on that session. Duet stays out until you return; your turns land in the same transcript the orchestrator continues from.')
-  .argument('<role>', 'orchestrator | implementer | reviewer')
+  .argument('<role>', 'orchestrator | implementer | reviewer | consultant')
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
   .action(async (role: string, runId: string | undefined) => {
-    if (role !== 'orchestrator' && role !== 'implementer' && role !== 'reviewer') {
-      fail(`unknown role "${role}" — use orchestrator, implementer, or reviewer`);
+    if (role !== 'orchestrator' && role !== 'implementer' && role !== 'reviewer' && role !== 'consultant') {
+      fail(`unknown role "${role}" — use orchestrator, implementer, reviewer, or consultant`);
     }
     const cwd = process.cwd();
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
@@ -834,7 +834,7 @@ program
       fail(`the ${role} has no session yet in run ${state.runId}`);
     }
 
-    const provider = role === 'orchestrator' ? state.bindings.orchestrator.provider : state.bindings[role].provider;
+    const provider = role === 'orchestrator' ? state.bindings.orchestrator.provider : bindingFor(state.bindings, role).provider;
     const cmd = provider === 'claude' ? ['claude', '--resume', sessionId] : ['codex', 'resume', sessionId];
     console.log(`handing over the ${role} session (${sessionId})`);
     console.log(`  ${cmd.join(' ')}`);
@@ -868,9 +868,9 @@ program
 // tailing a voice log) pipe through. The log files stay plain text; color
 // exists only in the live view. Unknown voices pass lines through untouched.
 const colorizeCommand = new Command('_colorize')
-  .argument('<voice>', 'orchestrator | implementer | reviewer')
+  .argument('<voice>', 'orchestrator | implementer | reviewer | consultant')
   .action(async (voice: string) => {
-    const known = voice === 'orchestrator' || voice === 'implementer' || voice === 'reviewer';
+    const known = voice === 'orchestrator' || voice === 'implementer' || voice === 'reviewer' || voice === 'consultant';
     process.stdout.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'EPIPE') process.exit(0); // pane closed mid-stream
     });

@@ -1,5 +1,6 @@
 import { bindingFor } from './config.ts';
 import { aliveDriverPid, probeRunPosition } from './harness/lifecycle.ts';
+import { voicesFor } from './roles.ts';
 import { resolveSessions, readRoleTranscriptTail } from './sessions.ts';
 import type { RunState, Voice } from './run-store.ts';
 import {
@@ -30,8 +31,6 @@ import {
  * Every transcript read is fail-soft: a missing/disappearing transcript yields an
  * idle/elapsed row, never a thrown health command.
  */
-
-const ROLES: readonly Voice[] = ['orchestrator', 'implementer', 'reviewer'];
 
 export interface RoleHealthRow {
   role: Voice;
@@ -157,9 +156,10 @@ export async function buildDoctorModel(
   // interactive session is driving it — not merely because a pid file exists.
   const phaseMidFlight = position.kind === 'running' || position.kind === 'interactive';
 
-  const roles = ROLES.map((role) => roleRow(role, state, { now: opts.now, ...(opts.home !== undefined ? { home: opts.home } : {}), driverAlive, phaseMidFlight }));
+  const voices = voicesFor(state);
+  const roles = voices.map((role) => roleRow(role, state, { now: opts.now, ...(opts.home !== undefined ? { home: opts.home } : {}), driverAlive, phaseMidFlight }));
 
-  const hasClaude = ROLES.some((r) => bindingFor(state.bindings, r).provider === 'claude');
+  const hasClaude = voices.some((r) => bindingFor(state.bindings, r).provider === 'claude');
   let connectivity: Connectivity;
   try {
     connectivity = hasClaude ? await probeAnthropic(opts.fetch ?? (globalThis.fetch as unknown as FetchLike)) : { target: 'none', status: 'not probed' };

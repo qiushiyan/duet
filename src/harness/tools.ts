@@ -410,7 +410,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   // by the injected dispatcher; absent → the headless host, blocking. The
   // same-role guard, the phase-exit gate, and check_turns all branch on it.
   const dispatcher = asyncDeps?.dispatcher;
-  const ROLES: WorkerRole[] = ['implementer', 'reviewer'];
+  const ROLES: WorkerRole[] = workerRolesFor(state);
   // A reconnect ORPHAN: a pending-turn record exists on disk for this role, but
   // the live dispatcher has no record for it — a prior server dispatched the
   // turn and died, and this (fresh) server does not own it. Detection is purely
@@ -502,7 +502,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       },
       async (args) => {
         const sent: Record<string, string[]> = {};
-        for (const role of ['implementer', 'reviewer'] as const) {
+        for (const role of workerRolesFor(state)) {
           for (const tag of state.sentSnippets?.[phase]?.[role] ?? []) {
             (sent[tag] ??= []).push(role);
           }
@@ -701,7 +701,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         // (the durable one-way flag) covers the async window where a turn was
         // dispatched but its session id isn't yet persisted; workerSessions
         // covers the headless host (and a settled interactive turn).
-        if (state.workerDispatched || state.workerSessions.implementer || state.workerSessions.reviewer) {
+        if (state.workerDispatched || workerRolesFor(state).some((r) => state.workerSessions[r])) {
           return {
             content: [
               {

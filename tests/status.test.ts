@@ -326,6 +326,40 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     expect.soft(buildBrief(model)).not.toHaveProperty('pendingTurns');
   });
 
+  test('a bound consultant is enumerated across sessions[], context, and pendingTurns; the orchestrator is kept', ({
+    run,
+    consultantRun,
+  }) => {
+    // sessions[] (worker surface): the consultant appears when bound, never when not.
+    run.orchestratorSessionId = 'orch-1';
+    run.workerSessions = { reviewer: 'rev-1', consultant: 'stray' }; // unbound: 'stray' must not surface
+    expect
+      .soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions.map((s) => s.role))
+      .toEqual(['orchestrator', 'reviewer']);
+
+    consultantRun.orchestratorSessionId = 'orch-1';
+    consultantRun.workerSessions = { consultant: 'c-1' };
+    expect
+      .soft(buildStatusModel(consultantRun, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions)
+      .toContainEqual({ role: 'consultant', provider: 'claude', sessionId: 'c-1' });
+
+    // context (voice surface): keeps the orchestrator AND gains the consultant —
+    // a blunt workerRolesFor here would have silently dropped the orchestrator.
+    consultantRun.contextUsage = {
+      orchestrator: { usedTokens: 83_000, windowTokens: 200_000, at: 't1' },
+      consultant: { usedTokens: 50_000, windowTokens: 200_000, at: 't2' },
+    };
+    const ctxRoles = buildStatusModel(consultantRun, { kind: 'running', pid: 1, phase: 'spec' }, []).context.map((c) => c.role);
+    expect.soft(ctxRoles).toContain('orchestrator');
+    expect.soft(ctxRoles).toContain('consultant');
+
+    // pendingTurns (worker surface): a dispatched consultant turn is surfaced.
+    consultantRun.pendingTurns = { consultant: { tag: 'consultant-spec', startedAt: 't3', status: 'ready' } };
+    expect
+      .soft(buildStatusModel(consultantRun, { kind: 'interactive', phase: 'spec' }, []).pendingTurns)
+      .toContainEqual({ role: 'consultant', tag: 'consultant-spec', status: 'ready', startedAt: 't3' });
+  });
+
   test('rounds run against their caps; auto-approvals carry packet headlines', ({ run }) => {
     run.rounds = { spec: 2, frame: 1 };
     run.autoApprovals = [{ gate: 'directionGate', at: '2026-06-12T03:14:00.000Z' }];

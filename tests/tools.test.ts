@@ -654,6 +654,38 @@ describe('send_prompt enum visibility (consultant only when bound)', () => {
   });
 });
 
+describe('consultant enumeration (both hosts surface it)', () => {
+  test('a settled consultant turn fixes the branch (the headless-settled case) and empties the branch paragraph', async ({
+    projectDir,
+    consultantRun,
+  }) => {
+    await execa('git', ['init', '-b', 'main'], { cwd: projectDir });
+    const consultant = new FakeWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'frame', consultant });
+
+    // A consultant turn IS a worker prompt — and it can settle before create_branch
+    // runs, the case the async workerDispatched flag doesn't cover.
+    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'frame analysis' });
+
+    const refused = await call('create_branch', { name: 'feat/too-late' });
+    expect.soft(refused.isError).toBe(true);
+    expect.soft(text(refused)).toContain('branch is fixed');
+    // The first-phase brief no longer offers the branch paragraph either.
+    expect.soft(buildPhaseBrief(consultantRun, 'frame')).not.toContain('the run works on exactly one branch');
+  });
+
+  test('check_turns enumerates a still-running consultant turn on the interactive host', async ({ consultantRun }) => {
+    const consultant = new DeferredWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant, async: true });
+    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit' });
+
+    const checked = await call('check_turns');
+    const joined = checked.content.map((c) => (c as { text?: string }).text ?? '').join('\n');
+    expect.soft(joined).toContain('consultant'); // the scan (ROLES = workerRolesFor) reaches it
+    expect.soft(joined).toContain('still running');
+  });
+});
+
 describe('ask_human (the cooperative pause)', () => {
   test('queues the question, persists it, and tells the orchestrator to end its turn', async ({ projectDir, run }) => {
     const { call } = harness(run);

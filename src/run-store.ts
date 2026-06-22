@@ -3,10 +3,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { Snapshot } from 'xstate';
+import { bindingFor } from './config.ts';
 import type { RoleBinding, RoleBindings } from './config.ts';
 import { PHASE, WORKFLOWS, defaultPosture, defaultPreAuthorizedOf, gatePhasesOf } from './phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
 import type { ContextUsage, WorkerRole } from './providers/types.ts';
+import { workerRolesFor } from './roles.ts';
 import { locateSessionTranscripts } from './sessions.ts';
 import type { ErrorClass, RetryState } from './worker-health.ts';
 
@@ -575,11 +577,16 @@ export function purgeRun(state: RunState, home: string = homedir()): PurgeResult
   if (state.orchestratorSessionId) {
     sessions.push({ provider: state.bindings.orchestrator.provider, sessionId: state.orchestratorSessionId });
   }
-  if (state.workerSessions.implementer) {
-    sessions.push({ provider: state.bindings.implementer.provider, sessionId: state.workerSessions.implementer });
-  }
-  if (state.workerSessions.reviewer) {
-    sessions.push({ provider: state.bindings.reviewer.provider, sessionId: state.workerSessions.reviewer });
+  // Each BOUND worker's LATEST tracked transcript, by exact session-id match —
+  // the consultant included when bound. Prior consultant checkpoint transcripts
+  // are intentionally left on disk: state tracks only the latest id and
+  // sessions.ts matches by exact id (never a directory sweep), so purge cannot
+  // reach them. (The run dir — including consultant.log — is removed below, so
+  // consultant.log is NOT a post-purge findability path; the surviving priors
+  // are the provider transcripts in ~/.claude / ~/.codex.)
+  for (const role of workerRolesFor(state)) {
+    const sessionId = state.workerSessions[role];
+    if (sessionId) sessions.push({ provider: bindingFor(state.bindings, role).provider, sessionId });
   }
 
   const transcripts = [

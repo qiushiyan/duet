@@ -2,6 +2,7 @@ import type { RunPosition } from './harness/lifecycle.ts';
 import { WORKFLOWS, gateOf, phaseOfGateState, phasesOf } from './phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
 import type { WorkerRole } from './providers/types.ts';
+import { voicesFor, workerRolesFor } from './roles.ts';
 import { contextPercent, fmtTokens, workflowOf } from './run-store.ts';
 import type { HumanDecision, RunState, Steer, Voice } from './run-store.ts';
 import { resolveSessions } from './sessions.ts';
@@ -173,7 +174,7 @@ export function buildStatusModel(state: RunState, position: RunPosition, pending
       .filter((p) => p.gate !== null && ((state.rounds[p.name] ?? 0) > 0 || p.reviewLoop))
       .map((p) => ({ phase: p.name, used: state.rounds[p.name] ?? 0, cap: p.roundCap })),
     costs: state.costs,
-    context: (['orchestrator', 'implementer', 'reviewer'] as const).flatMap((role) => {
+    context: voicesFor(state).flatMap((role) => {
       const usage = state.contextUsage?.[role];
       return usage ? [{ role, ...usage, percent: contextPercent(usage) }] : [];
     }),
@@ -184,7 +185,7 @@ export function buildStatusModel(state: RunState, position: RunPosition, pending
     })),
     ...(state.pendingTurns && Object.keys(state.pendingTurns).length > 0
       ? {
-          pendingTurns: (['implementer', 'reviewer'] as const).flatMap((role) => {
+          pendingTurns: workerRolesFor(state).flatMap((role) => {
             const t = state.pendingTurns?.[role];
             return t ? [{ role, tag: t.tag, status: t.status, startedAt: t.startedAt }] : [];
           }),
