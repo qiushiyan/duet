@@ -30,6 +30,16 @@
  */
 
 /**
+ * A consultant checkpoint mode — the posture the optional consultant takes at a
+ * phase, named by lineage, not by phase. `frame` is the generative third-analysis
+ * mode (framing); `specGate`/`implGate` are the critical bet-audit modes just
+ * before the Commit-spec and Ship gates. Each arc maps the modes onto its own
+ * phases (Full: frame/specGate/implGate; RIR: frame/implGate — no spec phase).
+ * Registry data, so "where the consultant fires" stays in the single source.
+ */
+export type ConsultantCheckpoint = 'frame' | 'specGate' | 'implGate';
+
+/**
  * The gate a phase exits through (registry input shape). String-typed at input
  * time; the derived `GatePhase` discriminates on `gate` being non-null.
  */
@@ -60,6 +70,12 @@ interface PhaseSpecInput<Name extends string = string> {
   readonly orchestratorBudgetUsd: number;
   readonly workerBudgetUsd: number;
   readonly workerTurnTimeoutMs: number;
+  /**
+   * The consultant checkpoint this phase carries (absent ⇒ none). Drives the
+   * orchestrator-brief injection that only fires when a consultant is bound; the
+   * unbound run never reads it.
+   */
+  readonly consultantCheckpoint?: ConsultantCheckpoint;
 }
 
 /** A workflow definition as written in the registry (string-typed input shape). */
@@ -104,7 +120,7 @@ export const WORKFLOWS = {
     phases: [
       {
         name: 'frame',
-        snippets: ['think-holistic', 'compare-notes'],
+        snippets: ['think-holistic', 'compare-notes', 'consultant-frame'],
         gate: {
           state: 'directionGate',
           heading: 'DIRECTION gate — the synthesized direction',
@@ -117,10 +133,11 @@ export const WORKFLOWS = {
         orchestratorBudgetUsd: 15,
         workerBudgetUsd: 10,
         workerTurnTimeoutMs: 30 * 60_000,
+        consultantCheckpoint: 'frame',
       },
       {
         name: 'spec',
-        snippets: ['write-spec', 'review-spec', 'update-spec', 'review-spec-again', 'update-spec-again'],
+        snippets: ['write-spec', 'review-spec', 'update-spec', 'review-spec-again', 'update-spec-again', 'consultant-spec'],
         gate: {
           state: 'commitSpecGate',
           heading: "SPEC gate — the orchestrator's summary",
@@ -133,6 +150,7 @@ export const WORKFLOWS = {
         orchestratorBudgetUsd: 15,
         workerBudgetUsd: 10,
         workerTurnTimeoutMs: 30 * 60_000,
+        consultantCheckpoint: 'specGate',
       },
       {
         name: 'plan',
@@ -164,6 +182,7 @@ export const WORKFLOWS = {
           'review-implementation-again',
           'respond-review-again',
           'ceo-summary',
+          'consultant-impl',
         ],
         gate: {
           state: 'shipGate',
@@ -177,6 +196,7 @@ export const WORKFLOWS = {
         orchestratorBudgetUsd: 30,
         workerBudgetUsd: 25,
         workerTurnTimeoutMs: 60 * 60_000,
+        consultantCheckpoint: 'implGate',
       },
       {
         name: 'docs',
@@ -250,7 +270,7 @@ export const WORKFLOWS = {
       {
         name: 'research',
         // Shared with Full's frame; use-latest-docs is RIR-only this run.
-        snippets: ['think-holistic', 'compare-notes', 'use-latest-docs'],
+        snippets: ['think-holistic', 'compare-notes', 'use-latest-docs', 'consultant-frame'],
         gate: {
           // Gate-state name reused from Full — legal because resolution is
           // workflow-scoped (phaseOfGateState(workflow, …)).
@@ -265,11 +285,12 @@ export const WORKFLOWS = {
         orchestratorBudgetUsd: 15,
         workerBudgetUsd: 10,
         workerTurnTimeoutMs: 30 * 60_000,
+        consultantCheckpoint: 'frame',
       },
       {
         name: 'implement',
         // The spine order: build, orient the reviewer, one writable review round.
-        snippets: ['implement-direct', 'handoff-direct', 'review-direct', 'apply-review'],
+        snippets: ['implement-direct', 'handoff-direct', 'review-direct', 'apply-review', 'consultant-impl'],
         gate: {
           state: 'shipGate',
           heading: 'SHIP gate — the implementation packet',
@@ -283,6 +304,7 @@ export const WORKFLOWS = {
         orchestratorBudgetUsd: 30,
         workerBudgetUsd: 25,
         workerTurnTimeoutMs: 60 * 60_000,
+        consultantCheckpoint: 'implGate',
       },
     ],
     entry: { firstPhase: 'research' },
@@ -354,6 +376,8 @@ export interface PhaseSpec {
   orchestratorBudgetUsd: number;
   workerBudgetUsd: number;
   workerTurnTimeoutMs: number;
+  /** The consultant checkpoint this phase carries, when any (registry data). */
+  consultantCheckpoint?: ConsultantCheckpoint;
 }
 
 /**
@@ -545,3 +569,25 @@ export const ANYTIME_SNIPPETS: readonly string[] = [
  * invite the very pre-plan compaction the design moved away from).
  */
 export const UNLISTED_SNIPPETS: readonly string[] = ['compact-for-plan'];
+
+/** The snippet each consultant checkpoint mode is run with. */
+const CONSULTANT_CHECKPOINT_SNIPPET: Record<ConsultantCheckpoint, string> = {
+  frame: 'consultant-frame',
+  specGate: 'consultant-spec',
+  implGate: 'consultant-impl',
+};
+
+/** A phase's consultant checkpoint mode, or undefined when it carries none. */
+export function consultantCheckpointOf(phase: PhaseName): ConsultantCheckpoint | undefined {
+  return PHASE[phase].consultantCheckpoint;
+}
+
+/**
+ * The consultant snippet a phase's checkpoint runs with, or undefined when the
+ * phase carries no checkpoint — the single source the orchestrator-brief
+ * injection reads, so the phase→snippet mapping is never duplicated in prompts.
+ */
+export function consultantSnippetFor(phase: PhaseName): string | undefined {
+  const mode = PHASE[phase].consultantCheckpoint;
+  return mode ? CONSULTANT_CHECKPOINT_SNIPPET[mode] : undefined;
+}

@@ -686,6 +686,42 @@ describe('consultant enumeration (both hosts surface it)', () => {
   });
 });
 
+describe('consultant checkpoint brief injection (orchestrator-only, additive)', () => {
+  // The cohort lives in the orchestrator brief (F3) — so buildPhaseBrief DOES
+  // name the consultant when bound, and is byte-for-byte today's when not.
+  test('the frame brief becomes a three-voice analysis when bound; unbound names no consultant', ({ run, consultantRun }) => {
+    const bound = buildPhaseBrief(consultantRun, 'frame');
+    expect.soft(bound).toContain('Consultant checkpoint');
+    expect.soft(bound).toContain('THREE-voice');
+    expect.soft(bound).toContain('consultant-frame');
+    expect.soft(bound).toContain('anonymized peers');
+    expect.soft(buildPhaseBrief(run, 'frame').toLowerCase()).not.toContain('consultant');
+  });
+
+  test('the spec brief gains the bet-audit step (folding severity into human_decisions) when bound; unbound is clean', ({
+    run,
+    consultantRun,
+  }) => {
+    const bound = buildPhaseBrief(consultantRun, 'spec'); // framing-only run → the draft entry variant
+    expect.soft(bound).toContain('Consultant checkpoint');
+    expect.soft(bound).toContain('consultant-spec');
+    expect.soft(bound).toContain('human_decisions');
+    expect.soft(bound).toContain('never re-grade');
+    expect.soft(buildPhaseBrief(run, 'spec').toLowerCase()).not.toContain('consultant');
+  });
+
+  test('the impl brief gains the bet-audit step when bound; unbound is clean', ({ run, consultantRun }) => {
+    expect.soft(buildPhaseBrief(consultantRun, 'impl')).toContain('consultant-impl');
+    expect.soft(buildPhaseBrief(consultantRun, 'impl')).toContain('Consultant checkpoint');
+    expect.soft(buildPhaseBrief(run, 'impl').toLowerCase()).not.toContain('consultant');
+  });
+
+  test('a non-checkpoint phase (plan) never injects, bound or not', ({ run, consultantRun }) => {
+    expect.soft(buildPhaseBrief(consultantRun, 'plan').toLowerCase()).not.toContain('consultant');
+    expect.soft(buildPhaseBrief(run, 'plan').toLowerCase()).not.toContain('consultant');
+  });
+});
+
 describe('ask_human (the cooperative pause)', () => {
   test('queues the question, persists it, and tells the orchestrator to end its turn', async ({ projectDir, run }) => {
     const { call } = harness(run);

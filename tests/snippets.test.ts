@@ -111,6 +111,33 @@ describe('the snippet library', () => {
     }
   });
 
+  test('the three consultant snippets exist, are phase-classified, and never carry a review- prefix', () => {
+    const phaseSet = new Set<string>(WORKFLOW_NAMES.flatMap((wf) => WORKFLOWS[wf].phases.flatMap((p) => p.snippets)));
+    for (const key of ['consultant-frame', 'consultant-spec', 'consultant-impl']) {
+      const snippet = getSnippet(key);
+      expect.soft(snippet, `snippet "${key}"`).toBeDefined();
+      expect.soft(snippet?.expand.trim(), `snippet "${key}" body`).toBeTruthy();
+      expect.soft(phaseSet.has(key), `"${key}" is phase-bound`).toBe(true);
+      // Load-bearing: a consultant tag must NOT start with "review" — tools.ts
+      // counts a review round by tag.startsWith('review'), so a review-prefixed
+      // consultant tag would consume a round (and pollute the telemetry).
+      expect.soft(key.startsWith('review'), `"${key}" must not start with review`).toBe(false);
+    }
+  });
+
+  test('information hiding: no worker-directed snippet names the consultant (only the consultant-* snippets may)', () => {
+    // The cohort lives only in the orchestrator/registry — the embedded reviewer
+    // and the consultant are blind to each other, and the implementer is blind to
+    // reviewer identity. So every snippet a WORKER could receive must read
+    // identically with or without a consultant bound and never name it; the
+    // consultant's OWN snippets (orchestrator→consultant) legitimately do.
+    for (const s of loadSnippets()) {
+      if (s.key.startsWith('consultant')) continue;
+      expect.soft(s.expand.toLowerCase(), `snippet "${s.key}" names the consultant`).not.toContain('consultant');
+      expect.soft(s.expand.toLowerCase(), `snippet "${s.key}" names "a third voice"`).not.toContain('third voice');
+    }
+  });
+
   test('the five RIR snippets exist with non-empty bodies; review-direct keeps the review- prefix', () => {
     for (const key of ['use-latest-docs', 'implement-direct', 'handoff-direct', 'review-direct', 'apply-review']) {
       const snippet = getSnippet(key);

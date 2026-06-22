@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PHASE } from '../phases.ts';
+import { PHASE, consultantSnippetFor } from '../phases.ts';
 import type { GatePhase, PhaseName } from '../phases.ts';
 import { workerRolesFor } from '../roles.ts';
 import { gateAttended } from '../run-store.ts';
@@ -170,6 +170,37 @@ Branch: the run works on exactly one branch, fixed before your first worker prom
 `;
 }
 
+/**
+ * The consultant-checkpoint injections — orchestrator-facing, and ADDITIVE: each
+ * returns '' when no consultant is bound, so an unbound run's brief is
+ * byte-for-byte today's (the byte-for-byte / information-hiding invariant). They
+ * teach only the orchestrator (the worker-directed snippets never name the
+ * consultant); the cohort legitimately lives in the orchestrator brief.
+ *
+ * `framingConsultantNote` is the generative-mode augmentation (frame/research):
+ * make the framing a three-voice analysis and synthesize anonymized peers. The
+ * snippet name comes from the registry (consultantSnippetFor), the single source.
+ */
+function framingConsultantNote(state: RunState, phase: PhaseName): string {
+  const snippet = consultantSnippetFor(phase);
+  if (!state.bindings.consultant || !snippet) return '';
+  return `
+
+Consultant checkpoint (the consultant is bound for this run): make framing a THREE-voice analysis. In the analysis step, also send the consultant a ${snippet} prompt — a third, independent, cross-family read on its bet-level-outsider lane, issued alongside the other two (it shares no inputs with them). In the synthesis step, give the implementer the reviewer's AND the consultant's analyses via compare-notes, presented as two anonymized peers (do not label either by role): synthesize across all three voices, don't average them. The consultant's analysis is a synthesis input to the direction, like the reviewer's — not a gate-holding finding.`;
+}
+
+/**
+ * The critical-mode augmentation (spec/impl): a bet audit just before the gate.
+ * `seedNote` names exactly what to curate into the ephemeral session.
+ */
+function consultantAuditStep(state: RunState, phase: PhaseName, seedNote: string): string {
+  const snippet = consultantSnippetFor(phase);
+  if (!state.bindings.consultant || !snippet) return '';
+  return `
+
+Consultant checkpoint (the consultant is bound for this run): before you advance, run its bet audit. Send the consultant a ${snippet} prompt — a fresh, ephemeral, read-only session, so curate what it sees rather than pointing it at the run's history: ${seedNote} Fold its raw findings into your advance_phase summary, and echo each finding's consultant-assigned severity into advance_phase's human_decisions — record them, never re-grade (you do triage, not opinion). "The bet is sound — ship" is a first-class outcome; a documented tradeoff is by-design, not a finding.`;
+}
+
 function documentsBlock(state: RunState): string {
   const docs = [
     state.framing
@@ -193,7 +224,7 @@ The shape of the phase:
 2. Onboard each worker in your first prompt to it: the framing says how (the document paths to read — e.g. an onboarding or skill file named by path). Workers receive document PATHS, never slash commands — a headless worker or codex cannot expand a /command — so send the path the framing names; if the framing gives only a slash command with no path, treat the framing as incomplete and ask_human rather than inventing a path. Fold the onboarding, the working branch, and the problem statement from the framing into that first prompt.
 3. Send think-holistic to each worker independently — same problem, two unshared analyses. Issue both send_prompt calls in one message: turns to different workers run concurrently, and these two share no inputs, so there is nothing to wait for.
 4. Send the reviewer's analysis to the implementer with compare-notes: critique, synthesize, don't capitulate.
-5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
+5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)${framingConsultantNote(state, 'frame')}
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
 
@@ -213,7 +244,7 @@ The shape of the loop:
 2. Send the reviewer a review-spec prompt wrapping the current spec. The reviewer runs read-only in the repo, so it can also read ${state.specPath} and related code directly — point it at the path as well as quoting the content.
 3. Route the reviewer's feedback to the implementer with an update-spec prompt. The implementer should apply accepted changes to ${state.specPath} directly (it has write access) and report what it changed versus rejected and why.
 4. Judge convergence. Run another round with the -again variants when substantive points remain open; stop when what's left is minor. The backstop cap for this phase is ${roundCap} review rounds — your judgment should converge well before it.
-5. When converged, call advance_phase with a summary of what the reviewer flagged, what changed, and any rejections with their rationale — the human decides at the gate from your summary.
+5. When converged, call advance_phase with a summary of what the reviewer flagged, what changed, and any rejections with their rationale — the human decides at the gate from your summary.${consultantAuditStep(state, 'spec', 'the settled spec and the decisions it must treat as by-design — not the review-loop traffic.')}
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
 
@@ -234,7 +265,7 @@ The shape of the phase:
 1. Decide where the spec file lives — the framing names the project's spec location. If it doesn't, ask_human for one before drafting.
 2. Send the implementer a write-spec prompt carrying the approved direction; it writes the spec file and reports the path and content.
 3. Run the review loop: review-spec to the reviewer (point it at the file's path as well as the content), update-spec to the implementer, -again variants for later rounds. The backstop cap is ${roundCap} review rounds; converge well before it.
-4. When converged, call advance_phase with the summary and with spec_path set to the spec file's repo-relative path — the harness records it for the later phases.
+4. When converged, call advance_phase with the summary and with spec_path set to the spec file's repo-relative path — the harness records it for the later phases.${consultantAuditStep(state, 'spec', 'the settled spec and the decisions it must treat as by-design — not the review-loop traffic.')}
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
 
@@ -312,7 +343,7 @@ The arc:
 4. Insert a midpoint checkpoint only when the implementation is genuinely large — more than roughly six slices is a rough signal, but judge by the real size and structural risk, not the count. Its whole value is catching a foundational problem while many slices still remain for the correction to save; a small or moderate plan has too little left to pay for the extra turns, so skip it and run straight to the handoff. When you do run it, run it exactly once: have the implementer stop at a sensible point partway (around the first third to half), then midpoint-status → review-midpoint → respond-midpoint. The reviewer weights foundational problems highest — they compound across every remaining slice — and treats unreached slices as intentionally undone, not missing. The implementer then triages the points into fix-now / fold-into-the-remaining-slices / disagree, applies the fix-now items, and continues to the end — folding the rest of the guidance into the remaining slices as it goes. It does not pause again; the next stop is the handoff.
 5. ${reviewCompactionStep}
 6. When all slices are in: implementation-handoff from the implementer, then the review loop — review-implementation to the reviewer, respond-review to the implementer, -again variants for later rounds, fix commits as they're accepted. The backstop cap for this phase is ${roundCap} review rounds; converge well before it.
-7. Last act, after the loop converges: send the implementer ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review history (rounds run, points raised, resolved, disputed), deviations from the plan, and the test state. The human returns from hours away and decides to ship from this packet alone — make it carry everything.
+7. Last act, after the loop converges: send the implementer ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review history (rounds run, points raised, resolved, disputed), deviations from the plan, and the test state. The human returns from hours away and decides to ship from this packet alone — make it carry everything.${consultantAuditStep(state, 'impl', "the settled spec, the by-design decisions, and the consultant's own prior spec-checkpoint findings — not the raw build or review traffic.")}
 
 Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
 
@@ -394,7 +425,7 @@ The shape of the phase:
 2. Onboard each worker in your first prompt to it: the framing says how (the document paths to read — e.g. an onboarding or skill file named by path). Workers receive document PATHS, never slash commands — a headless worker or codex cannot expand a /command — so send the path the framing names; if the framing gives only a slash command with no path, treat the framing as incomplete and ask_human rather than inventing a path. Fold the onboarding, the working branch, and the problem statement from the framing into that first prompt.
 3. Send think-holistic to each worker independently — same problem, two unshared analyses. Issue both send_prompt calls in one message: turns to different workers run concurrently, and these two share no inputs, so there is nothing to wait for. When the work leans on an external library or SDK, fold use-latest-docs into the prompt so the analysis is grounded in current APIs rather than stale memory.
 4. Send the reviewer's analysis to the implementer with compare-notes: critique, synthesize, don't capitulate.
-5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The implementer builds directly from these decisions, so the summary must carry enough that the build can proceed without a spec. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
+5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The implementer builds directly from these decisions, so the summary must carry enough that the build can proceed without a spec. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)${framingConsultantNote(state, 'research')}
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
 
@@ -422,7 +453,7 @@ The arc — there is no spec or plan here; the research decisions are the source
 1. Send the implementer the implement-direct prompt: build the change directly from the research decisions, rereading the decisions and the code it touches first, working in coherent commits and keeping tests green as it goes. There is no plan file to commit — the decisions carry the design. Never descope or thin tests to fit a turn: a fresh prompt carries a fresh budget ceiling, so trimming scope for budget is a product decision that needs work-content reasons and an honest line in the Ship packet. Have the implementer keep ephemeral verification harnesses (throwaway tsconfigs, scratch scripts) under .duet/scratch/ or delete them before handoff, so they don't ride the worktree as untracked strays. (Gotcha: a worker can't watch its own budget — a turn that hits the per-turn cap or time limit is cut off mechanically, surfacing as a failed or short response, not a graceful "I'm low" report. Its committed work is on disk, so just resume that session with a short continue prompt for the rest; that's resumption, not a content failure, so don't re-send the original prompt.)
 2. When the build is in: handoff-direct from the implementer — it orients the reviewer fast (what changed, where to look hardest), tied to the research decisions rather than a spec/plan.
 3. One writable review round — this arc has exactly one, no second pass: review-direct to the reviewer (it reviews against the research decisions and the actual goal, not a document), then apply-review to the implementer. apply-review is writable: the implementer assesses each point, fixes the valid ones in place, pushes back on the rest with reasons, and reports what it changed. The backstop cap for this phase is ${roundCap} review round.
-4. Call advance_phase with a lean Ship packet: the implementation handoff, plus the review-and-fix summary (what the reviewer raised, what was fixed, anything disputed) and the test state. There is no CEO summary in this arc — the human reads what shipped and the review outcome. The human returns from away and decides to ship from this packet, so it must reflect the final state of the code.
+4. Call advance_phase with a lean Ship packet: the implementation handoff, plus the review-and-fix summary (what the reviewer raised, what was fixed, anything disputed) and the test state. There is no CEO summary in this arc — the human reads what shipped and the review outcome. The human returns from away and decides to ship from this packet, so it must reflect the final state of the code.${consultantAuditStep(state, 'implement', "the research decisions treated as the design, the implemented change, and the consultant's own prior research-checkpoint findings — not the raw build or review traffic.")}
 
 Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
 

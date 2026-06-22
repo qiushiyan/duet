@@ -2,6 +2,8 @@ import { describe, expect, test } from 'vitest';
 import {
   PHASE,
   WORKFLOWS,
+  consultantCheckpointOf,
+  consultantSnippetFor,
   defaultPosture,
   gateOf,
   gatePhasesOf,
@@ -178,6 +180,38 @@ describe('the RIR workflow', () => {
     const implement = phasesOf('rir').find((p) => p.name === 'implement')!;
     expect.soft(implement.reviewLoop).toBe(true);
     expect.soft(implement.roundCap).toBe(1);
+  });
+});
+
+describe('consultant checkpoints (registry data per arc)', () => {
+  test('Full maps frame/specGate/implGate onto frame/spec/impl', () => {
+    expect.soft(consultantCheckpointOf('frame')).toBe('frame');
+    expect.soft(consultantCheckpointOf('spec')).toBe('specGate');
+    expect.soft(consultantCheckpointOf('impl')).toBe('implGate');
+    // Phases without a checkpoint carry none.
+    expect.soft(consultantCheckpointOf('plan')).toBeUndefined();
+    expect.soft(consultantCheckpointOf('docs')).toBeUndefined();
+  });
+
+  test('RIR maps frame@research and implGate@implement, and has NO specGate (no spec phase)', () => {
+    expect.soft(consultantCheckpointOf('research')).toBe('frame');
+    expect.soft(consultantCheckpointOf('implement')).toBe('implGate');
+    const rirModes = [...WORKFLOWS.rir.phases].map((p) => p.consultantCheckpoint);
+    expect.soft(rirModes).not.toContain('specGate');
+  });
+
+  test('each checkpoint resolves to its (non-review-prefixed) bet-audit snippet', () => {
+    expect.soft(consultantSnippetFor('frame')).toBe('consultant-frame');
+    expect.soft(consultantSnippetFor('spec')).toBe('consultant-spec');
+    expect.soft(consultantSnippetFor('impl')).toBe('consultant-impl');
+    expect.soft(consultantSnippetFor('research')).toBe('consultant-frame');
+    expect.soft(consultantSnippetFor('implement')).toBe('consultant-impl');
+    expect.soft(consultantSnippetFor('plan')).toBeUndefined(); // a non-checkpoint phase
+    // The audit snippets are phase-bound to their checkpoint phases and never
+    // carry the review- prefix (which countsReviewRound keys on).
+    for (const snippet of ['consultant-frame', 'consultant-spec', 'consultant-impl']) {
+      expect.soft(snippet.startsWith('review')).toBe(false);
+    }
   });
 });
 
