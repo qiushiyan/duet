@@ -7,6 +7,7 @@ import { claudeApiError, claudeAssistantText, jsonl, plantClaudeTranscript } fro
 import {
   ORCHESTRATOR_SYSTEM_PROMPT,
   buildPhaseBrief,
+  docsPhaseEntryPrompt,
   feedbackResumePrompt,
   framePhaseEntryPrompt,
   implementPhaseEntryPrompt,
@@ -768,5 +769,25 @@ describe('prompt selection and session continuity', () => {
     });
     await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, second.runTurn);
     expect(resumedWith).toBe('orc-abc');
+  });
+});
+
+describe('provider-agnostic onboarding — workers get document paths, not slash commands (F9)', () => {
+  test('the onboarding entry prompts name a path and never instruct slash-command expansion', ({ run }) => {
+    const frame = framePhaseEntryPrompt(run, PHASE.frame.roundCap);
+    const research = researchPhaseEntryPrompt(run, PHASE.research.roundCap);
+    const docs = docsPhaseEntryPrompt(run, PHASE.docs.roundCap);
+
+    for (const p of [frame, research, docs]) {
+      expect.soft(p).not.toContain('CLI expands it'); // the now-wrong slash-command instruction is gone
+      expect.soft(p).not.toContain("include its /name");
+    }
+    // frame/research: paths-not-commands + surface an incomplete framing via ask_human.
+    expect.soft(frame).toContain('document PATHS');
+    expect.soft(frame).toMatch(/incomplete[\s\S]*ask_human/);
+    expect.soft(research).toContain('document PATHS');
+    // docs: send the path, never a slash command; incomplete → ask_human.
+    expect.soft(docs).toContain('never a slash command');
+    expect.soft(docs).toMatch(/incomplete[\s\S]*ask_human/);
   });
 });

@@ -75,7 +75,10 @@ gates_at: afk              # optional: attend every gate (omit); presets are wor
 <what to build or change, why, and the scope boundaries — what's explicitly out>
 
 # Onboarding
-<skill to invoke (e.g. /onboarding <topic>) or files to read first; park any
+<the files to read first, BY PATH — an onboarding or skill file (e.g.
+ .claude/skills/onboarding/SKILL.md) and any docs. The orchestrator sends
+ workers document paths, not slash commands: a headless worker or codex can't
+ expand a /command, so name the file's path, not a bare /onboarding. Park any
  referenced assets under .duet/ so paths don't rot out from under the run>
 
 # Conventions
