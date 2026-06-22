@@ -332,7 +332,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     run.phaseSummaries.frame = { summary: 'Direction: invert the scope\nmore detail', artifacts: [] };
     const model = buildStatusModel(run, { kind: 'running', pid: 1, phase: 'spec' }, []);
 
-    expect.soft(model.rounds).toContainEqual({ phase: 'spec', used: 2, cap: 6 });
+    expect.soft(model.rounds).toContainEqual({ phase: 'spec', used: 2, cap: 3 });
     expect.soft(model.rounds).toContainEqual({ phase: 'frame', used: 1, cap: 2 });
     expect.soft(model.rounds.find((r) => r.phase === 'docs')).toBeUndefined();
     expect.soft(model.autoApprovals[0]?.headline).toBe('Direction: invert the scope');
@@ -414,9 +414,9 @@ describe('renderStatus', () => {
 
     expect.soft(out).toContain('phase:    running in the background (pid 4242)');
     expect.soft(out).toContain('frame 1/2');
-    expect.soft(out).toContain('spec 2/6');
+    expect.soft(out).toContain('spec 2/3');
     expect.soft(out).toContain('plan 0/4');
-    expect.soft(out).toContain('impl 0/6');
+    expect.soft(out).toContain('impl 0/3');
     expect.soft(out).not.toContain('docs 0');
   });
 

@@ -129,7 +129,7 @@ export const WORKFLOWS = {
         },
         artifactLabel: 'spec',
         reviewLoop: true,
-        roundCap: 6,
+        roundCap: 3,
         orchestratorBudgetUsd: 15,
         workerBudgetUsd: 10,
         workerTurnTimeoutMs: 30 * 60_000,
@@ -173,7 +173,7 @@ export const WORKFLOWS = {
         },
         artifactLabel: 'implementation',
         reviewLoop: true,
-        roundCap: 6,
+        roundCap: 3,
         orchestratorBudgetUsd: 30,
         workerBudgetUsd: 25,
         workerTurnTimeoutMs: 60 * 60_000,
@@ -344,7 +344,7 @@ export interface PhaseSpec {
    * mechanics) may legitimately advance without the reviewer.
    */
   reviewLoop: boolean;
-  /** Runaway backstop, not an exit mechanism — generous by design (~2× observed rounds). */
+  /** Runaway backstop, not an exit mechanism — kept tight by design (a couple rounds, not many). */
   roundCap: number;
   /**
    * Per-invocation rails. The AFK impl phase runs 1–3 hours with many worker

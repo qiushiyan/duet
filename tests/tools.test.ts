@@ -632,12 +632,12 @@ describe('review-round backstop cap', () => {
   });
 
   test('at the cap, a new round is refused toward advance_phase or ask_human', async ({ run }) => {
-    run.rounds.spec = 6;
+    run.rounds.spec = 3;
     const { call, reviewer } = harness(run);
     const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec-again', body: 'one more' });
 
     expect(result.isError).toBe(true);
-    expect.soft(text(result)).toContain('backstop cap of 6 review rounds');
+    expect.soft(text(result)).toContain('backstop cap of 3 review rounds');
     expect.soft(text(result)).toContain('advance_phase');
     expect.soft(text(result)).toContain('ask_human');
     expect.soft(reviewer.calls).toHaveLength(0);
