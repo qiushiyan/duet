@@ -64,27 +64,27 @@ Call write_note when you notice friction worth remembering — a snippet that di
 When a phase's exit criteria are met, call advance_phase with an honest summary — it always lands on a human gate, so the summary is what the human decides from. When the gate carries genuine decisions for the human — a product or direction call you deliberately did not make yourself — also pass them as advance_phase's structured human_decisions (each a short title plus severity: high for a real call the human must make, low for notable-but-not-blocking). It helps whoever relays the gate decide whether to hold for the human or relay an approval — and a high also holds a non-explicit crossing: a pre-authorized gate will not auto-cross over it and a one-tap afk handoff is refused, so an overnight or walk-away run stops for it rather than shipping past it (an explicit human approval still crosses). It does not replace the prose summary, which still carries the full picture. A routine convergence with nothing for the human to weigh needs no decisions list.`;
 
 /**
- * The bound-only consultant clause appended to the system prompt — identity
- * altitude, naming the optional third voice without rewriting the "two-agent"
- * opening (the persistent spine genuinely IS the implementer + reviewer; the
- * consultant is ephemeral, checkpoint-only, and optional). Behavior is driven by
- * the phase brief (the conditional three-send shape), which get_task serves on
- * both hosts; this clause only keeps the orchestrator's standing mental model in
- * step with that brief when a consultant is bound.
+ * The bound-only consultant clause, at identity altitude — naming the optional
+ * third voice without rewriting the "two-agent" opening (the persistent spine
+ * genuinely IS the implementer + reviewer; the consultant is ephemeral,
+ * checkpoint-only, and optional). The single source BOTH hosts append when a
+ * consultant is bound: the headless system prompt via `orchestratorSystemPrompt`
+ * below, the interactive identity via the launcher composing it into the run-dir
+ * identity file (`orchestrate.ts`). Behavior is driven by the phase brief (the
+ * conditional three-send shape) which get_task serves on both hosts; this clause
+ * keeps the orchestrator's standing mental model in step with that brief.
  */
-const CONSULTANT_IDENTITY_CLAUSE = `<consultant>
+export const CONSULTANT_IDENTITY_CLAUSE = `<consultant>
 This run also binds a consultant — an optional third voice the workflow consults at specific gate-adjacent checkpoints (your phase brief names exactly when and how). It is read-only and ephemeral: a fresh, low-context session each time, carrying no run history, so it questions the bet (assumptions, product fit) rather than the build. It is additive, never substitutive — it never stands in for a reviewer round, and its findings inform a direction or a gate packet, they do not by themselves hold a gate. The implementer and reviewer remain the persistent spine described above.
 </consultant>`;
 
 /**
- * The orchestrator system prompt for a run — the base prompt, plus the
- * consultant clause only when one is bound. Unbound it returns
- * ORCHESTRATOR_SYSTEM_PROMPT verbatim (the headless default-off byte-for-byte).
- * The headless driver builds the prompt from run state, so the clause lands
- * there; the interactive identity is a shipped static file with no clean
- * per-run injection seam (orchestrate.ts feeds it via
- * --append-system-prompt-file), so it carries the lighter touch — its behavior
- * is driven by the same conditional get_task brief regardless.
+ * The headless orchestrator's system prompt for a run — the base prompt, plus
+ * the consultant clause only when one is bound. Unbound it returns
+ * ORCHESTRATOR_SYSTEM_PROMPT verbatim (the default-off byte-for-byte). The
+ * interactive host gains the same clause by a different route — the launcher
+ * composes it onto the shipped identity file it feeds (`orchestrate.ts`) — so
+ * both hosts' identities match when bound and are unchanged when not.
  */
 export function orchestratorSystemPrompt(state: RunState): string {
   return state.bindings.consultant ? `${ORCHESTRATOR_SYSTEM_PROMPT}\n\n${CONSULTANT_IDENTITY_CLAUSE}` : ORCHESTRATOR_SYSTEM_PROMPT;
