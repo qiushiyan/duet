@@ -764,7 +764,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           .array(z.object({ title: z.string(), severity: z.enum(['low', 'high']) }))
           .optional()
           .describe(
-            'A SIGNAL-ONLY structured echo of the genuine human decisions this gate carries — the "things for you to decide" you would otherwise leave only in the prose summary. severity: "high" = a real product/direction call the human must make; "low" = notable but not blocking. The human/concierge reads it to decide hold-vs-relay; it never affects gate-crossing (only the human’s tap crosses a gate). Omit it when the gate is a routine convergence with nothing for the human to weigh.',
+            'A structured echo of the genuine human decisions this gate carries — the "things for you to decide" you would otherwise leave only in the prose summary. severity: "high" = a real product/direction call the human must make; "low" = notable but not blocking. A "high" holds a NON-EXPLICIT crossing: a pre-authorized gate will not auto-cross over it and a one-tap `duet afk` handoff is refused — both convert to an attended stop so the human weighs the call before it ships; an explicit human approval still crosses. "low" rides the packet as advisory. This does not change what advance_phase itself does — it records a normal advance; the hold lives in the crossing path, not this tool. Omit the field on a routine convergence with nothing for the human to weigh.',
           ),
       },
       async (args) => {

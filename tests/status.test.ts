@@ -233,6 +233,32 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     if (withD.kind === 'gate') expect.soft(withD.packet?.humanDecisions).toEqual([{ title: 't', severity: 'low' }]);
   });
 
+  test('full status renders the structured decisions and names a held high (pre-authorized vs attended) — slice 5', ({
+    run,
+  }) => {
+    run.phaseSummaries.impl = { summary: 'Shipped.', artifacts: [], humanDecisions: [{ title: 'data retention window', severity: 'high' }] };
+
+    // Pre-authorized (impl not in gatesAt): the high is precisely why it stopped.
+    run.gatesAt = ['spec'];
+    const preAuth = renderStatus(buildStatusModel(run, { kind: 'gate', phase: 'impl' }, []));
+    expect.soft(preAuth).toContain('decisions for you:');
+    expect.soft(preAuth).toContain('● data retention window'); // the structured decision, in the PRIMARY view
+    expect.soft(preAuth).toContain('pre-authorized, but a high decision held it');
+
+    // Attended (impl in gatesAt): the high is the human's call at a live gate.
+    run.gatesAt = ['impl'];
+    const attended = renderStatus(buildStatusModel(run, { kind: 'gate', phase: 'impl' }, []));
+    expect.soft(attended).toContain('a high decision is yours to make');
+    expect.soft(attended).not.toContain('pre-authorized, but a high');
+
+    // A low-only packet renders the decision but no high-hold line.
+    run.phaseSummaries.impl = { summary: 's', artifacts: [], humanDecisions: [{ title: 'minor', severity: 'low' }] };
+    const low = renderStatus(buildStatusModel(run, { kind: 'gate', phase: 'impl' }, []));
+    expect.soft(low).toContain('○ minor');
+    expect.soft(low).not.toContain('held it for you');
+    expect.soft(low).not.toContain('yours to make');
+  });
+
   test('status --brief is a derived lean projection with a computed headline', ({ run }) => {
     run.machineState = 'shipGate';
     run.phaseSummaries.impl = {

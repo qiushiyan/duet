@@ -34,10 +34,18 @@ export type Voice = 'orchestrator' | 'implementer' | 'reviewer' | 'consultant';
 
 /**
  * A structured echo of a genuine human decision a gate carries (#3) — what the
- * orchestrator would otherwise write only in prose. SIGNAL-ONLY: the human /
- * concierge reads it to decide hold-vs-relay; duet never reads it in the
- * gate-crossing path (gates cross only on the human's tap). `high` = a real
+ * orchestrator would otherwise write only in prose. `high` = a real
  * product/direction call the human must make; `low` = notable, not blocking.
+ *
+ * A `high` WITHHOLDS a non-explicit crossing (consultant reviewer, slice 5): the
+ * headless `driveToQuiescence` auto-cross and the one-tap `duet afk` handoff both
+ * refuse to manufacture an approval over a `high`, converting it to an attended
+ * stop. An EXPLICIT human approval (`duet continue --approve`, crossInteractive)
+ * always crosses — blocking the human's own tap would fight the gate model. `low`
+ * stays advisory and rides the packet. The single resolver `highDecisionsAt`
+ * (beside gateAttended) is what every consumer reads; advance_phase itself stays
+ * signal-only (it records a normal advance — the hold lives in the crossing path,
+ * not the tool).
  */
 export interface HumanDecision {
   title: string;
@@ -267,6 +275,18 @@ export function workflowOf(state: RunState): WorkflowName {
 export function gateAttended(state: RunState, phase: GatePhase): boolean {
   if ((WORKFLOWS[workflowOf(state)].forceAttend as readonly string[]).includes(phase)) return true;
   return state.gatesAt === undefined || state.gatesAt.includes(phase);
+}
+
+/**
+ * The `high`-severity human decisions a gate's packet carries — the single
+ * resolver for the severity hold (consultant reviewer, slice 5), beside
+ * gateAttended. A non-explicit crossing (driveToQuiescence's auto-cross,
+ * enterAfk's handoff) is withheld when this is non-empty; the status renderer
+ * reads the same list to name the hold. Returns the decisions (not a boolean) so
+ * those surfaces can name them. An explicit `--approve` never consults it.
+ */
+export function highDecisionsAt(state: RunState, gatePhase: GatePhase): HumanDecision[] {
+  return (state.phaseSummaries[gatePhase]?.humanDecisions ?? []).filter((d) => d.severity === 'high');
 }
 
 /**

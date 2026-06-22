@@ -768,7 +768,7 @@ describe('ask_human (the cooperative pause)', () => {
   });
 });
 
-describe('advance_phase human_decisions (signal-only gate-decision echo, #3)', () => {
+describe('advance_phase human_decisions (the tool stays signal-only; the hold lives in the crossing path)', () => {
   test('persists the decisions onto the gate packet', async ({ projectDir, run }) => {
     const { call } = harness(run, { phase: 'frame' });
     await call('advance_phase', { summary: 's', artifacts: [], human_decisions: [{ title: 'pick the backend', severity: 'low' }] });
@@ -783,12 +783,14 @@ describe('advance_phase human_decisions (signal-only gate-decision echo, #3)', (
     expect(loadRunState(projectDir, run.runId).phaseSummaries.frame).not.toHaveProperty('humanDecisions');
   });
 
-  test('is signal-only: a high decision does not change the terminal decision (gate-crossing unaffected)', async ({ run }) => {
+  test('advance_phase itself records a normal advance regardless of severity — the hold is in lifecycle, not the tool (slice 5)', async ({ run }) => {
     const { call } = harness(run, { phase: 'frame' });
     const result = await call('advance_phase', { summary: 's', artifacts: [], human_decisions: [{ title: 'storage backend', severity: 'high' }] });
     expect.soft(result.isError).toBeUndefined();
-    // The terminal marker is the normal advance — a high decision neither holds
-    // nor crosses; only the human's tap crosses, and the marker is unchanged.
+    // The terminal marker is the normal advance — advance_phase does not gate on
+    // severity. The severity HOLD lives in the crossing path (driveToQuiescence /
+    // enterAfk / status, exercised in lifecycle.test.ts and status.test.ts), so
+    // the tool stays signal-only and only the recorded packet differs.
     expect.soft(run.terminalMarker).toEqual({ phase: 'frame', kind: 'advance' });
   });
 

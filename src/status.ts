@@ -384,6 +384,23 @@ export function renderStatus(model: StatusModel): string {
       lines.push(stop.packet.summary);
       if (stop.packet.artifacts.length > 0) lines.push(`\nartifacts: ${stop.packet.artifacts.join(', ')}`);
     }
+    // The structured human decisions, rendered in the PRIMARY view (not only
+    // --brief): a hold the human can't see explained is half a feature. When a
+    // `high` is present the gate holds for it — and when the gate was
+    // pre-authorized, the high is precisely why the run stopped here.
+    const decisions = stop.packet?.humanDecisions ?? [];
+    if (decisions.length > 0) {
+      lines.push(`\ndecisions for you:`);
+      for (const d of decisions) lines.push(`  ${d.severity === 'high' ? '●' : '○'} ${d.title}`);
+      if (decisions.some((d) => d.severity === 'high')) {
+        const preAuthorized = model.gatesAt !== undefined && !model.gatesAt.includes(stop.phase);
+        lines.push(
+          preAuthorized
+            ? `  (this gate was pre-authorized, but a high decision held it for you — approve explicitly to cross, or reject)`
+            : `  (a high decision is yours to make; this gate holds for it — an explicit approve still crosses)`,
+        );
+      }
+    }
     lines.push(`\ndecide with:`);
     lines.push(`  ${stop.commands.approve}   (add "<rider>" to approve with adjustments)`);
     lines.push(`  ${stop.commands.reject}`);
