@@ -586,7 +586,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             content: [
               {
                 type: 'text' as const,
-                text: `Dispatched to the ${args.role} — the turn runs in the background and this session stays live: keep talking with the human, steer, or fire the other role meanwhile, then pull the result with check_turns once it lands (it returns the moment the turn settles; a phase can't advance while a turn is uncollected). If you have nothing more for the human right now, arm \`duet status --wait\` in the background before you stop — its settling brings you back to collect this turn, where ending without it leaves the run idle until the human messages you. A turn to the other role can run in parallel.`,
+                text: `Dispatched to the ${args.role} — the turn runs in the background and this session stays live: keep talking with the human, steer, check status, or fire the other role meanwhile, then pull the result with check_turns once it lands (it returns the moment the turn settles; a phase can't advance while a turn is uncollected). If you've nothing to do meanwhile and are about to end your turn, start \`duet status --wait\` in the background first — it wakes you the moment the turn settles, so the result gets collected instead of sitting idle while the run stalls. A turn to the other role can run in parallel.`,
               },
             ],
           };
