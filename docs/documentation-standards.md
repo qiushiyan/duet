@@ -109,6 +109,14 @@ Keep it lean. Phase 1 is for what an agent *cannot* skip, not what's merely inte
 
 **Update `CLAUDE.md` when** a new cross-cutting invariant earns its way in (the bar is high) or an existing one's framing rots. Implementation-level changes never warrant a `CLAUDE.md` edit.
 
+## Shipped skill maintenance
+
+The repo ships user-facing skills under `skills/` (distinct from the dev-time `.claude/skills/`): **duet-frame** composes a run's setup and emits the `duet new` command, **duet-concierge** starts and supervises runs. They are **prompts**, not docs — so edits follow `docs/prompting-and-tool-design.md` (a thinking framework with its motivation over bare prohibition, no aggressive emphasis, surface the load-bearing *why*) and each skill's established voice, not the design-doc style.
+
+**The trigger is a user-facing capability, not a prose change.** When a change adds or alters one — a `duet new` flag, a setup or gate-posture choice, a run-management verb — ask whether duet-frame should *surface* it (a new setup choice the user makes before launch) or duet-concierge should *relay or read* it (a new verb, or a changed run shape its supervision reports). A feature can add a flag without touching a single `.md`, so a diff-of-docs mindset misses these; make the capability the trigger, caught while reading the diff, not an afterthought.
+
+**`tests/skill.test.ts` guards coherence, not completeness.** It pins every verb and flag a skill *names* to the live CLI, so a rename fails in five seconds — but it cannot tell you a skill *should* name a capability it currently omits. A green skill test is not evidence the skills are current; the completeness call is the maintainer's. (Worked example: the consultant's `--consultant` flag shipped while duet-frame silently stopped covering a setup choice users now have, and the skill test stayed green throughout.)
+
 ## Maintenance cadence
 
-Review this file, the two skills, and the shape of `docs/` every 3–6 months or after a major Claude model release. Guardrails written for an older model can become friction for a newer one — instructions that kept past models on track can stop newer ones from making coordinated edits they handle fine. Treat removing stale guidance with the same weight as adding new.
+Review this file, the dev skills (onboarding + update-docs), the shipped skills (duet-frame + duet-concierge), and the shape of `docs/` every 3–6 months or after a major Claude model release. Guardrails written for an older model can become friction for a newer one — instructions that kept past models on track can stop newer ones from making coordinated edits they handle fine. Treat removing stale guidance with the same weight as adding new.
