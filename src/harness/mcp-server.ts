@@ -5,7 +5,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { PHASE, phasesOf } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
 import { createWorkers } from '../providers/index.ts';
-import type { WorkerProvider, WorkerRole } from '../providers/types.ts';
+import type { WorkerProviders, WorkerRole } from '../providers/types.ts';
 import { acquireMcpOwner, budgetFor, holdsMcpOwner, loadRunState, workflowOf } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
 import { probeRunPosition } from './lifecycle.ts';
@@ -131,8 +131,8 @@ function hostablePhase(position: RunPosition): PhaseName | undefined {
   }
 }
 
-/** Build the two worker providers for a run + phase — the seam tests fake. */
-export type WorkerFactory = (state: RunState, phase: PhaseName) => Record<WorkerRole, WorkerProvider>;
+/** Build the run's worker providers for a run + phase — the seam tests fake. */
+export type WorkerFactory = (state: RunState, phase: PhaseName) => WorkerProviders;
 
 const defaultWorkerFactory: WorkerFactory = (state, phase) =>
   createWorkers(state.bindings, {
@@ -172,7 +172,7 @@ export function createRunScopedKernel(
   const leaseHeld = (): boolean => holdsMcpOwner(loadRunState(cwd, runId), ownerNonce);
 
   let ctx:
-    | { phase: PhaseName; providers: Record<WorkerRole, WorkerProvider>; rails: { turnsInFlight: Set<WorkerRole>; resendWarned: Set<string> }; dispatcher: TurnDispatcher }
+    | { phase: PhaseName; providers: WorkerProviders; rails: { turnsInFlight: Set<WorkerRole>; resendWarned: Set<string> }; dispatcher: TurnDispatcher }
     | null = null;
 
   const toolsFor = (): Array<KernelTool<any>> => {

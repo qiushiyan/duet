@@ -5,7 +5,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { COMPACT_CONFIRMATION, ClaudeWorker, claudeArgs, claudeExecaOptions, parseClaudeTurn } from '../src/providers/claude.ts';
 import { parseRolloutContext } from '../src/providers/codex.ts';
 import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn } from '../src/providers/interactive-claude.ts';
-import { createWorkers } from '../src/providers/index.ts';
+import { createWorkers, providerFor } from '../src/providers/index.ts';
 import { BudgetCutoffError } from '../src/providers/types.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
 import { FakePane } from './helpers/fake-pane.ts';
@@ -596,5 +596,33 @@ describe('createWorkers', () => {
     );
     expect.soft(interactive.implementer).toBeInstanceOf(InteractiveClaudeWorker);
     expect.soft(interactive.implementer.name).toBe('claude'); // the same WorkerProvider contract name
+  });
+
+  test('the consultant provider is built only when bound; an un-enabled run has exactly today’s two', () => {
+    const unbound = createWorkers(DEFAULT_BINDINGS, { workerBudgetUsd: 10, timeoutMs: 60_000 });
+    expect.soft(unbound).not.toHaveProperty('consultant');
+    expect.soft(unbound.consultant).toBeUndefined();
+
+    const bound = createWorkers(
+      { ...DEFAULT_BINDINGS, consultant: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' } },
+      { workerBudgetUsd: 10, timeoutMs: 60_000 },
+    );
+    expect.soft(bound.consultant).toBeInstanceOf(ClaudeWorker);
+    expect.soft(bound.consultant?.name).toBe('claude');
+  });
+});
+
+describe('providerFor (narrow-or-prescribed-error over the optional consultant)', () => {
+  test('returns a built provider, and throws a prescribed-recovery error for an unbuilt role', () => {
+    const unbound = createWorkers(DEFAULT_BINDINGS, { workerBudgetUsd: 10, timeoutMs: 60_000 });
+    expect.soft(providerFor(unbound, 'implementer').name).toBe('claude');
+    expect.soft(providerFor(unbound, 'reviewer').name).toBe('codex');
+    expect.soft(() => providerFor(unbound, 'consultant')).toThrow(/no consultant worker is built/);
+
+    const bound = createWorkers(
+      { ...DEFAULT_BINDINGS, consultant: { provider: 'codex' } },
+      { workerBudgetUsd: 10, timeoutMs: 60_000 },
+    );
+    expect.soft(providerFor(bound, 'consultant').name).toBe('codex');
   });
 });

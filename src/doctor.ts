@@ -1,3 +1,4 @@
+import { bindingFor } from './config.ts';
 import { aliveDriverPid, probeRunPosition } from './harness/lifecycle.ts';
 import { resolveSessions, readRoleTranscriptTail } from './sessions.ts';
 import type { RunState, Voice } from './run-store.ts';
@@ -104,7 +105,7 @@ function inFlightFor(
 }
 
 function roleRow(role: Voice, state: RunState, opts: { now: number; home?: string; driverAlive: boolean; phaseMidFlight: boolean }): RoleHealthRow {
-  const provider = state.bindings[role].provider;
+  const provider = bindingFor(state.bindings, role).provider;
   const known = resolveSessions(state).find((s) => s.role === role);
   const { inFlightSince, retriesSince } = inFlightFor(role, state, opts.now, opts.driverAlive, opts.phaseMidFlight);
   const inFlight = inFlightSince !== undefined;
@@ -158,7 +159,7 @@ export async function buildDoctorModel(
 
   const roles = ROLES.map((role) => roleRow(role, state, { now: opts.now, ...(opts.home !== undefined ? { home: opts.home } : {}), driverAlive, phaseMidFlight }));
 
-  const hasClaude = ROLES.some((r) => state.bindings[r].provider === 'claude');
+  const hasClaude = ROLES.some((r) => bindingFor(state.bindings, r).provider === 'claude');
   let connectivity: Connectivity;
   try {
     connectivity = hasClaude ? await probeAnthropic(opts.fetch ?? (globalThis.fetch as unknown as FetchLike)) : { target: 'none', status: 'not probed' };

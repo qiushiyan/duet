@@ -1,6 +1,7 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { PhaseName } from '../phases.ts';
-import type { WorkerProvider, WorkerRole, WorkerTurn } from '../providers/types.ts';
+import { providerFor } from '../providers/index.ts';
+import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
 import {
   clearPendingTurn,
   clearTurnActive,
@@ -73,7 +74,7 @@ export interface TurnDispatcherDeps {
   phase: PhaseName;
   /** The phase's review-round backstop cap — for renderTurnResult's near-cap nudge. */
   cap: number;
-  providers: Record<WorkerRole, WorkerProvider>;
+  providers: WorkerProviders;
   log: (line: string) => void;
   home?: string;
   /**
@@ -203,7 +204,7 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
         // plus a record stranded `running`. stopHeartbeat rides a finally so the
         // 5-minute interval can never leak, on any exit.
         Promise.resolve()
-          .then(() => providers[role].runTurn({ prompt: body, sessionId: fresh.workerSessions[role], readOnly: role === 'reviewer', cwd: fresh.cwd }))
+          .then(() => providerFor(providers, role).runTurn({ prompt: body, sessionId: fresh.workerSessions[role], readOnly: role === 'reviewer', cwd: fresh.cwd }))
           .then(
             (turn) => finalize(turn),
             (err) => finalize(err instanceof Error ? err : new Error(String(err))),

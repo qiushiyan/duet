@@ -3,8 +3,9 @@ import { execa } from 'execa';
 import { z } from 'zod';
 import { PHASE, isGatePhase } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
+import { providerFor } from '../providers/index.ts';
 import { BudgetCutoffError } from '../providers/types.ts';
-import type { WorkerProvider, WorkerRole, WorkerTurn } from '../providers/types.ts';
+import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
 import { getSnippet, renderSnippetLibrary } from '../snippets.ts';
 import {
   appendNote,
@@ -91,7 +92,7 @@ export interface PhaseToolsDeps {
   /** The driver invocation's single live RunState copy — handlers mutate and persist it. */
   state: RunState;
   phase: PhaseName;
-  providers: Record<WorkerRole, WorkerProvider>;
+  providers: WorkerProviders;
   /** Narration sink (driver stdout → driver.log; view-time color). */
   log: (line: string) => void;
   /** A staged human answer, delivered to the first ask_human call instead of pausing. */
@@ -194,7 +195,7 @@ export function startHeartbeat(
  * same-phase reads (the warn-once / round rails) see this turn's result.
  */
 export function settleTurn(
-  deps: { state: RunState; phase: PhaseName; providers: Record<WorkerRole, WorkerProvider>; log: (line: string) => void },
+  deps: { state: RunState; phase: PhaseName; providers: WorkerProviders; log: (line: string) => void },
   meta: { role: WorkerRole; tag: string; isReviewRound: boolean },
   outcome: WorkerTurn | Error,
 ): void {
@@ -232,10 +233,11 @@ export function settleTurn(
   // misaccounted as Claude spend. An absent costUsd on a claude turn (the
   // interactive transport, by P5) makes the running total partial — mark it so
   // status/footer never present the known sum as the complete total.
-  if (providers[role].name === 'claude') {
+  const provider = providerFor(providers, role);
+  if (provider.name === 'claude') {
     if (turn.costUsd !== undefined) fresh.costs.claudeWorkersUsd += turn.costUsd;
     else fresh.costs.claudeWorkersCostPartial = true;
-  } else if (providers[role].name === 'codex' && turn.tokens) {
+  } else if (provider.name === 'codex' && turn.tokens) {
     fresh.costs.codexTokens.input += turn.tokens.input;
     fresh.costs.codexTokens.output += turn.tokens.output;
   }
@@ -571,7 +573,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           log(`[send_prompt] resend of ${args.tag} → ${args.role} allowed after steering (deliberate)`);
         }
 
-        const provider = providers[args.role];
+        const provider = providerFor(providers, args.role);
         log(`[send_prompt] → ${args.role} (${provider.name})  tag=${args.tag}  body=${args.body.length} chars`);
         appendVoiceLog(state, args.role, `◀ prompt (tag=${args.tag}, from orchestrator)`, args.body);
 

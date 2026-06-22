@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { Snapshot } from 'xstate';
-import type { RoleBindings } from './config.ts';
+import type { RoleBinding, RoleBindings } from './config.ts';
 import { PHASE, WORKFLOWS, defaultPosture, defaultPreAuthorizedOf, gatePhasesOf } from './phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
 import type { ContextUsage, WorkerRole } from './providers/types.ts';
@@ -28,7 +28,7 @@ import type { ErrorClass, RetryState } from './worker-health.ts';
  * a loaded copy as stale once you hand control away.
  */
 
-export type Voice = 'orchestrator' | 'implementer' | 'reviewer';
+export type Voice = 'orchestrator' | 'implementer' | 'reviewer' | 'consultant';
 
 /**
  * A structured echo of a genuine human decision a gate carries (#3) — what the
@@ -140,7 +140,7 @@ export interface RunState {
   /** Mirror of the machine's state value, for humans and `duet status`. */
   machineState?: string;
   orchestratorSessionId?: string;
-  workerSessions: Partial<Record<'implementer' | 'reviewer', string>>;
+  workerSessions: Partial<Record<WorkerRole, string>>;
 
   /** Which phases have had their entry prompt sent (drives entry-vs-resume). */
   phaseStarted: Partial<Record<PhaseName, true>>;
@@ -151,7 +151,7 @@ export interface RunState {
    * template discipline: a duplicate full-template send gets a warn-once
    * steering refusal, and list_snippets annotates already-sent snippets.
    */
-  sentSnippets?: Partial<Record<PhaseName, Partial<Record<'implementer' | 'reviewer', string[]>>>>;
+  sentSnippets?: Partial<Record<PhaseName, Partial<Record<WorkerRole, string[]>>>>;
   /** advance_phase outputs, shown at gates. */
   phaseSummaries: Partial<Record<PhaseName, { summary: string; artifacts: string[]; humanDecisions?: HumanDecision[] }>>;
 
@@ -571,7 +571,7 @@ export interface PurgeResult {
  * tests resolve transcripts under a tmp dir.
  */
 export function purgeRun(state: RunState, home: string = homedir()): PurgeResult {
-  const sessions: Array<{ provider: RoleBindings[keyof RoleBindings]['provider']; sessionId: string }> = [];
+  const sessions: Array<{ provider: RoleBinding['provider']; sessionId: string }> = [];
   if (state.orchestratorSessionId) {
     sessions.push({ provider: state.bindings.orchestrator.provider, sessionId: state.orchestratorSessionId });
   }

@@ -186,9 +186,14 @@ program
   .option('--orchestrator <provider[:model]>', 'role binding override (claude[:model] only in v1)')
   .option('--impl <provider[:model]>', 'implementer binding override')
   .option('--reviewer <provider[:model]>', 'reviewer binding override')
+  .option(
+    '--consultant <provider[:model]>',
+    'enable the optional consultant — an independent cross-family second reviewer (read-only). provider[:model], e.g. claude:claude-opus-4-8; defaults to claude-opus-4-8 when no model is named. Off by default; settable for every run via [roles.consultant] in the config',
+  )
+  .option('--no-consultant', 'disable the consultant for this run even when the config binds one')
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
   .option('--interactive', "orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over the attended arc up to the workflow's handoff gate (full: through the plan gate; rir: through the Direction gate); implementation onward runs headless after that handoff")
-  .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; budget?: string; orchestrator?: string; impl?: string; reviewer?: string; tmux?: boolean; interactive?: boolean }) => {
+  .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; budget?: string; orchestrator?: string; impl?: string; reviewer?: string; consultant?: string | boolean; tmux?: boolean; interactive?: boolean }) => {
     const cwd = process.cwd();
 
     // The framing's frontmatter is the machine/prose boundary: parsed
@@ -206,7 +211,10 @@ program
         ...(opts.orchestrator ? { orchestrator: opts.orchestrator } : {}),
         ...(opts.impl ? { implementer: opts.impl } : {}),
         ...(opts.reviewer ? { reviewer: opts.reviewer } : {}),
+        // --consultant carries a spec (string); --no-consultant arrives as `false`.
+        ...(typeof opts.consultant === 'string' ? { consultant: opts.consultant } : {}),
       },
+      ...(opts.consultant === false ? { noConsultant: true } : {}),
       ...(opts.budget !== undefined ? { budgetOverride: opts.budget } : {}),
     });
 
@@ -231,7 +239,7 @@ program
     console.log(`run ${state.runId} created`);
     if (opts.tmux) await openTmuxView(state);
     console.log(
-      `roles: orchestrator=${bindings.orchestrator.provider}:${bindings.orchestrator.model ?? ''} implementer=${bindings.implementer.provider}${bindings.implementer.model ? ':' + bindings.implementer.model : ''} reviewer=${bindings.reviewer.provider}${bindings.reviewer.model ? ':' + bindings.reviewer.model : ''}`,
+      `roles: orchestrator=${bindings.orchestrator.provider}:${bindings.orchestrator.model ?? ''} implementer=${bindings.implementer.provider}${bindings.implementer.model ? ':' + bindings.implementer.model : ''} reviewer=${bindings.reviewer.provider}${bindings.reviewer.model ? ':' + bindings.reviewer.model : ''}${bindings.consultant ? ` consultant=${bindings.consultant.provider}${bindings.consultant.model ? ':' + bindings.consultant.model : ''}` : ''}`,
     );
     // gatesAt: [] is the afk "attend none" posture — explicit copy, not an empty join.
     if (state.gatesAt)
