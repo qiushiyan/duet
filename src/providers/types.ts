@@ -69,7 +69,14 @@ export interface RunTurnOptions {
   prompt: string;
   /** Resume an existing session; omit to start a new one. */
   sessionId?: string;
-  /** Worker may not write or execute. Maps to `-s read-only` (codex) / restricted tools (claude). */
+  /**
+   * Marks the read-only reviewer role. A role-intent HINT, not an OS guarantee
+   * (2026-06-22): the headless providers run full-permission — codex defers to
+   * `~/.codex/config.toml` (no `--sandbox`), claude uses `bypassPermissions` —
+   * and the reviewer's review-only behavior rests on the review-* snippets, not
+   * a sandbox. The interactive claude transport is the lone consumer that still
+   * acts on it: being implementer-only, it refuses a read-only (reviewer) turn.
+   */
   readOnly?: boolean;
   cwd?: string;
 }

@@ -277,7 +277,7 @@ Run the SPEC review loop on the draft spec above, then advance to the commit-spe
 ${branchPolicyParagraph(state)}${attendancePosture(state, 'spec')}
 The shape of the loop:
 1. Read the snippet library (list_snippets) — the review-spec / update-spec snippets (and their -again variants for later rounds) are the templates for this loop.
-2. Send the reviewer a review-spec prompt wrapping the current spec. The reviewer runs read-only in the repo, so it can also read ${state.specPath} and related code directly — point it at the path as well as quoting the content.
+2. Send the reviewer a review-spec prompt wrapping the current spec. The reviewer can read the repo directly, so point it at ${state.specPath} and related code — name the path as well as quoting the content.
 3. Route the reviewer's feedback to the implementer with an update-spec prompt. The implementer should apply accepted changes to ${state.specPath} directly (it has write access) and report what it changed versus rejected and why.
 4. Judge convergence. Run another round with the -again variants when substantive points remain open; stop when what's left is minor. The backstop cap for this phase is ${roundCap} review rounds — your judgment should converge well before it.
 5. When converged, call advance_phase with a summary of what the reviewer flagged, what changed, and any rejections with their rationale — the human decides at the gate from your summary.${consultantAuditStep(state, 'spec', 'the settled spec and the decisions it must treat as by-design — not the review-loop traffic.')}

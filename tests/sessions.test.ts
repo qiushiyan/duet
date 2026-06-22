@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
-import { readRoleTranscriptTail, resolveSessions } from '../src/sessions.ts';
+import { readRoleTranscriptTail, readTranscriptTailAtPath, resolveSessions } from '../src/sessions.ts';
 import { test } from './helpers/fixtures.ts';
 import { claudeUserToolResult, jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
 
@@ -102,5 +102,21 @@ describe('readRoleTranscriptTail — the fs tail wrapper', () => {
     expect.soft(readRoleTranscriptTail(run, 'implementer', { home })).toBeUndefined();
     // A role with no session id at all is also undefined.
     expect.soft(readRoleTranscriptTail(run, 'reviewer', { home })).toBeUndefined();
+  });
+});
+
+describe('readTranscriptTailAtPath — the locate-free reader (the 30s activity poll)', () => {
+  test('reads the tail at an already-located path, no directory scan', ({ run, projectDir }) => {
+    const home = join(projectDir, 'home');
+    run.workerSessions = { implementer: 'impl-1' };
+    const path = plantClaudeTranscript(home, 'impl-1', jsonl(claudeUserToolResult({ ts: TS })));
+    const tail = readTranscriptTailAtPath(path, 'claude');
+    expect.soft(tail?.path).toBe(path);
+    expect.soft(tail?.schema).toBe('claude');
+    expect.soft(tail?.jsonl.includes('tool_result')).toBe(true);
+  });
+
+  test('a vanished path returns undefined (so the caller re-locates)', () => {
+    expect(readTranscriptTailAtPath('/no/such/transcript.jsonl', 'codex')).toBeUndefined();
   });
 });

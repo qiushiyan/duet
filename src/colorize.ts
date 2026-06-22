@@ -37,8 +37,11 @@ const VOICE_HEADER = /^(\[\d{4}-\d{2}-\d{2}T[^\]]+\])\s?(.*)$/;
 
 /**
  * Colorize one line of a voice log: timestamps dimmed, header text in the
- * voice's color (errors red, heartbeats dim). Body lines pass through
- * untouched — only the structural `[timestamp] header` lines are styled.
+ * voice's color (errors red, heartbeats and the `⋯` activity line dim — both
+ * ambient telemetry). Body lines pass through untouched — only the structural
+ * `[timestamp] header` lines are styled. The `⏳`/`⋯`/`✗` markers are a
+ * producer/colorizer contract: the producer (harness/tools.ts, worker-activity.ts)
+ * writes them, this branch keys on them.
  */
 export function colorizeVoiceLine(voice: Voice, line: string): string {
   const match = VOICE_HEADER.exec(line);
@@ -47,7 +50,7 @@ export function colorizeVoiceLine(voice: Voice, line: string): string {
   const header = match[2] ?? '';
   const paint = header.startsWith('✗')
     ? pc.red
-    : header.startsWith('⏳')
+    : header.startsWith('⏳') || header.startsWith('⋯')
       ? pc.dim
       : ROLE_PAINT[voice];
   return `${pc.dim(stamp)} ${paint(header)}`;

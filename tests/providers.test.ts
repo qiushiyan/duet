@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 import { COMPACT_CONFIRMATION, ClaudeWorker, claudeArgs, claudeExecaOptions, parseClaudeTurn } from '../src/providers/claude.ts';
-import { parseRolloutContext } from '../src/providers/codex.ts';
+import { codexThreadOptions, parseRolloutContext } from '../src/providers/codex.ts';
 import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn } from '../src/providers/interactive-claude.ts';
 import { createWorkers, providerFor } from '../src/providers/index.ts';
 import { BudgetCutoffError } from '../src/providers/types.ts';
@@ -567,6 +567,32 @@ describe('claudeArgs (the budget-cap omission seam)', () => {
   test('omits --max-budget-usd entirely when the cap is undefined (budgets off)', () => {
     const args = claudeArgs({}, { model: 'claude-opus-4-8', maxBudgetUsd: undefined });
     expect(args).not.toContain('--max-budget-usd');
+  });
+
+  test('always launches bypassPermissions and never --disallowed-tools — both roles run full-permission', () => {
+    // readOnly (the reviewer hint) no longer restricts the headless argv: full
+    // permissions for both workers, review-only enforced by the prompt instead.
+    const impl = claudeArgs({}, { model: 'claude-opus-4-8' });
+    const reviewer = claudeArgs({ readOnly: true }, { model: 'claude-opus-4-8' });
+    for (const args of [impl, reviewer]) {
+      expect.soft(args[args.indexOf('--permission-mode') + 1]).toBe('bypassPermissions');
+      expect.soft(args).not.toContain('--disallowed-tools');
+    }
+  });
+});
+
+describe('codexThreadOptions (the sandbox-deferral seam)', () => {
+  test('never sets sandboxMode — codex defers the sandbox to ~/.codex/config.toml', () => {
+    // The reviewer hint (a read-only role) must NOT derive an OS sandbox: the
+    // old read-only/workspace-write mapping overrode the user's config and broke
+    // read-only tooling ($TMPDIR IPC sockets, outbound reads). Omitting it lets
+    // the codex CLI fall back to the user's configured posture.
+    expect.soft(codexThreadOptions({ cwd: '/repo' }).sandboxMode).toBeUndefined();
+    expect.soft(codexThreadOptions({}).sandboxMode).toBeUndefined();
+  });
+
+  test('passes the working directory through', () => {
+    expect(codexThreadOptions({ cwd: '/repo' }).workingDirectory).toBe('/repo');
   });
 });
 

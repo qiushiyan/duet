@@ -44,6 +44,21 @@ export function claudeUserToolResult({ ts = BASE_TS } = {}): Rec {
   return { type: 'user', timestamp: ts, message: { content: [{ type: 'tool_result', content: 'ok' }] } };
 }
 
+/** An assistant record carrying one or more `tool_use` blocks (the live-activity
+ *  signal). Pass blocks as `{ name, input, id? }`; ids default per index. */
+export function claudeToolUse(
+  blocks: Array<{ name: string; input: Record<string, unknown>; id?: string }>,
+  { ts = BASE_TS } = {},
+): Rec {
+  return {
+    type: 'assistant',
+    timestamp: ts,
+    message: {
+      content: blocks.map((b, i) => ({ type: 'tool_use', id: b.id ?? `toolu_${i}`, name: b.name, input: b.input })),
+    },
+  };
+}
+
 /** A trailing metadata record WITHOUT a timestamp — must be skipped for last-activity. */
 export function claudeMetadata(type = 'last-prompt'): Rec {
   return { type, sessionId: 's' };
@@ -64,6 +79,33 @@ export function codexErrorEvent(message: string, { ts = BASE_TS } = {}): Rec {
 /** A codex token-count event — an activity/recency marker, not an error. */
 export function codexTokenCount(total: number, { ts = BASE_TS } = {}): Rec {
   return { type: 'event_msg', timestamp: ts, payload: { type: 'token_count', info: { total_token_usage: { input_tokens: total } } } };
+}
+
+/** A codex `exec_command` function_call (the live-activity signal — reads are
+ *  shell commands). `cmd` is the shell string the agent ran. */
+export function codexExecCommand(cmd: string, { callId = 'call_0', ts = BASE_TS } = {}): Rec {
+  return {
+    type: 'response_item',
+    timestamp: ts,
+    payload: { type: 'function_call', name: 'exec_command', arguments: JSON.stringify({ cmd, workdir: '/repo' }), call_id: callId },
+  };
+}
+
+/** A codex `apply_patch` custom_tool_call — codex's write/edit signal, `input`
+ *  the patch text (`*** Begin Patch …`). Real on-disk shape. */
+export function codexApplyPatch(patch: string, { callId = 'call_p', ts = BASE_TS } = {}): Rec {
+  return {
+    type: 'response_item',
+    timestamp: ts,
+    payload: { type: 'custom_tool_call', status: 'completed', name: 'apply_patch', input: patch, call_id: callId },
+  };
+}
+
+/** Build an apply_patch body touching the given files (header-only; a trivial
+ *  one-line hunk per file). `kind` defaults to Update. */
+export function patchBody(...files: Array<{ path: string; kind?: 'Add' | 'Update' | 'Delete' }>): string {
+  const body = files.map((f) => `*** ${f.kind ?? 'Update'} File: ${f.path}\n@@\n-old line\n+new line`).join('\n');
+  return `*** Begin Patch\n${body}\n*** End Patch`;
 }
 
 // ── planting under a fake home (the environment seam) ──────────────────────

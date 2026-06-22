@@ -223,17 +223,16 @@ export function claudeArgs(
   if (config.maxBudgetUsd !== undefined) {
     args.push('--max-budget-usd', String(config.maxBudgetUsd));
   }
-  if (opts.readOnly) {
-    args.push('--disallowed-tools', 'Write,Edit,NotebookEdit,Bash,Task');
-  }
-  if (!opts.readOnly) {
-    // The implementer edits, commits, and runs project commands (tests,
-    // typecheck, builds) with nobody at the keyboard — headless -p mode has
-    // no permission prompt. bypassPermissions is the user's deliberate
-    // posture for their own repos (2026-06-11 decision); the CLI still
-    // honors explicit deny rules and refuses to run as root.
-    args.push('--permission-mode', 'bypassPermissions');
-  }
+  // Both workers launch with full permissions — headless -p mode has no
+  // permission prompt, and duet deliberately does not make its coding agents
+  // more restricted than the user's own manual workflow (the user's posture for
+  // their own repos: 2026-06-11 for the implementer, extended to the reviewer
+  // 2026-06-22, superseding the per-role read-only/bypass split). The reviewer's
+  // review-only behavior is a prompt-level convention (the review-* snippets ask
+  // for critique, not edits), so opts.readOnly no longer gates the argv.
+  // bypassPermissions still honors explicit deny rules and the CLI refuses to
+  // run as root.
+  args.push('--permission-mode', 'bypassPermissions');
   return args;
 }
 

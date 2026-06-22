@@ -1,7 +1,7 @@
 import { closeSync, openSync, readSync, readdirSync, fstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { Codex } from '@openai/codex-sdk';
+import { Codex, type ThreadOptions } from '@openai/codex-sdk';
 import type { ContextUsage, RunTurnOptions, WorkerProvider, WorkerTurn } from './types.ts';
 
 /**
@@ -10,9 +10,10 @@ import type { ContextUsage, RunTurnOptions, WorkerProvider, WorkerTurn } from '.
  * `~/.codex/sessions/`, so the session stays manually resumable with
  * `codex exec resume <id>` (augmentation principle).
  *
- * Deliberately no model key: the user's own `~/.codex/config.toml` governs
- * model and reasoning effort (docs/automation-design.md §"Roles are
- * decoupled from providers").
+ * Deliberately no model key AND no sandbox flag: the user's own
+ * `~/.codex/config.toml` governs model, reasoning effort, AND the sandbox /
+ * approval posture (docs/automation-design.md §"Roles are decoupled from
+ * providers"). See `codexThreadOptions` for why duet imposes no `--sandbox`.
  */
 
 /**
@@ -48,6 +49,30 @@ export function parseRolloutContext(jsonlTail: string): ContextUsage | undefined
 const SESSIONS_ROOT = join(homedir(), '.codex', 'sessions');
 const TAIL_BYTES = 64 * 1024;
 
+/**
+ * The thread options for a codex turn, extracted as a pure builder (mirroring
+ * claudeArgs) so the sandbox posture is verifiable by test.
+ *
+ * It deliberately sets NO `sandboxMode`: the `@openai/codex-sdk` appends
+ * `--sandbox <mode>` to the CLI argv only when `sandboxMode` is truthy, so
+ * omitting it lets the user's `~/.codex/config.toml` (or active profile)
+ * govern the sandbox + approval posture — the same way duet already defers
+ * the model and reasoning effort to that file.
+ *
+ * This reversed a derived `opts.readOnly ? 'read-only' : 'workspace-write'`
+ * mapping (2026-06-22). That override conflated "this role must not mutate the
+ * repo" with "this role may touch nothing locally": codex `read-only` is a
+ * Seatbelt profile that denies ALL filesystem writes and network, so it killed
+ * the read-only reviewer's own evidence tooling (a tsx/Node tool's `$TMPDIR`
+ * IPC socket dies with `listen EPERM`; outbound reads are blocked) AND it
+ * overrode the user's config. The reviewer's review-only behavior is a
+ * prompt-level convention now (the review-* snippets ask for critique, not
+ * edits), not an OS sandbox — `opts.readOnly` no longer shapes the launch.
+ */
+export function codexThreadOptions(opts: { cwd?: string }): ThreadOptions {
+  return { ...(opts.cwd !== undefined ? { workingDirectory: opts.cwd } : {}) };
+}
+
 export class CodexWorker implements WorkerProvider {
   readonly name = 'codex' as const;
   private readonly codex = new Codex();
@@ -60,10 +85,7 @@ export class CodexWorker implements WorkerProvider {
   }
 
   async runTurn(opts: RunTurnOptions): Promise<WorkerTurn> {
-    const threadOptions = {
-      sandboxMode: opts.readOnly ? ('read-only' as const) : ('workspace-write' as const),
-      workingDirectory: opts.cwd,
-    };
+    const threadOptions = codexThreadOptions(opts);
     const thread = opts.sessionId
       ? this.codex.resumeThread(opts.sessionId, threadOptions)
       : this.codex.startThread(threadOptions);

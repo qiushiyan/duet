@@ -161,10 +161,10 @@ export interface RoleHealth {
   recentErrors: TerminalError[];
 }
 
-type JsonRecord = Record<string, unknown>;
+export type JsonRecord = Record<string, unknown>;
 
 /** Parse JSONL leniently — one record per line, skipping blank/partial/foreign lines (errscan's `records`). */
-function parseRecords(jsonl: string): JsonRecord[] {
+export function parseRecords(jsonl: string): JsonRecord[] {
   const out: JsonRecord[] = [];
   for (const raw of jsonl.split('\n')) {
     const line = raw.trim();

@@ -11,15 +11,15 @@
 [[snippets]]
 key = "think-holistic"
 expand = '''
-**DO NOT CHANGE ANY CODE YET.** Reason holistically — grounded in actual code, not assumptions.
+**Don't change code yet — this is an analysis pass.** Reason holistically, grounded in actual code, not assumptions.
 
 1. **Read the relevant code** to see how things work today. Trace real data/control flow, note existing constraints and why they exist, cite the files/functions you read. Without this, "first principles" is guessing.
 2. **Interview me about ambiguous product intent** (fuzzy terms, unclear scope, priorities you're guessing at) and **push back if my framing seems off**. One question at a time, each with your recommended answer. Don't ask what code can answer — you've just read it. **For clear, targeted bug fixes, skip this step.**
 3. **State the real problem** and the underlying UX goal **in your own words**, informed by what you read and learned.
-4. **Evaluate the current design** against the goal — local issue or structural?
+4. **Evaluate the current design** against the goal — is this a *local* change the current structure absorbs cleanly, or is the structure itself in the way? When the foundation fights the change, the move is **preparatory refactoring** (Kent Beck: *make the change easy, then make the easy change*) — reshape what's there first so the feature becomes a natural addition, instead of wedging it into a shape that resists it.
 5. **Propose 2–3 approaches** from first principles, with tradeoffs (complexity, blast radius, UX impact, future flexibility). Recommend one and explain why.
 
-Don't patch a flawed design with another patch. Don't shy from structural changes when justified — but back "structurally wrong" claims with code, and name the cost.'''
+Don't patch a flawed design with another patch. Don't shy from structural changes when justified — but back "structurally wrong" claims with code, and name the cost. Preparatory refactoring earns its place only when the structure genuinely blocks the goal — not as license to rewrite what merely looks imperfect.'''
 
 [[snippets]]
 key = "compare-notes"
@@ -47,6 +47,7 @@ Technical detail belongs in this section only when it makes the solution easier 
 **Structure the body around the flow of the change:**
 - **Distinguish current vs. desired** — what's preserved vs. what's changing.
 - **Name the coupling decision** — extension of an existing concept, or intentionally independent?
+- **Name the foundation decision (preparatory refactoring).** Decide whether the existing code is a base the feature extends cleanly, or a structure that blocks the design you actually want. If it blocks, scope a *bounded* preparatory refactoring — reshape the foundation first so the feature becomes an easy add — as the opening move, sized to this feature, not a rewrite of the module, and name what you're deliberately leaving alone.
 - **Use implementation anchors** (modules, functions, files) attached to the flow — not the main narrative.
 
 A tree-style before/after often makes the change crisp — adapt the format (tree, prose, diagram) to what fits:
@@ -93,6 +94,7 @@ The spec is intentionally high-level: problem, UX goal, conceptual approach, non
 - Does the conceptual approach hold up: data flow, state, ordering, failure modes, performance, backward compat, migrations?
 - Spec ↔ code mismatches.
 - Cleaner alternative approaches.
+- **Foundation & preparatory refactoring:** is the feature being bolted onto a structure that can't hold it (a missing prep step), or is a proposed cleanup disproportionate to the feature (scope creep)? Flag either.
 - Non-goals + open questions: anything in-scope that should defer? Anything missing from the uncertainty list?
 
 **Per point:**
@@ -203,17 +205,19 @@ Read these as a lens, not a checklist (adapt; drop what doesn't fit):
 
 **Slice = one meaningful unit — a subsystem or a cluster of related behaviors.** Be ambitious: group a behavior with the behaviors and wiring that belong with it into one slice a reviewer can grasp as a single idea — the mechanical steps that serve it (an import, mounting a component, wiring) ride in that slice, not slices of their own. Lean larger; split only when two parts are genuinely unrelated or a slice grows too big to hold in your head. Aim for deep modules (small interface, hidden implementation) — shrinks the test surface, keeps slices independently committable. **Prefer slicings that delete concepts** (branches, modes, helper layers disappear) over ones that just spread them. Commits follow slices — that's implied; don't engineer commit boundaries.
 
+**Preparatory refactoring first, when the foundation blocks the design** (Kent Beck: *make the change easy, then make the easy change*). If the spec named a blocking foundation — or you find one now — make the first slice or two a behavior-preserving reshaping — kept green by existing tests, or, if that code isn't covered, pinned with a characterization test first — that lays the groundwork before the feature slices land on it. Refactor only what the feature actually rests on; a prep slice that balloons into a module rewrite is the failure mode, not the goal.
+
 Strict red-green-refactor isn't required throughout — apply it inside a slice when design is uncertain or behavior is subtle and a failing test gives real signal. For straightforward slices, writing test + code together is fine. **The discipline is "one slice per commit", not keystroke order.**
 
 Constraints:
-- Follow our settled implementation guidelines. Tweak small details if exploration warrants; pause before challenging major direction.
+- Follow the settled spec and the project's conventions. Tweak small details if exploration warrants; pause before challenging major direction.
 - Skip doc updates — we'll do those after implementation.
 - Commit per slice, not all at the end.'''
 
 [[snippets]]
 key = "review-plan"
 expand = '''
-Spec updated. I've drafted an implementation plan. Review with the same rigor as the spec.
+I've drafted an implementation plan. Review with the same rigor as the spec.
 
 Background (skim as a lens, don't recite):
 - `~/.claude/skills/tdd/SKILL.md` — vertical slices, behavior-focused tests, when to mock
@@ -230,7 +234,7 @@ Background (skim as a lens, don't recite):
 - Agree → add technical suggestions, caveats, or risks worth flagging.
 - Disagree → give reasons and a concrete alternative. If architectural, say so and propose the structural fix.
 
-Challenge sequencing, scope, choice of vertical slices, **whether the plan deletes complexity or just rearranges it**, and **whether the resulting modules are deep or shallow** — not just surface details. The right plan should feel inevitable. Don't default to politeness.
+Challenge sequencing, scope, choice of vertical slices, **whether the plan deletes complexity or just rearranges it**, **whether the resulting modules are deep or shallow**, and **whether any preparatory-refactoring slice is proportionate to the feature, not quietly a rewrite** — not just surface details. The right plan should feel inevitable. Don't default to politeness.
 
 ---
 
@@ -332,7 +336,7 @@ Mid-point review feedback below. **Triage first — no code changes yet.** For e
 
 **Test fallout** — where a finding reveals a test gap in a completed slice, fix it alongside the now-problems; where it reshapes an upcoming slice, fold the test change into that slice's plan.
 
-Then summarize the updated plan: what you'll fix now, then the remaining slices in order. **Wait for my go-ahead before changing code.**
+Then summarize the updated plan: what you'll fix now, then the remaining slices in order. **Stop at the triage — don't change code until you're told to proceed.**
 
 ---
 
@@ -375,7 +379,7 @@ This is a guided map, **not a self-review** — don't grade your own work ("corr
 [[snippets]]
 key = "review-implementation"
 expand = '''
-Spec and plan settled. Code-review my implementation. **Read the actual code, not just commit messages.**
+Code-review my implementation. **Read the actual code, not just commit messages.**
 
 **Lens:**
 - Implementation is fair game across the board — correctness, structure, test quality, performance, readability, edge cases, pattern consistency.
@@ -389,7 +393,7 @@ Spec and plan settled. Code-review my implementation. **Read the actual code, no
 - **Test quality** — right altitude (behavior, not internals), covers planned cases + obvious additions, survives plausible refactors, uses project patterns.
 - **UX & performance** — user-facing impact, performance characteristics.
 - **Structural quality — be ambitious, not just local:**
-    - **Code-judo:** is there a reframing that deletes whole branches/helpers/modes/layers — not just rearranges them?  Do not stop at "this could be a bit cleaner." Look for opportunities to reframe the change so that whole branches, helpers, modes, conditionals, or layers disappear entirely.
+    - **Code-judo:** is there a reframing that makes whole branches, helpers, modes, conditionals, or layers disappear entirely — not just rearranges them? Don't stop at "this could be a bit cleaner."
     - **Spaghetti growth:** ad-hoc conditionals or special cases bolted into unrelated flows = design problem, not a stylistic nit. Push the logic behind its own abstraction.
     - **Thin abstractions:** pass-through wrappers, identity helpers, abstractions that add indirection without buying clarity — flag them.
     - **Boundary cleanliness:** casts, `any`, `unknown`, optionality papering over unclear invariants — push for an explicit contract.
@@ -527,10 +531,19 @@ expand = '''
 
 **Most importantly:** does this solve the core UX problem while maintaining a clean technical design?'''
 
+# Anytime helper, not arc-bound: a doc-currency check usable in either workflow
+# whenever a change leans on an external library (classified in ANYTIME_SNIPPETS).
+[[snippets]]
+key = "use-latest-docs"
+expand = '''
+When the work leans on an external library, framework, or SDK, check its current docs before committing to an approach — use your web-search / doc-fetch tools to confirm the latest APIs, defaults, and recommended patterns. Training data lags real releases, so a plausible-looking call can be deprecated or wrong, and that error compounds straight into the build.
+
+Skip this for the repo's own code and stable language/runtime facts — read those from the source here. It's for the moving parts you don't control.'''
+
 [[snippets]]
 key = "ceo-summary"
 expand = '''
-Implementation and follow-up reviews are done. Write a CEO-facing summary of this PR — for me, and for explaining the work to a colleague without walking them through the diff.
+Implementation and follow-up reviews are done. Write a CEO-facing summary of this PR — for me, and for explaining the work to a non-technical stakeholder without walking them through the code.
 
 Start non-technical, in this order:
 
@@ -548,13 +561,6 @@ This is CEO/CTO altitude: outcomes first, technology last. Drop any section that
 # with one writable review round. These snippets reference the research
 # decisions (not a spec/plan, which RIR has none of). review-direct keeps the
 # `review-` prefix — the review-round counter recognizes a round by it.
-
-[[snippets]]
-key = "use-latest-docs"
-expand = '''
-When the work leans on an external library, framework, or SDK, check its current docs before committing to an approach — use your web-search / doc-fetch tools to confirm the latest APIs, defaults, and recommended patterns. Training data lags real releases, so a plausible-looking call can be deprecated or wrong, and that error compounds straight into the build.
-
-Skip this for the repo's own code and stable language/runtime facts — read those from the source here. It's for the moving parts you don't control.'''
 
 [[snippets]]
 key = "implement-direct"
