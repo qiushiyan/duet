@@ -2,6 +2,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { PhaseName } from '../phases.ts';
 import { providerFor } from '../providers/index.ts';
 import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
+import { readOnlyFor, sessionIdFor } from '../roles.ts';
 import {
   clearPendingTurn,
   clearTurnActive,
@@ -204,7 +205,7 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
         // plus a record stranded `running`. stopHeartbeat rides a finally so the
         // 5-minute interval can never leak, on any exit.
         Promise.resolve()
-          .then(() => providerFor(providers, role).runTurn({ prompt: body, sessionId: fresh.workerSessions[role], readOnly: role === 'reviewer', cwd: fresh.cwd }))
+          .then(() => providerFor(providers, role).runTurn({ prompt: body, sessionId: sessionIdFor(fresh, role), readOnly: readOnlyFor(role), cwd: fresh.cwd }))
           .then(
             (turn) => finalize(turn),
             (err) => finalize(err instanceof Error ? err : new Error(String(err))),

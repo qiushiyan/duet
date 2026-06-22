@@ -30,6 +30,8 @@ interface HarnessOpts {
   stagedAnswer?: string;
   implementer?: FakeWorker | DeferredWorker | SyncThrowWorker;
   reviewer?: FakeWorker | DeferredWorker | SyncThrowWorker;
+  /** The optional consultant worker — present only when the run binds one. */
+  consultant?: FakeWorker | DeferredWorker | SyncThrowWorker;
   home?: string;
   /** Turn on the interactive async path: send_prompt dispatches, check_turns collects. */
   async?: boolean;
@@ -40,7 +42,7 @@ interface HarnessOpts {
 function harness(run: RunState, opts: HarnessOpts = {}) {
   const implementer = opts.implementer ?? new FakeWorker('claude');
   const reviewer = opts.reviewer ?? new FakeWorker('codex');
-  const providers = { implementer, reviewer };
+  const providers = { implementer, reviewer, ...(opts.consultant ? { consultant: opts.consultant } : {}) };
   const phase = opts.phase ?? 'spec';
   const lines: string[] = [];
   const log = (line: string) => lines.push(line);
@@ -73,7 +75,7 @@ function harness(run: RunState, opts: HarnessOpts = {}) {
   };
   // The terminal decision now lives on the run state the handlers mutate (the
   // persisted marker), not a returned outcome flag — assertions read run.terminalMarker.
-  return { call, implementer, reviewer, lines, dispatcher };
+  return { call, implementer, reviewer, consultant: opts.consultant, lines, dispatcher };
 }
 
 /** Let a DeferredWorker's just-resolved settle continuation drain (microtask flush). */
@@ -544,6 +546,111 @@ describe('review-round backstop cap', () => {
     expect.soft(text(result)).toContain('advance_phase');
     expect.soft(text(result)).toContain('ask_human');
     expect.soft(reviewer.calls).toHaveLength(0);
+  });
+});
+
+describe('the consultant role (ephemeral, read-only, additive)', () => {
+  test('ephemerality (blocking host): a later consultant turn carries no resume session id', async ({ consultantRun }) => {
+    const consultant = new FakeWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant });
+
+    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'bet audit 1' });
+    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'bet audit 2' });
+
+    // The first settle recorded a session id, yet the second turn still launches
+    // fresh — ephemerality by construction, not by forgetting to track it.
+    expect.soft(consultant.calls[0]?.sessionId).toBeUndefined();
+    expect.soft(consultant.calls[1]?.sessionId).toBeUndefined();
+    expect.soft(consultantRun.workerSessions.consultant).toBeDefined();
+  });
+
+  test('ephemerality (interactive host): the dispatcher launches each consultant turn fresh', async ({ consultantRun }) => {
+    const consultant = new DeferredWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant, async: true });
+
+    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit 1' });
+    consultant.resolve({ sessionId: 'c-1' });
+    await flush();
+    await call('check_turns'); // collect → re-opens the role
+    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit 2' });
+
+    // Both launches went out with no resume id, even though the first settle
+    // tracked 'c-1' — the dispatcher reads sessionIdFor, not workerSessions.
+    expect.soft(consultant.calls[0]?.sessionId).toBeUndefined();
+    expect.soft(consultant.calls[1]?.sessionId).toBeUndefined();
+  });
+
+  test('latest-session tracked: workerSessions.consultant holds the newest id; consultant.log names each', async ({
+    projectDir,
+    consultantRun,
+  }) => {
+    const consultant = new FakeWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant });
+
+    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit 1' });
+    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit 2' });
+
+    const persisted = loadRunState(projectDir, consultantRun.runId);
+    expect.soft(persisted.workerSessions.consultant).toBe('session-2'); // the latest, not the first
+    // The find-on-disk mechanism: each checkpoint's session id is named in the
+    // consultant's own voice log (the Voice widening routes it to consultant.log).
+    const log = readFileSync(join(runDirOf(projectDir, consultantRun.runId), 'consultant.log'), 'utf8');
+    expect.soft(log).toContain('session session-1');
+    expect.soft(log).toContain('session session-2');
+  });
+
+  test('additivity: a consultant turn never counts a review round nor satisfies the loop requirement', async ({
+    consultantRun,
+  }) => {
+    const consultant = new FakeWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant });
+
+    // Even a review-prefixed tag to the CONSULTANT does not count — countsReviewRound
+    // gates on the role, so the consultant is additive, never substitutive.
+    await call('send_prompt', { role: 'consultant', tag: 'review-spec', body: 'bet audit' });
+    expect.soft(consultantRun.rounds.spec ?? 0).toBe(0);
+
+    // spec is a review-loop phase; with only a consultant turn run, advance_phase
+    // still refuses — the embedded reviewer round is still owed.
+    const refused = await call('advance_phase', { summary: 'looks fine', artifacts: [] });
+    expect.soft(refused.isError).toBe(true);
+    expect.soft(text(refused)).toContain('No review round has run');
+  });
+
+  test('a consultant turn runs read-only', async ({ consultantRun }) => {
+    const consultant = new FakeWorker('claude');
+    const { call } = harness(consultantRun, { phase: 'spec', consultant });
+    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit' });
+    expect(consultant.calls[0]?.readOnly).toBe(true);
+  });
+});
+
+describe('send_prompt enum visibility (consultant only when bound)', () => {
+  const sendPromptTool = (run: RunState, withConsultant: boolean) => {
+    const providers = {
+      implementer: new FakeWorker('claude'),
+      reviewer: new FakeWorker('codex'),
+      ...(withConsultant ? { consultant: new FakeWorker('claude') } : {}),
+    };
+    const { tools } = createPhaseTools({ state: run, phase: 'spec', providers, log: () => {} });
+    return tools.find((t) => t.name === 'send_prompt')!;
+  };
+
+  test('unbound: the schema is byte-for-byte today’s — consultant is not a routable role', ({ run }) => {
+    const tool = sendPromptTool(run, false);
+    const schema = z.object(tool.inputSchema);
+    expect.soft(schema.safeParse({ role: 'consultant', tag: 't', body: 'b' }).success).toBe(false);
+    expect.soft(schema.safeParse({ role: 'reviewer', tag: 't', body: 'b' }).success).toBe(true);
+    expect.soft(tool.description).not.toContain('consultant');
+    expect.soft(tool.description).not.toContain('ephemeral');
+  });
+
+  test('bound: consultant becomes a routable role and the description names its ephemerality', ({ consultantRun }) => {
+    const tool = sendPromptTool(consultantRun, true);
+    const schema = z.object(tool.inputSchema);
+    expect.soft(schema.safeParse({ role: 'consultant', tag: 't', body: 'b' }).success).toBe(true);
+    expect.soft(tool.description).toContain('consultant');
+    expect.soft(tool.description.toLowerCase()).toContain('ephemeral');
   });
 });
 

@@ -3,9 +3,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test as base } from 'vitest';
 import { DEFAULT_BINDINGS } from '../../src/config.ts';
+import type { RoleBindings } from '../../src/config.ts';
 import type { RunTurnOptions, WorkerProvider, WorkerTurn } from '../../src/providers/types.ts';
 import { createRun, saveRunState } from '../../src/run-store.ts';
 import type { RunState } from '../../src/run-store.ts';
+
+/** The default bindings plus a claude consultant — the opt-in second reviewer. */
+export const consultantBindings: RoleBindings = {
+  ...DEFAULT_BINDINGS,
+  consultant: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' },
+};
 
 /**
  * Shared fixtures (the test.extend DI chain): a throwaway project dir, and a
@@ -112,6 +119,8 @@ export interface Fixtures {
   run: RunState;
   /** A framing-only run whose orchestration host is the interactive session. */
   interactiveRun: RunState;
+  /** A framing-only run with a consultant bound (the opt-in second reviewer). */
+  consultantRun: RunState;
 }
 
 export const test = base.extend<Fixtures>({
@@ -128,5 +137,8 @@ export const test = base.extend<Fixtures>({
     state.orchestrationHost = 'interactive';
     saveRunState(state);
     await use(state);
+  },
+  consultantRun: async ({ projectDir }, use) => {
+    await use(createRun({ cwd: projectDir, bindings: consultantBindings, framing: 'test framing' }));
   },
 });

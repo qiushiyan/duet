@@ -6,6 +6,7 @@ import type { PhaseName } from '../phases.ts';
 import { providerFor } from '../providers/index.ts';
 import { BudgetCutoffError } from '../providers/types.ts';
 import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
+import { countsReviewRound, readOnlyFor, sessionIdFor, workerRolesFor } from '../roles.ts';
 import { getSnippet, renderSnippetLibrary } from '../snippets.ts';
 import {
   appendNote,
@@ -447,6 +448,19 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     };
   };
 
+  // send_prompt's role surface is the run's BOUND worker roles: the consultant
+  // is an enum value (and named in the role/description copy) ONLY when bound, so
+  // an un-enabled run's tool schema is byte-for-byte today's and the orchestrator
+  // cannot route to a role that does not exist.
+  const workerRoles = workerRolesFor(state);
+  const consultantBound = workerRoles.includes('consultant');
+  const sendPromptRoleDescribe = consultantBound
+    ? 'implementer produces and revises artifacts (write access); reviewer critiques them (read-only); consultant is the independent cross-family second reviewer — read-only, and a fresh seeded session each turn (it does not accumulate the run’s context the way the persistent implementer and reviewer do).'
+    : 'implementer produces and revises artifacts (write access); reviewer critiques them (read-only).';
+  const sendPromptEphemerality = consultantBound
+    ? ' The consultant role is ephemeral: each consultant turn starts a fresh seeded session — unlike the persistent implementer and reviewer, it carries no prior turn’s context, so seed it with the curated artifact and decisions it needs each time.'
+    : '';
+
   const tools: Array<KernelTool<any>> = [
     kernelTool(
       'get_task',
@@ -500,11 +514,11 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
 
     kernelTool(
       'send_prompt',
-      'Send a prompt to a worker agent and return its final response. Each role is one persistent session: a later call to the same role continues that worker’s conversation, so refer back to earlier turns instead of repeating context the worker has already seen — and the instructions you send persist the same way, so a full snippet template goes to a given worker once per phase, with later turns steered by deltas (-again variants, short frame-referencing follow-ups). Worker turns are slow (often minutes) and a sent prompt becomes a permanent part of the session — there is no unsend — so compose the full body before calling and send one well-formed prompt rather than iterating by sending. Independent turns to different roles can be issued as parallel tool calls in one message and run concurrently — the frame phase’s two unshared analyses are the canonical case; a second turn to the same role while one is in flight is refused until the first returns (one session is one conversation). Sending the reviewer a prompt whose tag starts with "review" counts as a review round against the phase’s backstop cap. A claude-bound worker’s context can be deliberately compacted: a body that is literally "/compact " followed by your instructions (e.g. an adapted compact-for-* snippet) resets that session in place, keeping what the instructions name; codex-bound workers compact themselves automatically, so this applies only to claude.',
+      `Send a prompt to a worker agent and return its final response. Each role is one persistent session: a later call to the same role continues that worker’s conversation, so refer back to earlier turns instead of repeating context the worker has already seen — and the instructions you send persist the same way, so a full snippet template goes to a given worker once per phase, with later turns steered by deltas (-again variants, short frame-referencing follow-ups). Worker turns are slow (often minutes) and a sent prompt becomes a permanent part of the session — there is no unsend — so compose the full body before calling and send one well-formed prompt rather than iterating by sending. Independent turns to different roles can be issued as parallel tool calls in one message and run concurrently — the frame phase’s two unshared analyses are the canonical case; a second turn to the same role while one is in flight is refused until the first returns (one session is one conversation). Sending the reviewer a prompt whose tag starts with "review" counts as a review round against the phase’s backstop cap. A claude-bound worker’s context can be deliberately compacted: a body that is literally "/compact " followed by your instructions (e.g. an adapted compact-for-* snippet) resets that session in place, keeping what the instructions name; codex-bound workers compact themselves automatically, so this applies only to claude.${sendPromptEphemerality}`,
       {
         role: z
-          .enum(['implementer', 'reviewer'])
-          .describe('implementer produces and revises artifacts (write access); reviewer critiques them (read-only).'),
+          .enum(workerRoles as [WorkerRole, ...WorkerRole[]])
+          .describe(sendPromptRoleDescribe),
         tag: z
           .string()
           .describe('Source snippet key this prompt was built from, e.g. "review-spec". Use "custom" if composed from scratch.'),
@@ -537,7 +551,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           // turn — refuse the re-send (it would race the orphaned worker).
           return { content: [{ type: 'text' as const, text: orphanRefusalText(args.role) }], isError: true };
         }
-        const isReviewRound = args.role === 'reviewer' && args.tag.startsWith('review');
+        const isReviewRound = countsReviewRound(args.role, args.tag);
         const cap = PHASE[phase].roundCap;
         const used = state.rounds[phase] ?? 0;
         if (isReviewRound && used >= cap) {
@@ -607,8 +621,8 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         try {
           const turn = await provider.runTurn({
             prompt: args.body,
-            sessionId: state.workerSessions[args.role],
-            readOnly: args.role === 'reviewer',
+            sessionId: sessionIdFor(state, args.role),
+            readOnly: readOnlyFor(args.role),
             cwd: state.cwd,
           });
           settleTurn({ state, phase, providers, log }, { role: args.role, tag: args.tag, isReviewRound }, turn);
