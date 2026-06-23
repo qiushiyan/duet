@@ -153,7 +153,7 @@ Two Claude Code skills ship with duet (installed with `npx skills add` above): *
 
 ## Development & status
 
-**Status — early and experimental.** Verified end-to-end: the headless **full** arc, driven framing-through-ship on real features. Built and test-verified but awaiting a first live run: the lighter **rir** arc, the **interactive orchestrator** (your Claude Code session driving framing/spec/plan), the optional **consultant**, run supervision (`duet doctor`, opt-in infra retry), and the interactive-Claude implementer transport. The honest verified-vs-open ledger is [`docs/open-questions.md`](docs/open-questions.md).
+**Status — early and experimental.** Verified with live runs: the headless **full** and **rir** arcs (driven on real features) and the optional **consultant**. Built and test-verified but awaiting a first live run: the **interactive orchestrator** (your Claude Code session driving framing/spec/plan), run supervision (`duet doctor`, opt-in infra retry), and the interactive-Claude implementer transport. The honest verified-vs-open ledger is [`docs/open-questions.md`](docs/open-questions.md).
 
 No build step in dev — Node 24 runs the TypeScript directly:
 
