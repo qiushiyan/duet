@@ -223,9 +223,34 @@ function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running
     return { kind: 'gate', phase: gatePhase };
   }
 
-  // Unreachable for snapshots we persist (quiescent states only) — treat a
-  // foreign snapshot as a mid-phase crash so the run stays actionable.
+  // A phase-loop snapshot reaches the HEADLESS probe only after an
+  // interactive→headless handoff (`duet continue` at the handoff gate, `duet afk`,
+  // or a bare `--headless` mid-phase drop): crossInteractive — or the prior
+  // interactive rest — leaves the machine AT a phase loop (e.g. implLoop), then
+  // orchestrationHost is cleared (cli.ts). The pure-headless path never persists a
+  // phase loop (driveToQuiescence saves only at quiescent stops), so this branch's
+  // gate/flag checks above don't cover it; map it to its own phase. A live driver
+  // then surfaces it as `running` there (probeRunPosition); a dead one as a
+  // mid-phase `crashed` that bare `duet continue` re-enters from this very
+  // snapshot. Without this a handed-off mid-impl run misreports against the
+  // entry-phase fallback below (running/crashed in `spec`, not `impl`).
+  const loopPhase = phaseLoopOf(wf, value);
+  if (loopPhase) return { kind: 'crashed', phase: loopPhase };
+
+  // A genuinely foreign snapshot (not a phase loop, gate, or flag-wait) — treat
+  // it as a mid-phase crash from the entry phase so the run stays actionable.
   return { kind: 'crashed', phase: entryPhase };
+}
+
+/**
+ * The phase whose loop state (`<phase>Loop`) a machine value names, or undefined
+ * when the value is not a phase loop (a gate / flag-wait / done value). The one
+ * place the `<phase>Loop` naming convention is read — shared by the headless
+ * probe (`stoppedPosition`), the interactive rest read (`interactiveRestPhase`),
+ * and the interactive crossing (`crossInteractive`).
+ */
+function phaseLoopOf(wf: WorkflowName, value: string): PhaseName | undefined {
+  return phasesOf(wf).find((p) => `${p.name}Loop` === value)?.name;
 }
 
 /**
@@ -242,8 +267,7 @@ function interactiveRestPhase(state: RunState, snapshot: Snapshot<unknown>): Pha
     input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
     snapshot,
   }).getSnapshot();
-  const value = typeof restored.value === 'string' ? restored.value : JSON.stringify(restored.value);
-  return phasesOf(wf).find((p) => `${p.name}Loop` === value)?.name;
+  return typeof restored.value === 'string' ? phaseLoopOf(wf, restored.value) : undefined;
 }
 
 /**
@@ -453,8 +477,7 @@ export function crossInteractive(state: RunState, humanEvent: HumanEvent): void 
   // phase, fresh, on the first crossing). Consume the marker keyed off that
   // resting phase, so a stale marker can't drive a foreign phase's decision.
   const restValue = actor.getSnapshot().value;
-  const restPhase =
-    typeof restValue === 'string' ? phasesOf(wf).find((p) => `${p.name}Loop` === restValue)?.name : undefined;
+  const restPhase = typeof restValue === 'string' ? phaseLoopOf(wf, restValue) : undefined;
   const markerEvent = restPhase ? markerToEvent(state.terminalMarker, restPhase) : null;
   if (markerEvent) actor.send(markerEvent);
   actor.send(humanEvent);

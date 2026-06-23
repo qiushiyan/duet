@@ -434,6 +434,48 @@ describe('probeRunPosition — the interactive resting model (Stage 1)', () => {
     });
   });
 
+  test('after the interactive→headless handoff, the phase-loop snapshot reads as the handed-off phase — not a crash in the entry phase', ({
+    projectDir,
+    interactiveRun,
+    onTestFinished,
+  }) => {
+    // The plan-gate handoff (full's handoffGate): crossInteractive persists the
+    // NEXT phase's loop rest (implLoop), then orchestrationHost is cleared and a
+    // headless _drive is spawned (cli.ts). The now-HEADLESS probe must read that
+    // phase-loop snapshot as the phase the driver runs — the regression was that
+    // the headless branch only handled quiescent (gate/flag) snapshots, so a
+    // phase loop fell through to the entry-phase fallback and a mid-impl run
+    // misreported as running/crashed in `frame`.
+    restInteractiveAt(interactiveRun, [
+      { type: 'phase.advance' }, { type: 'human.approve' }, // frame → spec
+      { type: 'phase.advance' }, { type: 'human.approve' }, // spec → plan
+      { type: 'phase.advance' }, { type: 'human.approve' }, // plan → impl (the handoff)
+    ]);
+    const handed = loadRunState(projectDir, interactiveRun.runId);
+    delete handed.orchestrationHost; // the handoff: the run is headless from here
+    saveRunState(handed);
+
+    // No live driver yet → a mid-phase crash AT the handed-off phase (impl), which
+    // bare `duet continue` re-enters from this very snapshot — not the entry phase.
+    expect.soft(probeRunPosition(loadRunState(projectDir, interactiveRun.runId))).toEqual({
+      kind: 'crashed',
+      phase: 'impl',
+    });
+
+    // The live headless driver makes it `running` at that same phase — what the
+    // real broken run showed as `running` in `spec` before the fix.
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
+    onTestFinished(() => {
+      child.kill();
+    });
+    writeFileSync(join(runDirOf(projectDir, interactiveRun.runId), 'driver.pid'), `${child.pid}\n`);
+    expect.soft(probeRunPosition(loadRunState(projectDir, interactiveRun.runId))).toEqual({
+      kind: 'running',
+      pid: child.pid,
+      phase: 'impl',
+    });
+  });
+
   test('a headless run is unchanged — the gate comes from the snapshot, and the marker is ignored', async ({
     projectDir,
     run,
