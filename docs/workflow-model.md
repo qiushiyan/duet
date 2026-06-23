@@ -35,11 +35,10 @@ IMPLEMENTATION (AFK — flags queue, process exits on them)
   REVIEW ⇄ respond/fix rounds          loop exit: orchestrator judgment,
                                        hard backstop caps in the harness
   CEO-SUMMARY        implementer drafts; last act of the phase
-    ── Ship gate ──                     ← human returns; reads packet
+    ── Ship gate ──                     ← human returns; verifies (migrations, smoke tests) + reads packet
 
-FINAL REVIEW (attended)
-  VERIFY             human as environment proxy: migrations, smoke tests
-  UPDATE_DOCS        skill; its internal gate surfaces as the Docs-plan gate
+FINAL REVIEW (finishing — unattended by default)
+  UPDATE_DOCS        skill; one pass — update and commit, no gate
   PR_DESCRIPTION     implementer drafts for the PR body
     ── Open-PR gate ──                  ← auto-opens by default; gates_at: pr adds a pre-open stop
 ```

@@ -20,7 +20,7 @@ describe('parseGatesAt', () => {
     { input: 'frame,spec', expected: ['frame', 'spec'] },
     { input: 'frame spec  plan', expected: ['frame', 'spec', 'plan'] },
     { input: 'overnight', expected: ['frame', 'spec'] },
-    { input: 'skip-plan', expected: ['frame', 'spec', 'impl', 'docs'] },
+    { input: 'skip-plan', expected: ['frame', 'spec', 'impl'] },
     { input: 'pr', expected: ['pr'] }, // pr is attended only when explicitly listed (opt-in)
     { input: 'frame,frame,spec', expected: ['frame', 'spec'] },
   ])('"$input" → $expected (no pr auto-appended; pr is opt-in now)', ({ input, expected }) => {
@@ -28,7 +28,7 @@ describe('parseGatesAt', () => {
   });
 
   plain('an unknown phase fails with the full vocabulary', () => {
-    expect(() => parseGatesAt('frame,ship')).toThrow(/"ship" is not a gate-bearing phase.*frame, spec, plan, impl, docs, pr/);
+    expect(() => parseGatesAt('frame,ship')).toThrow(/"ship" is not a gate-bearing phase.*frame, spec, plan, impl, pr/);
   });
 
   plain('an empty list fails with how to fix it', () => {

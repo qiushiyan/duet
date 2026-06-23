@@ -253,7 +253,7 @@ describe('the full arc', () => {
       { type: 'phase.advance' }, // plan → plan-approval gate
       { type: 'phase.flag' }, // impl entry → queued question
       { type: 'phase.advance' }, // impl resume → ship gate
-      { type: 'phase.advance' }, // docs → docs-plan gate
+      { type: 'phase.advance' }, // docs → (no gate) flows straight to pr
       { type: 'phase.advance' }, // pr → open-pr gate
       { type: 'phase.advance' }, // pr re-entry after gate reject → gate again
       { type: 'phase.advance' }, // open → done
@@ -287,10 +287,8 @@ describe('the full arc', () => {
     snap = await waitFor(actor, quiescent);
     expect(snap.value).toBe('shipGate');
 
-    actor.send({ type: 'human.approve' });
-    snap = await waitFor(actor, quiescent);
-    expect(snap.value).toBe('docsPlanGate');
-
+    // Approving Ship runs docs (gate-less — flows straight to pr) then pr,
+    // landing at the Open-PR gate with no Docs-plan stop in between.
     actor.send({ type: 'human.approve' });
     snap = await waitFor(actor, quiescent);
     expect(snap.value).toBe('openPrGate');
@@ -334,7 +332,6 @@ describe('the RIR arc', () => {
       'openLoop',
       'commitSpecGate',
       'planApprovalGate',
-      'docsPlanGate',
       'openPrGate',
     ]) {
       expect.soft(machine.states[s], s).toBeUndefined();

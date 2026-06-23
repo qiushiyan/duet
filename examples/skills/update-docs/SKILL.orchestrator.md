@@ -9,7 +9,7 @@ allowed-tools: Bash(git diff:*), Bash(git log:*), Bash(git branch:*), Bash(git m
 
 You are a documentation maintainer for the iTELL Platform. Before doing any assessment or writing, read `docs/documentation-standards.md` — it defines the assessment criteria, writing standards, consolidation principles, and onboarding skill maintenance rules that govern all documentation work.
 
-> **Orchestrator-aware modification.** This file differs from the original (`./SKILL.md`) in exactly one place: Step 4's gate now recognizes an "orchestrator resume" marker so the skill can be driven by `duet` without the human re-invoking it. Search this file for `ORCHESTRATOR_RESUME_FROM_PROPOSAL` to find the modification. Interactive behavior is unchanged.
+> **Orchestrator-aware modification.** This file differs from the original (`./SKILL.md`) in exactly one place: Step 4's approval gate now recognizes a "run to completion" marker, so when an orchestrator drives the skill (no human at the keyboard to confirm a plan), it applies its changes in one pass instead of pausing. Search this file for `ORCHESTRATOR_RUN_TO_COMPLETION` to find the modification. Interactive behavior is unchanged.
 
 ## Workflow
 
@@ -62,7 +62,7 @@ Use the significance tiers from `docs/documentation-standards.md` to determine t
 
 ## Step 4 — Propose Plan
 
-**Orchestrator resume check.** If the prompt that invoked this skill (or any user-role message earlier in this session) contains the literal token `ORCHESTRATOR_RESUME_FROM_PROPOSAL`, the human has already reviewed and approved a proposal in a prior turn of this session. The approved proposal is preserved in your context. **Do not re-emit a proposal and do not re-run Steps 1–3.** Skip directly to Step 5 using the already-approved plan. Continue with Steps 6 and 7 as normal.
+**Orchestrator run-to-completion check.** If the prompt that invoked this skill (or any user-role message earlier in this session) contains the literal token `ORCHESTRATOR_RUN_TO_COMPLETION`, an orchestrator is driving this skill with no human at the keyboard to confirm a plan. Produce the proposal block below as the record of what you are about to do, then proceed directly to Step 5 and apply it — there is no approval step to wait for. (A genuine product call about the docs — deleting a documented concept, rewriting a design claim, pruning a doc the work superseded — is the driver's to escalate to its human, not yours to resolve: note it in your output and take the conservative default.)
 
 Otherwise (interactive mode, no marker present):
 
@@ -97,7 +97,7 @@ Otherwise (interactive mode, no marker present):
 
 Wait for user confirmation before proceeding. The user may adjust scope, skip certain docs, or add areas you missed.
 
-> **For orchestrator drivers.** On a fresh invocation with no marker, this step emits the proposal block above and stops. The driver should capture the proposal, surface it at a phase-boundary gate, collect human approval, and resume the same session (e.g. `claude -p --resume <session-id> "ORCHESTRATOR_RESUME_FROM_PROPOSAL — proceed to Step 5."`). The Step 4 check above will then skip the gate.
+> **For orchestrator drivers.** duet's docs phase has no approval gate — it drives this skill to completion in one turn. Pass `ORCHESTRATOR_RUN_TO_COMPLETION` in the invoking prompt so the check above applies the proposal in a single pass rather than stopping for confirmation. The doc changes ride the branch into the PR, where the human reviews them with the rest of the diff.
 
 ## Step 5 — Update Docs
 

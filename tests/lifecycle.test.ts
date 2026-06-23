@@ -669,15 +669,16 @@ describe('gate pre-authorization (gates_at)', () => {
 
     expect.soft(stop.snapshot.value).toBe('openPrGate');
     expect.soft(calls).toEqual(['frame', 'spec', 'plan', 'impl', 'docs', 'pr']);
+    // docs is gate-less (one-pass update + commit) — it runs but records no
+    // auto-crossing, so the recorded crossings are the four gates before it.
     expect.soft(loadRunState(projectDir, run.runId).autoApprovals?.map((a) => a.gate)).toEqual([
       'directionGate',
       'commitSpecGate',
       'planApprovalGate',
       'shipGate',
-      'docsPlanGate',
     ]);
     // One notification per crossing plus the final attended stop.
-    expect.soft(notifications).toHaveLength(6);
+    expect.soft(notifications).toHaveLength(5);
     expect.soft(notifications[0]).toContain('directionGate auto-approved (pre-authorized)');
   });
 
@@ -739,7 +740,7 @@ describe('enterAfk — the mid-session AFK handoff (#1)', () => {
     expect.soft(persisted.orchestrationHost).toBeUndefined(); // handed off to headless
     expect.soft(probeRunPosition(persisted)).not.toEqual({ kind: 'gate', phase: 'frame' }); // frame crossed
     expect.soft(split.attended).toEqual(['spec']);
-    expect.soft(split.preAuthorized).toEqual(['frame', 'plan', 'impl', 'docs', 'pr']);
+    expect.soft(split.preAuthorized).toEqual(['frame', 'plan', 'impl', 'pr']);
   });
 
   test('is legal at a PRE-AUTHORIZED interactive gate — legality keys on the gate position, not gateAttended (the F1 case)', ({

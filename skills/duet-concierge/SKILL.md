@@ -13,7 +13,7 @@ duet is a command-line tool, installed on this machine, that runs a largely auto
 
 ```
 full:  frame → DIRECTION gate → spec → COMMIT-SPEC gate → plan → PLAN gate (human walks away)
-       → impl (autonomous, often hours) → SHIP gate → docs → DOCS-PLAN gate → pr → OPEN-PR gate → done
+       → impl (autonomous, often hours) → SHIP gate → docs (one pass) → pr → OPEN-PR gate → done
 rir:   research → DIRECTION gate (human walks away) → implement (autonomous) → SHIP gate → done
 ```
 

@@ -20,7 +20,7 @@ A run moves through an arc you pick at the start (`--workflow`). Each `→` is a
 
 ```
 full  frame → DIRECTION → spec → COMMIT-SPEC → plan → PLAN (walk away)
-        → implementation (AFK, often hours) → SHIP → docs → DOCS-PLAN → pr → OPEN-PR → done
+        → implementation (AFK, often hours) → SHIP → docs (one pass) → pr → OPEN-PR → done
 
 rir   research → DIRECTION (walk away) → implementation (AFK) → SHIP → done
 ```

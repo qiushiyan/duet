@@ -25,7 +25,7 @@
  * The arcs (docs/automation-design.md §"Phases and gates"):
  *
  *   full:  frame → Direction → spec → Commit-spec → plan → Plan-approval
- *          (walk away) → impl (AFK) → Ship → docs → Docs-plan → pr →
+ *          (walk away) → impl (AFK) → Ship → docs (one pass, no gate) → pr →
  *          Open-PR → open → done
  */
 
@@ -203,15 +203,20 @@ export const WORKFLOWS = {
         consultantCheckpoint: 'implGate',
       },
       {
+        // No gate (2026-06-23). The docs are updated and committed in one pass:
+        // the doc diff rides the branch into the PR, where the human reviews it
+        // like any other change (a doc commit on an unmerged branch is reversible,
+        // and the human's Ship-gate approval already covers the implementation the
+        // docs describe). A genuine doc-scope product call — deleting a documented
+        // concept, rewriting a design claim, pruning a superseded spec/plan — still
+        // flags via ask_human, which pauses the run; the substance was never in the
+        // gate. Replaces the propose → Docs-plan gate → apply round trip, whose
+        // orchestrator "approval" was pure routing and whose gate auto-crossed
+        // unattended in every overnight run (see docs/open-questions.md Q2).
         name: 'docs',
         snippets: ['compact-for-cleanup'],
-        gate: {
-          state: 'docsPlanGate',
-          heading: 'DOCS-PLAN gate — the proposal',
-          ready: 'Docs-plan gate — proposal ready',
-          hint: null,
-        },
-        artifactLabel: 'docs plan',
+        gate: null,
+        artifactLabel: 'docs',
         reviewLoop: false,
         roundCap: 2,
         orchestratorBudgetUsd: 10,
@@ -256,7 +261,7 @@ export const WORKFLOWS = {
        * unattended. Born from run evidence (the human reports rubber-stamping
        * plan gates); whether this earns default status is Q20's evidence stream.
        */
-      'skip-plan': ['frame', 'spec', 'impl', 'docs'],
+      'skip-plan': ['frame', 'spec', 'impl'],
     },
     // Opening a PR is non-destructive and reversible, so the Open-PR gate is no
     // longer force-attended — it is pre-authorized by default (the PR auto-opens)

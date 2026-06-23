@@ -111,11 +111,11 @@ describe('defaultPosture — the materialized default gate posture', () => {
   });
 
   test("excluding ['pr'] over full's gate set drops only pr, order preserved", () => {
-    expect(defaultPosture(gatePhasesOf('full'), ['pr'])).toEqual(['frame', 'spec', 'plan', 'impl', 'docs']);
+    expect(defaultPosture(gatePhasesOf('full'), ['pr'])).toEqual(['frame', 'spec', 'plan', 'impl']);
   });
 
   test('a two-element exclusion drops both, order preserved', () => {
-    expect(defaultPosture(gatePhasesOf('full'), ['spec', 'pr'])).toEqual(['frame', 'plan', 'impl', 'docs']);
+    expect(defaultPosture(gatePhasesOf('full'), ['spec', 'pr'])).toEqual(['frame', 'plan', 'impl']);
   });
 });
 
@@ -134,8 +134,8 @@ describe("the Full workflow derives today's arc", () => {
     ]);
   });
 
-  test('gatePhasesOf("full") is every phase but the open-ended one', () => {
-    expect(gatePhasesOf('full')).toEqual(['frame', 'spec', 'plan', 'impl', 'docs', 'pr']);
+  test('gatePhasesOf("full") is every gate phase — docs and open are gate-less', () => {
+    expect(gatePhasesOf('full')).toEqual(['frame', 'spec', 'plan', 'impl', 'pr']);
   });
 
   test('full pre-authorizes the Open-PR gate by default and force-attends nothing (#2)', () => {
@@ -148,6 +148,7 @@ describe("the Full workflow derives today's arc", () => {
       ['docs', 'frame', 'impl', 'implement', 'open', 'pr', 'plan', 'research', 'spec'].sort(),
     );
     expect(PHASE['impl'].gate?.state).toBe('shipGate');
+    expect(PHASE['docs'].gate).toBeNull(); // docs is gate-less — one-pass update + commit
     expect(PHASE['open'].gate).toBeNull();
   });
 

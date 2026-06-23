@@ -24,8 +24,10 @@ import type { PhaseName, WorkflowName, WorkflowSpecInput } from '../phases.ts';
  * the registry in src/phases.ts) — the arc is a linear chain, so each phase
  * contributes `<name>Loop` + `<name>FlagWait` + its gate state; a gate's approve
  * targets the next phase's loop, its reject re-enters the loop it gates. A
- * gate-less phase (Full's `open`) advances straight to done. `machineFor('full')`
- * is topology-identical to the original single-arc machine. The full arc:
+ * gate-less phase advances straight to the next phase's loop (Full's `docs`
+ * flows into `pr` with no human stop), or to done when it is the last (Full's
+ * `open`). `machineFor('full')` is topology-identical to the original single-arc
+ * machine. The full arc:
  *
  * ```
  * route ─(no spec)─▶ frameLoop ──▶ directionGate ─approve─▶ specLoop ──▶ commitSpecGate
@@ -34,9 +36,9 @@ import type { PhaseName, WorkflowName, WorkflowSpecInput } from '../phases.ts';
  *               shipGate ◀── implLoop ◀─approve── planApprovalGate ◀── planLoop
  *                  │ approve                                  ▲ (walk away)
  *                  ▼
- *               docsLoop ──▶ docsPlanGate ─approve─▶ prLoop ──▶ openPrGate
- *                                                                  │ approve
- *                                          done ◀── openLoop ◀─────┘
+ *               docsLoop ─advance─▶ prLoop ──▶ openPrGate
+ *               (no gate)                          │ approve
+ *                                   done ◀── openLoop ◀─────┘
  * ```
  *
  * Persistence guardrail: snapshots are persisted only in `quiescent`-tagged states
@@ -132,7 +134,13 @@ function buildStates(spec: WorkflowSpecInput): Record<string, object> {
     const loop = `${name}Loop`;
     const flagWait = flagWaitStateOf(name);
     const next = phases[i + 1];
-    states[loop] = phaseState(name, { advanced: p.gate?.state ?? 'done', flagWait });
+    // A gated phase advances to its gate; a gate-less phase advances to the next
+    // phase's loop (Full's `docs` → `pr`, no human stop), or to done when it is
+    // the last phase (Full's `open`).
+    states[loop] = phaseState(name, {
+      advanced: p.gate?.state ?? (next ? `${next.name}Loop` : 'done'),
+      flagWait,
+    });
     states[flagWait] = flagWaitState(loop);
     if (p.gate) {
       states[p.gate.state] = gateState({ approve: next ? `${next.name}Loop` : 'done', reject: loop });

@@ -432,12 +432,12 @@ ${approvalClause(
     'impl',
     'The human approved the Ship gate — the implementation is verified and shipping.',
     'The Ship gate was pre-authorized at run start and auto-crossed — the implementation packet is recorded for the human, and their environment verification (smoke tests, migrations) is still pending; the docs you produce describe work that has not yet had a human eye.',
-  )} Run the DOCS phase to its proposal:
-${attendancePosture(state, 'docs')}
-1. The framing names how this project updates its docs (often a docs or skill file named by PATH — send the implementer that path, never a slash command, which a headless worker can't expand — otherwise conventions to follow); if the framing gives only a slash command with no path, treat it as incomplete and ask_human rather than inventing a path. If the framing names nothing, have the implementer survey the repo's docs and derive the impact from what shipped.
-2. Drive the implementer to the docs-update proposal: which documents change and how. The proposal is this phase's whole product — when a skill has an internal approval step, run it exactly up to that step; applying changes happens after the human approves.
-3. A review round is available when the proposal warrants one (backstop cap ${roundCap}); most docs plans go straight to the gate.
-4. Call advance_phase with the proposal verbatim in the summary — the human approves or adjusts it at the Docs-plan gate.
+  )} Run the DOCS phase — update the docs and commit, in one pass:
+
+1. The framing names how this project updates its docs (often a docs or skill file named by PATH — send the implementer that path, never a slash command, which a headless worker can't expand — otherwise the conventions to follow); if the framing gives only a slash command with no path, treat it as incomplete and ask_human rather than inventing a path. If the framing names nothing, have the implementer survey the repo's docs and derive the impact from what shipped.
+2. Drive the implementer to run that method end to end in a single turn: assess what shipped, update the affected docs, and commit. There is no docs gate — the doc changes ride this branch into the PR, where the human reviews them with the rest of the diff, so the implementer applies and commits rather than pausing for approval. If the project's docs skill has its own internal approval step, the framing names the marker that runs it straight through; pass that marker so the skill applies its changes instead of stopping.
+3. A genuine product or direction call about the docs stays the human's — deleting a documented concept, rewriting a design claim the docs assert, pruning a spec or plan the work superseded. Flag those with ask_human (it pauses the run until the human returns); the implementer settles everything tactical against the project's doc standards.
+4. A review round is available when the doc changes are large enough to warrant a second set of eyes (backstop cap ${roundCap}); most updates are a single pass. Then call advance_phase summarizing what the docs now cover and what changed — the run continues to the PR description.
 
 Throughout: flag product or direction questions with ask_human; tactical questions bounce to the worker.
 </task>`;
@@ -445,17 +445,11 @@ Throughout: flag product or direction questions with ask_human; tactical questio
 
 export function prPhaseEntryPrompt(state: RunState, roundCap: number): string {
   return `<task>
-${approvalClause(
-    state,
-    'docs',
-    "The human approved the docs plan (their adjustments, if any, arrived as gate feedback).",
-    'The Docs-plan gate was pre-authorized at run start and auto-crossed — apply the proposal as recorded.',
-  )} Finish the run's artifacts:
+The implementation shipped and the docs are updated and committed. Write the PR description:
 
-1. Have the implementer apply the approved docs plan and commit the doc changes. It wrote this proposal and still holds it in its session, so a short go-ahead is all it needs — confirm approval, fold in any gate adjustments, and don't restate the plan back. (If the framing says the project's docs skill needs a specific marker to resume past its own approval step, that marker is your go-ahead.)
-2. Send the implementer the pr-description snippet — the PR body for a technical colleague who won't read the diff.
-3. A review round on the description is available when it warrants one (backstop cap ${roundCap}).
-4. Call advance_phase with the PR title and description verbatim in the summary — this becomes the Open-PR packet. ${
+1. Send the implementer the pr-description snippet — the PR body for a technical colleague who won't read the diff.
+2. A review round on the description is available when it warrants one (backstop cap ${roundCap}).
+3. Call advance_phase with the PR title and description verbatim in the summary — this becomes the Open-PR packet. ${
     gateAttended(state, 'pr')
       ? 'The Open-PR gate is attended: the human reads the packet there and decides whether to open.'
       : 'The Open-PR gate is pre-authorized (the PR auto-opens by default): your packet is recorded and auto-crossed straight into PR creation, with no human tap — so make it self-contained.'

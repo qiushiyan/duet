@@ -56,7 +56,7 @@ If the user hasn't said: suggest `rir` when the problem is small and clearly und
 
 A framing can pre-authorize gates so the user can walk away. Before finalizing, ask how hands-off they want the run unless they've already said — the gates depend on the workflow you picked:
 
-- **full** has six gates (Direction, Commit-spec, Plan-approval, Ship, Docs-plan, Open-PR). The **Open-PR gate is pre-authorized by default — the PR auto-opens**; list `pr` in `gates_at` for a pre-open stop. Postures: **attend every gate except the auto-opening PR** (default); **`skip-plan`** — walk away at spec approval, return at the Ship gate; **`overnight`** — auto-cross everything after the spec.
+- **full** has five gates (Direction, Commit-spec, Plan-approval, Ship, Open-PR). The **Open-PR gate is pre-authorized by default — the PR auto-opens**; list `pr` in `gates_at` for a pre-open stop. Postures: **attend every gate except the auto-opening PR** (default); **`skip-plan`** — walk away at spec approval, return at the Ship gate; **`overnight`** — auto-cross everything after the spec.
 - **rir** has just two gates — **Direction** (the walk-away / headless-handoff point) and **Ship** (the return). Postures: **attend both** (default), or **`afk`** — pre-authorize both and run straight through to done.
 
 Record their choice as `gates_at:` in the framing frontmatter. A preset must belong to the chosen workflow (`overnight` / `skip-plan` are full's; `afk` is rir's), so duet rejects a mismatch.

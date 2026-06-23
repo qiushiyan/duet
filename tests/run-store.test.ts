@@ -239,7 +239,7 @@ describe('gate attendance', () => {
   test('the Open-PR gate auto-opens by default, and is attended only when pr is listed (#2)', ({ projectDir }) => {
     // A new default Full run materializes gatesAt without pr → the PR auto-opens.
     const fresh = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
-    expect.soft(fresh.gatesAt).toEqual(['frame', 'spec', 'plan', 'impl', 'docs']);
+    expect.soft(fresh.gatesAt).toEqual(['frame', 'spec', 'plan', 'impl']);
     expect.soft(gateAttended(fresh, 'pr')).toBe(false);
 
     // Listing pr restores the pre-open stop (opt-in).
