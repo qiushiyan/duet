@@ -1,7 +1,7 @@
 # dependencies
 node_modules/
 
-repos/
+resources/
 
 # vendored reference clones — re-cloneable, deliberately unpinned (see references/README.md)
 references/*
