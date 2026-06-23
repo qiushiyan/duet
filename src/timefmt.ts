@@ -1,5 +1,3 @@
-import { formatAge } from './worker-health.ts';
-
 /**
  * View-time timestamp helpers. Stored logs and `status --json` keep raw UTC ISO
  * — they are the inspectable-without-duet / machine-consumed artifacts — so a
@@ -32,12 +30,14 @@ export function localClock(iso: string): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-/** A stored UTC ISO timestamp → a compact relative age (`3m ago`), reusing
- *  formatAge so the activity line and the heartbeat's `last activity Nm ago`
- *  read alike. `now` is injectable for tests; in the colorizer it defaults to
- *  the clock at stream time — accurate when the line lands, frozen after. */
-export function relativeAge(iso: string, now: number = Date.now()): string {
+/** A stored UTC ISO timestamp → a short local `HH:MM` — the trailing stamp on
+ *  the promoted `⋯` activity line, naming when the action was logged in the
+ *  human's zone. A relative age can't serve there: the colorizer renders a line
+ *  once as it streams, so an age would read ~0 at that instant and freeze, while
+ *  a wall-clock time stays meaningful frozen. */
+export function localTime(iso: string): string {
   const ms = Date.parse(iso);
   if (Number.isNaN(ms)) return iso;
-  return `${formatAge(now - ms)} ago`;
+  const d = new Date(ms);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }

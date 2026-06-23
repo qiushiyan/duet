@@ -1,6 +1,6 @@
 import pc from 'picocolors';
 import type { Voice } from './run-store.ts';
-import { localClock, relativeAge } from './timefmt.ts';
+import { localClock, localTime } from './timefmt.ts';
 
 /**
  * View-time colorizing for the run logs. The log files themselves stay plain
@@ -44,17 +44,19 @@ const ACTIVITY_TAG: Record<string, string> = { reading: 'read', editing: 'edit',
 
 /**
  * Colorize one line of a voice log. Two shapes of header line:
- *   - the `⋯` live-activity line is PROMOTED to `[tag] subject 3m ago` — the
+ *   - the `⋯` live-activity line is PROMOTED to `[tag] subject HH:MM` — the
  *     action tag in the voice's color (the most emphasis), the path/subject in
- *     the default fg (secondary), the relative age dimmed (quietest), and the
- *     leading clock dropped (the age IS the time). Promoted on purpose: unlike
- *     the content-free `⏳` heartbeat, an activity line names a concrete action.
+ *     the default fg (secondary), the action's local time dimmed (quietest), and
+ *     the leading clock dropped (the trailing time replaces it). Promoted on
+ *     purpose: unlike the content-free `⏳` heartbeat, an activity line names a
+ *     concrete action.
  *   - every other header keeps a dim LOCAL clock prefix + the voice's color
  *     (errors red; the `⏳` heartbeat stays dim — ambient telemetry).
  * Body lines pass through untouched. The stored line is unchanged (raw UTC,
- * plain) — this is the view. One caveat: a line is colorized once as it streams
- * through `tail -F | _colorize`, so a relative age is correct when the line
- * lands and does NOT tick afterward; live-ticking would be a larger change.
+ * plain) — this is the view. A line is colorized once as it streams through
+ * `tail -F | _colorize`, so the activity line trails the action's wall-clock
+ * time (HH:MM), not a relative age — an age would read ~0 at stream time and
+ * freeze there (the bug this replaced).
  */
 export function colorizeVoiceLine(voice: Voice, line: string): string {
   const match = VOICE_HEADER.exec(line);
@@ -66,7 +68,8 @@ export function colorizeVoiceLine(voice: Voice, line: string): string {
   return `${pc.dim(localClock(iso))} ${paint(header)}`;
 }
 
-/** The promoted activity line render (see colorizeVoiceLine). An unrecognized
+/** The promoted activity line render (see colorizeVoiceLine): `[tag] subject
+ *  HH:MM`, the trailing stamp being the action's local time. An unrecognized
  *  verb falls back to the ambient dim form, so a format drift never throws. */
 function colorizeActivity(voice: Voice, iso: string, header: string): string {
   const rest = header.slice(ACTIVITY_MARKER.length).trimStart(); // "reading src/foo.ts"
@@ -75,7 +78,7 @@ function colorizeActivity(voice: Voice, iso: string, header: string): string {
   const subject = sp === -1 ? '' : rest.slice(sp + 1);
   const tag = ACTIVITY_TAG[verb];
   if (tag === undefined) return `${pc.dim(localClock(iso))} ${pc.dim(header)}`;
-  return `${ROLE_PAINT[voice](`[${tag}]`)} ${subject} ${pc.dim(relativeAge(iso))}`;
+  return `${ROLE_PAINT[voice](`[${tag}]`)} ${subject} ${pc.dim(localTime(iso))}`;
 }
 
 /** Driver-narration `[tag]` prefixes — the one palette every view applies. */

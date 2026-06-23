@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { localClock, localStamp, relativeAge } from '../src/timefmt.ts';
+import { localClock, localStamp, localTime } from '../src/timefmt.ts';
 
 /**
  * View-time timestamp helpers. The stored artifact stays UTC ISO; these only
@@ -44,17 +44,20 @@ describe('localStamp — local date+minute for the status/doctor lists', () => {
   });
 });
 
-describe('relativeAge — compact "Nm ago" (reuses formatAge, injectable now)', () => {
-  test.for<[string, number]>([
-    ['30s ago', 30_000],
-    ['3m ago', 3 * 60_000],
-    ['2h5m ago', 2 * 3600_000 + 5 * 60_000],
-  ])('renders %s', ([expected, deltaMs]) => {
-    const base = Date.parse('2026-06-20T00:00:00.000Z');
-    expect(relativeAge(new Date(base).toISOString(), base + deltaMs)).toBe(expected);
+describe('localTime — short local HH:MM for the promoted activity line', () => {
+  test('renders local HH:MM (independently confirmed via Intl)', () => {
+    const expected = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ISO));
+    expect(localTime(ISO)).toBe(expected);
+  });
+
+  test('drops the seconds and the raw ISO markers', () => {
+    const out = localTime(ISO);
+    expect.soft(out).toMatch(/^\d{2}:\d{2}$/);
+    expect.soft(out).not.toContain('T');
+    expect.soft(out).not.toContain('Z');
   });
 
   test('a malformed timestamp passes through unchanged', () => {
-    expect(relativeAge('soon', 123)).toBe('soon');
+    expect(localTime('whenever')).toBe('whenever');
   });
 });

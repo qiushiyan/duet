@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, test } from 'vitest';
 import { ROLE_GLYPH, ROLE_TMUX_COLOR, colorizeVoiceLine } from '../src/colorize.ts';
 
 /**
@@ -30,37 +30,30 @@ describe('colorize carries the consultant voice', () => {
 /**
  * The view-time render. picocolors no-ops under vitest's non-TTY, so the escapes
  * aren't asserted — the structure is: the activity line is PROMOTED to
- * `[tag] subject Nm-ago` (leading clock dropped, age computed at stream time);
- * every other header keeps a LOCAL clock prefix and its painted text. The stored
- * line (raw UTC, plain) is the artifact; this is only how a pane shows it.
+ * `[tag] subject HH:MM` (leading clock dropped, the trailing HH:MM is the
+ * action's local time); every other header keeps a LOCAL clock prefix and its
+ * painted text. The stored line (raw UTC, plain) is the artifact; this is only
+ * how a pane shows it.
  */
 describe('colorizeVoiceLine — promoted activity lines', () => {
-  // Pin "now" so the relative age is deterministic (the colorizer reads the
-  // clock as a line streams; here it streams 3 minutes after the action).
-  function atThreeMinutesLater<T>(body: () => T): T {
-    vi.useFakeTimers();
-    vi.setSystemTime(Date.parse('2026-06-20T12:03:00.000Z'));
-    try {
-      return body();
-    } finally {
-      vi.useRealTimers();
-    }
-  }
+  // The trailing time is the action's local HH:MM — confirmed via an independent
+  // Intl path so the test is timezone-robust and not a tautology of the getters.
+  const hm = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date('2026-06-20T12:00:00.000Z'));
 
   test.for<[string, string]>([
-    ['⋯ reading src/foo.ts', '[read] src/foo.ts 3m ago'],
-    ['⋯ editing src/foo.ts', '[edit] src/foo.ts 3m ago'],
-    ['⋯ searching docs', '[search] docs 3m ago'],
-    ['⋯ running git diff', '[run] git diff 3m ago'],
-  ])('promotes %s to a tag + subject + relative age', ([header, expected]) => {
-    const out = atThreeMinutesLater(() => colorizeVoiceLine('implementer', `[2026-06-20T12:00:00.000Z] ${header}`));
+    ['⋯ reading src/foo.ts', `[read] src/foo.ts ${hm}`],
+    ['⋯ editing src/foo.ts', `[edit] src/foo.ts ${hm}`],
+    ['⋯ searching docs', `[search] docs ${hm}`],
+    ['⋯ running git diff', `[run] git diff ${hm}`],
+  ])('promotes %s to a tag + subject + local time', ([header, expected]) => {
+    const out = colorizeVoiceLine('implementer', `[2026-06-20T12:00:00.000Z] ${header}`);
     expect.soft(out).toBe(expected);
     expect.soft(out).not.toContain('⋯'); // the marker is replaced by the tag
-    expect.soft(out).not.toContain('2026-06-20T'); // the leading clock is dropped (age IS the time)
+    expect.soft(out).not.toContain('2026-06-20T'); // the raw stamp isn't shown
   });
 
   test('an unrecognized activity verb falls back to the ambient form, never throws', () => {
-    const out = atThreeMinutesLater(() => colorizeVoiceLine('implementer', '[2026-06-20T12:00:00.000Z] ⋯ frobnicating x'));
+    const out = colorizeVoiceLine('implementer', '[2026-06-20T12:00:00.000Z] ⋯ frobnicating x');
     expect.soft(out).toContain('⋯ frobnicating x'); // left as-is under a local clock
     expect.soft(out).not.toContain('2026-06-20T12:00:00.000Z'); // stamp still localized
   });
