@@ -73,7 +73,7 @@ The smoothest way to run duet is to let a Claude Code session sharpen your probl
    Your own Claude Code session becomes the orchestrator: you approve the direction (and, on the full arc, the spec and plan) right in the chat.
 4. **Walk away.** At the handoff gate — plan approval (full) or the Direction gate (rir) — the run hands off to a background driver and implements semi-AFK, often for an hour or more. You return to a Ship-gate packet (a CEO-style summary on top) and, on the full arc, an opened pull request — or a well-formed question waiting for you.
 
-> **Heads-up:** interactive orchestration is built and test-verified but hasn't had a live end-to-end run yet. For the path that *has* been driven framing-through-ship on real features, skip the interactive flag and run a headless framing turn — `duet new` opens your editor on a framing draft, then the orchestrator runs in the background and you act at each gate with `duet continue`.
+> **Prefer the terminal?** Skip `--interactive` and run a headless framing turn instead — `duet new` opens your editor on a framing draft, then the orchestrator runs in the background and you act at each gate with `duet continue`.
 
 Common ways to start a run:
 
@@ -153,7 +153,7 @@ Two Claude Code skills ship with duet (installed with `npx skills add` above): *
 
 ## Development & status
 
-**Status — early and experimental.** Verified with live runs: the headless **full** and **rir** arcs (driven on real features) and the optional **consultant**. Built and test-verified but awaiting a first live run: the **interactive orchestrator** (your Claude Code session driving framing/spec/plan), run supervision (`duet doctor`, opt-in infra retry), and the interactive-Claude implementer transport. The honest verified-vs-open ledger is [`docs/open-questions.md`](docs/open-questions.md).
+**Status.** Early and personal, but the whole workflow is now live-verified end to end: both the **full** and **rir** arcs, the headless and interactive orchestrator hosts, the optional **consultant**, run supervision (`duet doctor`, opt-in infra retry), and the interactive-Claude implementer transport have all run on real work. Expect rough edges — the open *design* questions and their evidence live in [`docs/open-questions.md`](docs/open-questions.md).
 
 No build step in dev — Node 24 runs the TypeScript directly:
 
