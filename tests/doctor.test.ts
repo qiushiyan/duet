@@ -5,6 +5,7 @@ import { buildDoctorModel, renderDoctor } from '../src/doctor.ts';
 import type { DoctorModel, RoleHealthRow } from '../src/doctor.ts';
 import { runDirOf, saveRunState } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
+import { localStamp } from '../src/timefmt.ts';
 import { claudeApiError, claudeUserToolResult, jsonl, plantClaudeTranscript, plantCodexRollout } from './helpers/transcripts.ts';
 
 const NOW = Date.parse('2026-06-20T12:00:00.000Z');
@@ -149,5 +150,17 @@ describe('renderDoctor', () => {
     expect.soft(text).toContain('reviewer');
     expect.soft(text).toContain('network:');
     expect.soft(text).toMatch(/idle|working|crashed|retrying|long-inference|silent\/stuck/);
+  });
+
+  test('an error row localizes its timestamp (the stored transcript ts stays UTC)', async ({ run, projectDir }) => {
+    const home = join(projectDir, 'home');
+    const errTs = '2026-06-20T11:59:30.000Z';
+    run.workerSessions = { implementer: 'impl-1' };
+    saveRunState(run);
+    plantClaudeTranscript(home, 'impl-1', jsonl(claudeApiError('API Error: 500 Internal server error', { ts: errTs })));
+    const text = renderDoctor(await buildDoctorModel(run, { now: NOW, home, fetch: okFetch }));
+
+    expect.soft(text).toContain(`⛔ ${localStamp(errTs)}`); // local, not the raw UTC slice
+    expect.soft(text).not.toContain(errTs);
   });
 });

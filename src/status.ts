@@ -7,6 +7,7 @@ import { contextPercent, fmtTokens, workflowOf } from './run-store.ts';
 import type { HumanDecision, RunState, Steer, Voice } from './run-store.ts';
 import { resolveSessions } from './sessions.ts';
 import type { SessionRef } from './sessions.ts';
+import { localStamp } from './timefmt.ts';
 import type { ErrorClass } from './worker-health.ts';
 
 /**
@@ -251,9 +252,10 @@ function packetHeadline(state: RunState, gateState: string): string {
   return (state.phaseSummaries[phase]?.summary.split('\n').find((l) => l.trim()) ?? '').slice(0, 96);
 }
 
-/** ISO timestamp → the short human form the status lists use. */
+/** ISO timestamp → the short human form the status lists use — localized to the
+ *  human's zone (the stored fields + `status --json` keep raw UTC ISO). */
 function fmtStamp(iso: string): string {
-  return iso.slice(0, 16).replace('T', ' ');
+  return localStamp(iso);
 }
 
 /**

@@ -5,6 +5,7 @@ import { createRun } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import type { RunPosition } from '../src/harness/lifecycle.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
+import { localStamp } from '../src/timefmt.ts';
 import { test } from './helpers/fixtures.ts';
 
 const render = (run: RunState, position: RunPosition): string =>
@@ -451,7 +452,9 @@ describe('renderStatus', () => {
     const out = render(run, { kind: 'gate', phase: 'impl' });
 
     expect.soft(out).toContain('while you were away — gates auto-approved (pre-authorized):');
-    expect.soft(out).toContain('✓ directionGate  2026-06-12 03:14  Direction: invert the scope');
+    // The stamp is localized to the human's zone (the stored field stays UTC) —
+    // derive the expected local form so the assertion is timezone-robust.
+    expect.soft(out).toContain(`✓ directionGate  ${localStamp('2026-06-12T03:14:00.000Z')}  Direction: invert the scope`);
     expect.soft(out).toContain('gates:    attending impl, pr — other gates pre-authorized');
   });
 
@@ -522,7 +525,11 @@ describe('renderStatus', () => {
     );
 
     expect.soft(out).toContain('staged steers awaiting delivery:');
-    expect.soft(out).toContain('• 2026-06-12 10:30  drop the retry tests');
+    expect.soft(out).toContain(`• ${localStamp('2026-06-12T10:30:00.000Z')}  drop the retry tests`);
+    // The boundary: human text localizes, but the underlying field (and so
+    // `status --json`) keeps raw UTC ISO — a machine consumer never sees local.
+    expect.soft(out).not.toContain('2026-06-12T10:30:00.000Z');
+    expect.soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'impl' }, [{ file: 'f.json', text: 'x', stagedAt: '2026-06-12T10:30:00.000Z' }]).pendingSteers[0]?.stagedAt).toBe('2026-06-12T10:30:00.000Z');
   });
 
   test('a crashed phase names itself and the resume command', ({ run }) => {

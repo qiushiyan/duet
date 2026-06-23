@@ -3,6 +3,7 @@ import { aliveDriverPid, probeRunPosition } from './harness/lifecycle.ts';
 import { voicesFor } from './roles.ts';
 import { resolveSessions, readRoleTranscriptTail } from './sessions.ts';
 import type { RunState, Voice } from './run-store.ts';
+import { localStamp } from './timefmt.ts';
 import {
   RETRY_WINDOW_MS,
   formatAge,
@@ -205,7 +206,7 @@ export function renderDoctor(model: DoctorModel): string {
     lines.push(`  ${VERDICT_MARK[r.verdict]} ${r.role.padEnd(12)} (${r.provider})  ${r.verdict.padEnd(14)} ${age}${retries}`);
     if (r.sessionPath) lines.push(`      ${r.sessionPath}`);
     for (const e of r.recentErrors.slice(-2)) {
-      lines.push(`      ⛔ ${e.ts.slice(0, 19)}  ${e.errorClass}: ${e.text.slice(0, 70)}`);
+      lines.push(`      ⛔ ${localStamp(e.ts)}  ${e.errorClass}: ${e.text.slice(0, 70)}`);
     }
   }
   return lines.join('\n');
