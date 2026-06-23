@@ -155,7 +155,7 @@ export async function runPhase(
       // queue the infra question with its classified cause/class.
       if (!state.pendingQuestion) {
         state.pendingQuestion = {
-          question: `The ${phase} phase failed at the infrastructure layer (${detail}). Check driver.log and the orchestrator log; answer with how to proceed — the orchestrator session resumes from its last completed turn.`,
+          question: `The ${phase} phase failed at the infrastructure layer (${detail}). Run duet doctor for per-role health, or check driver.log; answer with how to proceed — the orchestrator session resumes from its last completed turn.`,
           cause: 'infra',
           errorClass: decision.errorClass,
         };
@@ -264,7 +264,7 @@ async function drivePhase(
     if (result === 'continue') {
       state.pendingQuestion = {
         question:
-          'The orchestrator twice ended its turn without advancing the phase or asking a question — the run is stuck. Check the orchestrator log and answer with how to proceed.',
+          'The orchestrator twice ended its turn without advancing the phase or asking a question — the run is stuck. Run duet doctor for per-role health, or check the orchestrator log; answer with how to proceed.',
         cause: 'infra',
         errorClass: 'unknown',
       };
@@ -321,7 +321,7 @@ async function drivePhase(
                   cause: 'budget',
                 }
               : {
-                  question: `The orchestrator run ended abnormally (${message.subtype}). Check the orchestrator log; answer with how to proceed (the session resumes from where it stopped).`,
+                  question: `The orchestrator run ended abnormally (${message.subtype}). Run duet doctor for per-role health, or check the orchestrator log; answer with how to proceed (the session resumes from where it stopped).`,
                   cause: 'infra',
                   errorClass: 'unknown',
                 };

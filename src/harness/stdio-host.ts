@@ -107,7 +107,7 @@ export async function runPhaseOverStdio(
     const state = loadRunState(cwd, runId);
     if (!state.pendingQuestion) {
       state.pendingQuestion = {
-        question: `The ${phase} phase's orchestrator twice ended its turn over the MCP boundary without advancing the phase or asking a question — the run is stuck. Check the logs and answer with how to proceed.`,
+        question: `The ${phase} phase's orchestrator twice ended its turn over the MCP boundary without advancing the phase or asking a question — the run is stuck. Run duet doctor for per-role health, or check the orchestrator log; answer with how to proceed.`,
         cause: 'infra',
         errorClass: 'unknown',
       };
@@ -124,7 +124,7 @@ export async function runPhaseOverStdio(
     const state = loadRunState(cwd, runId);
     if (!state.pendingQuestion) {
       state.pendingQuestion = {
-        question: `The ${phase} phase's orchestrator boundary failed (${detail}). The kernel or the orchestrator client died mid-turn; check driver.log and the orchestrator log, then answer with how to proceed — the session resumes from its last completed turn.`,
+        question: `The ${phase} phase's orchestrator boundary failed (${detail}). The kernel or the orchestrator client died mid-turn; run duet doctor for per-role health, or check driver.log, then answer with how to proceed — the session resumes from its last completed turn.`,
         cause: 'infra',
         errorClass: classifyError(detail),
       };

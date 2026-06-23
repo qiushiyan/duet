@@ -56,6 +56,15 @@ You then **present that packet to the human and propose the crossing**: `duet co
 
 At the handoff gate — the brief names it (Full's plan-approval, RIR's Direction) — the human's approval hands the run off to the headless driver for AFK implementation and this session ends. Earlier gates rest in place: once crossed, you pick up the next phase's brief with `get_task` and drive it here.
 
+## Diagnosing a stuck or failed run
+
+Sometimes the human asks about the run itself rather than the work — "did a worker die?", "is it stuck?", "what failed?" That is process, not substance, so it is yours to answer, and reaching for the right verb beats hand-reading logs:
+
+- **`duet doctor <run-id>`** — the first stop: each role's health and the recent error that stopped it, plus a live connectivity probe. The direct answer to "is this run healthy, and which role failed and why."
+- **`duet status <run-id>`** — where the run is parked and what it is waiting on. Position, where `doctor` is health.
+
+`doctor` diagnoses; it does not decide — report what it found and let the human choose how to resume.
+
 ## Recording observations
 
 Call `write_note` when you notice friction worth remembering — a snippet that didn't fit, a triage call you were unsure about, a worker that needed unusual hand-holding. These notes are how the workflow improves between runs.
