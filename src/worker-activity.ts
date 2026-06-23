@@ -43,6 +43,7 @@
  * only a `structuredPatch` needing correlation+summing, codex nothing).
  */
 
+import { isAbsolute, relative } from 'node:path';
 import { parseRecords } from './worker-health.ts';
 import type { JsonRecord, Schema } from './worker-health.ts';
 
@@ -91,6 +92,21 @@ export function activityLine(activity: WorkerActivity): string {
     case 'run':
       return `${ACTIVITY_MARKER} running ${activity.subject}`;
   }
+}
+
+/**
+ * A worker-reported path made repo-relative — the canonical voice-log form (like
+ * git's repo-relative paths; an absolute path leaks the machine's worktree
+ * location, and claude/codex disagree on which they emit). Applied at
+ * produce-time by the heartbeat poll, which holds the run's cwd. Pure: node:path
+ * is string-only (no fs). An already-relative path (codex) passes through
+ * unchanged; an absolute path OUTSIDE the repo keeps its absolute form — a
+ * `../../…` rewrite would read worse than the honest absolute.
+ */
+export function repoRelative(p: string, cwd: string): string {
+  if (!isAbsolute(p)) return p;
+  const rel = relative(cwd, p);
+  return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : p;
 }
 
 /**

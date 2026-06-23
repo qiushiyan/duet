@@ -615,6 +615,24 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
     await pending;
   });
 
+  test('relativizes a worker path under the repo root (the canonical artifact form)', async ({ run, projectDir, onTestFinished }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const abs = join(run.cwd, 'src/foo.ts'); // an absolute path under the run's cwd, as claude emits
+    const { lines, finish, pending } = await activityLines(
+      run,
+      projectDir,
+      (home, base) => plantClaudeTranscript(home, 'impl-1', jsonl(claudeToolUse([{ name: 'Read', input: { file_path: abs }, id: 'toolu_rel' }], { ts: new Date(base).toISOString() }))),
+      30_000,
+    );
+    expect.soft(lines.some((l) => l.includes('⋯ reading src/foo.ts'))).toBe(true); // repo-relative
+    expect.soft(lines.some((l) => l.includes(abs))).toBe(false); // never the absolute form
+    finish();
+    await pending;
+  });
+
   test('does not re-emit an unchanged action across ticks (change-detected)', async ({ run, projectDir, onTestFinished }) => {
     vi.useFakeTimers();
     onTestFinished(() => {

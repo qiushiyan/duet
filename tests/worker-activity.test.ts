@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { activityLine, latestActivity } from '../src/worker-activity.ts';
+import { activityLine, latestActivity, repoRelative } from '../src/worker-activity.ts';
 import type { WorkerActivity } from '../src/worker-activity.ts';
 import { claudeAssistantText, claudeToolUse, codexApplyPatch, codexExecCommand, jsonl, patchBody } from './helpers/transcripts.ts';
 
@@ -174,5 +174,23 @@ describe('activityLine — the one voice-log line shape', () => {
     [{ id: '4', kind: 'run', subject: 'git diff' }, '⋯ running git diff'],
   ])('renders %o', ([activity, line]) => {
     expect(activityLine(activity)).toBe(line);
+  });
+});
+
+describe('repoRelative — the canonical voice-log path form', () => {
+  test('an absolute path under the repo root becomes repo-relative', () => {
+    expect(repoRelative('/repo/src/foo.ts', '/repo')).toBe('src/foo.ts');
+  });
+
+  test('an already-relative path (codex) passes through unchanged', () => {
+    expect(repoRelative('docs/x.md', '/repo')).toBe('docs/x.md');
+  });
+
+  test('an absolute path OUTSIDE the repo keeps its absolute form (no ../../ rewrite)', () => {
+    expect(repoRelative('/elsewhere/x.ts', '/repo')).toBe('/elsewhere/x.ts');
+  });
+
+  test('the repo root itself stays absolute (never an empty string)', () => {
+    expect(repoRelative('/repo', '/repo')).toBe('/repo');
   });
 });

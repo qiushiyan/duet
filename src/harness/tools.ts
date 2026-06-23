@@ -29,7 +29,7 @@ import type { HumanMessage, RunState } from '../run-store.ts';
 import { readRoleTranscriptTail, readTranscriptTailAtPath } from '../sessions.ts';
 import type { TurnDispatcher } from './turn-dispatcher.ts';
 import { formatAge, probeRole } from '../worker-health.ts';
-import { activityLine, latestActivity } from '../worker-activity.ts';
+import { activityLine, latestActivity, repoRelative } from '../worker-activity.ts';
 import {
   answerResumePrompt,
   approvalRiderBlock,
@@ -216,7 +216,11 @@ export function startHeartbeat(
       const act = latestActivity(tail.jsonl, tail.schema);
       if (!act || act.id === lastActivityId) return; // nothing new since the last tick
       lastActivityId = act.id;
-      const line = activityLine(act);
+      // Normalize a read/write path to repo-relative for the log (the canonical
+      // artifact form) — search/run subjects are already concise. Produce-time,
+      // here, where state.cwd is in hand (worker-activity stays pure).
+      const display = act.kind === 'read' || act.kind === 'write' ? { ...act, path: repoRelative(act.path, state.cwd) } : act;
+      const line = activityLine(display);
       log(`[send_prompt] ${line} (${role})`);
       appendVoiceLog(state, role, line);
     } catch {
