@@ -128,6 +128,22 @@ describe('latestActivity — codex shell work (read / search / run)', () => {
   });
 });
 
+describe('latestActivity — codex operators without surrounding whitespace (tokenizer)', () => {
+  test('an unspaced pipe reduces to the first segment (reads the source, never the tail)', () => {
+    const act = latestActivity(jsonl(codexExecCommand('nl -ba src/x.ts|sed -n 250,370p', { callId: 'c' })), 'codex');
+    expect(act).toEqual({ id: 'c', kind: 'read', path: 'src/x.ts' });
+  });
+
+  test('an unspaced redirect bails — never leaks "a.ts>b.ts" as a read path', () => {
+    expect(latestActivity(jsonl(codexExecCommand('cat a.ts>b.ts', { callId: 'c' })), 'codex')).toBeUndefined();
+  });
+
+  test('an operator INSIDE quotes is literal, not a split point', () => {
+    const act = latestActivity(jsonl(codexExecCommand("rg 'a|b' src", { callId: 'c' })), 'codex');
+    expect(act).toEqual({ id: 'c', kind: 'search', subject: 'src' });
+  });
+});
+
 describe('latestActivity — codex writes (apply_patch, header-only)', () => {
   test.for<[string, 'Add' | 'Update' | 'Delete']>([
     ['src/x.ts', 'Update'],
@@ -190,7 +206,7 @@ describe('repoRelative — the canonical voice-log path form', () => {
     expect(repoRelative('/elsewhere/x.ts', '/repo')).toBe('/elsewhere/x.ts');
   });
 
-  test('the repo root itself stays absolute (never an empty string)', () => {
-    expect(repoRelative('/repo', '/repo')).toBe('/repo');
+  test('the repo root itself becomes "." (the repo-relative spelling, never an empty string or a worktree leak)', () => {
+    expect(repoRelative('/repo', '/repo')).toBe('.');
   });
 });

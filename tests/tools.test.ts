@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, vi } from 'vitest';
@@ -587,12 +587,38 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
     await vi.advanceTimersByTimeAsync(5 * 60_000);
 
     // Voice-log only (no driver-log dup) — the orchestrator pane otherwise
-    // freezes while it blocks on the worker turn it reads no files during.
+    // freezes while it blocks on the worker turn it reads no files during. This
+    // is the HEADLESS host (no dispatcher) where the orchestrator truly blocks.
     const orchestratorLog = readFileSync(join(runDirOf(run.cwd, run.runId), 'orchestrator.log'), 'utf8');
     expect(orchestratorLog).toContain('⏳ awaiting implementer — 5m');
 
     finish({ text: 'done', sessionId: 'impl-1' });
     await pending;
+  });
+
+  test('the async (interactive) host emits NO "awaiting" mirror — fire-and-collect, the orchestrator is not blocked', async ({ run, projectDir, onTestFinished }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const home = join(projectDir, 'home');
+    run.workerSessions = { implementer: 'impl-1' };
+    saveRunState(run);
+    const worker = new DeferredWorker('claude'); // stays in flight so the 5-min heartbeat fires
+    const { call, dispatcher } = harness(run, { implementer: worker, home, async: true });
+    await call('send_prompt', { role: 'implementer', tag: 'tdd-plan', body: 'plan' }); // dispatches and returns
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    // The worker heartbeat DID fire (the test isn't vacuous) — but no orchestrator
+    // mirror, because on the async host the orchestrator never blocks awaiting it.
+    expect.soft(readFileSync(join(runDirOf(run.cwd, run.runId), 'implementer.log'), 'utf8')).toContain('⏳ turn running');
+    const orchPath = join(runDirOf(run.cwd, run.runId), 'orchestrator.log');
+    const orchestratorLog = existsSync(orchPath) ? readFileSync(orchPath, 'utf8') : '';
+    expect.soft(orchestratorLog).not.toContain('awaiting');
+
+    worker.resolve({ sessionId: 'impl-1' });
+    await vi.advanceTimersByTimeAsync(0); // drain the settle so the heartbeat interval is cleared
+    dispatcher?.collectReady();
   });
 });
 

@@ -186,24 +186,27 @@ const ACTIVITY_POLL_MS = 30_000;
  * stop fn that clears both intervals.
  */
 export function startHeartbeat(
-  deps: { state: RunState; log: (line: string) => void; home?: string },
+  deps: { state: RunState; log: (line: string) => void; home?: string; blockingHost?: boolean },
   meta: { role: WorkerRole; tag: string; startedAt: number },
 ): () => void {
-  const { state, log, home } = deps;
+  const { state, log, home, blockingHost } = deps;
   const { role, tag, startedAt } = meta;
   const heartbeat = setInterval(() => {
     const mins = Math.round((Date.now() - startedAt) / 60_000);
     const health = heartbeatHealth(state, role, startedAt, Date.now(), home);
     log(`[send_prompt] ⏳ ${role} turn running — ${mins}m elapsed (tag=${tag})${health}`);
     appendVoiceLog(state, role, `⏳ turn running — ${mins}m elapsed (tag=${tag})${health}`);
-    // Control-plane mirror onto the orchestrator pane. While a worker turn runs,
-    // the orchestrator is blocked awaiting it (headless), so its pane otherwise
-    // freezes on the last line — yet it reads no files, so it has no `⋯`
-    // activity of its own. Reflect what the run is waiting on so the top pane
-    // reads as alive. `⏳`-prefixed, so the colorizer dims it like the worker
-    // heartbeat (ambient telemetry); voice-log only — the driver log already
-    // mirrors the worker line above.
-    appendVoiceLog(state, 'orchestrator', `⏳ awaiting ${role} — ${mins}m`);
+    // Control-plane mirror onto the orchestrator pane — ONLY on the headless
+    // host (blockingHost), where the orchestrator is an in-process Agent SDK
+    // session blocked inside `await runTurn` while this turn runs, so its pane
+    // freezes on the last line and "awaiting <role>" is literally true; it reads
+    // no files, so it has no `⋯` activity of its own to fill the gap. On the
+    // interactive (async) host send_prompt is fire-and-collect — the orchestrator
+    // is the human's live CC session, free to keep working or dispatch another
+    // role — so "awaiting" would be false, and no mirror is emitted there.
+    // `⏳`-prefixed, so the colorizer dims it like the worker heartbeat;
+    // voice-log only — the driver log already mirrors the worker line above.
+    if (blockingHost) appendVoiceLog(state, 'orchestrator', `⏳ awaiting ${role} — ${mins}m`);
   }, 5 * 60_000);
   let lastActivityId: string | undefined;
   // Cache the located transcript path/schema after the first successful read so
@@ -836,7 +839,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           turnsInFlight.add(role);
           markTurnActive(state, role, tag);
           const startedAt = Date.now();
-          const stopHeartbeat = startHeartbeat({ state, log, ...(home !== undefined ? { home } : {}) }, { role, tag, startedAt });
+          const stopHeartbeat = startHeartbeat({ state, log, blockingHost: true, ...(home !== undefined ? { home } : {}) }, { role, tag, startedAt });
           // settleTurn is kept INSIDE this try/catch (both arms) so a throw during
           // the merge renders as an infra failure exactly as a runTurn throw does.
           try {

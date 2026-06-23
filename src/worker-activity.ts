@@ -100,13 +100,15 @@ export function activityLine(activity: WorkerActivity): string {
  * location, and claude/codex disagree on which they emit). Applied at
  * produce-time by the heartbeat poll, which holds the run's cwd. Pure: node:path
  * is string-only (no fs). An already-relative path (codex) passes through
- * unchanged; an absolute path OUTSIDE the repo keeps its absolute form — a
- * `../../…` rewrite would read worse than the honest absolute.
+ * unchanged; the repo root itself becomes `.` (the repo-relative spelling, never
+ * the leaked absolute); an absolute path OUTSIDE the repo keeps its absolute form
+ * — a `../../…` rewrite would read worse than the honest absolute.
  */
 export function repoRelative(p: string, cwd: string): string {
   if (!isAbsolute(p)) return p;
   const rel = relative(cwd, p);
-  return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : p;
+  if (rel === '') return '.'; // the repo root itself — repo-relative, no worktree leak
+  return !rel.startsWith('..') && !isAbsolute(rel) ? rel : p;
 }
 
 /**
@@ -165,8 +167,11 @@ const RUN_COMMANDS = new Set([
 ]);
 /** Shell control operators that separate pipeline/chain segments (own tokens). */
 const CONTROL_OPS = new Set(['|', '||', '&&', ';', '&']);
-/** Redirect operators — a redirected first segment is too ambiguous, no line. */
-const REDIRECT = new Set(['>', '>>', '<', '<<', '2>', '&>']);
+/** Every unquoted shell operator character — the tokenizer emits a run of them
+ *  as its own token, so a pipeline or redirect splits/bails even WITHOUT
+ *  surrounding whitespace (`cat a>b`, `nl x|sed`). A first segment that still
+ *  contains a redirect (`>`/`<`) is too ambiguous to pin, so it surfaces no line. */
+const OPERATOR_CHARS = new Set(['|', '&', ';', '<', '>']);
 const ENV_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
 /** Cap on a search/run subject — telemetry, never a full command transcript. */
 const SUBJECT_MAX = 60;
@@ -237,7 +242,9 @@ function classifyCommand(cmd: string): WorkerAction | undefined {
   const opIdx = tokens.findIndex((t) => CONTROL_OPS.has(t));
   const seg = opIdx === -1 ? tokens : tokens.slice(0, opIdx);
   // A redirect or command substitution makes the target ambiguous — no line.
-  if (seg.some((t) => REDIRECT.has(t) || t.includes('`') || t.includes('$('))) return undefined;
+  // Redirect chars only ever appear in an operator token (the tokenizer splits
+  // them out), so a word never false-positives here.
+  if (seg.some((t) => t.includes('>') || t.includes('<') || t.includes('`') || t.includes('$('))) return undefined;
   let i = 0;
   while (i < seg.length && ENV_ASSIGN.test(seg[i] ?? '')) i++; // skip leading env assignments
   const tool = (seg[i] ?? '').split('/').pop() ?? ''; // /usr/bin/sed → sed
@@ -326,12 +333,43 @@ function fileOperands(cmd: string, args: string[]): string[] {
   return cmd === 'sed' ? operands.slice(1) : operands;
 }
 
-/** A best-effort shell tokenizer: splits on whitespace, honoring single/double
- *  quotes (no escape handling — telemetry, not a shell). */
+/** A best-effort shell tokenizer (telemetry, not a shell — no escape handling):
+ *  splits on whitespace, keeps a quoted span as one literal token (so an operator
+ *  INSIDE quotes — `rg 'a|b'` — is preserved, never a split point), and emits a
+ *  run of unquoted operator characters as its own token (so `cat a>b` and
+ *  `nl x|sed` split/bail rather than leaking the operator+tail into a path). A
+ *  regex split on whitespace alone could not do the last two. */
 function tokenize(s: string): string[] {
   const out: string[] = [];
-  const re = /'([^']*)'|"([^"]*)"|(\S+)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(s)) !== null) out.push(m[1] ?? m[2] ?? m[3] ?? '');
+  let cur = '';
+  const flush = (): void => {
+    if (cur) {
+      out.push(cur);
+      cur = '';
+    }
+  };
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i] ?? '';
+    if (c === "'" || c === '"') {
+      const close = s.indexOf(c, i + 1);
+      const end = close === -1 ? s.length : close;
+      cur += s.slice(i + 1, end); // quoted content, verbatim — operators inside are literal
+      i = end; // skip past the closing quote (or to end if unterminated)
+      continue;
+    }
+    if (c === ' ' || c === '\t') {
+      flush();
+      continue;
+    }
+    if (OPERATOR_CHARS.has(c)) {
+      flush();
+      let op = c;
+      while (i + 1 < s.length && OPERATOR_CHARS.has(s[i + 1] ?? '')) op += s[++i];
+      out.push(op);
+      continue;
+    }
+    cur += c;
+  }
+  flush();
   return out;
 }
