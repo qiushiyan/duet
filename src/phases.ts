@@ -168,7 +168,7 @@ export const WORKFLOWS = {
         },
         artifactLabel: 'plan',
         reviewLoop: true,
-        roundCap: 4,
+        roundCap: 3,
         orchestratorBudgetUsd: 15,
         workerBudgetUsd: 10,
         workerTurnTimeoutMs: 30 * 60_000,

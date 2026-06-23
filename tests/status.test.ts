@@ -478,7 +478,7 @@ describe('renderStatus', () => {
     expect.soft(out).toContain('phase:    running in the background (pid 4242)');
     expect.soft(out).toContain('frame 1/2');
     expect.soft(out).toContain('spec 2/3');
-    expect.soft(out).toContain('plan 0/4');
+    expect.soft(out).toContain('plan 0/3');
     expect.soft(out).toContain('impl 0/3');
     expect.soft(out).not.toContain('docs 0');
   });
