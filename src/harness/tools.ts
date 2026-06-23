@@ -196,6 +196,14 @@ export function startHeartbeat(
     const health = heartbeatHealth(state, role, startedAt, Date.now(), home);
     log(`[send_prompt] ⏳ ${role} turn running — ${mins}m elapsed (tag=${tag})${health}`);
     appendVoiceLog(state, role, `⏳ turn running — ${mins}m elapsed (tag=${tag})${health}`);
+    // Control-plane mirror onto the orchestrator pane. While a worker turn runs,
+    // the orchestrator is blocked awaiting it (headless), so its pane otherwise
+    // freezes on the last line — yet it reads no files, so it has no `⋯`
+    // activity of its own. Reflect what the run is waiting on so the top pane
+    // reads as alive. `⏳`-prefixed, so the colorizer dims it like the worker
+    // heartbeat (ambient telemetry); voice-log only — the driver log already
+    // mirrors the worker line above.
+    appendVoiceLog(state, 'orchestrator', `⏳ awaiting ${role} — ${mins}m`);
   }, 5 * 60_000);
   let lastActivityId: string | undefined;
   // Cache the located transcript path/schema after the first successful read so

@@ -569,6 +569,31 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
     const result = await pending;
     expect.soft(result.isError).toBeFalsy();
   });
+
+  test('mirrors a control-plane "awaiting <role>" line onto the orchestrator pane', async ({ run, projectDir, onTestFinished }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const home = join(projectDir, 'home');
+    run.workerSessions = { implementer: 'impl-1' };
+    saveRunState(run);
+
+    let finish!: (t: { text: string; sessionId: string }) => void;
+    const slow = new FakeWorker('claude');
+    slow.runTurn = () => new Promise((r) => (finish = r));
+    const { call } = harness(run, { implementer: slow, home });
+    const pending = call('send_prompt', { role: 'implementer', tag: 'tdd-plan', body: 'plan' });
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    // Voice-log only (no driver-log dup) — the orchestrator pane otherwise
+    // freezes while it blocks on the worker turn it reads no files during.
+    const orchestratorLog = readFileSync(join(runDirOf(run.cwd, run.runId), 'orchestrator.log'), 'utf8');
+    expect(orchestratorLog).toContain('⏳ awaiting implementer — 5m');
+
+    finish({ text: 'done', sessionId: 'impl-1' });
+    await pending;
+  });
 });
 
 describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
