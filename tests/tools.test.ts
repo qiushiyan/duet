@@ -991,7 +991,7 @@ describe('orchestratorSystemPrompt (the bound-only identity clause)', () => {
   test('bound: appends the consultant clause, naming it additive and ephemeral', ({ consultantRun }) => {
     const prompt = orchestratorSystemPrompt(consultantRun);
     expect.soft(prompt.startsWith(ORCHESTRATOR_SYSTEM_PROMPT)).toBe(true); // base preserved, clause appended
-    expect.soft(prompt).toContain('<consultant>');
+    expect.soft(prompt).toContain('## The consultant');
     expect.soft(prompt.toLowerCase()).toContain('ephemeral');
     expect.soft(prompt.toLowerCase()).toContain('additive, never substitutive');
   });

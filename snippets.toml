@@ -11,7 +11,7 @@
 [[snippets]]
 key = "think-holistic"
 expand = '''
-**Don't change code yet — this is an analysis pass.** Reason holistically, grounded in actual code, not assumptions.
+This turn is analysis, not building — work through the problem and the design before any code changes. Reason holistically, grounded in the actual code, not assumptions.
 
 1. **Read the relevant code** to see how things work today. Trace real data/control flow, note existing constraints and why they exist, cite the files/functions you read. Without this, "first principles" is guessing.
 2. **Interview me about ambiguous product intent** (fuzzy terms, unclear scope, priorities you're guessing at) and **push back if my framing seems off**. One question at a time, each with your recommended answer. Don't ask what code can answer — you've just read it. **For clear, targeted bug fixes, skip this step.**
@@ -646,9 +646,11 @@ $0'''
 [[snippets]]
 key = "consultant-frame"
 expand = '''
-**DO NOT CHANGE ANY CODE.** You are this run's independent cross-family voice at the framing stage — a third analysis alongside two engineers working the same problem. Your lane is the bet, not the build: the assumptions the work would rest on, whether they hold, and whether the change serves the product and the people using it. Your value is the outsider's altitude the embedded engineers can't reach, precisely because you are not steeped in this codebase — so spend your read there.
+Your goal this turn is to judge the bet behind the change described above: do its assumptions hold, and does it serve the product and the people who use it?
 
-1. **Read enough code to be grounded, not deep.** Trace the real problem and the shape of the current design — enough to reason about whether the bet is sound. A line-level or construction review is the embedded reviewer's job; duplicating it spends your distinct value on work already covered.
+Your job is to analyze, not to build or fix — read, reason, and write up your judgment; don't change code. You bring an outside read on the bet: the assumptions the work would rest on and whether the change serves the product, not the construction details (a separate reviewer covers those). Your distance is the asset — not being steeped in this work is what lets you question assumptions the people closest to it take for granted — so spend your read there, on the bet, not the build.
+
+1. **Read enough code to be grounded, not deep.** Trace the real problem and the shape of the current design — enough to reason about whether the bet is sound. A line-level or construction review is a separate reviewer's job; duplicating it spends your distinct value on work already covered.
 2. **State the bet in your own words.** What is being assumed about the problem, the users, the product direction, and the constraints? Name the load-bearing assumptions — the ones that, if wrong, make this the wrong work.
 3. **Pressure-test the bet.** Which assumptions are unverified or likely to change? Where might this solve the stated problem but miss the real one? Wear the hat the change calls for — a CEO/user hat (does this serve the product and its users?) and a CTO hat (do the technical assumptions hold?), often both. A documented, deliberate tradeoff is by-design, not a finding.
 4. **Propose direction, not patches.** Where the bet is weak, say what a sounder bet looks like at the framing altitude — approach, scope, sequencing — not the implementation.
@@ -658,9 +660,11 @@ expand = '''
 [[snippets]]
 key = "consultant-spec"
 expand = '''
-**DO NOT CHANGE ANY CODE.** You are this run's independent cross-family voice — a fresh, low-context outsider auditing the bet behind a settled spec, not its construction. A separate reviewer has already worked the spec at build altitude (signatures, data flow, test design); repeating that spends your distinct value on covered ground. Your lane is whether the bet is sound: the assumptions the design rests on, which are likely to break, and whether the change serves the product.
+Your goal this turn is to audit the bet behind the spec below — not how it's built, but whether it's the right thing to build: do its assumptions hold, and does it serve the product?
 
-You are seeded with the settled spec and the decisions already treated as by-design — treat those documented, deliberate tradeoffs as settled, not findings.
+Your job is to analyze, not to build or fix — read, reason, and judge; don't change code. You bring an outside read on the bet: the assumptions the design rests on, which are likely to break, and whether the change serves the product. A separate reviewer has already worked the spec at build altitude (signatures, data flow, test design); repeating that spends your distinct value on covered ground.
+
+You are given the settled spec and the decisions already treated as by-design — treat those documented, deliberate tradeoffs as settled, not findings.
 
 Work the audit:
 1. **Enumerate the assumptions** the design rests on — about the problem, the users, the product direction, the environment, and the technical constraints.
@@ -680,7 +684,9 @@ $0'''
 [[snippets]]
 key = "consultant-impl"
 expand = '''
-**DO NOT CHANGE ANY CODE.** You are this run's independent cross-family voice — a fresh, low-context outsider auditing the bet behind the implemented change, not its construction. The embedded reviewer has already worked the code at build altitude; your lane is whether the bet still holds now that it's built.
+Your goal this turn is to audit the bet behind the implemented change below — not how it's built, but whether the bet still holds now that it's real code: did building it serve the product, and do the original assumptions still stand?
+
+Your job is to analyze, not to build or fix — read, reason, and judge; don't change code. You bring an outside read on the bet, not the construction (a separate reviewer has already worked the code at build altitude).
 
 You are seeded with the settled design, the decisions treated as by-design, and your own findings from the earlier checkpoint — treat the documented, deliberate tradeoffs as settled, not findings.
 

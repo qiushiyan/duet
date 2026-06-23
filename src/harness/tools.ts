@@ -718,7 +718,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         body: z
           .string()
           .describe(
-            'The full prompt text to send — the template adapted to this run: generality collapsed onto the actual task, discipline intact.',
+            'The full prompt text to send — the template adapted to this run: generality collapsed onto the actual task, discipline intact. A worker reads it cold, so a first prompt of a phase opens with the work (what is being built and the goal this turn) before the role and task, and carries none of duet’s internal vocabulary — arc, gate, or checkpoint names orient you, not the worker.',
           ),
       },
       async (args) => {
