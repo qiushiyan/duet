@@ -53,7 +53,7 @@ describe('latestActivity — claude (structured tool_use)', () => {
   });
 });
 
-describe('latestActivity — codex reads (single-file shell commands only)', () => {
+describe('latestActivity — codex shell work (read / search / run)', () => {
   test.for<[string, string]>([
     ["sed -n '1,260p' CLAUDE.md", 'CLAUDE.md'],
     ["sed '1,5p' a.ts", 'a.ts'],
@@ -69,25 +69,54 @@ describe('latestActivity — codex reads (single-file shell commands only)', () 
     expect(latestActivity(jsonl(codexExecCommand(cmd, { callId: 'call_r' })), 'codex')).toEqual({ id: 'call_r', kind: 'read', path });
   });
 
+  test.for<[string, string]>([
+    ['cat a.ts b.ts', 'a.ts'], // a multi-file read shows its first file
+    ["sed -n '1,5p' a.ts b.ts", 'a.ts'],
+    ['head -n 50 a.ts b.ts', 'a.ts'],
+    ['nl -ba src/x.ts', 'src/x.ts'], // nl is a read command (number-lines)
+    ['nl -ba src/x.ts | sed -n 250,370p', 'src/x.ts'], // a pipeline reduces to its first segment
+    ["sed -n '1,5p' a.ts | grep foo", 'a.ts'], // first segment is the read source
+    ["sed -n '1,220p' a.ts && sed -n '1,260p' b.ts", 'a.ts'], // a chain shows the first file
+  ])('a read surfaces the first segment’s file: %s', ([cmd, path]) => {
+    expect(latestActivity(jsonl(codexExecCommand(cmd, { callId: 'call_r' })), 'codex')).toEqual({ id: 'call_r', kind: 'read', path });
+  });
+
+  test.for<[string, string]>([
+    ['rg "appendVoiceLog" src', 'src'], // pattern-first → the path target is the subject
+    ['rg -n "interface Loopy" a.ts b.ts c.ts', 'a.ts'], // first path target after the pattern
+    ['rg "lonePattern"', 'lonePattern'], // no path target → the pattern is the subject
+    ['ls -la src', 'src'],
+    ['find packages -maxdepth 2 -type d', 'packages'], // first non-flag operand is the search root
+  ])('a search surfaces its target (never the raw command): %s', ([cmd, subject]) => {
+    expect(latestActivity(jsonl(codexExecCommand(cmd, { callId: 'call_s' })), 'codex')).toEqual({ id: 'call_s', kind: 'search', subject });
+  });
+
+  test.for<[string, string]>([
+    ['pnpm test', 'pnpm test'],
+    ['pnpm --filter @planlab/x test', 'pnpm'], // a flag next → just the tool
+    ['git diff --stat A..B', 'git diff'],
+    ['git status --short && git log --oneline', 'git status'], // a chain shows the first run
+    ['node script.js', 'node script.js'],
+    ['npx ctx7@latest library Zod', 'npx ctx7@latest'],
+  ])('a tool-run surfaces a short <tool> <subcommand> phrase: %s', ([cmd, subject]) => {
+    expect(latestActivity(jsonl(codexExecCommand(cmd, { callId: 'call_run' })), 'codex')).toEqual({ id: 'call_run', kind: 'run', subject });
+  });
+
   test.for<[string]>([
-    ['cat a.ts b.ts'], // multi-file — must not look single-file
-    ["sed -n '1,5p' a.ts b.ts"],
-    ['head -n 50 a.ts b.ts'],
-    ['rg "appendVoiceLog" src'], // a search — not a read command, and the args are out of scope
-    ['ls -la src'],
-    ['pnpm test'],
-    ["sed -n '1,5p' a.ts | grep foo"], // a pipeline
-    ['cat a.ts > b.ts'], // a redirect
-  ])('an ambiguous/multi-file/non-read command surfaces NO line (never a guessed or raw-command path): %s', ([cmd]) => {
+    ['cat a.ts > b.ts'], // a redirect makes the target ambiguous
+    ['cat $(ls)'], // a command substitution
+    ['make-believe foo'], // an unknown tool → stay conservative
+    ['sed'], // a read command with no file operand
+  ])('an ambiguous or unknown command surfaces NO line: %s', ([cmd]) => {
     expect(latestActivity(jsonl(codexExecCommand(cmd, { callId: 'call_x' })), 'codex')).toBeUndefined();
   });
 
-  test('a search after a read is skipped — the last confident read still shows', () => {
+  test('the newest qualifying action wins — a search after a read shows the search', () => {
     const tail = jsonl(
       codexExecCommand('cat foo.ts', { callId: 'call_read', ts: '2026-06-20T00:00:00.000Z' }),
       codexExecCommand('rg pattern src', { callId: 'call_search', ts: '2026-06-20T00:01:00.000Z' }),
     );
-    expect(latestActivity(tail, 'codex')).toEqual({ id: 'call_read', kind: 'read', path: 'foo.ts' });
+    expect(latestActivity(tail, 'codex')).toEqual({ id: 'call_search', kind: 'search', subject: 'src' });
   });
 
   test('newest read wins', () => {
@@ -141,6 +170,8 @@ describe('activityLine — the one voice-log line shape', () => {
   test.for<[WorkerActivity, string]>([
     [{ id: '1', kind: 'read', path: 'src/foo.ts' }, '⋯ reading src/foo.ts'],
     [{ id: '2', kind: 'write', path: 'src/foo.ts' }, '⋯ editing src/foo.ts'],
+    [{ id: '3', kind: 'search', subject: 'src docs' }, '⋯ searching src docs'],
+    [{ id: '4', kind: 'run', subject: 'git diff' }, '⋯ running git diff'],
   ])('renders %o', ([activity, line]) => {
     expect(activityLine(activity)).toBe(line);
   });
