@@ -116,6 +116,32 @@ function lastAssistantText(candidates: unknown[]): string | undefined {
 }
 
 /**
+ * The real partial text a worker generated before a mid-response failure — the
+ * assistant text blocks across the stream, EXCLUDING the element whose text is
+ * the error itself (the `-p` stream renders an API error as a trailing assistant
+ * `text` block, so a naive "last assistant text" would mistake every failure —
+ * pre-flight included — for a mid-response one). The error element is identified
+ * structurally, by its text equalling the result envelope's own `result` string
+ * (a same-response comparison, robust to any rewording), never a hardcoded
+ * message. Empty when nothing real was generated (a pre-flight failure).
+ */
+export function partialBeforeError(candidates: unknown[], errorText: string): string {
+  const err = errorText.trim();
+  const parts: string[] = [];
+  for (const m of candidates) {
+    if (typeof m !== 'object' || m === null) continue;
+    const msg = m as { type?: unknown; message?: { content?: unknown } };
+    if (msg.type !== 'assistant' || !Array.isArray(msg.message?.content)) continue;
+    for (const b of msg.message.content) {
+      if (typeof b !== 'object' || b === null || (b as { type?: unknown }).type !== 'text') continue;
+      const t = (b as { text?: unknown }).text;
+      if (typeof t === 'string' && t.trim() && t.trim() !== err) parts.push(t);
+    }
+  }
+  return parts.join('');
+}
+
+/**
  * The `claude -p` envelope reported a failed turn — `message` is the CLI's own
  * reason (an API / auth / network error — whatever the `result` field held). A
  * distinct type, not matched by wording, so recoverClaudeFailure can propagate
@@ -167,6 +193,24 @@ export function parseClaudeTurn(stdout: string, prompt: string): WorkerTurn {
   }
   const envelope = resultEnvelope.parse(raw);
   if (envelope.is_error || envelope.subtype !== 'success') {
+    // Mid-response vs pre-flight. If the worker generated real partial work
+    // before the failure (assistant text distinct from the error message) and
+    // the session is resumable, this is a settleable CHECKPOINT — capture the
+    // partial + session so the orchestrator can resume with a continuation,
+    // rather than discarding recoverable work. Requiring POSITIVE evidence of
+    // generation biases the close call toward pre-flight (resend), so a pre-flight
+    // failure is never misread as "continue".
+    const partial = partialBeforeError(candidates, envelope.result ?? '');
+    if (partial.trim()) {
+      const context = claudeContextUsage(candidates, envelope.modelUsage);
+      return {
+        text: partial,
+        sessionId: envelope.session_id,
+        interrupted: true,
+        ...(envelope.total_cost_usd !== undefined ? { costUsd: envelope.total_cost_usd } : {}),
+        ...(context ? { context } : {}),
+      };
+    }
     throw new ClaudeTurnFailedError(`claude worker turn failed (${envelope.subtype}): ${envelope.result ?? ''}`);
   }
   // A /compact turn succeeds with an empty result (the CLI emits only a
@@ -222,7 +266,9 @@ export function recoverClaudeFailure(err: unknown, prompt: string): WorkerTurn {
   if (typeof stdout === 'string' && stdout.length > 0) {
     try {
       const turn = parseClaudeTurn(stdout, prompt);
-      if (turn.budgetTruncated) return turn;
+      // A settled checkpoint — a budget cutoff or a mid-response interruption —
+      // is recoverable work, not a failure: return it so the session is captured.
+      if (turn.budgetTruncated || turn.interrupted) return turn;
       // A success envelope on a non-zero exit is contradictory and rare — prefer
       // the concise exit/stderr error below over trusting it.
     } catch (parseErr) {

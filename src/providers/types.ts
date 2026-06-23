@@ -45,6 +45,16 @@ export interface WorkerTurn {
    * distinct `BudgetCutoffError` (no WorkerTurn, since sessionId is required).
    */
   budgetTruncated?: true;
+  /**
+   * The turn was cut short by a connection drop AFTER the worker generated real
+   * partial work (a "mid-response" failure), and the session is resumable. Like
+   * `budgetTruncated`, a settled CHECKPOINT — the partial work + session are
+   * captured, so the orchestrator resumes with a short continuation rather than
+   * re-sending the original prompt. Distinguished from a "pre-flight" failure (no
+   * generation, nothing to resume → an infra error) by the presence of real
+   * generated content, never by the error wording.
+   */
+  interrupted?: true;
 }
 
 /**

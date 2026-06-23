@@ -343,6 +343,16 @@ export function renderTurnResult(
       text: `(budget reached — the worker saw your prompt and committed work is on disk; its session is resumable. Resume that session for the remainder, or raise the budget. This is a checkpoint, not a failure — do not re-send the original prompt.)`,
     });
   }
+  // A mid-response interruption (a connection drop after real generation) also
+  // settled — the partial work above is committed to a resumable session. The
+  // recovery is a short continuation, NOT a re-send: re-sending the original
+  // prompt would restart work the worker already partly did.
+  if (outcome.interrupted) {
+    content.push({
+      type: 'text' as const,
+      text: `(the connection dropped mid-response — the worker's partial work above is committed to its session, which is resumable. Send it a short continuation to finish from where it stopped; do not re-send the original prompt. This is a checkpoint, not a failure.)`,
+    });
+  }
   // Reactive state-triggered nudge (docs/prompting-and-tool-design.md
   // §"Results nudge the next step"): when this review round leaves exactly one
   // before the backstop cap, say so once — the cap is runaway protection, not a

@@ -200,6 +200,18 @@ describe('send_prompt', () => {
     expect.soft(joined).toMatch(/\[context 40% · claude \$0\.18 · round 0\/\d+\]/); // and the footer too
   });
 
+  test('a mid-response interruption surfaces the partial work + a continue-not-resend note, and captures the session', async ({ projectDir, run }) => {
+    const implementer = new FakeWorker('claude', [{ interrupted: true, sessionId: 'sess-mid', text: 'partial spec content' }]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+    expect.soft(result.isError).toBeUndefined(); // a settled checkpoint, not an error
+    expect.soft(joined).toContain('partial spec content'); // the resumable partial work
+    expect.soft(joined).toContain('do not re-send the original prompt'); // continue, don't resend
+    // The session is captured so the orchestrator can resume it with a continuation.
+    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer).toBe('sess-mid');
+  });
+
   test('a worker failure names the layer, prescribes retry-then-flag, and counts nothing', async ({ run }) => {
     const reviewer = new FakeWorker('codex', [new Error('spawn codex ENOENT')]);
     const { call } = harness(run, { reviewer });

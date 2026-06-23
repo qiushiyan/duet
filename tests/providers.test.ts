@@ -546,16 +546,19 @@ describe('ClaudeWorker.runTurn (failure recovery at the execa boundary)', () => 
     await expect(worker().runTurn({ prompt: 'do it', cwd: '/x' })).rejects.toBeInstanceOf(BudgetCutoffError);
   });
 
-  test('a CLI-reported failure surfaces the envelope’s reason — not a budget turn, not the multi-KB stdout dump', async () => {
-    // A realistic noisy -p stream: a fat init event + a message event with ids,
-    // wrapping the one error result. Any error class lands here the same way — the
-    // reason is whatever `result` holds (here a 5xx), matched by structure not text.
+  test('a pre-flight CLI-reported failure (no real generation) surfaces the envelope’s reason — not a budget turn, not the multi-KB stdout dump', async () => {
+    // A realistic noisy -p stream: a fat init event wrapping the one error result,
+    // the error also rendered as the only assistant block (no real work). Any error
+    // class lands here the same way — the reason is whatever `result` holds (here a
+    // 5xx), matched by structure not text.
     const stdout = JSON.stringify([
       { type: 'system', subtype: 'init', tools: Array(40).fill('SomeNoisyToolName'), slash_commands: Array(40).fill('cmd') },
-      { type: 'assistant', uuid: 'msg-id-1', message: { content: [{ type: 'text', text: 'partial' }] } },
+      { type: 'assistant', uuid: 'msg-id-1', message: { content: [{ type: 'text', text: 'API Error: 500 Internal server error' }] } },
       { type: 'result', subtype: 'success', is_error: true, session_id: 's', result: 'API Error: 500 Internal server error' },
     ]);
     mockExeca.mockRejectedValueOnce(execaExit1(stdout));
+    // Throws (pre-flight → resend) — it is NOT returned as a settled checkpoint,
+    // because the only assistant content is the error itself (no real generation).
     const err: Error = await worker().runTurn({ prompt: 'do it', cwd: '/x' }).catch((e) => e);
     expect.soft(err).toBeInstanceOf(Error);
     expect.soft(err).not.toBeInstanceOf(BudgetCutoffError);
@@ -585,6 +588,29 @@ describe('ClaudeWorker.runTurn (failure recovery at the execa boundary)', () => 
     mockExeca.mockRejectedValueOnce(Object.assign(new Error('spawn claude ENOENT'), { stdout: '' }));
     await expect(worker().runTurn({ prompt: 'do it', cwd: '/x' })).rejects.toThrow('spawn claude ENOENT');
   });
+
+  // Mid-response vs pre-flight. The `-p` stream renders an API error as a trailing
+  // assistant `text` block, so the classifier must exclude it (else every failure,
+  // pre-flight included, looks like mid-response → a "continue?" on work never
+  // started). It keys on real generated content, never the error wording.
+  const drop = 'API Error: Connection closed mid-response. The response above may be incomplete.';
+
+  test('a mid-response failure (real partial work before the drop) settles as an interrupted checkpoint, not a throw', async () => {
+    const stdout = JSON.stringify([
+      { type: 'system', subtype: 'init', tools: ['x'] },
+      { type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'planning' }] } },
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'Writing the spec now, starting with the envelope' }] } },
+      { type: 'assistant', message: { content: [{ type: 'text', text: drop }] } }, // the error, as an assistant block
+      { type: 'result', subtype: 'success', is_error: true, session_id: 'sess-mid', total_cost_usd: 0.27, result: drop },
+    ]);
+    mockExeca.mockRejectedValueOnce(execaExit1(stdout));
+    const turn = await worker().runTurn({ prompt: 'do it', cwd: '/x' });
+    expect.soft(turn.interrupted).toBe(true);
+    expect.soft(turn.sessionId).toBe('sess-mid'); // the resumable handle is captured
+    expect.soft(turn.text).toContain('Writing the spec now'); // the real partial work
+    expect.soft(turn.text).not.toContain('API Error'); // the error-marker block is excluded
+  });
+
 });
 
 describe('claudeArgs (the budget-cap omission seam)', () => {
