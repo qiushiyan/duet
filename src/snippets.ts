@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'smol-toml';
@@ -16,6 +17,75 @@ import type { PhaseName, WorkflowName } from './phases.ts';
 export interface Snippet {
   key: string;
   expand: string;
+}
+
+/**
+ * Where an effective snippet resolved from: the shipped base library, or one of
+ * the two override layers. Provenance is a `duet snippets` display concern only
+ * — the library SERVED to workers carries no source marker (that is exactly what
+ * the byte-for-byte-identity guarantee requires).
+ */
+export type SnippetLayer = 'shipped' | 'user' | 'project';
+
+/** A snippet plus the layer it resolved from — the merged-library element. */
+export interface EffectiveSnippet extends Snippet {
+  source: SnippetLayer;
+}
+
+/**
+ * Where to discover override layers when resolving the effective library. Both
+ * fields optional: `configDir` (default `~/.config/duet`) holds the USER
+ * override `snippets.toml`; `cwd` (the project root) holds the PROJECT override
+ * at `<cwd>/.duet/snippets.toml`. An absent field skips that layer's discovery —
+ * with neither, resolution is the shipped base verbatim.
+ */
+export interface SnippetLibraryContext {
+  /** Project root — its `.duet/snippets.toml` is the project override layer. */
+  cwd?: string;
+  /** User config dir — its `snippets.toml` is the user override layer. Default `~/.config/duet`. */
+  configDir?: string;
+}
+
+/** A parsed override layer fed to `mergeSnippetLayers`: its source tag, the path it came from (for errors), and its snippets. */
+export interface SnippetOverrideLayer {
+  source: Exclude<SnippetLayer, 'shipped'>;
+  path: string;
+  snippets: Snippet[];
+}
+
+/**
+ * Merge override layers onto the base library — PURE, the feature's test seam.
+ * Each override replaces a snippet's ENTIRE body (whole-body, keyed by snippet
+ * key); there is no partial/field merge. Layers apply in array order, last-wins
+ * per key, so a later layer (project) overrides an earlier one (user). Base
+ * order is preserved and every result element carries the layer it resolved
+ * from.
+ *
+ * Fail-closed: an override naming a key absent from the BASE library throws —
+ * overrides may only replace existing snippets, never introduce new keys (a new
+ * key would have no phase classification and go silently invisible in
+ * list_snippets). Validation is against the base key set only; an earlier layer
+ * cannot add a key a later layer could then target.
+ *
+ * With no override layers the result is the base library tagged `shipped`,
+ * element-for-element — the foundation of the byte-for-byte-identity guarantee.
+ */
+export function mergeSnippetLayers(base: Snippet[], overrides: SnippetOverrideLayer[] = []): EffectiveSnippet[] {
+  const merged: EffectiveSnippet[] = base.map((s) => ({ ...s, source: 'shipped' }));
+  const byKey = new Map(merged.map((s) => [s.key, s]));
+  for (const layer of overrides) {
+    for (const override of layer.snippets) {
+      const target = byKey.get(override.key);
+      if (!target) {
+        throw new Error(
+          `snippet override at ${layer.path} names unknown key "${override.key}". Overrides can only replace existing duet snippets — run "duet snippets" to list valid keys, fix the key, or remove that [[snippets]] entry.`,
+        );
+      }
+      target.expand = override.expand;
+      target.source = layer.source;
+    }
+  }
+  return merged;
 }
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -80,6 +150,57 @@ export function getSnippet(key: string): Snippet | undefined {
   return index().get(key);
 }
 
+/**
+ * Read and validate one override file, or return undefined when it is absent.
+ * Same schema as the shipped library; a malformed file throws naming the path
+ * and the problem (the contextual analogue of `loadSnippets`' own guard), so a
+ * typo fails loud at the serve surface rather than silently dropping overrides.
+ * Deliberately NOT cached: the project layer is cwd-relative and the user layer
+ * home-relative, so the effective library is run-scoped — only the shipped base
+ * keeps a process-global cache (it is the immutable package file).
+ */
+function loadOverrideLayer(path: string, source: Exclude<SnippetLayer, 'shipped'>): SnippetOverrideLayer | undefined {
+  if (!existsSync(path)) return undefined;
+  const parsed = librarySchema.safeParse(parse(readFileSync(path, 'utf8')));
+  if (!parsed.success) {
+    throw new Error(
+      `snippet override at ${path} is not a valid snippet library (${parsed.error.issues[0]?.message ?? 'unknown issue'}) — each [[snippets]] entry needs a string "key" and a string "expand". Fix or remove the file.`,
+    );
+  }
+  return { source, path, snippets: parsed.data.snippets };
+}
+
+/**
+ * Resolve the effective library in a run/project context: the shipped base with
+ * the user (`<configDir>/snippets.toml`) and project (`<cwd>/.duet/snippets.toml`)
+ * override layers stacked on top, project winning. THE contextual entry point —
+ * `loadSnippets`/`getSnippet` stay shipped-only and context-free (their only
+ * non-render caller does an existence check, and the key set is override-invariant
+ * since an unknown key is an error). With no override files present the result is
+ * the base library tagged `shipped`, element-for-element — the byte-for-byte
+ * guarantee the no-override author relies on.
+ */
+export function loadEffectiveSnippets(ctx: SnippetLibraryContext = {}): EffectiveSnippet[] {
+  const configDir = ctx.configDir ?? join(homedir(), '.config', 'duet');
+  const layers: SnippetOverrideLayer[] = [];
+  const userLayer = loadOverrideLayer(join(configDir, 'snippets.toml'), 'user');
+  if (userLayer) layers.push(userLayer);
+  if (ctx.cwd !== undefined) {
+    const projectLayer = loadOverrideLayer(join(ctx.cwd, '.duet', 'snippets.toml'), 'project');
+    if (projectLayer) layers.push(projectLayer);
+  }
+  return mergeSnippetLayers(loadSnippets(), layers);
+}
+
+/**
+ * One snippet's effective (merged) form plus its provenance — for
+ * `duet snippets show <key>`. STORED form: the `{{skills_dir}}` token is left
+ * unresolved, matching `getSnippet`.
+ */
+export function getEffectiveSnippet(key: string, ctx: SnippetLibraryContext = {}): EffectiveSnippet | undefined {
+  return loadEffectiveSnippets(ctx).find((s) => s.key === key);
+}
+
 export interface SnippetRenderOpts {
   /**
    * The current phase — renders the phase-grouped view: this phase's templates
@@ -104,6 +225,16 @@ export interface SnippetRenderOpts {
    * so a context-less render (the no-arg menu) treats the run as unbound.
    */
   consultantBound?: boolean;
+  /**
+   * Run/project context for override discovery. When PRESENT, the served library
+   * is the merged effective library (shipped + user + project overrides); when
+   * ABSENT, the shipped library is served verbatim — the no-context path stays
+   * byte-for-byte today's and reads no override file, so a context-less render is
+   * independent of machine state (the existing guard tests rely on this). The
+   * merge is provenance-tracked internally but the rendered XML carries no source
+   * marker (`snippetBlock` ignores it), preserving byte identity when unused.
+   */
+  libraryContext?: SnippetLibraryContext;
 }
 
 /**
@@ -118,8 +249,12 @@ export interface SnippetRenderOpts {
  */
 export function renderSnippetLibrary(opts: SnippetRenderOpts = {}): string {
   const consultantBound = opts.consultantBound ?? false;
-  if (opts.all || !opts.phase) return renderFlat(opts.sentTo, opts.all, consultantBound, opts.workflow);
-  return renderForPhase(opts.phase, opts.workflow ?? workflowOfPhase(opts.phase), opts.sentTo, consultantBound);
+  // No libraryContext ⇒ shipped-only (byte-for-byte today's, no override file read).
+  // A context ⇒ the merged effective library. The renderers take the resolved
+  // array, so the override layering is invisible past this line.
+  const library: Snippet[] = opts.libraryContext ? loadEffectiveSnippets(opts.libraryContext) : loadSnippets();
+  if (opts.all || !opts.phase) return renderFlat(library, opts.sentTo, opts.all, consultantBound, opts.workflow);
+  return renderForPhase(library, opts.phase, opts.workflow ?? workflowOfPhase(opts.phase), opts.sentTo, consultantBound);
 }
 
 function snippetBlock(s: Snippet, sentTo?: Record<string, string[]>): string {
@@ -128,7 +263,7 @@ function snippetBlock(s: Snippet, sentTo?: Record<string, string[]>): string {
   return `<snippet key="${s.key}"${attr}>\n${withSkillsDir(s.expand)}\n</snippet>`;
 }
 
-function renderFlat(sentTo?: Record<string, string[]>, all?: boolean, consultantBound = false, workflow?: WorkflowName): string {
+function renderFlat(library: Snippet[], sentTo?: Record<string, string[]>, all?: boolean, consultantBound = false, workflow?: WorkflowName): string {
   // The flat library is the whole file, so the checkpoint snippets must be filtered
   // here: unbound shows NONE; bound shows only the consultant snippets THIS arc's
   // checkpoints reach (per-arc honesty — a bound rir run never sees full's contract
@@ -139,7 +274,7 @@ function renderFlat(sentTo?: Record<string, string[]>, all?: boolean, consultant
     : workflow
       ? consultantSnippetsForWorkflow(workflow)
       : CONSULTANT_SNIPPETS;
-  const snippets = loadSnippets().filter((s) => !CONSULTANT_SNIPPETS.has(s.key) || allowedConsultant.has(s.key));
+  const snippets = library.filter((s) => !CONSULTANT_SNIPPETS.has(s.key) || allowedConsultant.has(s.key));
   return [
     all ? '<snippet_library all="true">' : '<snippet_library>',
     ...snippets.map((s) => snippetBlock(s, sentTo)),
@@ -147,16 +282,21 @@ function renderFlat(sentTo?: Record<string, string[]>, all?: boolean, consultant
   ].join('\n');
 }
 
-function fullBodies(keys: readonly string[], sentTo?: Record<string, string[]>): string[] {
-  return keys.map((k) => getSnippet(k)).filter((s): s is Snippet => s !== undefined).map((s) => snippetBlock(s, sentTo));
+function fullBodies(byKey: Map<string, Snippet>, keys: readonly string[], sentTo?: Record<string, string[]>): string[] {
+  return keys.map((k) => byKey.get(k)).filter((s): s is Snippet => s !== undefined).map((s) => snippetBlock(s, sentTo));
 }
 
 function renderForPhase(
+  library: Snippet[],
   phase: PhaseName,
   workflow: WorkflowName,
   sentTo: Record<string, string[]> | undefined,
   consultantBound: boolean,
 ): string {
+  // Look the phase/anytime keys up in the RESOLVED library (so overridden bodies
+  // serve), not the shipped-only `getSnippet` global. Insertion order = base
+  // order; key lookups are order-independent, so the no-context path is identical.
+  const byKey = new Map<string, Snippet>(library.map((s) => [s.key, s]));
   const phases = phasesOf(workflow);
   const i = phases.findIndex((p) => p.name === phase);
   // Each phase's ENABLED snippets — the always-on base plus its consultant
@@ -169,11 +309,11 @@ function renderForPhase(
     'Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in arc order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).',
     `<phase_templates phase="${phase}">`,
     ...(current.length > 0
-      ? fullBodies(current, sentTo)
+      ? fullBodies(byKey, current, sentTo)
       : ['(No library templates — this phase is skill- and mechanics-driven; compose from scratch or reach for a helper.)']),
     '</phase_templates>',
     '<anytime_helpers>',
-    ...fullBodies(ANYTIME_SNIPPETS, sentTo),
+    ...fullBodies(byKey, ANYTIME_SNIPPETS, sentTo),
     '</anytime_helpers>',
   ];
 
