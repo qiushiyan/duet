@@ -101,7 +101,7 @@ A doc that gains 10 lines of new content should usually shed 5–10 of redundanc
 `/onboarding [topic]` (`.claude/skills/onboarding/SKILL.md`) bootstraps a session with topic-scoped context in two phases:
 
 - **Phase 1 — always-on core reads:** `CLAUDE.md`, `docs/automation-design.md`, `docs/engineering.md`. The mental model no duet task can safely skip.
-- **Phase 2 — topic deep dive:** the design doc(s) and code for the topic. The doc map in `CLAUDE.md` §Docs is the source of truth; the skill's topic table only turns a phrase into a focus.
+- **Phase 2 — topic deep dive:** the design doc(s) and code for the topic. The doc + code map in `CLAUDE.md` §Map is the source of truth; the skill's topic table only turns a phrase into a focus.
 
 Keep it lean. Phase 1 is for what an agent *cannot* skip, not what's merely interesting. Litmus: *"Would an agent on a typical duet task produce wrong code without reading this?"* If not, it's Phase 2.
 

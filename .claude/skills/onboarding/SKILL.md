@@ -17,7 +17,7 @@ duet's mental model and conventions live in `CLAUDE.md` (always loaded). Re-inte
 
 ### 1. Interpret the topic
 
-Map `$ARGUMENTS` to a focus. The doc map in `CLAUDE.md` §Docs is the source of truth for what exists; this table only turns a phrase into a focus:
+Map `$ARGUMENTS` to a focus. The doc + code map in `CLAUDE.md` §Map is the source of truth for what exists; this table only turns a phrase into a focus:
 
 | If the topic mentions…                                                | Focus       |
 | --------------------------------------------------------------------- | ----------- |
