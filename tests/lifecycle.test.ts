@@ -931,8 +931,10 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
 
   const headOf = async (dir: string): Promise<string> =>
     (await execa('git', ['rev-parse', 'HEAD'], { cwd: dir })).stdout.trim();
-  const tracked = async (dir: string, path: string): Promise<boolean> =>
-    (await execa('git', ['ls-files', '--', path], { cwd: dir })).stdout.trim().length > 0;
+  // In HEAD's committed tree — the precise "did the freeze commit it" check (a
+  // staged-but-uncommitted file would be `git ls-files`-tracked but not `inHead`).
+  const inHead = async (dir: string, path: string): Promise<boolean> =>
+    (await execa('git', ['ls-tree', '-r', '--name-only', 'HEAD'], { cwd: dir })).stdout.split('\n').includes(path);
 
   /**
    * A consultant-bound Full run with a committed spec and an AUTHORED-but-
@@ -964,9 +966,11 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
 
   test('commits the authored contract path-scoped and records {path, commit}', async ({ projectDir }) => {
     const { state, contractPath } = await contractRun(projectDir);
-    // An in-progress plan in the same worktree must NOT be swept into the commit.
+    // An in-progress plan in the same worktree must NOT be swept into the commit —
+    // even when the implementer has STAGED it (the harder case than merely untracked).
     const planPath = 'docs/plan.md';
     writeFileSync(join(projectDir, planPath), '# plan WIP\n');
+    await execa('git', ['add', '--', planPath], { cwd: projectDir });
 
     await freezeContractAt(state, 'plan');
 
@@ -975,8 +979,9 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
     // The freeze commit touched ONLY the contract file.
     const changed = (await execa('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: projectDir })).stdout.trim();
     expect.soft(changed).toBe(contractPath);
-    // The in-progress plan is still uncommitted.
-    expect.soft(await tracked(projectDir, planPath)).toBe(false);
+    // The staged plan is NOT in the freeze commit, so it survives for impl's own commit.
+    expect.soft(await inHead(projectDir, planPath)).toBe(false);
+    expect.soft(await inHead(projectDir, contractPath)).toBe(true);
     // Persisted to disk, not only the in-memory ref.
     expect.soft(loadRunState(projectDir, state.runId).acceptanceContract?.commit).toBe(head);
   });
@@ -1035,6 +1040,6 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
     const persisted = loadRunState(projectDir, state.runId);
     expect.soft(persisted.machineState).toBe('shipGate'); // stopped at the attended impl gate
     expect.soft(persisted.acceptanceContract?.path).toBe(contractPath); // frozen at the plan auto-cross
-    expect.soft(await tracked(projectDir, contractPath)).toBe(true); // and committed
+    expect.soft(await inHead(projectDir, contractPath)).toBe(true); // and committed
   });
 });
