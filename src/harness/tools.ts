@@ -1188,9 +1188,14 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           }
           for (const role of ROLES) {
             if (dispatcher.statusOf(role) === 'running') {
+              // Per-poll STATE (this role isn't ready) + the idle-risk pointer.
+              // The fire-and-collect rhythm itself (keep the human talking, fire
+              // the other role) is the identity's durable contract, not re-taught
+              // on every poll; `status --wait` stays because this is the surface
+              // nearest the idle moment (docs/prompting-and-tool-design.md).
               content.push({
                 type: 'text' as const,
-                text: `The ${role} turn is still running — keep the conversation going and call check_turns again later, or, with nothing more to do meanwhile, arm \`duet status --wait\` in the background so its settling brings you back.`,
+                text: `The ${role} turn is still running — collect it on a later check_turns, or arm \`duet status --wait\` so its settling brings you back.`,
               });
             }
           }
