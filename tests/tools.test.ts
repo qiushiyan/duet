@@ -514,7 +514,7 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
     const slow = new FakeWorker('claude');
     slow.runTurn = () => new Promise((r) => (finish = r));
     const { call, lines } = harness(run, { implementer: slow, home });
-    const pending = call('send_prompt', { role: 'implementer', tag: 'tdd-plan', body: 'plan' });
+    const pending = call('send_prompt', { role: 'implementer', tag: 'start-plan', body: 'plan' });
     await vi.advanceTimersByTimeAsync(5 * 60_000);
 
     const hb = lines.find((l) => l.includes('⏳ implementer turn running — 5m elapsed'));
@@ -559,7 +559,7 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
     const slow = new FakeWorker('claude');
     slow.runTurn = () => new Promise((r) => (finish = r));
     const { call, lines } = harness(run, { implementer: slow, home });
-    const pending = call('send_prompt', { role: 'implementer', tag: 'tdd-plan', body: 'x' });
+    const pending = call('send_prompt', { role: 'implementer', tag: 'start-plan', body: 'x' });
     await vi.advanceTimersByTimeAsync(5 * 60_000);
 
     const hb = lines.find((l) => l.includes('⏳ implementer turn running — 5m elapsed'));
@@ -584,7 +584,7 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
     const slow = new FakeWorker('claude');
     slow.runTurn = () => new Promise((r) => (finish = r));
     const { call } = harness(run, { implementer: slow, home });
-    const pending = call('send_prompt', { role: 'implementer', tag: 'tdd-plan', body: 'plan' });
+    const pending = call('send_prompt', { role: 'implementer', tag: 'start-plan', body: 'plan' });
     await vi.advanceTimersByTimeAsync(5 * 60_000);
 
     // Voice-log only (no driver-log dup) — the orchestrator pane otherwise
@@ -607,7 +607,7 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
     saveRunState(run);
     const worker = new DeferredWorker('claude'); // stays in flight so the 5-min heartbeat fires
     const { call, dispatcher } = harness(run, { implementer: worker, home, async: true });
-    await call('send_prompt', { role: 'implementer', tag: 'tdd-plan', body: 'plan' }); // dispatches and returns
+    await call('send_prompt', { role: 'implementer', tag: 'start-plan', body: 'plan' }); // dispatches and returns
     await vi.advanceTimersByTimeAsync(5 * 60_000);
 
     // The worker heartbeat DID fire (the test isn't vacuous) — but no orchestrator
@@ -642,7 +642,7 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
     const slow = new FakeWorker('claude');
     slow.runTurn = () => new Promise((r) => (finish = r));
     const { call, lines } = harness(run, { implementer: slow, home });
-    const pending = call('send_prompt', { role: 'implementer', tag: 'tdd-plan', body: 'build' });
+    const pending = call('send_prompt', { role: 'implementer', tag: 'start-plan', body: 'build' });
     await vi.advanceTimersByTimeAsync(advanceMs);
     return {
       lines: lines.filter((l) => l.includes('⋯')),
@@ -729,7 +729,7 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
     const slow = new FakeWorker('claude');
     slow.runTurn = () => new Promise((r) => (finish = r));
     const { call, lines } = harness(run, { implementer: slow, home });
-    const pending = call('send_prompt', { role: 'implementer', tag: 'tdd-plan', body: 'x' });
+    const pending = call('send_prompt', { role: 'implementer', tag: 'start-plan', body: 'x' });
     await vi.advanceTimersByTimeAsync(60_000);
     expect(lines.some((l) => l.includes('⋯'))).toBe(false);
     finish({ text: 'done', sessionId: 'impl-1' });
@@ -1174,7 +1174,7 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
     // seen the plan. Assert the order in the rendered brief.
     const specCommitAt = bound.indexOf('commit the approved spec');
     const authorAt = bound.indexOf('author the acceptance contract');
-    const planPromptAt = bound.indexOf('tdd-plan');
+    const planPromptAt = bound.indexOf('start-plan');
     expect.soft(specCommitAt).toBeGreaterThanOrEqual(0);
     expect.soft(authorAt).toBeGreaterThan(specCommitAt);
     expect.soft(planPromptAt).toBeGreaterThan(authorAt);
@@ -1843,7 +1843,7 @@ describe('the library and the journal', () => {
     // The run-surface altitude for {{skills_dir}} resolution: snippets.test.ts
     // layer 3 guards renderSnippetLibrary (the faster library-local check); this
     // guards what list_snippets actually hands a worker on the plan phase, where
-    // tdd-plan/review-plan cite the vendored skills in full.
+    // start-plan/review-plan cite the vendored skills in full.
     const { call } = harness(run, { phase: 'plan' });
     const library = text(await call('list_snippets'));
 

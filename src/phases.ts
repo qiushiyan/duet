@@ -181,7 +181,7 @@ export const WORKFLOWS = {
       },
       {
         name: 'plan',
-        snippets: ['tdd-plan', 'review-plan', 'update-plan', 'review-plan-again', 'update-plan-again'],
+        snippets: ['start-plan', 'review-plan', 'update-plan', 'review-plan-again', 'update-plan-again'],
         gate: {
           state: 'planApprovalGate',
           heading: "PLAN gate — the orchestrator's summary",

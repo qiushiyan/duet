@@ -63,7 +63,7 @@ describe('buildDoctorModel — per-role verdicts', () => {
   test('an in-flight worker (activeTurns + live driver) reads working', async ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
     run.workerSessions = { implementer: 'impl-1' };
-    run.activeTurns = { implementer: { tag: 'tdd-plan', startedAt: ago(30 * SEC) } };
+    run.activeTurns = { implementer: { tag: 'start-plan', startedAt: ago(30 * SEC) } };
     saveRunState(run);
     setDriver(run, process.pid); // a live driver (this test process)
     plantClaudeTranscript(home, 'impl-1', jsonl(claudeUserToolResult({ ts: ago(8 * SEC) })));
@@ -77,7 +77,7 @@ describe('buildDoctorModel — per-role verdicts', () => {
     const home = join(projectDir, 'home');
     run.workerSessions = { implementer: 'impl-1' };
     // A turn the hint says started 40m ago — but the driver that would clear it is dead.
-    run.activeTurns = { implementer: { tag: 'tdd-plan', startedAt: ago(40 * MIN) } };
+    run.activeTurns = { implementer: { tag: 'start-plan', startedAt: ago(40 * MIN) } };
     saveRunState(run);
     setDriver(run, DEAD_PID);
     plantClaudeTranscript(home, 'impl-1', jsonl(claudeUserToolResult({ ts: ago(40 * MIN) })));

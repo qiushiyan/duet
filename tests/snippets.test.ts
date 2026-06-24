@@ -91,7 +91,7 @@ describe('the snippet library', () => {
       'write-spec',
       'review-spec',
       'update-spec',
-      'tdd-plan',
+      'start-plan',
       'review-plan',
       'update-plan',
       'midpoint-status',
@@ -256,7 +256,7 @@ describe('the snippet library', () => {
     expect(rendered).toContain('<snippet key="reread-context">');
     // a later phase: key-only index, not a body
     expect(rendered).toContain('<phase name="plan">');
-    expect(rendered).not.toContain('<snippet key="tdd-plan">');
+    expect(rendered).not.toContain('<snippet key="start-plan">');
     // an earlier phase: listed under done
     expect(rendered).toContain('<already_done>');
     expect(rendered).toContain('think-holistic');
@@ -267,7 +267,7 @@ describe('the snippet library', () => {
   test('all=true renders every body, ungrouped', () => {
     const rendered = renderSnippetLibrary({ phase: 'spec', all: true });
     expect(rendered.startsWith('<snippet_library all="true">')).toBe(true);
-    expect(rendered).toContain('<snippet key="tdd-plan">'); // a non-spec template, in full
+    expect(rendered).toContain('<snippet key="start-plan">'); // a non-spec template, in full
     expect(rendered).toContain('<snippet key="compact-for-plan">'); // even the unlisted one
   });
 
