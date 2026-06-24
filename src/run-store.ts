@@ -164,6 +164,17 @@ export interface RunState {
   sentSnippets?: Partial<Record<PhaseName, Partial<Record<WorkerRole, string[]>>>>;
   /** advance_phase outputs, shown at gates. */
   phaseSummaries: Partial<Record<PhaseName, { summary: string; artifacts: string[]; humanDecisions?: HumanDecision[] }>>;
+  /**
+   * The frozen acceptance contract (the optional consultant's contract feature,
+   * Full arc) — set when the contract gate (plan) is crossed and the consultant
+   * authored a contract file: its repo-relative `path` and the `commit` that
+   * froze it. ADDITIVE and consultant-only: absent on every run with no
+   * consultant bound (and on any run whose authoring did not produce a file), so
+   * the default-off byte-for-byte invariant holds — nothing reads it unless it is
+   * present. The impl verify checkpoint reads it to know there is a frozen target
+   * to verify against (absent ⇒ the checkpoint is a noted skip).
+   */
+  acceptanceContract?: { path: string; commit: string };
 
   /**
    * Persisted hint: which worker has a turn in flight right now, set at a

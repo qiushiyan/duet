@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, vi } from 'vitest';
@@ -1097,15 +1097,97 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
     expect.soft(buildPhaseBrief(run, 'spec').toLowerCase()).not.toContain('consultant');
   });
 
-  test('the impl brief gains the bet-audit step when bound; unbound is clean', ({ run, consultantRun }) => {
-    expect.soft(buildPhaseBrief(consultantRun, 'impl')).toContain('consultant-impl');
-    expect.soft(buildPhaseBrief(consultantRun, 'impl')).toContain('Consultant checkpoint');
+  test('the impl brief VERIFIES the frozen contract when bound + frozen; notes a skip when bound + unfrozen; unbound is clean', ({
+    run,
+    consultantRun,
+  }) => {
+    // Bound + a frozen contract on state → the verify step points at the contract,
+    // names consultant-verify, and routes a failed assertion to a high.
+    consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc123' };
+    const frozen = buildPhaseBrief(consultantRun, 'impl');
+    expect.soft(frozen).toContain('Consultant checkpoint');
+    expect.soft(frozen).toContain('consultant-verify');
+    expect.soft(frozen).toContain('docs/specs/x.acceptance.md');
+    expect.soft(frozen).toContain('high human_decision');
+    expect.soft(frozen).not.toContain('consultant-impl'); // Full's impl verifies, it does not re-run the open-ended audit
+
+    // Bound + no frozen contract → a noted skip, never silent, never a fallback audit.
+    delete consultantRun.acceptanceContract;
+    const unfrozen = buildPhaseBrief(consultantRun, 'impl');
+    expect.soft(unfrozen).toContain('Consultant checkpoint');
+    expect.soft(unfrozen).toContain('no frozen acceptance contract');
+
+    // Unbound → byte-for-byte clean.
     expect.soft(buildPhaseBrief(run, 'impl').toLowerCase()).not.toContain('consultant');
   });
 
-  test('a non-checkpoint phase (plan) never injects, bound or not', ({ run, consultantRun }) => {
-    expect.soft(buildPhaseBrief(consultantRun, 'plan').toLowerCase()).not.toContain('consultant');
+  test('the plan brief AUTHORS the contract when bound (write-not-commit, spec-only, missing→high); unbound is clean', ({
+    run,
+    consultantRun,
+  }) => {
+    // The author step derives the contract path from the spec path; the plan brief
+    // also embeds the spec file, so it must exist on disk in the run's cwd.
+    consultantRun.specPath = 'docs/specs/x.md';
+    mkdirSync(join(consultantRun.cwd, 'docs/specs'), { recursive: true });
+    writeFileSync(join(consultantRun.cwd, 'docs/specs/x.md'), '# spec\n');
+    const bound = buildPhaseBrief(consultantRun, 'plan');
+    expect.soft(bound).toContain('Consultant checkpoint');
+    expect.soft(bound).toContain('consultant-contract');
+    expect.soft(bound).toContain('docs/specs/x.acceptance.md'); // the derived target path
+    expect.soft(bound).toContain('blind to the plan and the code'); // spec-only independence
+    expect.soft(bound).toContain('NOT commit'); // the consultant writes, never commits
+    expect.soft(bound).toContain('human_decision'); // missing-contract → high
+
+    // Unbound → byte-for-byte clean.
     expect.soft(buildPhaseBrief(run, 'plan').toLowerCase()).not.toContain('consultant');
+  });
+});
+
+// Guarantee 1 (no consultant ⇒ byte-for-byte unchanged) and Guarantee 2 (bound ⇒
+// the contract is active author→verify) asserted at the TOOL surface — get_task
+// (the brief the orchestrator actually reads) and list_snippets — not only the
+// buildPhaseBrief helper. The send_prompt schema/identity guarantees are above.
+describe('acceptance contract at the tool altitude (get_task + list_snippets)', () => {
+  test('unbound: get_task for plan and impl carries no contract or consultant text', async ({ run }) => {
+    for (const phase of ['plan', 'impl'] as const) {
+      const { call } = harness(run, { phase });
+      const brief = text(await call('get_task')).toLowerCase();
+      expect.soft(brief, `${phase} brief`).not.toContain('consultant');
+      expect.soft(brief, `${phase} brief`).not.toContain('acceptance contract');
+    }
+  });
+
+  test('bound: get_task for plan AUTHORS the contract through the tool', async ({ consultantRun }) => {
+    consultantRun.specPath = 'docs/specs/x.md';
+    mkdirSync(join(consultantRun.cwd, 'docs/specs'), { recursive: true });
+    writeFileSync(join(consultantRun.cwd, 'docs/specs/x.md'), '# spec\n');
+    const { call } = harness(consultantRun, { phase: 'plan', consultant: new FakeWorker('claude') });
+
+    const brief = text(await call('get_task'));
+
+    expect.soft(brief).toContain('consultant-contract');
+    expect.soft(brief).toContain('docs/specs/x.acceptance.md'); // the derived target
+    expect.soft(brief).toContain('NOT commit'); // write-not-commit
+  });
+
+  test('bound: get_task for impl VERIFIES the frozen contract through the tool', async ({ consultantRun }) => {
+    consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'deadbeef' };
+    saveRunState(consultantRun);
+    const { call } = harness(consultantRun, { phase: 'impl', consultant: new FakeWorker('claude') });
+
+    const brief = text(await call('get_task'));
+
+    expect.soft(brief).toContain('consultant-verify');
+    expect.soft(brief).toContain('docs/specs/x.acceptance.md'); // the frozen ref
+    expect.soft(brief).toContain('high human_decision'); // a failed assertion holds the crossing
+  });
+
+  test('bound: list_snippets surfaces the contract checkpoint snippet in its owning phase', async ({ consultantRun }) => {
+    const consultant = new FakeWorker('claude');
+    const atPlan = text(await harness(consultantRun, { phase: 'plan', consultant }).call('list_snippets'));
+    expect.soft(atPlan).toContain('<snippet key="consultant-contract">');
+    const atImpl = text(await harness(consultantRun, { phase: 'impl', consultant }).call('list_snippets'));
+    expect.soft(atImpl).toContain('<snippet key="consultant-verify">');
   });
 });
 

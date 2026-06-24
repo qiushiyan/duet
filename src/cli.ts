@@ -15,6 +15,7 @@ import {
   crossInteractive,
   driveToQuiescence,
   enterAfk,
+  freezeContractAt,
   interactiveContinueAction,
   killDriver,
   probeRunPosition,
@@ -462,7 +463,7 @@ program
   )
   .argument('[preset]', 'a workflow gates_at preset or phase list for the downstream posture (bare = attend none)')
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
-  .action((preset: string | undefined, runId: string | undefined) => {
+  .action(async (preset: string | undefined, runId: string | undefined) => {
     const cwd = process.cwd();
     // `duet afk <runId>` (bare posture, specific run) and `duet afk <preset>`
     // (posture, latest run) share the first positional — resolveAfkArgs sorts it.
@@ -474,7 +475,7 @@ program
       // Bare afk → the empty "attend none" posture; a named arg → an existing
       // preset/list (no new presets). parseGatesAt validates against the workflow.
       const posture = presetArg ? parseGatesAt(presetArg, workflowOf(state)) : [];
-      split = enterAfk(state, posture);
+      split = await enterAfk(state, posture);
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
     }
@@ -605,6 +606,9 @@ program
 
       // Validation passed, so the position is a gate or flag — both carry a phase.
       if (position.kind !== 'gate' && position.kind !== 'flag') return;
+      // Freeze the acceptance contract before an approve crosses the contract gate
+      // (the human ratifies it by approving) — no-op at every other gate/event.
+      if (eventType === 'approve') await freezeContractAt(state, position.phase);
       const action = interactiveContinueAction(workflowOf(state), position.phase, eventType, Boolean(opts.headless));
       crossInteractive(state, { type: `human.${eventType}` });
 
