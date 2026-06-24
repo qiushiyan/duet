@@ -268,11 +268,11 @@ describe('the snippet library', () => {
       expect.soft(atFrame).not.toContain('<snippet key="consultant-verify">');
     });
 
-    test('bound: all=true exposes the consultant bodies', () => {
+    test('bound: all=true exposes every consultant body', () => {
       const rendered = renderSnippetLibrary({ phase: 'spec', all: true, consultantBound: true });
-      expect.soft(rendered).toContain('<snippet key="consultant-frame">');
-      expect.soft(rendered).toContain('<snippet key="consultant-spec">');
-      expect.soft(rendered).toContain('<snippet key="consultant-impl">');
+      for (const key of ['consultant-frame', 'consultant-spec', 'consultant-impl', 'consultant-contract', 'consultant-verify']) {
+        expect.soft(rendered).toContain(`<snippet key="${key}">`);
+      }
     });
 
     test('bound: a RIR phase shows only its arc’s checkpoints (no spec checkpoint — RIR has no spec)', () => {

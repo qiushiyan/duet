@@ -244,9 +244,10 @@ Branch: the run works on exactly one branch, fixed before your first worker prom
  * two-analysis text byte-for-byte; bound returns a three-send / three-voice
  * shape. The snippet name comes from the registry (consultantSnippetFor).
  *
- * The two critical-mode injections (spec/impl, consultantAuditStep below) stay
- * append-style: there the audit is its own gate-adjacent step, not a rewrite of
- * an existing one.
+ * The critical/contract-mode injections (consultantAuditStep for spec and rir's
+ * implement; consultantContractStep at plan; consultantVerifyStep at impl — all
+ * below) stay append-style: there the checkpoint is its own gate-adjacent step,
+ * not a rewrite of an existing one.
  */
 function analysisSendStep(state: RunState, phase: PhaseName): string {
   const snippet = consultantSnippetFor(phase);
