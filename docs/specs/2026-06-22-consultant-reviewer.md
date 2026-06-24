@@ -369,17 +369,6 @@ safety here** — not process death: a worktree that can't be corrupted is the
 guarantee. (For the headless Claude transport execa's child cleanup also kills the
 orphaned worker when its server dies, but that is a per-provider detail, not the rule.)
 
-> **Amendment (acceptance contract, 2026-06-24).** One checkpoint — the `contract`
-> author at the plan phase (full arc) — *writes* a file, so it is not strictly
-> read-only. The premise still holds, by two facts: the consultant **never commits**
-> (it writes only an uncommitted working-tree file at a fixed path — duet commits it
-> at the freeze gate via `freezeContractAt`), so an orphaned author leaves at worst an
-> overwrite-on-reseed working-tree file and touches no git history; and the author
-> checkpoint runs only where a human is present (the interactive plan phase) or as a
-> *blocking* headless turn (no `pendingTurns` orphan path at all). The AFK `verify`
-> checkpoint stays non-writing (execute-to-observe). So discard-and-reseed's
-> corruption-free guarantee is preserved exactly where it is load-bearing — unattended.
-
 So the consultant's `orphan` policy is **discard-and-reseed**, and the two resolutions
 are concrete:
 
