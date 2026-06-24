@@ -139,6 +139,35 @@ That's the only config duet has — role-to-provider bindings plus billing postu
 - **Consultant (optional, off by default).** Add `[roles.consultant]`, or pass `--consultant <provider[:model]>` per run, for a second, read-only reviewer that questions the *bet* (assumptions, product fit) rather than the build — ideally on a different model family from your reviewer, which is the point. `--no-consultant` disables a configured one for a single run. On the full arc it also authors an **acceptance contract** — a short, frozen list of falsifiable assertions of what success means, written blind to the plan, which you ratify at the plan gate and a fresh session verifies against the built system before the Ship gate.
 - **Interactive implementer transport (advanced, experimental).** Add `transport = "interactive"` under `[roles.implementer]` to drive the interactive `claude` TUI instead of headless `claude -p`, so its turns bill your flat subscription quota rather than the metered credit pool. tmux-driven, implementer-only, pending one live-auth check — see [`docs/interactive-transport.md`](docs/interactive-transport.md).
 
+## Customizing the snippets
+
+The snippets are the prompts the orchestrator sends the workers — they *are* the workflow. duet ships an opinionated set (detailed specs, TDD-shaped planning); you can reshape it without forking, at two grains.
+
+**The coarse knob — swap the methodology.** The two planning snippets cite duet's vendored TDD and architecture skills through a `{{skills_dir}}` token. Point that at your own methodology skill and one swap shifts how the whole plan phase reasons — the coherent, low-effort way to change duet's *opinion* without editing individual prompts.
+
+**The fine knob — override a snippet.** Replace any single snippet's body, by key, from two optional files layered over the shipped defaults:
+
+| Layer | File | Scope |
+|---|---|---|
+| user | `~/.config/duet/snippets.toml` | you, every project |
+| project | `<repo>/.duet/snippets.toml` | one repo |
+
+Both use the shipped library's `[[snippets]]` schema (`key` + `expand`). Precedence is **shipped → user → project**, last-wins per key; an override replaces a snippet's *whole* body (no partial patching). The headline targets are the generative drafts — `write-spec`, `start-plan`, `implement-direct` — which write the *first* artifact of each phase, so customizing them reshapes everything downstream.
+
+- **Fail-closed.** An override naming a key that isn't in the shipped library is a hard error — naming the file and the bad key, so a typo can't silently vanish.
+- **Invisible when unused.** With no override files present, the served library is byte-for-byte the shipped one; overriding is opt-out, and a run with no overrides behaves exactly as before.
+- **Inspect it.** `duet snippets` lists every key and the layer it resolves from; `duet snippets show <key>` prints the effective body.
+- **Commit a project override** by carving `!/snippets.toml` into the repo's `.duet/.gitignore` (the same move `.duet/templates/` uses); without that line, `.duet/` ignores it like other run artifacts.
+
+**Override at your own cost.** The surface is unrestricted on purpose — every key is overridable, including the ones below — but a few snippets are load-bearing for duet's safety machinery, and a weaker version quietly weakens the guardrail:
+
+- `consultant-contract` / `consultant-verify` carry the acceptance-contract pair; softening them degrades the falsifiable-success check a fresh session runs before the Ship gate.
+- The gate-adjacent prompts — the severity wording the consultant assigns, the `implementation-handoff` that frames the final review — shape what reaches a human gate.
+
+The *structural* gates are code and can't be forged from a prompt; what an override can erode is the *quality of the signal* feeding a gate decision. Override these knowingly.
+
+**Framing stays primary.** A snippet override customizes the *tool* — it's the same kind of artifact as duet's own shipped library — not your project. It is **not** the place to tell duet about your codebase; that is the framing's job, the single project-knowledge seam. The project layer is a deliberate, opt-in, at-your-own-cost secondary channel, nothing more.
+
 ## Going deeper
 
 The `docs/` folder is the real design record. Suggested reading order:

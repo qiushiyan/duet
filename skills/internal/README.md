@@ -3,7 +3,7 @@
 These are **vendored snapshots**, not authored here. They are duet's quality
 opinion for the PLAN phase — what counts as good implementation (TDD discipline)
 and good design (deep modules, seams, the deletion test). The two PLAN snippets
-in `snippets.toml` (`tdd-plan`, `review-plan`) cite them by a `{{skills_dir}}/…`
+in `snippets.toml` (`start-plan`, `review-plan`) cite them by a `{{skills_dir}}/…`
 path that `src/snippets.ts` resolves to this directory at serve time, so a
 worker on any install reads the real files, not a path on the author's machine.
 They ship in the npm package (`package.json` `files` includes `skills`).
