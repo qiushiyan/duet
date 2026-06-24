@@ -9,12 +9,13 @@ import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
 import { bindingFor, loadRunConfig } from './config.ts';
 import type { BindableRole } from './config.ts';
 import { sessionPolicyFor, voicesFor } from './roles.ts';
-import { DEFAULT_FRAMING_FILE, parseGatesAt, resolveHumanText, resolveRunInputs } from './framing.ts';
+import { DEFAULT_FRAMING_FILE, composeInEditor, parseGatesAt, resolveHumanText, resolveRunInputs } from './framing.ts';
 import {
   aliveDriverPid,
   crossInteractive,
   driveToQuiescence,
   enterAfk,
+  freezeContractAt,
   interactiveContinueAction,
   killDriver,
   probeRunPosition,
@@ -342,10 +343,10 @@ async function resolveDecisionText(
   inline: string | boolean | undefined,
   file: string | undefined,
   instructions: string,
-  io: { isTTY: boolean; readStdin: () => Promise<string> },
+  io: { isTTY: boolean; readStdin: () => Promise<string>; compose: (instructions: string) => Promise<string> },
 ): Promise<string | undefined> {
   if (file !== undefined) return file === '-' ? io.readStdin() : readDecisionFile(file);
-  return resolveHumanText(inline, instructions, { isTTY: io.isTTY });
+  return resolveHumanText(inline, instructions, { isTTY: io.isTTY, compose: io.compose });
 }
 
 /**
@@ -359,14 +360,20 @@ async function resolveDecisionText(
  * off one, naming the inline/file/stdin forms). Approve's rider is *optional*,
  * so a bare `--approve` means "no rider" — the editor is opt-in via `--edit`
  * (which FAILS FAST off a TTY rather than silently approving with no rider).
- * `io` is the environment seam (injectable isTTY + stdin reader) for tests.
+ * `io` is the environment seam for tests: injectable isTTY, stdin reader, and
+ * editor launcher (`compose`) — so a test exercises the editor path without
+ * spawning an editor child.
  */
 export async function stageContinueText(
   state: RunState,
   opts: ContinueTextOpts,
-  io: { isTTY?: boolean; readStdin?: () => Promise<string> } = {},
+  io: { isTTY?: boolean; readStdin?: () => Promise<string>; compose?: (instructions: string) => Promise<string> } = {},
 ): Promise<void> {
-  const env = { isTTY: io.isTTY ?? Boolean(process.stdin.isTTY), readStdin: io.readStdin ?? readAllStdin };
+  const env = {
+    isTTY: io.isTTY ?? Boolean(process.stdin.isTTY),
+    readStdin: io.readStdin ?? readAllStdin,
+    compose: io.compose ?? composeInEditor,
+  };
 
   // One source per intent — mixing the inline flag with its file form is almost
   // always a mistake, so fail fast rather than silently pick one (consistent
@@ -462,7 +469,7 @@ program
   )
   .argument('[preset]', 'a workflow gates_at preset or phase list for the downstream posture (bare = attend none)')
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
-  .action((preset: string | undefined, runId: string | undefined) => {
+  .action(async (preset: string | undefined, runId: string | undefined) => {
     const cwd = process.cwd();
     // `duet afk <runId>` (bare posture, specific run) and `duet afk <preset>`
     // (posture, latest run) share the first positional — resolveAfkArgs sorts it.
@@ -474,7 +481,7 @@ program
       // Bare afk → the empty "attend none" posture; a named arg → an existing
       // preset/list (no new presets). parseGatesAt validates against the workflow.
       const posture = presetArg ? parseGatesAt(presetArg, workflowOf(state)) : [];
-      split = enterAfk(state, posture);
+      split = await enterAfk(state, posture);
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
     }
@@ -605,6 +612,9 @@ program
 
       // Validation passed, so the position is a gate or flag — both carry a phase.
       if (position.kind !== 'gate' && position.kind !== 'flag') return;
+      // Freeze the acceptance contract before an approve crosses the contract gate
+      // (the human ratifies it by approving) — no-op at every other gate/event.
+      if (eventType === 'approve') await freezeContractAt(state, position.phase);
       const action = interactiveContinueAction(workflowOf(state), position.phase, eventType, Boolean(opts.headless));
       crossInteractive(state, { type: `human.${eventType}` });
 

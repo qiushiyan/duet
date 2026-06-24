@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PHASE, consultantSnippetFor } from '../phases.ts';
-import type { GatePhase, PhaseName } from '../phases.ts';
+import { PHASE, acceptanceContractPathForSpec, consultantSnippetFor, contractAuthorPhaseOf } from '../phases.ts';
+import type { GatePhase, PhaseName, WorkflowName } from '../phases.ts';
 import { workerRolesFor } from '../roles.ts';
-import { gateAttended } from '../run-store.ts';
+import { gateAttended, workflowOf } from '../run-store.ts';
 import type { RunState, Steer } from '../run-store.ts';
 
 /**
@@ -117,15 +117,39 @@ export const CONSULTANT_IDENTITY_CLAUSE = `## The consultant
 This run also binds a consultant — an optional third voice the workflow consults at specific gate-adjacent checkpoints (your phase brief names exactly when and how). It is read-only and ephemeral: a fresh, low-context session each time, carrying no run history, so it questions the bet (assumptions, product fit) rather than the build. It is additive, never substitutive — it never stands in for a reviewer round, and its findings inform a direction or a gate packet, they do not by themselves hold a gate. The implementer and reviewer remain the persistent spine described above.`;
 
 /**
+ * The acceptance-contract addendum to the consultant clause — appended ONLY for an
+ * arc that authors a contract (full: the `contract`/`verify` checkpoints). An arc
+ * without them (rir) never sees it, so a bound rir run's identity is byte-for-byte
+ * the base clause above — the contract feature does not leak into the arc that
+ * deferred it. It narrows "read-only" for the two checkpoints that relax it.
+ */
+const CONSULTANT_CONTRACT_CLAUSE = `On this arc, two of those checkpoints relax read-only by a precise, scoped amount, named in your phase brief: at one your brief has the consultant author the acceptance contract (it writes that one file, never commits), and at another it runs the built system to gather evidence (execute-to-observe — never editing or committing). Everywhere else it only reads and judges.`;
+
+/**
+ * The consultant clause for a run's arc — the base clause, plus the contract
+ * addendum only when the arc authors a contract (full). The single source BOTH
+ * hosts use when a consultant is bound: the headless system prompt
+ * (`orchestratorSystemPrompt`), and the interactive identity the launcher composes
+ * into the run-dir file (`orchestrate.ts`). Arc-scoped so rir stays byte-for-byte.
+ */
+export function consultantIdentityClause(workflow: WorkflowName): string {
+  return contractAuthorPhaseOf(workflow)
+    ? `${CONSULTANT_IDENTITY_CLAUSE}\n\n${CONSULTANT_CONTRACT_CLAUSE}`
+    : CONSULTANT_IDENTITY_CLAUSE;
+}
+
+/**
  * The headless orchestrator's system prompt for a run — the base prompt, plus
- * the consultant clause only when one is bound. Unbound it returns
+ * the arc's consultant clause only when one is bound. Unbound it returns
  * ORCHESTRATOR_SYSTEM_PROMPT verbatim (the default-off byte-for-byte). The
  * interactive host gains the same clause by a different route — the launcher
  * composes it onto the shipped identity file it feeds (`orchestrate.ts`) — so
  * both hosts' identities match when bound and are unchanged when not.
  */
 export function orchestratorSystemPrompt(state: RunState): string {
-  return state.bindings.consultant ? `${ORCHESTRATOR_SYSTEM_PROMPT}\n\n${CONSULTANT_IDENTITY_CLAUSE}` : ORCHESTRATOR_SYSTEM_PROMPT;
+  return state.bindings.consultant
+    ? `${ORCHESTRATOR_SYSTEM_PROMPT}\n\n${consultantIdentityClause(workflowOf(state))}`
+    : ORCHESTRATOR_SYSTEM_PROMPT;
 }
 
 /**
@@ -244,9 +268,10 @@ Branch: the run works on exactly one branch, fixed before your first worker prom
  * two-analysis text byte-for-byte; bound returns a three-send / three-voice
  * shape. The snippet name comes from the registry (consultantSnippetFor).
  *
- * The two critical-mode injections (spec/impl, consultantAuditStep below) stay
- * append-style: there the audit is its own gate-adjacent step, not a rewrite of
- * an existing one.
+ * The critical/contract-mode injections (consultantAuditStep for spec and rir's
+ * implement; consultantContractStep at plan; consultantVerifyStep at impl — all
+ * below) stay append-style: there the checkpoint is its own gate-adjacent step,
+ * not a rewrite of an existing one.
  */
 function analysisSendStep(state: RunState, phase: PhaseName): string {
   const snippet = consultantSnippetFor(phase);
@@ -273,6 +298,46 @@ function consultantAuditStep(state: RunState, phase: PhaseName, seedNote: string
   return `
 
 Consultant checkpoint (the consultant is bound for this run): before you advance, run its bet audit. Send the consultant a ${snippet} prompt — a fresh, ephemeral, read-only session, so curate what it sees rather than pointing it at the run's history: ${seedNote} Fold its raw findings into your advance_phase summary, and echo each finding's consultant-assigned severity into advance_phase's human_decisions — record them, never re-grade (you do triage, not opinion). "The bet is sound — ship" is a first-class outcome; a documented tradeoff is by-design, not a finding.`;
+}
+
+/**
+ * The acceptance-contract AUTHOR injection (Full's plan). Placed EARLY — right
+ * after the spec commit and before any plan drafting — so a compliant orchestrator
+ * dispatches it before its own session has seen the plan: the consultant's
+ * blindness rests on spec-only seeding AND on the orchestrator not yet holding plan
+ * context when it composes the prompt. The consultant writes (never commits) the
+ * file; duet freezes it at the plan-gate crossing. Empty unless a consultant is
+ * bound AND a spec path is known (the contract location derives from it).
+ */
+function consultantContractStep(state: RunState): string {
+  const snippet = consultantSnippetFor('plan');
+  if (!state.bindings.consultant || !snippet || !state.specPath) return '';
+  const path = acceptanceContractPathForSpec(state.specPath);
+  return `
+
+Consultant checkpoint — author the acceptance contract (the consultant is bound for this run): do this NOW — immediately after the spec commit and BEFORE you draft or review the plan — so the consultant authors blind to the plan and the code. Send it a ${snippet} prompt as its own independent dispatch (never folded into a plan prompt); it runs concurrently, so do not wait for it before starting the plan loop. It authors a short, frozen list of falsifiable behavioral assertions pinning what success MEANS: the runtime behavior that would drift from the ratified spec in ways the implementer's own tests would miss. Seed it with the committed spec ONLY (${state.specPath}); never put any plan or implementation detail into its prompt — that blindness is what makes the contract independent. Have it write the contract to ${path} and NOT commit it (duet freezes it when you cross the plan gate). The consultant is ephemeral and never counts a review round. At advance_phase, list ${path} among the artifacts so the human ratifies the contract by approving the plan; if the consultant could not author one, record a high human_decision ("acceptance contract not authored — proceeding freezes no target"). The plan gate will not advance without an authored contract or that high.`;
+}
+
+/**
+ * The acceptance-contract VERIFY injection (Full's impl) — supplants the
+ * open-ended implGate bet audit there. A fresh session re-reads the FROZEN
+ * contract and verifies it by exercising the built system. Absent a frozen
+ * contract (authoring failed and the human proceeded anyway), it degrades to a
+ * noted skip — never silently, and never a fallback audit. Empty when no
+ * consultant is bound.
+ */
+function consultantVerifyStep(state: RunState): string {
+  const snippet = consultantSnippetFor('impl');
+  if (!state.bindings.consultant || !snippet) return '';
+  if (!state.acceptanceContract) {
+    return `
+
+Consultant checkpoint — no frozen acceptance contract exists for this run (none was authored at the plan phase), so there is nothing to verify: skip the consultant here and note in your advance_phase packet that the implementation shipped without a frozen contract to verify against.`;
+  }
+  const { path } = state.acceptanceContract;
+  return `
+
+Consultant checkpoint — verify the frozen acceptance contract (the consultant is bound for this run): before you advance, send the consultant a ${snippet} prompt over a fresh, ephemeral, read-only session. Point it at the frozen contract at ${path} (committed and ratified at the plan gate): it re-reads each assertion, exercises the BUILT system to gather evidence (run the tests, run the CLI, read logs — never edit or commit), and returns a per-assertion PASS/FAIL with the evidence it cited. Record each FAILED assertion as its own high human_decision (titled by the assertion) — a failed contract assertion is load-bearing AFK protection: it holds the pre-authorized Ship auto-cross and a one-tap afk handoff, so the run stops for the human rather than shipping past a broken target. Fold the per-assertion results and any residual concerns into your advance_phase summary. "Every assertion holds — ship" is a first-class expected outcome.`;
 }
 
 function documentsBlock(state: RunState): string {
@@ -366,7 +431,7 @@ ${approvalClause(
     'The commit-spec gate was pre-authorized at run start and auto-crossed — the spec stands approved as converged.',
   )} Run the PLAN phase:
 ${attendancePosture(state, 'plan')}
-1. Have the implementer commit the approved spec file (${specRef}) with a conventional message, as its own commit.
+1. Have the implementer commit the approved spec file (${specRef}) with a conventional message, as its own commit.${consultantContractStep(state)}
 2. Decide where the plan file lives: the framing names the project's plan location (path or directory convention). The plan must be a file in the repo — implementation may compact the implementer's context, and the plan file is what later turns re-anchor on. If the framing doesn't name a plan location, ask_human for one before drafting.
 3. Send the implementer a planning prompt based on the tdd-plan snippet. The implementer writes the plan to the file and reports it.
 4. Run the plan review loop: review-plan to the reviewer (point it at the plan file's path as well as the content), update-plan to the implementer, -again variants for later rounds. Plans are reviewable at a finer altitude than specs — test cases, fixtures, and line-level references are fair game; only full code bodies are deferred.
@@ -417,7 +482,7 @@ The arc:
 4. Insert a midpoint checkpoint only when the implementation is genuinely large — more than roughly six slices is a rough signal, but judge by the real size and structural risk, not the count. Its whole value is catching a foundational problem while many slices still remain for the correction to save; a small or moderate plan has too little left to pay for the extra turns, so skip it and run straight to the handoff. When you do run it, run it exactly once: have the implementer stop at a sensible point partway (around the first third to half), then midpoint-status → review-midpoint → respond-midpoint. The reviewer weights foundational problems highest — they compound across every remaining slice — and treats unreached slices as intentionally undone, not missing. The implementer then triages the points into fix-now / fold-into-the-remaining-slices / disagree, applies the fix-now items, and continues to the end — folding the rest of the guidance into the remaining slices as it goes. It does not pause again; the next stop is the handoff.
 5. ${reviewCompactionStep}
 6. When all slices are in: implementation-handoff from the implementer, then the review loop — review-implementation to the reviewer, respond-review to the implementer, -again variants for later rounds, fix commits as they're accepted. The backstop cap for this phase is ${roundCap} review rounds; converge well before it.
-7. Last act, after the loop converges: send the implementer ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review history (rounds run, points raised, resolved, disputed), deviations from the plan, and the test state. The human returns from hours away and decides to ship from this packet alone — make it carry everything.${consultantAuditStep(state, 'impl', "the settled spec, the by-design decisions, and the consultant's own prior spec-checkpoint findings — not the raw build or review traffic.")}
+7. Last act, after the loop converges: send the implementer ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review history (rounds run, points raised, resolved, disputed), deviations from the plan, and the test state. The human returns from hours away and decides to ship from this packet alone — make it carry everything.${consultantVerifyStep(state)}
 
 Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
 

@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { execa } from 'execa';
 import { describe, expect } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { createActor, fromCallback } from 'xstate';
@@ -14,15 +15,17 @@ import {
   crossInteractive,
   driveToQuiescence,
   enterAfk,
+  freezeContractAt,
   interactiveContinueAction,
   probeRunPosition,
   validateInteractiveCrossing,
   waitForRunStop,
   waitForTurnOrStop,
 } from '../src/harness/lifecycle.ts';
+import { acceptanceContractPathForSpec } from '../src/phases.ts';
 import { createRun, gateAttended, loadMachineSnapshot, loadRunState, markAbandoned, runDirOf, saveMachineSnapshot, saveRunState, stageHumanInput } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
-import { test } from './helpers/fixtures.ts';
+import { consultantBindings, test } from './helpers/fixtures.ts';
 import { scriptedMachine } from './helpers/scripted-machine.ts';
 
 /**
@@ -768,14 +771,14 @@ describe('enterAfk — the mid-session AFK handoff (#1)', () => {
     return parked;
   };
 
-  test('from an ATTENDED interactive gate: sets the posture, crosses the gate, clears the interactive marker', ({
+  test('from an ATTENDED interactive gate: sets the posture, crosses the gate, clears the interactive marker', async ({
     projectDir,
     interactiveRun,
   }) => {
     const parked = atFrameGate(projectDir, interactiveRun);
     expect.soft(probeRunPosition(parked)).toEqual({ kind: 'gate', phase: 'frame' });
 
-    const split = enterAfk(parked, ['spec']);
+    const split = await enterAfk(parked, ['spec']);
 
     const persisted = loadRunState(projectDir, interactiveRun.runId);
     expect.soft(persisted.gatesAt).toEqual(['spec']); // downstream posture re-set
@@ -785,7 +788,7 @@ describe('enterAfk — the mid-session AFK handoff (#1)', () => {
     expect.soft(split.preAuthorized).toEqual(['frame', 'plan', 'impl', 'pr']);
   });
 
-  test('is legal at a PRE-AUTHORIZED interactive gate — legality keys on the gate position, not gateAttended (the F1 case)', ({
+  test('is legal at a PRE-AUTHORIZED interactive gate — legality keys on the gate position, not gateAttended (the F1 case)', async ({
     projectDir,
     interactiveRun,
   }) => {
@@ -795,11 +798,11 @@ describe('enterAfk — the mid-session AFK handoff (#1)', () => {
     saveRunState(parked);
     expect.soft(gateAttended(parked, 'frame')).toBe(false); // pre-authorized, yet still an AFK position
 
-    expect(() => enterAfk(parked, [])).not.toThrow();
+    await expect(enterAfk(parked, [])).resolves.toBeDefined();
     expect.soft(loadRunState(projectDir, interactiveRun.runId).orchestrationHost).toBeUndefined();
   });
 
-  test('refuses when not parked at a gate (a flag) and when the run is not interactive', ({
+  test('refuses when not parked at a gate (a flag) and when the run is not interactive', async ({
     projectDir,
     interactiveRun,
     run,
@@ -807,18 +810,18 @@ describe('enterAfk — the mid-session AFK handoff (#1)', () => {
     const flagged = loadRunState(projectDir, interactiveRun.runId);
     flagged.terminalMarker = { phase: 'frame', kind: 'flag' };
     saveRunState(flagged);
-    expect.soft(() => enterAfk(flagged, [])).toThrow(/queued question|gate/);
+    await expect.soft(enterAfk(flagged, [])).rejects.toThrow(/queued question|gate/);
 
     // A headless run (no interactive marker) is already unattended — refused.
-    expect.soft(() => enterAfk(run, [])).toThrow(/not orchestrated interactively/);
+    await expect.soft(enterAfk(run, [])).rejects.toThrow(/not orchestrated interactively/);
   });
 
-  test('the posture survives a co-staged approval rider (the stale-save guard)', ({ projectDir, interactiveRun }) => {
+  test('the posture survives a co-staged approval rider (the stale-save guard)', async ({ projectDir, interactiveRun }) => {
     const parked = atFrameGate(projectDir, interactiveRun);
     // The hazard: setGatesAt then a whole-state save (a staged rider) must not
     // clobber the posture — setGatesAt syncs the passed copy, so the rider save
     // carries the new gatesAt forward.
-    enterAfk(parked, ['spec', 'plan']);
+    await enterAfk(parked, ['spec', 'plan']);
     stageHumanInput(parked, { kind: 'approval', text: 'take it the rest of the way' });
 
     const persisted = loadRunState(projectDir, interactiveRun.runId);
@@ -863,14 +866,39 @@ describe('the severity hold — a high human decision withholds a NON-EXPLICIT c
     expect.soft(notifications.join('\n')).toContain('auto-approved');
   });
 
-  test('enterAfk REFUSES handoff over a high, directing to the explicit substitute', ({ projectDir, interactiveRun }) => {
+  test('a failed-contract high at the SHIP gate holds the pre-authorized auto-cross — the contract is load-bearing AFK protection', async ({
+    run,
+    projectDir,
+  }) => {
+    // A consultant-verify FAILURE lands as a high in the impl (Ship) packet. Under
+    // an overnight posture (everything pre-authorized) it must convert the Ship
+    // auto-cross into an attended stop, not ship past a broken target.
+    run.gatesAt = []; // attend nothing — frame/spec/plan/impl all pre-authorized
+    run.phaseSummaries.impl = {
+      summary: 'shipped',
+      artifacts: [],
+      humanDecisions: [{ title: 'contract assertion A3 failed: bad-password login returns 500, not 401', severity: 'high' }],
+    };
+    saveRunState(run);
+    const { machine } = scriptedMachine([advanced, advanced, advanced, advanced]);
+    const { notify, notifications } = recordingNotify();
+
+    const stop = await driveToQuiescence(run, undefined, { machine, notify });
+
+    expect.soft(stop.snapshot.value).toBe('shipGate'); // held at Ship, not auto-crossed onward
+    expect.soft(loadRunState(projectDir, run.runId).autoApprovals?.some((a) => a.gate === 'shipGate')).toBeFalsy();
+    expect.soft(notifications.join('\n')).toContain('held');
+    expect.soft(notifications.join('\n')).toContain('A3 failed');
+  });
+
+  test('enterAfk REFUSES handoff over a high, directing to the explicit substitute', async ({ projectDir, interactiveRun }) => {
     const parked = loadRunState(projectDir, interactiveRun.runId);
     parked.terminalMarker = { phase: 'frame', kind: 'advance' };
     parked.phaseSummaries.frame = { summary: 's', artifacts: [], humanDecisions: [{ title: 'pricing model', severity: 'high' }] };
     saveRunState(parked);
 
-    expect.soft(() => enterAfk(parked, [])).toThrow(/--approve --headless/);
-    expect.soft(() => enterAfk(parked, [])).toThrow(/pricing model/);
+    await expect.soft(enterAfk(parked, [])).rejects.toThrow(/--approve --headless/);
+    await expect.soft(enterAfk(parked, [])).rejects.toThrow(/pricing model/);
     // Not handed off — still interactive.
     expect.soft(loadRunState(projectDir, interactiveRun.runId).orchestrationHost).toBe('interactive');
   });
@@ -886,5 +914,155 @@ describe('the severity hold — a high human decision withholds a NON-EXPLICIT c
 
     crossInteractive(parked, { type: 'human.approve' }); // never consults the severity hold
     expect(probeRunPosition(loadRunState(projectDir, interactiveRun.runId))).toEqual({ kind: 'interactive', phase: 'spec' });
+  });
+});
+
+describe('freezeContractAt — the acceptance contract freeze at the contract gate', () => {
+  const quiet = async () => {};
+
+  const initGit = async (dir: string): Promise<void> => {
+    await execa('git', ['init', '-q'], { cwd: dir });
+    await execa('git', ['config', 'user.email', 'duet-test@example.com'], { cwd: dir });
+    await execa('git', ['config', 'user.name', 'duet test'], { cwd: dir });
+    writeFileSync(join(dir, 'README.md'), '# repo\n');
+    await execa('git', ['add', '-A'], { cwd: dir });
+    await execa('git', ['commit', '-qm', 'initial'], { cwd: dir });
+  };
+
+  const headOf = async (dir: string): Promise<string> =>
+    (await execa('git', ['rev-parse', 'HEAD'], { cwd: dir })).stdout.trim();
+  // In HEAD's committed tree — the precise "did the freeze commit it" check (a
+  // staged-but-uncommitted file would be `git ls-files`-tracked but not `inHead`).
+  const inHead = async (dir: string, path: string): Promise<boolean> =>
+    (await execa('git', ['ls-tree', '-r', '--name-only', 'HEAD'], { cwd: dir })).stdout.split('\n').includes(path);
+
+  /**
+   * A consultant-bound Full run with a committed spec and an AUTHORED-but-
+   * uncommitted contract file — the consultant writes, never commits, so the
+   * working tree at the plan gate is exactly what freeze must commit. A `draft`
+   * marker (set in production by settleTurn when the consultant's contract turn
+   * settles) is the authorship proof freeze now requires; `draft: false` models a
+   * stale/pre-existing file this run never authored.
+   */
+  const contractRun = async (
+    projectDir: string,
+    opts: { consultant?: boolean; writeContract?: boolean; draft?: boolean } = {},
+  ): Promise<{ state: RunState; specPath: string; contractPath: string }> => {
+    await initGit(projectDir);
+    const specPath = 'docs/specs/test.md';
+    mkdirSync(join(projectDir, 'docs/specs'), { recursive: true });
+    writeFileSync(join(projectDir, specPath), '# spec\n');
+    await execa('git', ['add', '--', specPath], { cwd: projectDir });
+    await execa('git', ['commit', '-qm', 'spec'], { cwd: projectDir });
+    const state = createRun({
+      cwd: projectDir,
+      bindings: opts.consultant === false ? DEFAULT_BINDINGS : consultantBindings,
+      framing: 'f',
+      specPath,
+    });
+    const contractPath = acceptanceContractPathForSpec(specPath);
+    if (opts.writeContract !== false) {
+      writeFileSync(join(projectDir, contractPath), '[A1] When X, the system SHALL Y.\n  Verify by: run the tests\n');
+    }
+    if (opts.draft !== false && opts.consultant !== false) {
+      state.acceptanceContractDraft = { path: contractPath, sessionId: 'c-author', authoredAt: '2026-06-24T00:00:00.000Z' };
+      saveRunState(state);
+    }
+    return { state, specPath, contractPath };
+  };
+
+  test('commits the authored contract path-scoped and records {path, commit}', async ({ projectDir }) => {
+    const { state, contractPath } = await contractRun(projectDir);
+    // An in-progress plan in the same worktree must NOT be swept into the commit —
+    // even when the implementer has STAGED it (the harder case than merely untracked).
+    const planPath = 'docs/plan.md';
+    writeFileSync(join(projectDir, planPath), '# plan WIP\n');
+    await execa('git', ['add', '--', planPath], { cwd: projectDir });
+
+    await freezeContractAt(state, 'plan');
+
+    const head = await headOf(projectDir);
+    expect.soft(state.acceptanceContract).toEqual({ path: contractPath, commit: head });
+    // The freeze commit touched ONLY the contract file.
+    const changed = (await execa('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: projectDir })).stdout.trim();
+    expect.soft(changed).toBe(contractPath);
+    // The staged plan is NOT in the freeze commit, so it survives for impl's own commit.
+    expect.soft(await inHead(projectDir, planPath)).toBe(false);
+    expect.soft(await inHead(projectDir, contractPath)).toBe(true);
+    // Persisted to disk, not only the in-memory ref.
+    expect.soft(loadRunState(projectDir, state.runId).acceptanceContract?.commit).toBe(head);
+  });
+
+  test('no-ops when no consultant is bound (default-off byte-for-byte)', async ({ projectDir }) => {
+    const { state } = await contractRun(projectDir, { consultant: false });
+    const head = await headOf(projectDir);
+
+    await freezeContractAt(state, 'plan');
+
+    expect.soft(state.acceptanceContract).toBeUndefined();
+    expect.soft(await headOf(projectDir)).toBe(head); // no commit made
+  });
+
+  test('no-ops at a non-contract gate', async ({ projectDir }) => {
+    const { state } = await contractRun(projectDir);
+    const head = await headOf(projectDir);
+
+    await freezeContractAt(state, 'spec'); // not the contract author phase
+
+    expect.soft(state.acceptanceContract).toBeUndefined();
+    expect.soft(await headOf(projectDir)).toBe(head);
+  });
+
+  test('no-ops when authoring produced no file (the missing-contract case)', async ({ projectDir }) => {
+    const { state } = await contractRun(projectDir, { writeContract: false });
+    const head = await headOf(projectDir);
+
+    await freezeContractAt(state, 'plan');
+
+    expect.soft(state.acceptanceContract).toBeUndefined();
+    expect.soft(await headOf(projectDir)).toBe(head);
+  });
+
+  test('no-ops on a stale/pre-existing file this run never authored — no draft marker (finding 3)', async ({ projectDir }) => {
+    // A contract file is present at the derived path, but no draft marker proves
+    // THIS run authored it (e.g. it was committed by a prior run). Freeze must not
+    // ratify it — even when the file is already committed and clean.
+    const { state, contractPath } = await contractRun(projectDir, { draft: false });
+    await execa('git', ['add', '--', contractPath], { cwd: projectDir });
+    await execa('git', ['commit', '-qm', 'stale contract from a prior run'], { cwd: projectDir });
+    const head = await headOf(projectDir);
+    expect.soft(state.acceptanceContractDraft).toBeUndefined(); // this run authored nothing
+
+    await freezeContractAt(state, 'plan');
+
+    expect.soft(state.acceptanceContract).toBeUndefined(); // not frozen — no authorship proof
+    expect.soft(await headOf(projectDir)).toBe(head);
+  });
+
+  test('is idempotent — a second freeze does not double-commit', async ({ projectDir }) => {
+    const { state } = await contractRun(projectDir);
+
+    await freezeContractAt(state, 'plan');
+    const frozen = state.acceptanceContract?.commit;
+    const headAfterFirst = await headOf(projectDir);
+
+    await freezeContractAt(state, 'plan'); // second call — already frozen
+
+    expect.soft(state.acceptanceContract?.commit).toBe(frozen);
+    expect.soft(await headOf(projectDir)).toBe(headAfterFirst); // no new commit
+  });
+
+  test('the pre-authorized plan auto-cross freezes the contract (driveToQuiescence)', async ({ projectDir }) => {
+    const { state, contractPath } = await contractRun(projectDir);
+    state.gatesAt = ['impl']; // frame/spec/plan pre-authorized → plan auto-crosses; impl attended → stop
+    saveRunState(state);
+    const { machine } = scriptedMachine([advanced, advanced, advanced, advanced]);
+
+    await driveToQuiescence(state, undefined, { machine, notify: quiet });
+
+    const persisted = loadRunState(projectDir, state.runId);
+    expect.soft(persisted.machineState).toBe('shipGate'); // stopped at the attended impl gate
+    expect.soft(persisted.acceptanceContract?.path).toBe(contractPath); // frozen at the plan auto-cross
+    expect.soft(await inHead(projectDir, contractPath)).toBe(true); // and committed
   });
 });

@@ -29,15 +29,29 @@
  *          Open-PR → open → done
  */
 
+import { basename, dirname, extname } from 'node:path';
+
 /**
  * A consultant checkpoint mode — the posture the optional consultant takes at a
- * phase, named by lineage, not by phase. `frame` is the generative third-analysis
- * mode (framing); `specGate`/`implGate` are the critical bet-audit modes just
- * before the Commit-spec and Ship gates. Each arc maps the modes onto its own
- * phases (Full: frame/specGate/implGate; RIR: frame/implGate — no spec phase).
+ * phase, named by lineage, not by phase. The modes:
+ *
+ * - `frame` — the generative third-analysis mode (framing).
+ * - `specGate` — the critical bet-audit mode just before the Commit-spec gate.
+ * - `implGate` — the open-ended bet-audit mode at the impl-side gate. RIR's
+ *   `implement` uses it (it has no plan phase, so it authors no contract).
+ * - `contract` — the generative-and-writing mode: the consultant AUTHORS the
+ *   acceptance contract (Full's `plan`), blind to the plan and code.
+ * - `verify` — the evidence-grounded verification mode: a fresh session VERIFIES
+ *   the frozen acceptance contract (Full's `impl`), supplanting the open-ended
+ *   `implGate` audit there.
+ *
+ * Each arc maps the modes onto its own phases (Full: frame/specGate/contract/
+ * verify; RIR: frame/implGate — no spec or plan phase, so no contract loop). The
+ * `contract`/`verify` pair is the acceptance-contract feature; `implGate` is
+ * NOT globally re-pointed (RIR still audits the bet with no contract to verify).
  * Registry data, so "where the consultant fires" stays in the single source.
  */
-export type ConsultantCheckpoint = 'frame' | 'specGate' | 'implGate';
+export type ConsultantCheckpoint = 'frame' | 'specGate' | 'implGate' | 'contract' | 'verify';
 
 /**
  * The gate a phase exits through (registry input shape). String-typed at input
@@ -180,6 +194,10 @@ export const WORKFLOWS = {
         orchestratorBudgetUsd: 15,
         workerBudgetUsd: 10,
         workerTurnTimeoutMs: 30 * 60_000,
+        // The acceptance-contract AUTHOR checkpoint: the consultant authors the
+        // contract here, blind to the plan loop running alongside it, and the
+        // human ratifies it when approving this gate (it is the freeze gate).
+        consultantCheckpoint: 'contract',
       },
       {
         name: 'impl',
@@ -208,7 +226,10 @@ export const WORKFLOWS = {
         orchestratorBudgetUsd: 30,
         workerBudgetUsd: 25,
         workerTurnTimeoutMs: 60 * 60_000,
-        consultantCheckpoint: 'implGate',
+        // The acceptance-contract VERIFY checkpoint: a fresh session verifies the
+        // frozen contract by running the built system, supplanting the
+        // open-ended implGate bet-audit (RIR keeps implGate — it has no contract).
+        consultantCheckpoint: 'verify',
       },
       {
         // No gate (2026-06-23). The docs are updated and committed in one pass:
@@ -601,6 +622,8 @@ const CONSULTANT_CHECKPOINT_SNIPPET: Record<ConsultantCheckpoint, string> = {
   frame: 'consultant-frame',
   specGate: 'consultant-spec',
   implGate: 'consultant-impl',
+  contract: 'consultant-contract',
+  verify: 'consultant-verify',
 };
 
 /**
@@ -611,6 +634,19 @@ const CONSULTANT_CHECKPOINT_SNIPPET: Record<ConsultantCheckpoint, string> = {
  * forcing these into the phases' always-on lists (which is what leaked them).
  */
 export const CONSULTANT_SNIPPETS: ReadonlySet<string> = new Set(Object.values(CONSULTANT_CHECKPOINT_SNIPPET));
+
+/**
+ * The consultant snippets a WORKFLOW's checkpoints actually reach — full's
+ * {frame, spec, contract, verify} snippets; rir's {frame, impl}. The flat
+ * `all=true` renderer filters the consultant bucket against this so a bound run's
+ * library exposes only the snippets ITS arc can use: a bound rir run never sees
+ * `consultant-contract`/`consultant-verify` (nor the Full-only `consultant-spec`)
+ * — the contract feature does not leak into the arc that deferred it, and the
+ * surface stays per-arc honest, not merely "any consultant snippet".
+ */
+export function consultantSnippetsForWorkflow(workflow: WorkflowName): ReadonlySet<string> {
+  return new Set(phasesOf(workflow).map((p) => consultantSnippetFor(p.name)).filter((s): s is string => s !== undefined));
+}
 
 /** A phase's consultant checkpoint mode, or undefined when it carries none. */
 export function consultantCheckpointOf(phase: PhaseName): ConsultantCheckpoint | undefined {
@@ -638,4 +674,31 @@ export function phaseSnippetsFor(phase: PhaseName, opts: { consultant: boolean }
 export function consultantSnippetFor(phase: PhaseName): string | undefined {
   const mode = PHASE[phase].consultantCheckpoint;
   return mode ? CONSULTANT_CHECKPOINT_SNIPPET[mode] : undefined;
+}
+
+/**
+ * The phase in a workflow whose consultant checkpoint AUTHORS the acceptance
+ * contract (`contract` mode) — Full's `plan`; `undefined` for an arc with no
+ * contract loop (RIR). The freeze step reads this to recognize "this gate is the
+ * contract's freeze gate", so the gate→freeze coupling stays registry-derived
+ * (never a hardcoded `=== 'plan'`), and an arc that authors no contract freezes
+ * none. Derived, since exactly one phase carries the mode (or none).
+ */
+export function contractAuthorPhaseOf(workflow: WorkflowName): PhaseName | undefined {
+  return phasesOf(workflow).find((p) => p.consultantCheckpoint === 'contract')?.name;
+}
+
+/**
+ * The committed location of a run's acceptance contract, derived from the spec
+ * path: the spec's sibling with an `.acceptance.md` suffix (e.g.
+ * `docs/specs/2026-06-24-foo.md` → `docs/specs/2026-06-24-foo.acceptance.md`).
+ * A convention, not a stored field — both the author step (where to write) and
+ * the freeze/verify steps (where to read) derive it from `state.specPath`, so the
+ * path is deterministic without new run state. Repo-relative, matching specPath.
+ */
+export function acceptanceContractPathForSpec(specPath: string): string {
+  const dir = dirname(specPath);
+  const stem = basename(specPath, extname(specPath));
+  const file = `${stem}.acceptance.md`;
+  return dir === '.' ? file : `${dir}/${file}`;
 }

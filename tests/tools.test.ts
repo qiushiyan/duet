@@ -1,9 +1,9 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, vi } from 'vitest';
 import { z } from 'zod';
-import { ORCHESTRATOR_SYSTEM_PROMPT, buildPhaseBrief, orchestratorSystemPrompt } from '../src/harness/orchestrator-prompts.ts';
+import { CONSULTANT_IDENTITY_CLAUSE, ORCHESTRATOR_SYSTEM_PROMPT, buildPhaseBrief, orchestratorSystemPrompt } from '../src/harness/orchestrator-prompts.ts';
 import { createPhaseTools, projectDetail } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
 import { createTurnDispatcher } from '../src/harness/turn-dispatcher.ts';
@@ -14,7 +14,7 @@ import type { PhaseName } from '../src/phases.ts';
 import { createRun, listPendingSteers, loadRunState, markPendingTurn, runDirOf, saveRunState, stageHumanInput, stageSteer } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
-import { DeferredWorker, FakeWorker, SyncThrowWorker, test } from './helpers/fixtures.ts';
+import { DeferredWorker, FakeWorker, SyncThrowWorker, consultantBindings, test } from './helpers/fixtures.ts';
 import { claudeApiRetry, claudeToolUse, claudeUserToolResult, jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
 
 /**
@@ -919,6 +919,36 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     expect.soft(log).toContain('session session-2');
   });
 
+  test('a consultant turn at the contract phase records the authorship draft marker (the freeze/rail evidence)', async ({
+    projectDir,
+    consultantRun,
+  }) => {
+    consultantRun.specPath = 'docs/specs/x.md';
+    saveRunState(consultantRun);
+    const { call } = harness(consultantRun, { phase: 'plan', consultant: new FakeWorker('claude') });
+
+    await call('send_prompt', { role: 'consultant', tag: 'consultant-contract', body: 'author the contract' });
+
+    const persisted = loadRunState(projectDir, consultantRun.runId);
+    expect.soft(persisted.acceptanceContractDraft?.path).toBe('docs/specs/x.acceptance.md'); // derived from specPath
+    expect.soft(persisted.acceptanceContractDraft?.sessionId).toBeDefined();
+  });
+
+  test('a consultant turn at the verify phase stamps verifiedAt on the frozen contract (the impl-rail evidence)', async ({
+    projectDir,
+    consultantRun,
+  }) => {
+    consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc' };
+    saveRunState(consultantRun);
+    const { call } = harness(consultantRun, { phase: 'impl', consultant: new FakeWorker('claude') });
+
+    await call('send_prompt', { role: 'consultant', tag: 'consultant-verify', body: 'verify the contract' });
+
+    const persisted = loadRunState(projectDir, consultantRun.runId);
+    expect.soft(persisted.acceptanceContract?.verifiedAt).toBeDefined(); // verification RAN
+    expect.soft(persisted.acceptanceContract?.commit).toBe('abc'); // the freeze record is preserved
+  });
+
   test('additivity: a consultant turn never counts a review round nor satisfies the loop requirement', async ({
     consultantRun,
   }) => {
@@ -1097,15 +1127,211 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
     expect.soft(buildPhaseBrief(run, 'spec').toLowerCase()).not.toContain('consultant');
   });
 
-  test('the impl brief gains the bet-audit step when bound; unbound is clean', ({ run, consultantRun }) => {
-    expect.soft(buildPhaseBrief(consultantRun, 'impl')).toContain('consultant-impl');
-    expect.soft(buildPhaseBrief(consultantRun, 'impl')).toContain('Consultant checkpoint');
+  test('the impl brief VERIFIES the frozen contract when bound + frozen; notes a skip when bound + unfrozen; unbound is clean', ({
+    run,
+    consultantRun,
+  }) => {
+    // Bound + a frozen contract on state → the verify step points at the contract,
+    // names consultant-verify, and routes a failed assertion to a high.
+    consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc123' };
+    const frozen = buildPhaseBrief(consultantRun, 'impl');
+    expect.soft(frozen).toContain('Consultant checkpoint');
+    expect.soft(frozen).toContain('consultant-verify');
+    expect.soft(frozen).toContain('docs/specs/x.acceptance.md');
+    expect.soft(frozen).toContain('high human_decision');
+    expect.soft(frozen).not.toContain('consultant-impl'); // Full's impl verifies, it does not re-run the open-ended audit
+
+    // Bound + no frozen contract → a noted skip, never silent, never a fallback audit.
+    delete consultantRun.acceptanceContract;
+    const unfrozen = buildPhaseBrief(consultantRun, 'impl');
+    expect.soft(unfrozen).toContain('Consultant checkpoint');
+    expect.soft(unfrozen).toContain('no frozen acceptance contract');
+
+    // Unbound → byte-for-byte clean.
     expect.soft(buildPhaseBrief(run, 'impl').toLowerCase()).not.toContain('consultant');
   });
 
-  test('a non-checkpoint phase (plan) never injects, bound or not', ({ run, consultantRun }) => {
-    expect.soft(buildPhaseBrief(consultantRun, 'plan').toLowerCase()).not.toContain('consultant');
+  test('the plan brief AUTHORS the contract when bound (write-not-commit, spec-only, missing→high); unbound is clean', ({
+    run,
+    consultantRun,
+  }) => {
+    // The author step derives the contract path from the spec path; the plan brief
+    // also embeds the spec file, so it must exist on disk in the run's cwd.
+    consultantRun.specPath = 'docs/specs/x.md';
+    mkdirSync(join(consultantRun.cwd, 'docs/specs'), { recursive: true });
+    writeFileSync(join(consultantRun.cwd, 'docs/specs/x.md'), '# spec\n');
+    const bound = buildPhaseBrief(consultantRun, 'plan');
+    expect.soft(bound).toContain('Consultant checkpoint');
+    expect.soft(bound).toContain('consultant-contract');
+    expect.soft(bound).toContain('docs/specs/x.acceptance.md'); // the derived target path
+    expect.soft(bound).toContain('blind to the plan and the code'); // spec-only independence
+    expect.soft(bound).toContain('NOT commit'); // the consultant writes, never commits
+    expect.soft(bound).toContain('human_decision'); // missing-contract → high
+
+    // Finding 4 (blindness): the author dispatch must come AFTER the spec commit but
+    // BEFORE the planning prompt, so a compliant orchestrator authors before it has
+    // seen the plan. Assert the order in the rendered brief.
+    const specCommitAt = bound.indexOf('commit the approved spec');
+    const authorAt = bound.indexOf('author the acceptance contract');
+    const planPromptAt = bound.indexOf('tdd-plan');
+    expect.soft(specCommitAt).toBeGreaterThanOrEqual(0);
+    expect.soft(authorAt).toBeGreaterThan(specCommitAt);
+    expect.soft(planPromptAt).toBeGreaterThan(authorAt);
+
+    // Unbound → byte-for-byte clean.
     expect.soft(buildPhaseBrief(run, 'plan').toLowerCase()).not.toContain('consultant');
+  });
+});
+
+// Guarantee 1 (no consultant ⇒ byte-for-byte unchanged) and Guarantee 2 (bound ⇒
+// the contract is active author→verify) asserted at the TOOL surface — get_task
+// (the brief the orchestrator actually reads) and list_snippets — not only the
+// buildPhaseBrief helper. The send_prompt schema/identity guarantees are above.
+describe('acceptance contract at the tool altitude (get_task + list_snippets)', () => {
+  test('unbound: get_task for plan and impl carries no contract or consultant text', async ({ run }) => {
+    for (const phase of ['plan', 'impl'] as const) {
+      const { call } = harness(run, { phase });
+      const brief = text(await call('get_task')).toLowerCase();
+      expect.soft(brief, `${phase} brief`).not.toContain('consultant');
+      expect.soft(brief, `${phase} brief`).not.toContain('acceptance contract');
+    }
+  });
+
+  test('bound: get_task for plan AUTHORS the contract through the tool', async ({ consultantRun }) => {
+    consultantRun.specPath = 'docs/specs/x.md';
+    mkdirSync(join(consultantRun.cwd, 'docs/specs'), { recursive: true });
+    writeFileSync(join(consultantRun.cwd, 'docs/specs/x.md'), '# spec\n');
+    const { call } = harness(consultantRun, { phase: 'plan', consultant: new FakeWorker('claude') });
+
+    const brief = text(await call('get_task'));
+
+    expect.soft(brief).toContain('consultant-contract');
+    expect.soft(brief).toContain('docs/specs/x.acceptance.md'); // the derived target
+    expect.soft(brief).toContain('NOT commit'); // write-not-commit
+  });
+
+  test('bound: get_task for impl VERIFIES the frozen contract through the tool', async ({ consultantRun }) => {
+    consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'deadbeef' };
+    saveRunState(consultantRun);
+    const { call } = harness(consultantRun, { phase: 'impl', consultant: new FakeWorker('claude') });
+
+    const brief = text(await call('get_task'));
+
+    expect.soft(brief).toContain('consultant-verify');
+    expect.soft(brief).toContain('docs/specs/x.acceptance.md'); // the frozen ref
+    expect.soft(brief).toContain('high human_decision'); // a failed assertion holds the crossing
+  });
+
+  test('bound: list_snippets surfaces the contract checkpoint snippet in its owning phase', async ({ consultantRun }) => {
+    const consultant = new FakeWorker('claude');
+    const atPlan = text(await harness(consultantRun, { phase: 'plan', consultant }).call('list_snippets'));
+    expect.soft(atPlan).toContain('<snippet key="consultant-contract">');
+    const atImpl = text(await harness(consultantRun, { phase: 'impl', consultant }).call('list_snippets'));
+    expect.soft(atImpl).toContain('<snippet key="consultant-verify">');
+  });
+});
+
+// Guarantee 1, the arc that DEFERRED the contract: a consultant-bound RIR run must
+// not see contract/verify at any tool surface — the feature does not leak into rir.
+describe('RIR + consultant: the contract feature does not leak into the deferred arc', () => {
+  const rirConsultantRun = (projectDir: string): RunState =>
+    createRun({ cwd: projectDir, workflow: 'rir', bindings: consultantBindings, framing: 'f' });
+
+  test('orchestratorSystemPrompt is byte-for-byte the BASE consultant clause — no contract/verify text', ({ projectDir }) => {
+    const prompt = orchestratorSystemPrompt(rirConsultantRun(projectDir));
+    // The base clause, not the full-only contract addendum — byte-for-byte.
+    expect.soft(prompt).toBe(`${ORCHESTRATOR_SYSTEM_PROMPT}\n\n${CONSULTANT_IDENTITY_CLAUSE}`);
+    expect.soft(prompt.toLowerCase()).not.toContain('acceptance contract');
+    expect.soft(prompt.toLowerCase()).not.toContain('execute-to-observe');
+    // Contrast: a bound FULL run DOES gain the addendum (proves it is arc-scoped, not absent).
+    const full = orchestratorSystemPrompt(
+      createRun({ cwd: projectDir, workflow: 'full', bindings: consultantBindings, framing: 'f' }),
+    );
+    expect.soft(full.toLowerCase()).toContain('acceptance contract');
+  });
+
+  test('list_snippets (phase view and all=true) names no contract/verify snippet, but keeps RIR’s own', async ({
+    projectDir,
+  }) => {
+    const consultant = new FakeWorker('claude');
+    for (const view of [{}, { all: true }] as const) {
+      const lib = text(await harness(rirConsultantRun(projectDir), { phase: 'research', consultant }).call('list_snippets', view));
+      expect.soft(lib, JSON.stringify(view)).not.toContain('consultant-contract');
+      expect.soft(lib, JSON.stringify(view)).not.toContain('consultant-verify');
+      expect.soft(lib, JSON.stringify(view)).not.toContain('consultant-spec'); // also Full-only — per-arc honesty
+    }
+    // all=true still exposes the consultant snippets RIR's own checkpoints reach.
+    const all = text(await harness(rirConsultantRun(projectDir), { phase: 'research', consultant }).call('list_snippets', { all: true }));
+    expect.soft(all).toContain('consultant-frame');
+    expect.soft(all).toContain('consultant-impl');
+  });
+});
+
+// Guarantee 2 MECHANICALLY (not by prompt): advance_phase cannot proceed past the
+// contract chain on a Full+consultant run — author at plan, verify at impl — unless
+// the orchestrator records a high (which itself holds the AFK crossing). This is
+// the gap the review named: prior tests proved the brief ASKS; these prove the tool
+// REFUSES. Each clears the review-round rail first (rounds[phase] = 1).
+describe('advance_phase acceptance-contract rail (Full + consultant)', () => {
+  const advance = { summary: 's', artifacts: [] };
+  const high = { ...advance, human_decisions: [{ title: 'no contract', severity: 'high' as const }] };
+
+  test('plan REFUSES with no authored contract (no draft marker) and no high', async ({ consultantRun }) => {
+    consultantRun.rounds.plan = 1;
+    const { call } = harness(consultantRun, { phase: 'plan', consultant: new FakeWorker('claude') });
+    const res = await call('advance_phase', advance);
+    expect.soft(res.isError).toBe(true);
+    expect.soft(text(res)).toContain('acceptance contract');
+  });
+
+  test('plan ADVANCES once this run authored (a draft marker exists)', async ({ consultantRun }) => {
+    consultantRun.rounds.plan = 1;
+    consultantRun.acceptanceContractDraft = { path: 'docs/specs/x.acceptance.md', sessionId: 'c', authoredAt: 'now' };
+    const { call } = harness(consultantRun, { phase: 'plan', consultant: new FakeWorker('claude') });
+    const res = await call('advance_phase', advance);
+    expect.soft(res.isError).toBeFalsy();
+  });
+
+  test('plan ADVANCES with no contract when a high is recorded (the escape hatch that holds the AFK crossing)', async ({
+    consultantRun,
+  }) => {
+    consultantRun.rounds.plan = 1;
+    const { call } = harness(consultantRun, { phase: 'plan', consultant: new FakeWorker('claude') });
+    const res = await call('advance_phase', high);
+    expect.soft(res.isError).toBeFalsy();
+  });
+
+  test('impl REFUSES when a frozen contract was not verified (no verifiedAt) and no high', async ({ consultantRun }) => {
+    consultantRun.rounds.impl = 1;
+    consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc' };
+    const { call } = harness(consultantRun, { phase: 'impl', consultant: new FakeWorker('claude') });
+    const res = await call('advance_phase', advance);
+    expect.soft(res.isError).toBe(true);
+    expect.soft(text(res)).toContain('not been verified');
+  });
+
+  test('impl ADVANCES once verification ran (verifiedAt stamped)', async ({ consultantRun }) => {
+    consultantRun.rounds.impl = 1;
+    consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc', verifiedAt: 'now' };
+    const { call } = harness(consultantRun, { phase: 'impl', consultant: new FakeWorker('claude') });
+    const res = await call('advance_phase', advance);
+    expect.soft(res.isError).toBeFalsy();
+  });
+
+  test('impl with NO frozen contract is the noted-skip case — no verify rail (the absence was a high at plan)', async ({
+    consultantRun,
+  }) => {
+    consultantRun.rounds.impl = 1; // no acceptanceContract on state
+    const { call } = harness(consultantRun, { phase: 'impl', consultant: new FakeWorker('claude') });
+    const res = await call('advance_phase', advance);
+    expect.soft(res.isError).toBeFalsy();
+  });
+
+  test('the rail is consultant-only: an unbound Full plan advances with no contract', async ({ run }) => {
+    run.rounds.plan = 1;
+    const { call } = harness(run, { phase: 'plan' });
+    const res = await call('advance_phase', advance);
+    expect.soft(res.isError).toBeFalsy();
   });
 });
 

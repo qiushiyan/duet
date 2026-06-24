@@ -642,6 +642,13 @@ $0'''
 # consultant audits the bet (assumptions, product fit), not the build — authored
 # against review-spec as the negative boundary. Tags deliberately avoid the
 # "review" prefix so a consultant turn never trips the review-round count.
+#
+# consultant-contract / consultant-verify are the acceptance-contract pair (Full
+# arc): the consultant AUTHORS a frozen, falsifiable definition of success at the
+# plan phase (blind to the plan/code), and a fresh session VERIFIES it against the
+# built system at the impl phase. The contract's job is to catch runtime drift
+# from the ratified spec that the implementer's own tests would miss — not to
+# re-judge "the right thing" in the abstract.
 
 [[snippets]]
 key = "consultant-frame"
@@ -700,6 +707,64 @@ Grade each finding's severity yourself:
 - **low** — notable, worth the human's eyes, but not blocking.
 
 Product and direction questions go to the human as options, never as defects for the implementer. "The bet held — ship" is a first-class expected outcome; say so plainly when it's true.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "consultant-contract"
+expand = '''
+Your job this turn is to author an acceptance contract for the change specified below: a short, frozen list of falsifiable assertions that define what success MEANS for it — the runtime behaviors that, if they silently drift from the spec, mean we shipped the wrong thing, and that the implementer's own tests would most plausibly miss.
+
+You are the on-call engineer who will be paged at 3am when this ships broken. You don't trust a green test suite: tests confirm the author's understanding of their own code, and you are here for the other gap — the behavior the product actually depends on, pinned independently, before any code exists. You are reading the spec ONLY; you cannot see the plan or the implementation, and that blindness is the asset — it is what keeps this a definition of success rather than a description of whatever got built.
+
+Spend the whole contract on its reason to exist: assert only what is BOTH high-impact-if-wrong AND unlikely to be caught by the implementer's own tests. Their tests already cover "does my code do what I think"; the contract spends its budget on runtime behavior that can drift from the spec's intent while every obvious test still passes.
+
+Work in two moves, in this order — the order is load-bearing.
+
+1. **Elicit the high-value behaviors — find them before you format them.** Scan the spec for where being wrong is both costly and quiet. Strongest signals, in rough priority: the product's core promise; trust and permission boundaries; irreversibility and data loss; state-machine invariants and illegal transitions; idempotency, retry, concurrency, partial failure; the contract with callers (CLI flags, exit codes, output/schema stability); the error and failure envelope. Three techniques to surface them:
+   - **Pre-mortem.** It is three months from now. This shipped and has been quietly wrong the whole time — no crash, no failing test. Write the post-mortem, then turn each cause into an assertion.
+   - **Definition-of-wrong.** Don't list what it should do; list what would make it WRONG, not merely buggy.
+   - **Red-team the tests.** Assume every obvious test passes. Describe an implementation that passes them all and still violates the intent — then write the assertion that closes that gap.
+
+2. **Formalize the survivors into the template.** One observable behavior per line, each an ID'd, EARS-shaped assertion plus a mandatory evidence field:
+
+   [A1] <When | While | If…then | Where | (ubiquitous, no keyword)> <trigger or condition>, the <system> SHALL <one observable response>.
+     Verify by: <probe> → <exact expected observable>
+
+   Discipline: SHALL / SHALL NOT only; one observable per line; explicit negations where the absence is the point; stable IDs, never renumbered; self-contained lines (no cross-references); binary pass/fail, no holistic score. Ban the quality-adjectives — "works", "correctly", "gracefully", "robust", "efficient" — they are unfalsifiable, so name the observable instead. Concreteness tracks the spec: where the spec already fixes the surface (a flag, an exit code, a state field, a log line), make `Verify by:` concrete against it; where the spec defers to implementation, keep the probe behavioral ("the run RESUMES, not restarts"). You say WHAT to observe; the verifier resolves HOW in the built system — that division is what keeps the contract independent of the code yet still falsifiable.
+
+Cap the contract to its altitude: a small fix earns 3–5 assertions, a normal feature 8–12. If you want more, the contract is at the wrong altitude — raise it. Do not restate the spec as assertions, do not assert the obvious happy path the tests already own, and do not demand detail the spec intentionally defers.
+
+Write the contract to the path the orchestrator names, and do NOT commit it — duet freezes it at the plan gate, where the human ratifies it. Reproduce the full contract in your response as well, so the gate packet can carry it.
+
+The spec to author against:
+
+---
+
+$0'''
+
+[[snippets]]
+key = "consultant-verify"
+expand = '''
+Your job this turn is to verify the implemented change against its frozen acceptance contract — assertion by assertion, on observed behavior, never by reading the diff.
+
+You are the on-call engineer who doesn't trust a green test suite. This contract was authored before any code existed, blind to the implementation, and ratified by the human; it is the independent definition of success. Your task is to find out whether the built system actually satisfies it by RUNNING the system and citing what you observed — because reasoning from the code is exactly where this kind of check goes wrong.
+
+Work each assertion in ID order:
+1. **Gather evidence by exercising the system.** Run the relevant tests, run the CLI or binary, hit the endpoint, read the logs and output — whatever the assertion's `Verify by:` calls for. You may read anything and run observational, read-only commands; you must NOT edit tracked source, commit, push, install packages, reach external networks, or touch the orchestrator's own run state (do not invoke duet itself, and do not write under .duet/). If a probe is underspecified for the built system, resolve a reasonable concrete observation and state how you observed it.
+2. **Return a binary verdict grounded in the evidence.** For each assertion: `[A1] PASS` or `[A1] FAIL`, followed by the exact command and observation that grounds it — the output you saw, the log line, the exit code. No holistic score; each line stands on its own evidence. A FAIL means the OBSERVED behavior contradicts the assertion; quote the contradiction.
+
+Then, briefly: **residual concerns** — anything the assertions don't capture that you believe undercuts the bet now that it is real code. Grade each low/high. This is the room for what a frozen list couldn't have foreseen; keep it short.
+
+Grade the finding the human reads:
+- **high** — one or more assertions FAILED, or a residual concern that should hold the ship. A failed assertion is load-bearing: report each as its own high so the run stops for the human rather than shipping past a broken target.
+- **low** — every assertion holds; a residual concern worth the human's eyes but not blocking.
+
+"Every assertion holds — ship" is a first-class, expected outcome; say so plainly when the evidence shows it.
+
+The frozen acceptance contract, then the implemented change:
 
 ---
 
