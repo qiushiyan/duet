@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { CONSULTANT_IDENTITY_CLAUSE, ORCHESTRATOR_SYSTEM_PROMPT, buildPhaseBrief, orchestratorSystemPrompt } from '../src/harness/orchestrator-prompts.ts';
 import { createPhaseTools, projectDetail } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
+import { SKILLS_DIR } from '../src/snippets.ts';
 import { createTurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import type { TurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import { BudgetCutoffError } from '../src/providers/types.ts';
@@ -1836,6 +1837,19 @@ describe('the library and the journal', () => {
     expect.soft(library).toContain('<phase name="implement">'); // the next RIR phase, indexed by key
     expect.soft(library).not.toContain('<phase name="plan">'); // no Full-only phase leaks in
     expect.soft(library).not.toContain('<phase name="spec">');
+  });
+
+  test('list_snippets resolves the vendored methodology path at the tool surface (no token, no ~/.claude)', async ({ run }) => {
+    // The run-surface altitude for {{skills_dir}} resolution: snippets.test.ts
+    // layer 3 guards renderSnippetLibrary (the faster library-local check); this
+    // guards what list_snippets actually hands a worker on the plan phase, where
+    // tdd-plan/review-plan cite the vendored skills in full.
+    const { call } = harness(run, { phase: 'plan' });
+    const library = text(await call('list_snippets'));
+
+    expect.soft(library, 'an unresolved {{skills_dir}} token reached the tool result').not.toContain('{{skills_dir}}');
+    expect.soft(library, 'a ~/.claude path reached the tool result').not.toContain('~/.claude');
+    expect.soft(library, 'the resolved vendored path a worker receives').toContain(join(SKILLS_DIR, 'tdd/SKILL.md'));
   });
 
   test('propose_snippet_edit queues for the end-of-run review, never applies now', async ({ projectDir, run }) => {
