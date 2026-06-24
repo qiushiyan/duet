@@ -9,7 +9,7 @@ import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
 import { bindingFor, loadRunConfig } from './config.ts';
 import type { BindableRole } from './config.ts';
 import { sessionPolicyFor, voicesFor } from './roles.ts';
-import { DEFAULT_FRAMING_FILE, parseGatesAt, resolveHumanText, resolveRunInputs } from './framing.ts';
+import { DEFAULT_FRAMING_FILE, composeInEditor, parseGatesAt, resolveHumanText, resolveRunInputs } from './framing.ts';
 import {
   aliveDriverPid,
   crossInteractive,
@@ -343,10 +343,10 @@ async function resolveDecisionText(
   inline: string | boolean | undefined,
   file: string | undefined,
   instructions: string,
-  io: { isTTY: boolean; readStdin: () => Promise<string> },
+  io: { isTTY: boolean; readStdin: () => Promise<string>; compose: (instructions: string) => Promise<string> },
 ): Promise<string | undefined> {
   if (file !== undefined) return file === '-' ? io.readStdin() : readDecisionFile(file);
-  return resolveHumanText(inline, instructions, { isTTY: io.isTTY });
+  return resolveHumanText(inline, instructions, { isTTY: io.isTTY, compose: io.compose });
 }
 
 /**
@@ -360,14 +360,20 @@ async function resolveDecisionText(
  * off one, naming the inline/file/stdin forms). Approve's rider is *optional*,
  * so a bare `--approve` means "no rider" — the editor is opt-in via `--edit`
  * (which FAILS FAST off a TTY rather than silently approving with no rider).
- * `io` is the environment seam (injectable isTTY + stdin reader) for tests.
+ * `io` is the environment seam for tests: injectable isTTY, stdin reader, and
+ * editor launcher (`compose`) — so a test exercises the editor path without
+ * spawning an editor child.
  */
 export async function stageContinueText(
   state: RunState,
   opts: ContinueTextOpts,
-  io: { isTTY?: boolean; readStdin?: () => Promise<string> } = {},
+  io: { isTTY?: boolean; readStdin?: () => Promise<string>; compose?: (instructions: string) => Promise<string> } = {},
 ): Promise<void> {
-  const env = { isTTY: io.isTTY ?? Boolean(process.stdin.isTTY), readStdin: io.readStdin ?? readAllStdin };
+  const env = {
+    isTTY: io.isTTY ?? Boolean(process.stdin.isTTY),
+    readStdin: io.readStdin ?? readAllStdin,
+    compose: io.compose ?? composeInEditor,
+  };
 
   // One source per intent — mixing the inline flag with its file form is almost
   // always a mistake, so fail fast rather than silently pick one (consistent

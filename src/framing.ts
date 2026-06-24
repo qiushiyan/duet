@@ -255,17 +255,19 @@ export async function composeInEditor(instructions: string): Promise<string> {
  * drive — the non-interactive editor hang this fixes (#6). `undefined` is
  * deliberately distinct from `""` (an editor saved empty): the caller maps
  * the sentinel per intent — approve treats it as "no rider", reject/answer/
- * steer fail fast naming the inline/file/stdin forms. `isTTY` is injected
- * (the environment seam) so tests pin interactivity without a real terminal.
+ * steer fail fast naming the inline/file/stdin forms. Both subprocess seams are
+ * injected so tests pin behavior without a real terminal: `isTTY` for
+ * interactivity, `compose` for the editor launch (defaults to the real
+ * `composeInEditor` — a faked `compose` avoids spawning an editor child).
  */
 export async function resolveHumanText(
   inline: string | boolean | undefined,
   instructions: string,
-  { isTTY = Boolean(process.stdin.isTTY) }: { isTTY?: boolean } = {},
+  { isTTY = Boolean(process.stdin.isTTY), compose = composeInEditor }: { isTTY?: boolean; compose?: (instructions: string) => Promise<string> } = {},
 ): Promise<string | undefined> {
   if (typeof inline === "string") return inline;
   if (!isTTY) return undefined;
-  return composeInEditor(instructions);
+  return compose(instructions);
 }
 
 export interface FramingFrontmatter {
