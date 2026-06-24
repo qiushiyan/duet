@@ -58,7 +58,7 @@ Record their choice as `gates_at:` in the framing frontmatter. A preset must bel
 
 ## Consultant — an optional outside voice
 
-duet's reviewer is sharp on *is this well-built*, but — invested in the framing it helped shape — rarely challenges the *bet* underneath. A run can bind an optional **consultant**: a read-only second reviewer that questions assumptions and product fit rather than the build, ideally on a **different model family** from the reviewer — the one outside perspective a single reviewer working harder can't supply. It is **off by default** and never changes what gets built; it only checks whether the bet is sound.
+duet's reviewer is sharp on *is this well-built*, but — invested in the framing it helped shape — rarely challenges the *bet* underneath. A run can bind an optional **consultant**: a read-only second reviewer that questions assumptions and product fit rather than the build, ideally on a **different model family** from the reviewer — the one outside perspective a single reviewer working harder can't supply. It is **off by default** and never changes what gets built; it checks whether the bet is sound. On the **full** arc it also authors a frozen **acceptance contract** — a short, falsifiable list of what success means, written before the code — which the user ratifies at the plan gate and a fresh session verifies against the built system before shipping; worth mentioning when the consultant is in play, since the plan gate then carries that extra thing to sign off.
 
 Surface it like gate posture — offer the choice, don't make it; whether the premise is worth a second opinion is the user's call:
 

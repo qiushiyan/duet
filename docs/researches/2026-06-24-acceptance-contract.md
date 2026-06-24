@@ -1,6 +1,6 @@
 # The acceptance contract — a consultant-authored, judge-verified definition of success
 
-Status: **design research, 2026-06-24.** An on-ramp to a future spec, not a built feature. Consolidates the contract thread from `docs/researches/2026-06-23-orchestration-landscape-scan.md` (where it surfaced as the flagship direction) through the mechanics / format / prompting dialogue that followed. Decided calls are marked **DECIDED**; deferred ones **OPEN**. Sources are inline.
+Status: **shipped 2026-06-24** — built on the full arc and distilled into the live design (`docs/automation-design.md` §"Consultant checkpoints"; `CLAUDE.md` invariants), which is authoritative for current behavior. This doc is kept as the originating rationale — the first-principles case, the format/prompting design, and the science it rests on — not as a description of the build; where the two differ, the design docs win. Consolidates the contract thread from `docs/researches/2026-06-23-orchestration-landscape-scan.md` through the mechanics / format / prompting dialogue that followed; the **OPEN** questions below were all settled during the build (see that section).
 
 ## The idea in one paragraph
 
@@ -73,14 +73,17 @@ This implies two snippets, deferred until the spec: **`consultant-contract`** (a
 
 The top of the signal taxonomy — state-machine invariants, illegal transitions, idempotency, partial-failure, contract-with-callers — *is duet's own domain. duet already maintains a hand-written latent contract of exactly this kind: the **"invariants that bite if forgotten"** list in `CLAUDE.md`* ("no tool emits `human.*`", "one branch per run, fixed before the first prompt", "the spent-marker is cleared iff the run resumed at the marker phase's own gate/flag"). This feature systematizes, per feature, the discipline duet already practices at the project level — and duet is a clean first test subject for it.
 
-## Open questions for the spec
+## Open questions — how the build settled them
 
-- **rir arc — OPEN.** rir has no idle plan-phase slot (consultant fires at `research` then `implGate`, back-to-back) and its identity is lightness, but its review loop is *weaker* (one writable round) — exactly where a contract could earn its keep. Likely resolution: optional, ultra-light (a ≤3-line acceptance checklist authored at Direction), off by default. Not settled.
-- **Read-only relaxation specifics — OPEN.** The exact write scope (one file, enforced how) and the execute-to-observe surface (which commands, sandboxed how) for the two new checkpoints.
-- **Author input — OPEN (leaning spec-only).** Author from the spec alone, or spec + framing? Spec-only maximizes independence; the parallel timing already blinds it to the plan/code regardless.
-- **Does `consultant-verify` fully replace the open-ended `implGate` bet-audit, or run alongside it?** Leaning: replace (the frozen contract *is* the bet, made falsifiable), with room for residual free-form concerns.
-- **Human editing at the freeze gate — OPEN.** Whether the human can amend the contract when ratifying it at the handoff gate, and how that interacts with the rider channel.
-- **Cap numbers and per-arc scaling — OPEN.**
+These were OPEN when this was research; each was settled during the build. The live design (`docs/automation-design.md` §"Consultant checkpoints") is authoritative; the verdicts:
+
+- **rir arc — DEFERRED.** rir stays byte-for-byte unchanged and authors no contract; the ultra-light Direction-gate checklist is not built (revisit when a live rir run wants it). rir's `implGate` keeps its open-ended bet audit rather than being re-pointed at a contract it never authored.
+- **Read-only relaxation — prompt-level, no sandbox.** The author's one-file write and the verifier's execute-to-observe surface are scoped by the `consultant-contract`/`consultant-verify` snippets, not an OS sandbox (the codebase deliberately omits one). The integrity that *is* structural is the path-scoped freeze (commits only the contract) and the authorship draft marker (a stale file is never frozen).
+- **Author input — spec-only.** Seeded with the committed spec alone; the author step is placed before plan drafting so the orchestrator dispatches it blind.
+- **`consultant-verify` vs the `implGate` audit — replace.** On the full arc, `verify` supplants the open-ended audit (with room for residual free-form concerns); rir keeps the audit.
+- **Human editing at freeze — direct edit, separate from the rider.** The human edits the committed contract file at the always-live plan gate; the freeze commits whatever is there. The approval rider stays a direction-to-the-next-phase channel, not a contract-edit channel.
+- **Caps / location — prompt-stated caps; `<spec-stem>.acceptance.md`.** FMEA-lite caps (bug fix 3–5, feature 8–12) live in the author snippet, not a code rail; the contract is the spec's sibling.
+- **Enforcement (raised in review).** The author→freeze→verify chain is enforced mechanically by `advance_phase` rails (existence of the checkpoint, not pass/fail) plus the draft/`verifiedAt` markers, with a `high` the only escape — so a bound full run can't silently ship past the chain.
 
 ## Sources
 

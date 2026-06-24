@@ -1,6 +1,6 @@
-import { existsSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { beforeAll, describe, expect, vi } from 'vitest';
+import { beforeAll, describe, expect } from 'vitest';
 import { program, stageContinueText } from '../src/cli.ts';
 import { loadRunState, saveRunState } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
@@ -20,13 +20,20 @@ beforeAll(() => {
 const staged = (run: { cwd: string; runId: string }) => loadRunState(run.cwd, run.runId).pendingMessage;
 
 describe('stageContinueText — non-TTY safety', () => {
-  test('a bare --approve off a TTY stages no rider and never opens an editor', async ({ projectDir, run }) => {
-    const marker = join(projectDir, 'editor-ran.marker');
-    vi.stubEnv('VISUAL', '');
-    vi.stubEnv('EDITOR', `sh -c 'touch ${marker}'`);
-    await stageContinueText(run, { approve: true }, { isTTY: false });
-    // No rider staged — a true no-rider approval, the run advances plain.
+  // A compose spy: a fake editor launcher that records if it was reached, so a
+  // test can prove "no editor opened" without spawning a real editor child (the
+  // injected seam — no subprocess, no $EDITOR env, deterministic under load).
+  const composeSpy = (text = 'composed') => {
+    const calls: string[] = [];
+    return { calls, compose: async (instructions: string) => (calls.push(instructions), text) };
+  };
+
+  test('a bare --approve off a TTY stages no rider and never opens an editor', async ({ run }) => {
+    const editor = composeSpy();
+    await stageContinueText(run, { approve: true }, { isTTY: false, compose: editor.compose });
+    // No rider staged, and the editor was never reached — a true no-rider approval.
     expect.soft(staged(run)).toBeUndefined();
+    expect.soft(editor.calls).toHaveLength(0);
   });
 
   test('a bare --reject off a TTY fails fast, naming the inline / file / stdin forms', async ({ run }) => {
@@ -43,24 +50,20 @@ describe('stageContinueText — non-TTY safety', () => {
     expect(staged(run)).toBeUndefined();
   });
 
-  test('a bare --approve on a TTY stages no rider and does NOT open the editor — the rider is opt-in', async ({ projectDir, run }) => {
-    const marker = join(projectDir, 'editor-ran.marker');
-    const editor = join(projectDir, 'editor.sh');
-    writeFileSync(editor, `#!/bin/sh\ntouch ${marker}\nprintf "should not run\\n" >> "$1"\n`, { mode: 0o755 });
-    vi.stubEnv('VISUAL', '');
-    vi.stubEnv('EDITOR', editor);
-    await stageContinueText(run, { approve: true }, { isTTY: true });
+  test('a bare --approve on a TTY stages no rider and does NOT open the editor — the rider is opt-in', async ({ run }) => {
+    // On a TTY the editor COULD be reached, so the opt-in is what holds it back:
+    // a bare --approve (no --edit) must not call compose.
+    const editor = composeSpy();
+    await stageContinueText(run, { approve: true }, { isTTY: true, compose: editor.compose });
     expect.soft(staged(run)).toBeUndefined();
-    expect.soft(existsSync(marker)).toBe(false);
+    expect.soft(editor.calls).toHaveLength(0);
   });
 
-  test('--approve --edit on a TTY composes the rider in the editor (the human opt-in)', async ({ projectDir, run }) => {
-    const editor = join(projectDir, 'editor.sh');
-    writeFileSync(editor, '#!/bin/sh\nprintf "ship it, but rename the flag\\n" >> "$1"\n', { mode: 0o755 });
-    vi.stubEnv('VISUAL', '');
-    vi.stubEnv('EDITOR', editor);
-    await stageContinueText(run, { approve: true, edit: true }, { isTTY: true });
-    expect(staged(run)).toEqual({ kind: 'approval', text: 'ship it, but rename the flag' });
+  test('--approve --edit on a TTY composes the rider in the editor (the human opt-in)', async ({ run }) => {
+    const editor = composeSpy('ship it, but rename the flag');
+    await stageContinueText(run, { approve: true, edit: true }, { isTTY: true, compose: editor.compose });
+    expect.soft(editor.calls).toHaveLength(1); // the opt-in reached the editor
+    expect.soft(staged(run)).toEqual({ kind: 'approval', text: 'ship it, but rename the flag' });
   });
 
   test('--approve --edit off a TTY fails fast, naming the inline form', async ({ run }) => {

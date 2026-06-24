@@ -2,8 +2,8 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONSULTANT_IDENTITY_CLAUSE } from './harness/orchestrator-prompts.ts';
-import { loadRunState, runDirOf, saveRunState } from './run-store.ts';
+import { consultantIdentityClause } from './harness/orchestrator-prompts.ts';
+import { loadRunState, runDirOf, saveRunState, workflowOf } from './run-store.ts';
 import type { RunState } from './run-store.ts';
 
 /**
@@ -34,8 +34,8 @@ export const IDENTITY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..',
 
 /**
  * Where the per-run COMPOSED identity lives when a consultant is bound: the
- * shipped identity plus the consultant clause (`CONSULTANT_IDENTITY_CLAUSE` — the
- * SAME clause the headless system prompt appends via `orchestratorSystemPrompt`,
+ * shipped identity plus the arc's consultant clause (`consultantIdentityClause` —
+ * the SAME clause the headless system prompt appends via `orchestratorSystemPrompt`,
  * so both hosts gain it identically and only when bound). Written under the run
  * dir so the launcher feeds a single `--append-system-prompt-file`: the Claude
  * CLI doesn't document `--append-system-prompt-file` composing with a second
@@ -231,7 +231,7 @@ export function runOrchestrate(
   // launch, and is removed by `duet abandon --purge`.
   if (state.bindings.consultant) {
     const base = readFileSync(identityPath, 'utf8');
-    writeFileSync(composedIdentityPath(state), `${base.trimEnd()}\n\n${CONSULTANT_IDENTITY_CLAUSE}\n`);
+    writeFileSync(composedIdentityPath(state), `${base.trimEnd()}\n\n${consultantIdentityClause(workflowOf(state))}\n`);
   }
 
   const spec = buildSpec(state);

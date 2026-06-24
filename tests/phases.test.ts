@@ -2,8 +2,10 @@ import { describe, expect, test } from 'vitest';
 import {
   PHASE,
   WORKFLOWS,
+  acceptanceContractPathForSpec,
   consultantCheckpointOf,
   consultantSnippetFor,
+  contractAuthorPhaseOf,
   defaultPosture,
   gateOf,
   gatePhasesOf,
@@ -185,34 +187,54 @@ describe('the RIR workflow', () => {
 });
 
 describe('consultant checkpoints (registry data per arc)', () => {
-  test('Full maps frame/specGate/implGate onto frame/spec/impl', () => {
+  test('Full maps frame/specGate onto frame/spec, and the acceptance-contract pair onto plan/impl', () => {
     expect.soft(consultantCheckpointOf('frame')).toBe('frame');
     expect.soft(consultantCheckpointOf('spec')).toBe('specGate');
-    expect.soft(consultantCheckpointOf('impl')).toBe('implGate');
+    // The acceptance contract: plan AUTHORS it, impl VERIFIES it (the latter
+    // supplants the open-ended implGate audit Full's impl used to carry).
+    expect.soft(consultantCheckpointOf('plan')).toBe('contract');
+    expect.soft(consultantCheckpointOf('impl')).toBe('verify');
     // Phases without a checkpoint carry none.
-    expect.soft(consultantCheckpointOf('plan')).toBeUndefined();
     expect.soft(consultantCheckpointOf('docs')).toBeUndefined();
   });
 
-  test('RIR maps frame@research and implGate@implement, and has NO specGate (no spec phase)', () => {
+  test('RIR is unchanged: frame@research, implGate@implement, and NO contract/verify/specGate', () => {
     expect.soft(consultantCheckpointOf('research')).toBe('frame');
     expect.soft(consultantCheckpointOf('implement')).toBe('implGate');
     const rirModes = [...WORKFLOWS.rir.phases].map((p) => p.consultantCheckpoint);
+    // RIR authors no contract (no plan phase), so it never verifies one — implGate
+    // stays the open-ended bet audit; it is not globally re-pointed to verify.
     expect.soft(rirModes).not.toContain('specGate');
+    expect.soft(rirModes).not.toContain('contract');
+    expect.soft(rirModes).not.toContain('verify');
   });
 
-  test('each checkpoint resolves to its (non-review-prefixed) bet-audit snippet', () => {
+  test('each checkpoint resolves to its (non-review-prefixed) snippet', () => {
     expect.soft(consultantSnippetFor('frame')).toBe('consultant-frame');
     expect.soft(consultantSnippetFor('spec')).toBe('consultant-spec');
-    expect.soft(consultantSnippetFor('impl')).toBe('consultant-impl');
+    expect.soft(consultantSnippetFor('plan')).toBe('consultant-contract');
+    expect.soft(consultantSnippetFor('impl')).toBe('consultant-verify');
     expect.soft(consultantSnippetFor('research')).toBe('consultant-frame');
     expect.soft(consultantSnippetFor('implement')).toBe('consultant-impl');
-    expect.soft(consultantSnippetFor('plan')).toBeUndefined(); // a non-checkpoint phase
-    // The audit snippets are phase-bound to their checkpoint phases and never
-    // carry the review- prefix (which countsReviewRound keys on).
-    for (const snippet of ['consultant-frame', 'consultant-spec', 'consultant-impl']) {
+    expect.soft(consultantSnippetFor('docs')).toBeUndefined(); // a non-checkpoint phase
+    // The consultant snippets are phase-bound to their checkpoint phases and
+    // never carry the review- prefix (which countsReviewRound keys on).
+    for (const snippet of ['consultant-frame', 'consultant-spec', 'consultant-impl', 'consultant-contract', 'consultant-verify']) {
       expect.soft(snippet.startsWith('review')).toBe(false);
     }
+  });
+
+  test('contractAuthorPhaseOf names the contract freeze gate per arc (Full: plan; RIR: none)', () => {
+    expect.soft(contractAuthorPhaseOf('full')).toBe('plan');
+    expect.soft(contractAuthorPhaseOf('rir')).toBeUndefined();
+  });
+
+  test('acceptanceContractPathForSpec derives the spec sibling with an .acceptance.md suffix', () => {
+    expect.soft(acceptanceContractPathForSpec('docs/specs/2026-06-24-foo.md')).toBe(
+      'docs/specs/2026-06-24-foo.acceptance.md',
+    );
+    expect.soft(acceptanceContractPathForSpec('SPEC.md')).toBe('SPEC.acceptance.md');
+    expect.soft(acceptanceContractPathForSpec('a/b/c/plan.spec.md')).toBe('a/b/c/plan.spec.acceptance.md');
   });
 });
 

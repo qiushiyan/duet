@@ -118,9 +118,9 @@ describe('the snippet library', () => {
     }
   });
 
-  test('the three consultant snippets exist, are checkpoint-classified (never in a base phase list), and never carry a review- prefix', () => {
+  test('the five consultant snippets exist, are checkpoint-classified (never in a base phase list), and never carry a review- prefix', () => {
     const phaseSet = new Set<string>(WORKFLOW_NAMES.flatMap((wf) => WORKFLOWS[wf].phases.flatMap((p) => p.snippets)));
-    for (const key of ['consultant-frame', 'consultant-spec', 'consultant-impl']) {
+    for (const key of ['consultant-frame', 'consultant-spec', 'consultant-impl', 'consultant-contract', 'consultant-verify']) {
       const snippet = getSnippet(key);
       expect.soft(snippet, `snippet "${key}"`).toBeDefined();
       expect.soft(snippet?.expand.trim(), `snippet "${key}" body`).toBeTruthy();
@@ -137,14 +137,16 @@ describe('the snippet library', () => {
     }
     // The checkpoint→snippet mapping is the single source the registry exposes:
     // each phase that carries a checkpoint resolves to its snippet, and the
-    // arcs map the modes onto their own phases (Full: frame/spec/impl; RIR:
-    // research/implement — no spec phase).
+    // arcs map the modes onto their own phases. Full's plan AUTHORS the contract
+    // and its impl VERIFIES it (supplanting the open-ended impl bet-audit); RIR
+    // keeps the open-ended consultant-impl (no plan phase, no contract to verify).
     expect.soft(consultantSnippetFor('frame')).toBe('consultant-frame');
     expect.soft(consultantSnippetFor('spec')).toBe('consultant-spec');
-    expect.soft(consultantSnippetFor('impl')).toBe('consultant-impl');
+    expect.soft(consultantSnippetFor('plan')).toBe('consultant-contract');
+    expect.soft(consultantSnippetFor('impl')).toBe('consultant-verify');
     expect.soft(consultantSnippetFor('research')).toBe('consultant-frame');
     expect.soft(consultantSnippetFor('implement')).toBe('consultant-impl');
-    expect.soft(consultantSnippetFor('plan'), 'plan carries no consultant checkpoint').toBeUndefined();
+    expect.soft(consultantSnippetFor('docs'), 'docs carries no consultant checkpoint').toBeUndefined();
   });
 
   test('information hiding: no worker-directed snippet names the consultant (only the consultant-* snippets may)', () => {
@@ -256,18 +258,21 @@ describe('the snippet library', () => {
       const atFrame = renderSnippetLibrary({ phase: 'frame', workflow: 'full', consultantBound: true });
       // frame owns consultant-frame → rendered as a full body in phase_templates.
       expect.soft(atFrame).toContain('<snippet key="consultant-frame">');
-      // spec and impl own theirs later → indexed by key in coming_next, not as bodies.
+      // spec/plan/impl own theirs later (consultant-spec, the contract author, the
+      // verify checkpoint) → indexed by key in coming_next, not as bodies.
       expect.soft(atFrame).toContain('consultant-spec');
       expect.soft(atFrame).not.toContain('<snippet key="consultant-spec">');
-      expect.soft(atFrame).toContain('consultant-impl');
-      expect.soft(atFrame).not.toContain('<snippet key="consultant-impl">');
+      expect.soft(atFrame).toContain('consultant-contract');
+      expect.soft(atFrame).not.toContain('<snippet key="consultant-contract">');
+      expect.soft(atFrame).toContain('consultant-verify');
+      expect.soft(atFrame).not.toContain('<snippet key="consultant-verify">');
     });
 
-    test('bound: all=true exposes the consultant bodies', () => {
+    test('bound: all=true exposes every consultant body', () => {
       const rendered = renderSnippetLibrary({ phase: 'spec', all: true, consultantBound: true });
-      expect.soft(rendered).toContain('<snippet key="consultant-frame">');
-      expect.soft(rendered).toContain('<snippet key="consultant-spec">');
-      expect.soft(rendered).toContain('<snippet key="consultant-impl">');
+      for (const key of ['consultant-frame', 'consultant-spec', 'consultant-impl', 'consultant-contract', 'consultant-verify']) {
+        expect.soft(rendered).toContain(`<snippet key="${key}">`);
+      }
     });
 
     test('bound: a RIR phase shows only its arc’s checkpoints (no spec checkpoint — RIR has no spec)', () => {

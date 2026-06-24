@@ -1,10 +1,20 @@
 import { spawn } from 'node:child_process';
 import { closeSync, existsSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { execa } from 'execa';
 import { createActor, waitFor } from 'xstate';
 import type { AnyMachineSnapshot, Snapshot } from 'xstate';
 import { notify as desktopNotify } from '../notify.ts';
-import { PHASE, WORKFLOWS, entryOf, gatePhasesOf, phaseOfGateState, phasesOf } from '../phases.ts';
+import {
+  PHASE,
+  WORKFLOWS,
+  acceptanceContractPathForSpec,
+  contractAuthorPhaseOf,
+  entryOf,
+  gatePhasesOf,
+  phaseOfGateState,
+  phasesOf,
+} from '../phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from '../phases.ts';
 import type { WorkerRole } from '../providers/types.ts';
 import { workerRolesFor } from '../roles.ts';
@@ -389,6 +399,15 @@ export async function driveToQuiescence(
     saveRunState(state);
   }
 
+  // Freeze on an EXPLICIT headless approve of the contract gate (the human
+  // approved an attended/held plan gate, re-spawning the driver with the event):
+  // the restored snapshot is parked at that gate, so freeze before the event
+  // crosses it. The pre-authorized auto-cross is handled in the loop below.
+  if (options?.event?.type === 'human.approve' && typeof restoredValue === 'string') {
+    const enteringGate = phaseOfGateState(workflowOf(state), restoredValue);
+    if (enteringGate) await freezeContractAt(state, enteringGate);
+  }
+
   if (options?.event) actor.send(options.event);
 
   for (;;) {
@@ -424,6 +443,10 @@ export async function driveToQuiescence(
     // (crossInteractive) never consults this — only the manufactured one here.
     const held = gatePhase ? highDecisionsAt(fresh, gatePhase) : [];
     if (gatePhase && !gateAttended(fresh, gatePhase) && held.length === 0) {
+      // Freeze on a pre-authorized AUTO-cross of the contract gate (accepted even
+      // though the human never ratified it — the auto-cross is the standing
+      // authority). No-op at every other gate. Before the cross, like the entry case.
+      await freezeContractAt(fresh, gatePhase);
       // Dedupe on crash-recovery re-entry at the same gate.
       if (fresh.autoApprovals?.at(-1)?.gate !== fresh.machineState) {
         (fresh.autoApprovals ??= []).push({ gate: fresh.machineState, at: new Date().toISOString() });
@@ -447,6 +470,57 @@ export async function driveToQuiescence(
     await notify(`duet ${fresh.runId}`, describeStop(fresh, snapshot.status === 'done'));
     return { snapshot, state: fresh };
   }
+}
+
+/**
+ * Freeze the acceptance contract when an approve-crossing reaches its author
+ * phase's gate (Full: the plan-approval gate). A discrete, self-guarding step the
+ * approve paths call — kept OUT of the pure crossInteractive disk transition. It
+ * no-ops unless this is the contract gate, a consultant is bound, a spec path is
+ * known, and the consultant actually authored a contract FILE (authoring failed ⇒
+ * no file ⇒ the orchestrator's missing-contract `high` surfaces it, not this).
+ *
+ * The consultant authors but never commits — single-writer-by-construction keeps
+ * the orphan-safe discard-and-reseed premise (the consultant touches no git
+ * history). So duet commits the authored file here, PATH-SCOPED so the in-progress
+ * plan in the same worktree stays uncommitted, and records the freezing commit for
+ * the impl verify checkpoint. Idempotent: a crash-recovery re-cross with the
+ * contract already frozen is a no-op, and the commit sha is resolved from the
+ * path's own history (not HEAD), surviving a crash between commit and state save.
+ *
+ * Freezes even on a pre-authorized (auto-crossed) plan gate the human never
+ * ratified — the contract still freezes and keeps its independent + evidence-
+ * verified value; only the human-signed-target leg is absent there (accepted).
+ */
+export async function freezeContractAt(state: RunState, gatePhase: PhaseName): Promise<void> {
+  if (state.acceptanceContract) return; // already frozen — idempotent re-entry
+  if (gatePhase !== contractAuthorPhaseOf(workflowOf(state))) return; // not the contract gate
+  if (!state.bindings.consultant || !state.specPath) return; // default-off / nothing to derive from
+  const path = acceptanceContractPathForSpec(state.specPath);
+  // Require THIS run's authoring: a draft marker the consultant's contract turn
+  // settled, at this derived path. A pre-existing/stale contract file from a prior
+  // run (no draft marker, or a stale path) is NOT this run's contract — freezing it
+  // would ratify a target nobody authored this run (the verify checkpoint then
+  // checks the built system against it). Without the marker, no freeze; impl treats
+  // it as "no contract" and the plan rail already required a high for the absence.
+  if (state.acceptanceContractDraft?.path !== path) return;
+  if (!existsSync(join(state.cwd, path))) return; // authoring produced no file
+  const git = (args: string[]): Promise<{ stdout: string }> => execa('git', args, { cwd: state.cwd, timeout: 30_000 });
+  const dirty = (await git(['status', '--porcelain', '--', path])).stdout.trim();
+  if (dirty) {
+    await git(['add', '--', path]);
+    await git(['commit', '-m', `docs(contract): freeze acceptance contract (${state.runId})`, '--', path]);
+  }
+  // The contract's own last-touching commit — robust to HEAD having moved on and
+  // to a crash between an earlier commit and this save (where HEAD ≠ the freeze).
+  const commit = (await git(['log', '-1', '--format=%H', '--', path])).stdout.trim();
+  // Fresh-load → set the one field → save (the setGatesAt discipline), so a
+  // concurrently-staged pendingMessage on disk is not clobbered; mirror onto the
+  // caller's ref so the same turn's downstream reads see the freeze.
+  const fresh = loadRunState(state.cwd, state.runId);
+  fresh.acceptanceContract = { path, commit };
+  saveRunState(fresh);
+  state.acceptanceContract = { path, commit };
 }
 
 /**
@@ -505,7 +579,10 @@ export function crossInteractive(state: RunState, humanEvent: HumanEvent): void 
  * Returns the resulting attended/pre-authorized split for the caller to print as
  * informed consent.
  */
-export function enterAfk(state: RunState, posture: GatePhase[]): { attended: GatePhase[]; preAuthorized: GatePhase[] } {
+export async function enterAfk(
+  state: RunState,
+  posture: GatePhase[],
+): Promise<{ attended: GatePhase[]; preAuthorized: GatePhase[] }> {
   if (state.orchestrationHost !== 'interactive') {
     throw new Error(
       `run ${state.runId} is not orchestrated interactively — duet afk hands off from an interactive gate; a headless run already runs unattended.`,
@@ -529,6 +606,9 @@ export function enterAfk(state: RunState, posture: GatePhase[]): { attended: Gat
         .join('; ')}). duet afk would approve it unattended; approve this gate explicitly and then hand off: duet continue --approve --headless.`,
     );
   }
+  // Freeze the contract before this gate is crossed away — `duet afk` from the
+  // plan gate is an approve-crossing of the contract gate (no-op elsewhere).
+  await freezeContractAt(state, position.phase);
   setGatesAt(state, posture);
   crossInteractive(state, { type: 'human.approve' });
   const fresh = loadRunState(state.cwd, state.runId);

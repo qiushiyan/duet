@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'smol-toml';
 import { z } from 'zod';
-import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, phaseSnippetsFor, phasesOf, workflowOfPhase } from './phases.ts';
+import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, consultantSnippetsForWorkflow, phaseSnippetsFor, phasesOf, workflowOfPhase } from './phases.ts';
 import type { PhaseName, WorkflowName } from './phases.ts';
 
 /**
@@ -89,7 +89,7 @@ export interface SnippetRenderOpts {
  */
 export function renderSnippetLibrary(opts: SnippetRenderOpts = {}): string {
   const consultantBound = opts.consultantBound ?? false;
-  if (opts.all || !opts.phase) return renderFlat(opts.sentTo, opts.all, consultantBound);
+  if (opts.all || !opts.phase) return renderFlat(opts.sentTo, opts.all, consultantBound, opts.workflow);
   return renderForPhase(opts.phase, opts.workflow ?? workflowOfPhase(opts.phase), opts.sentTo, consultantBound);
 }
 
@@ -99,11 +99,18 @@ function snippetBlock(s: Snippet, sentTo?: Record<string, string[]>): string {
   return `<snippet key="${s.key}"${attr}>\n${s.expand}\n</snippet>`;
 }
 
-function renderFlat(sentTo?: Record<string, string[]>, all?: boolean, consultantBound = false): string {
-  // The flat library is the whole file, so the checkpoint snippets must be
-  // filtered out here too unless bound — else `all=true` would expose them on an
-  // unbound run, the very leak this gating closes.
-  const snippets = consultantBound ? loadSnippets() : loadSnippets().filter((s) => !CONSULTANT_SNIPPETS.has(s.key));
+function renderFlat(sentTo?: Record<string, string[]>, all?: boolean, consultantBound = false, workflow?: WorkflowName): string {
+  // The flat library is the whole file, so the checkpoint snippets must be filtered
+  // here: unbound shows NONE; bound shows only the consultant snippets THIS arc's
+  // checkpoints reach (per-arc honesty — a bound rir run never sees full's contract
+  // snippets, the leak the workflow filter closes). With no workflow (defensive,
+  // outside the tool path), a bound run falls back to every consultant snippet.
+  const allowedConsultant = !consultantBound
+    ? new Set<string>()
+    : workflow
+      ? consultantSnippetsForWorkflow(workflow)
+      : CONSULTANT_SNIPPETS;
+  const snippets = loadSnippets().filter((s) => !CONSULTANT_SNIPPETS.has(s.key) || allowedConsultant.has(s.key));
   return [
     all ? '<snippet_library all="true">' : '<snippet_library>',
     ...snippets.map((s) => snippetBlock(s, sentTo)),
