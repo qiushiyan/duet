@@ -29,7 +29,7 @@ import { serveKernelStdio, serveRunScopedKernelStdio } from './harness/mcp-serve
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
 import { runOrchestrate } from './orchestrate.ts';
 import { entryOf, handoffWatchLabel, phaseOfGateState } from './phases.ts';
-import { getEffectiveSnippet, loadEffectiveSnippets } from './snippets.ts';
+import { getEffectiveSnippet, loadEffectiveSnippets, runtimeLibraryContext } from './snippets.ts';
 import type { EffectiveSnippet } from './snippets.ts';
 import { buildBrief, buildStatusModel, renderBrief, renderStatus, steerRefusal } from './status.ts';
 import { openTmuxView } from './tmux-view.ts';
@@ -1020,7 +1020,7 @@ const snippetsCmd = program
     // recovery-worded) message cleanly via fail(), not a raw stack trace.
     let snippets: EffectiveSnippet[];
     try {
-      snippets = loadEffectiveSnippets({ cwd: process.cwd() });
+      snippets = loadEffectiveSnippets(runtimeLibraryContext(process.cwd()));
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
     }
@@ -1033,7 +1033,7 @@ snippetsCmd
   .action((key: string) => {
     let snippet: EffectiveSnippet | undefined;
     try {
-      snippet = getEffectiveSnippet(key, { cwd: process.cwd() });
+      snippet = getEffectiveSnippet(key, runtimeLibraryContext(process.cwd()));
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
     }

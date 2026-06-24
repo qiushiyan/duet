@@ -34,15 +34,18 @@ export interface EffectiveSnippet extends Snippet {
 
 /**
  * Where to discover override layers when resolving the effective library. Both
- * fields optional: `configDir` (default `~/.config/duet`) holds the USER
- * override `snippets.toml`; `cwd` (the project root) holds the PROJECT override
- * at `<cwd>/.duet/snippets.toml`. An absent field skips that layer's discovery —
- * with neither, resolution is the shipped base verbatim.
+ * fields optional and explicit: `configDir` holds the USER override
+ * `snippets.toml`; `cwd` (the project root) holds the PROJECT override at
+ * `<cwd>/.duet/snippets.toml`. An absent field skips that layer's discovery — so
+ * with neither, resolution is the shipped base verbatim, and there is NO ambient
+ * read of the OS home here. Production callers build the real context through
+ * `runtimeLibraryContext` (the one place the home is read); tests pass explicit
+ * dirs, so the contextual core stays environment-independent.
  */
 export interface SnippetLibraryContext {
-  /** Project root — its `.duet/snippets.toml` is the project override layer. */
+  /** Project root — its `.duet/snippets.toml` is the project override layer. Absent ⇒ no project layer. */
   cwd?: string;
-  /** User config dir — its `snippets.toml` is the user override layer. Default `~/.config/duet`. */
+  /** User config dir — its `snippets.toml` is the user override layer. Absent ⇒ no user layer. */
   configDir?: string;
 }
 
@@ -161,7 +164,18 @@ export function getSnippet(key: string): Snippet | undefined {
  */
 function loadOverrideLayer(path: string, source: Exclude<SnippetLayer, 'shipped'>): SnippetOverrideLayer | undefined {
   if (!existsSync(path)) return undefined;
-  const parsed = librarySchema.safeParse(parse(readFileSync(path, 'utf8')));
+  // Two failure modes, each named with the path + recovery (with two possible
+  // override files, "which file?" must be in the message): a TOML *syntax* error
+  // (parse throws), then a *schema* mismatch (valid TOML, wrong shape).
+  let raw: unknown;
+  try {
+    raw = parse(readFileSync(path, 'utf8'));
+  } catch (err) {
+    throw new Error(
+      `snippet override at ${path} is not valid TOML (${err instanceof Error ? err.message : String(err)}) — fix or remove the file.`,
+    );
+  }
+  const parsed = librarySchema.safeParse(raw);
   if (!parsed.success) {
     throw new Error(
       `snippet override at ${path} is not a valid snippet library (${parsed.error.issues[0]?.message ?? 'unknown issue'}) — each [[snippets]] entry needs a string "key" and a string "expand". Fix or remove the file.`,
@@ -181,15 +195,30 @@ function loadOverrideLayer(path: string, source: Exclude<SnippetLayer, 'shipped'
  * guarantee the no-override author relies on.
  */
 export function loadEffectiveSnippets(ctx: SnippetLibraryContext = {}): EffectiveSnippet[] {
-  const configDir = ctx.configDir ?? join(homedir(), '.config', 'duet');
   const layers: SnippetOverrideLayer[] = [];
-  const userLayer = loadOverrideLayer(join(configDir, 'snippets.toml'), 'user');
-  if (userLayer) layers.push(userLayer);
+  if (ctx.configDir !== undefined) {
+    const userLayer = loadOverrideLayer(join(ctx.configDir, 'snippets.toml'), 'user');
+    if (userLayer) layers.push(userLayer);
+  }
   if (ctx.cwd !== undefined) {
     const projectLayer = loadOverrideLayer(join(ctx.cwd, '.duet', 'snippets.toml'), 'project');
     if (projectLayer) layers.push(projectLayer);
   }
   return mergeSnippetLayers(loadSnippets(), layers);
+}
+
+/**
+ * The real runtime library context for a project root: the project override at
+ * `<cwd>/.duet/snippets.toml` and the user override at
+ * `<home>/.config/duet/snippets.toml`. The ONE place the OS home is read for
+ * snippets (mirroring config.ts's `~/.config/duet` location), so production gets
+ * the real home while `loadEffectiveSnippets` itself stays environment-free.
+ * `home` defaults to `homedir()`; the test suite isolates it by pointing `$HOME`
+ * at an empty fixture (tests/helpers/home-isolation.ts), so no run picks up the
+ * developer's own override.
+ */
+export function runtimeLibraryContext(cwd: string, home: string = homedir()): SnippetLibraryContext {
+  return { cwd, configDir: join(home, '.config', 'duet') };
 }
 
 /**

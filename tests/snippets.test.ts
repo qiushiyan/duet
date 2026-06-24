@@ -12,6 +12,7 @@ import {
   loadSnippets,
   mergeSnippetLayers,
   renderSnippetLibrary,
+  runtimeLibraryContext,
 } from '../src/snippets.ts';
 import type { Snippet, SnippetOverrideLayer, SnippetRenderOpts } from '../src/snippets.ts';
 
@@ -483,9 +484,37 @@ describe('loadEffectiveSnippets — contextual resolution over real files', () =
     expect.soft(bad).toThrow(/snippets\.toml/);
   });
 
-  test('a syntactically-broken override file fails loud (never silently dropped)', () => {
+  test('a TOML *syntax* error names the path and the recovery action (not a bare throw)', () => {
     const configDir = withUserSnippets('this is not valid toml [[[');
-    expect(() => loadEffectiveSnippets({ cwd: tmpEmpty(), configDir })).toThrow();
+    const bad = (): unknown => loadEffectiveSnippets({ cwd: tmpEmpty(), configDir });
+    expect.soft(bad).toThrow(/is not valid TOML/);
+    expect.soft(bad).toThrow(/snippets\.toml/);
+    expect.soft(bad).toThrow(/fix or remove the file/i);
+  });
+});
+
+describe('the contextual API takes explicit dirs — no ambient home read', () => {
+  test('an empty context (no fields) is shipped-only, every element shipped (the honest contract)', () => {
+    // Point 4: loadEffectiveSnippets({}) must NOT default the config dir to the
+    // real ~/.config/duet — with neither field it is the shipped base verbatim.
+    const eff = loadEffectiveSnippets({});
+    expect.soft(eff.map((s) => ({ key: s.key, expand: s.expand }))).toEqual(loadSnippets());
+    expect.soft(eff.every((s) => s.source === 'shipped')).toBe(true);
+  });
+
+  test('runtimeLibraryContext points configDir at <home>/.config/duet and resolves the user layer there', () => {
+    // The production path (the ONE place home is read), tested with an explicit
+    // home arg — no env mutation needed.
+    const home = tmpEmpty();
+    mkdirSync(join(home, '.config', 'duet'), { recursive: true });
+    writeFileSync(join(home, '.config', 'duet', 'snippets.toml'), overrideToml([['write-spec', 'HOME user override']]));
+    const ctx = runtimeLibraryContext(tmpEmpty(), home);
+    expect.soft(ctx.configDir).toBe(join(home, '.config', 'duet'));
+    expect.soft(loadEffectiveSnippets(ctx).find((s) => s.key === 'write-spec')).toEqual({
+      key: 'write-spec',
+      expand: 'HOME user override',
+      source: 'user',
+    });
   });
 });
 

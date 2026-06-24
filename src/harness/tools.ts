@@ -1,5 +1,4 @@
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
-import { join } from 'node:path';
 import { execa } from 'execa';
 import { z } from 'zod';
 import { PHASE, acceptanceContractPathForSpec, isGatePhase } from '../phases.ts';
@@ -8,7 +7,7 @@ import { providerFor } from '../providers/index.ts';
 import { BudgetCutoffError } from '../providers/types.ts';
 import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
 import { countsReviewRound, orphanRecoveryFor, readOnlyFor, sessionIdFor, workerRolesFor } from '../roles.ts';
-import { getSnippet, renderSnippetLibrary } from '../snippets.ts';
+import { getSnippet, renderSnippetLibrary, runtimeLibraryContext } from '../snippets.ts';
 import {
   appendNote,
   appendVoiceLog,
@@ -727,14 +726,10 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             (sent[tag] ??= []).push(role);
           }
         }
-        // Resolve against the run's project root so a `<cwd>/.duet/snippets.toml`
-        // override is discovered; the user override comes from the config dir
-        // (home-relative — reuse the `home` env seam so a planted-home test stays
-        // hermetic, else loadEffectiveSnippets defaults to the real `~/.config/duet`).
-        const libraryContext = {
-          cwd: state.cwd,
-          ...(home !== undefined ? { configDir: join(home, '.config', 'duet') } : {}),
-        };
+        // Resolve against the run's project root (the `<cwd>/.duet/snippets.toml`
+        // project override) and the user config dir; runtimeLibraryContext owns the
+        // single OS-home read, which the test suite isolates via $HOME.
+        const libraryContext = runtimeLibraryContext(state.cwd);
         // A malformed or unknown-key override file fails closed — surface it as a
         // readable tool error (not a crashed turn): the orchestrator can't compose
         // prompts from a broken library, so it must stop and flag rather than serve
