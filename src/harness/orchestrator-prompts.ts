@@ -615,9 +615,17 @@ export function feedbackResumePrompt(phase: PhaseName, feedback: string): string
   const reviseClause = reRunsReviewLoop
     ? 'run whatever review rounds the changes warrant (with the -again variants), and advance the phase again when converged'
     : "have the implementer apply the changes directly and advance the phase again — this phase doesn't re-run a reviewer round on re-entry, so the human's feedback is the revision itself, not the trigger for a new review pass";
+  // A phase that folds its docs in before the gate (RIR implement) carries the
+  // docs requirement only in its initial brief — not in this resume prompt — and
+  // has no downstream docs/PR phase to catch drift. So on a rejection, remind the
+  // orchestrator to refresh the docs when the feedback changes the code, or a
+  // re-advance can ship a docs commit describing the rejected implementation.
+  const docsRefresh = PHASE[phase].foldsDocs
+    ? ' If the feedback changes what the code does, have the implementer refresh the docs it updated before this gate so they still describe the shipped behavior — this arc folds docs into the build and opens no PR, so a stale docs commit would ship uncaught.'
+    : '';
   return `At the gate, the human sent the ${artifact} back with this feedback: ${JSON.stringify(
     feedback,
-  )}. Re-enter the phase to address it — route the feedback to the implementer (the human is the editor-in-chief; their feedback outranks reviewer opinions), ${reviseClause}. Your workers kept their full context from before the gate: steer them with deltas to the frames they already hold (what changed and why), not by re-running templates they've already received.`;
+  )}. Re-enter the phase to address it — route the feedback to the implementer (the human is the editor-in-chief; their feedback outranks reviewer opinions), ${reviseClause}.${docsRefresh} Your workers kept their full context from before the gate: steer them with deltas to the frames they already hold (what changed and why), not by re-running templates they've already received.`;
 }
 
 export function nudgeContinuePrompt(): string {

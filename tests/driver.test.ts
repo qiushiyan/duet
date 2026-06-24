@@ -185,6 +185,19 @@ describe('feedbackResumePrompt routes a gate rejection per the phase', () => {
     // The Full multi-round language must not leak into the single-round arc.
     expect.soft(prompt).not.toContain('review rounds');
     expect.soft(prompt).not.toContain('-again');
+    // RIR folds docs into this phase before Ship and opens no PR, so a rejection
+    // must carry the docs-refresh reminder — the docs-before-Ship invariant can't
+    // live only in the initial brief, or a re-advance could ship docs describing
+    // rejected code with no downstream docs/PR phase to catch it.
+    expect.soft(prompt).toContain('refresh the docs');
+  });
+
+  test("a folded-docs phase's rejection refreshes docs, a downstream-docs phase's does not", () => {
+    // The folded-docs reminder is keyed on the registry's foldsDocs flag (RIR
+    // implement), not the phase name. Full's impl re-runs its separate docs phase
+    // after a re-approved Ship, so its rejection must NOT carry the reminder.
+    expect.soft(feedbackResumePrompt('implement', 'x')).toContain('refresh the docs');
+    expect.soft(feedbackResumePrompt('impl', 'x')).not.toContain('refresh the docs');
   });
 
   test('a non-loop gate phase (rir research) also routes directly, no review round', () => {

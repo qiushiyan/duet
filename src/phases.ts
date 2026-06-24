@@ -76,6 +76,14 @@ interface PhaseSpecInput<Name extends string = string> {
    * unbound run never reads it.
    */
   readonly consultantCheckpoint?: ConsultantCheckpoint;
+  /**
+   * Whether this phase folds a docs update into itself before its gate (absent ⇒
+   * no). The RIR implement phase sets it: with no separate docs phase and no PR,
+   * the docs are made part of the shippable state inside the build. Read by the
+   * gate-reject resume prompt so the docs-before-gate invariant survives a
+   * rejection, not only the initial brief (src/harness/orchestrator-prompts.ts).
+   */
+  readonly foldsDocs?: boolean;
 }
 
 /** A workflow definition as written in the registry (string-typed input shape). */
@@ -314,6 +322,9 @@ export const WORKFLOWS = {
         workerBudgetUsd: 25,
         workerTurnTimeoutMs: 60 * 60_000,
         consultantCheckpoint: 'implGate',
+        // Docs fold into this phase before Ship (no separate docs phase, no PR),
+        // so a gate rejection must refresh them too — feedbackResumePrompt reads this.
+        foldsDocs: true,
       },
     ],
     entry: { firstPhase: 'research' },
@@ -387,6 +398,11 @@ export interface PhaseSpec {
   workerTurnTimeoutMs: number;
   /** The consultant checkpoint this phase carries, when any (registry data). */
   consultantCheckpoint?: ConsultantCheckpoint;
+  /**
+   * Whether this phase folds a docs update in before its gate (RIR implement) —
+   * read by feedbackResumePrompt so a gate rejection refreshes the docs too.
+   */
+  foldsDocs?: boolean;
 }
 
 /**
