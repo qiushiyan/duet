@@ -65,7 +65,7 @@ Surface it like gate posture — offer the choice, don't make it; whether the pr
 - **Worth raising** when the *premise* carries the risk: a new direction, an unproven assumption, a product bet where "are we building the right thing?" matters more than execution polish.
 - **Leave it off** for routine, well-understood work — the embedded reviewer is enough there, and an extra voice is just cost and ceremony.
 
-Unlike workflow and gate posture, this is **not frontmatter** — it's a launch flag, `--consultant <provider[:model]>` (e.g. `--consultant codex` for a cross-family read against a claude reviewer). If the user already binds one in config (`[roles.consultant]`) it runs every time, so skip the flag; `--no-consultant` turns it off for a single run.
+Unlike workflow and gate posture, this is **not frontmatter** — it's a launch flag, `--consultant <provider[:model]>` (e.g. `--consultant claude` — Claude Opus 4.8 by default — for a cross-family read against the default codex reviewer). If the user already binds one in config (`[roles.consultant]`) it runs every time, so skip the flag; `--no-consultant` turns it off for a single run.
 
 ## The framing schema
 
