@@ -1852,6 +1852,28 @@ describe('the library and the journal', () => {
     expect.soft(library, 'the resolved vendored path a worker receives').toContain(join(SKILLS_DIR, 'tdd/SKILL.md'));
   });
 
+  test('list_snippets serves a project .duet/snippets.toml override (the contextual wire is connected)', async ({ run }) => {
+    // The integration altitude: snippets.test.ts proves the merge; this proves
+    // tools.ts threads the run's cwd into the resolver so the project override is
+    // discovered and served (with no provenance marker on the wire).
+    mkdirSync(join(run.cwd, '.duet'), { recursive: true });
+    writeFileSync(join(run.cwd, '.duet', 'snippets.toml'), '[[snippets]]\nkey = "review-plan"\nexpand = "PROJECT-OVERRIDDEN review-plan body"\n');
+    const { call } = harness(run, { phase: 'plan' });
+    const library = text(await call('list_snippets'));
+    expect.soft(library).toContain('PROJECT-OVERRIDDEN review-plan body');
+    expect.soft(library).toContain('<snippet key="review-plan">'); // tag shape unchanged — provenance never reaches the worker
+  });
+
+  test('list_snippets fails closed on an unknown-key override — a readable tool error, not a crashed turn', async ({ run }) => {
+    mkdirSync(join(run.cwd, '.duet'), { recursive: true });
+    writeFileSync(join(run.cwd, '.duet', 'snippets.toml'), '[[snippets]]\nkey = "no-such-key"\nexpand = "x"\n');
+    const { call } = harness(run, { phase: 'plan' });
+    const result = await call('list_snippets');
+    expect.soft(result.isError).toBe(true);
+    expect.soft(text(result)).toContain('no-such-key');
+    expect.soft(text(result)).toContain('could not be loaded');
+  });
+
   test('propose_snippet_edit queues for the end-of-run review, never applies now', async ({ projectDir, run }) => {
     const { call } = harness(run);
     const result = await call('propose_snippet_edit', {
