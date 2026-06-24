@@ -18,7 +18,30 @@ export interface Snippet {
   expand: string;
 }
 
-const SNIPPETS_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'snippets.toml');
+const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const SNIPPETS_PATH = join(PACKAGE_ROOT, 'snippets.toml');
+
+/**
+ * The vendored methodology skills (`skills/internal/`) — duet's PLAN-phase
+ * quality opinion, shipped in the package (`files` includes `skills`). Snippet
+ * bodies cite these with a `{{skills_dir}}/…` token that `snippetBlock` resolves
+ * to this absolute dir at serve time, so a worker on any install reads the real
+ * files. Same package-relative resolution as `SNIPPETS_PATH` — `src/` and
+ * `dist/` both sit one level below the root, so it survives the published build.
+ * Exported for the snippet guard (`tests/snippets.test.ts`).
+ */
+export const SKILLS_DIR = join(PACKAGE_ROOT, 'skills', 'internal');
+
+/**
+ * Resolve the `{{skills_dir}}` placeholder in a snippet body to the vendored
+ * absolute path. Applied only on the serve path (the rendered XML), never
+ * stored: `loadSnippets`/`getSnippet` keep the portable token, so the library on
+ * disk and in memory never carries a machine-specific path — the invariant this
+ * substitution exists to hold.
+ */
+function withSkillsDir(body: string): string {
+  return body.replaceAll('{{skills_dir}}', SKILLS_DIR);
+}
 
 // The file is hand-edited (snippet proposals apply here) — validate so a
 // typo fails with the path and the problem, not a crash downstream.
@@ -47,6 +70,12 @@ function index(): Map<string, Snippet> {
   return byKey;
 }
 
+/**
+ * Look up a snippet by key. Returns the STORED form — a `{{skills_dir}}`
+ * placeholder is left unresolved; only the render path (`snippetBlock`, via
+ * `renderSnippetLibrary`) resolves it. Worker-facing delivery must go through
+ * the render path, never a raw `getSnippet(...).expand`.
+ */
 export function getSnippet(key: string): Snippet | undefined {
   return index().get(key);
 }
@@ -96,7 +125,7 @@ export function renderSnippetLibrary(opts: SnippetRenderOpts = {}): string {
 function snippetBlock(s: Snippet, sentTo?: Record<string, string[]>): string {
   const sent = sentTo?.[s.key];
   const attr = sent && sent.length > 0 ? ` already_sent_this_phase_to="${sent.join(', ')}"` : '';
-  return `<snippet key="${s.key}"${attr}>\n${s.expand}\n</snippet>`;
+  return `<snippet key="${s.key}"${attr}>\n${withSkillsDir(s.expand)}\n</snippet>`;
 }
 
 function renderFlat(sentTo?: Record<string, string[]>, all?: boolean, consultantBound = false, workflow?: WorkflowName): string {

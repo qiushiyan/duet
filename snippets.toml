@@ -193,13 +193,13 @@ Write this plan so that it is complementary to the spec, not overlapping. Don't 
 Go detailed — name each slice, list specific test cases, sketch helpers and fixtures, cite line numbers for changes in existing code. **Don't pre-write full code bodies** — describe tests and helpers; actual code happens during red-green-refactor.
 
 Read these as a lens, not a checklist (adapt; drop what doesn't fit):
-- `~/.claude/skills/tdd/SKILL.md` — vertical slices, what to test, anti-patterns
-- `~/.claude/skills/tdd/tests.md` — behavior-focused tests; `test.for`, `expect.soft`, custom matchers
-- `~/.claude/skills/tdd/mocking.md` — mock only at boundaries, never your own modules
-- `~/.claude/skills/tdd/interface-design.md` — testability via `test.extend` fixtures
-- `~/.claude/skills/tdd/deep-modules.md` — small interface, deep implementation; keeps the test surface small and tests stable across refactors
-- `~/.claude/skills/tdd/vitest-patterns.md` — Vitest APIs *(TS-Vitest projects only)*
-- `~/.claude/skills/improve-codebase-architecture/SKILL.md` — also informs designing well from the start
+- `{{skills_dir}}/tdd/SKILL.md` — vertical slices, what to test, anti-patterns
+- `{{skills_dir}}/tdd/tests.md` — behavior-focused tests; `test.for`, `expect.soft`, custom matchers
+- `{{skills_dir}}/tdd/mocking.md` — mock only at boundaries, never your own modules
+- `{{skills_dir}}/tdd/interface-design.md` — testability via `test.extend` fixtures
+- `{{skills_dir}}/tdd/deep-modules.md` — small interface, deep implementation; keeps the test surface small and tests stable across refactors
+- `{{skills_dir}}/tdd/vitest-patterns.md` — Vitest APIs *(TS-Vitest projects only)*
+- `{{skills_dir}}/improve-codebase-architecture/SKILL.md` — also informs designing well from the start
 
 **What to test:** observable behavior through public interfaces and critical paths — not implementation details or every edge case. Skip UI tests unless requested; focus on pure business logic. Confirm with me if unclear.
 
@@ -220,8 +220,8 @@ expand = '''
 I've drafted an implementation plan. Review with the same rigor as the spec.
 
 Background (skim as a lens, don't recite):
-- `~/.claude/skills/tdd/SKILL.md` — vertical slices, behavior-focused tests, when to mock
-- `~/.claude/skills/improve-codebase-architecture/SKILL.md` — deep modules, seams, the deletion test
+- `{{skills_dir}}/tdd/SKILL.md` — vertical slices, behavior-focused tests, when to mock
+- `{{skills_dir}}/improve-codebase-architecture/SKILL.md` — deep modules, seams, the deletion test
 
 **Adapt; drop what doesn't fit our use case.**
 

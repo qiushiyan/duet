@@ -1,7 +1,9 @@
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, UNLISTED_SNIPPETS, WORKFLOWS, consultantSnippetFor } from '../src/phases.ts';
 import type { WorkflowName } from '../src/phases.ts';
-import { getSnippet, loadSnippets, renderSnippetLibrary } from '../src/snippets.ts';
+import { SKILLS_DIR, getSnippet, loadSnippets, renderSnippetLibrary } from '../src/snippets.ts';
 
 const WORKFLOW_NAMES = Object.keys(WORKFLOWS) as WorkflowName[];
 
@@ -21,15 +23,63 @@ describe('the snippet library', () => {
     }
   });
 
-  test('snippet paths are project-neutral: no foreign spec path, skill roots unified on ~/.claude (F7)', () => {
-    const bodies = loadSnippets()
-      .map((s) => s.expand)
-      .join('\n');
-    expect.soft(bodies).not.toContain('docs/superpowers/'); // the tabtype-port's foreign spec path
-    expect.soft(bodies).not.toContain('~/.agents/skills/'); // the outlier skill root
-    // The skill references that remain all sit under the single ~/.claude/skills root.
-    expect.soft(bodies).toContain('~/.claude/skills/tdd/');
-    expect.soft(bodies).toContain('~/.claude/skills/improve-codebase-architecture/');
+  // The PLAN snippets cite duet's methodology by a {{skills_dir}}/… token that
+  // resolves to the vendored skills/internal copy at serve time — so the
+  // discipline ships with the package instead of pointing at the author's
+  // machine. These five layers guard that the references stay shippable and that
+  // the resolution is invisible at the run surface (a worker never sees a token,
+  // a personal path never re-enters the library). The earlier F7 guard asserted
+  // the *opposite* state (~/.claude paths present); this supersedes it.
+  describe('the PLAN methodology ships with the package (vendored skills resolve)', () => {
+    const rawBodies = (): string => loadSnippets().map((s) => s.expand).join('\n');
+
+    test('layer 1 — no personal or foreign path remains in any stored snippet body', () => {
+      const bodies = rawBodies();
+      expect.soft(bodies, 'a ~/.claude path leaked back into the library').not.toContain('~/.claude');
+      expect.soft(bodies, 'the outlier ~/.agents skill root').not.toContain('~/.agents/skills/');
+      expect.soft(bodies, "the tabtype-port's foreign spec path").not.toContain('docs/superpowers/');
+    });
+
+    test('layer 2 — every {{skills_dir}} reference resolves to a vendored file', () => {
+      const refs: string[] = [];
+      for (const m of rawBodies().matchAll(/\{\{skills_dir\}\}\/([\w./-]+)/g)) if (m[1]) refs.push(m[1]);
+      expect(refs.length, 'no {{skills_dir}} references found — the PLAN snippets stopped citing the methodology').toBeGreaterThan(0);
+      // the two SKILL.md roots the snippets name explicitly
+      expect.soft(refs).toContain('tdd/SKILL.md');
+      expect.soft(refs).toContain('improve-codebase-architecture/SKILL.md');
+      for (const rel of refs) {
+        expect.soft(existsSync(join(SKILLS_DIR, rel)), `{{skills_dir}}/${rel} is cited but not vendored — re-run \`pnpm vendor-skills\``).toBe(true);
+      }
+    });
+
+    test('layer 3 — the served library resolves the placeholder (invisible at the run surface)', () => {
+      // every path a body reaches a worker funnels through renderSnippetLibrary;
+      // the token must be gone and an absolute path present, with no ~/.claude.
+      for (const rendered of [renderSnippetLibrary({ all: true }), renderSnippetLibrary({ phase: 'plan', workflow: 'full' })]) {
+        expect.soft(rendered, 'an unresolved {{skills_dir}} token reached the served library').not.toContain('{{skills_dir}}');
+        expect.soft(rendered, 'a ~/.claude path reached the served library').not.toContain('~/.claude');
+      }
+      expect(renderSnippetLibrary({ all: true }), 'the resolved absolute path a worker actually receives').toContain(join(SKILLS_DIR, 'tdd/SKILL.md'));
+    });
+
+    test('layer 4 — no vendored skill file hardcodes a personal path (the bug must not move one level down)', () => {
+      // Scoped to the vendored snapshot content, not skills/internal/README.md —
+      // that file is duet-authored provenance and legitimately names the source.
+      for (const skill of ['tdd', 'improve-codebase-architecture']) {
+        const dir = join(SKILLS_DIR, skill);
+        for (const rel of readdirSync(dir, { recursive: true }) as string[]) {
+          const full = join(dir, rel);
+          if (!statSync(full).isFile()) continue;
+          const text = readFileSync(full, 'utf8');
+          expect.soft(text, `${skill}/${rel} hardcodes a ~/.claude path`).not.toContain('~/.claude');
+          expect.soft(text, `${skill}/${rel} hardcodes a ~/.agents path`).not.toContain('~/.agents');
+        }
+      }
+    });
+
+    test('layer 5 — skills/internal has no SKILL.md of its own (sync-skills never symlinks it as an invokable skill)', () => {
+      expect(existsSync(join(SKILLS_DIR, 'SKILL.md'))).toBe(false);
+    });
   });
 
   test('carries the templates the orchestrator prompts name', () => {
