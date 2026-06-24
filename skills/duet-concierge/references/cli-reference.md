@@ -29,6 +29,8 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | `duet doctor [run-id]` | Per-role health: working / long-inference / retrying / silent-stuck / crashed, with last-activity age, retry count, recent classified errors, and a connectivity probe. Reads the workers' own transcripts (heavier than `status`) — the answer to "is this run healthy, or stuck?" |
 | `duet doctor [run-id] --json` | The full health model, including each role's resolved transcript path, for automation. |
 | `duet runs` | List the project's runs, newest first. |
+| `duet snippets` | List the effective snippet library and where each snippet resolves from — the shipped default, or a user (`~/.config/duet/snippets.toml`) / project (`<repo>/.duet/snippets.toml`) override. Read-only; project-independent of any run. |
+| `duet snippets show <key>` | Print the full effective body of one snippet, with the layer it resolved from. |
 | `duet logs [run-id]` | Stream the driver narration — replays from the start, then follows. Ctrl-C detaches; the run is unaffected. |
 | `duet view [run-id]` | Open a tmux viewer (one pane per voice). Terminal-side; not useful remotely. |
 | `duet takeover <role> [run-id]` | Hand a role's session to the human in the provider's own interactive CLI. Terminal-only by nature — never the concierge's verb. |
