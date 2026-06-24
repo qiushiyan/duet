@@ -439,16 +439,28 @@ function joinRoles(roles: WorkerRole[]): string {
 }
 
 /**
- * The interactive-host "dispatched" result for a send (single or fan-out). A
- * single role keeps today's exact text; a fan-out reports the set and pluralizes
- * the collect/wake nudge (convention 5 — says what to do next). check_turns
- * already collects every settled role, so the fan-out needs no new collect verb.
+ * The interactive-host "dispatched" result for a send (single or fan-out). It
+ * carries per-call STATE (which role(s) were dispatched) and the single next
+ * action (collect with check_turns) — deliberately terse from the first call.
+ *
+ * It does NOT re-teach the fire-and-collect model (keep the session live, fire
+ * the other role in parallel, can't-advance-while-uncollected, arm
+ * `duet status --wait` before idling): that whole contract is the durable
+ * orchestrator identity's §"Fire-and-collect" (prompts/orchestrator-identity.md),
+ * fed as a system prompt on every interactive session — so it is compaction-proof
+ * and present from turn one. Repeating it on every dispatch was automatic +
+ * invariant coaching (the friction kind), and a tool result re-teaching it can't
+ * even be relied on: a /compact discards the turn that carried it. The moment a
+ * dispatch model fact is genuinely conditional (idle-risk), it fires on the
+ * relevant surface instead — check_turns' "still running" branch carries the
+ * `status --wait` anti-stall reminder, where the condition actually holds.
+ * (docs/prompting-and-tool-design.md §"Results nudge the next step".)
  */
 function dispatchedMessage(roles: WorkerRole[]): string {
   if (roles.length === 1) {
-    return `Dispatched to the ${roles[0]} — the turn runs in the background and this session stays live: keep talking with the human, steer, check status, or fire the other role meanwhile, then pull the result with check_turns once it lands (it returns the moment the turn settles; a phase can't advance while a turn is uncollected). If you've nothing to do meanwhile and are about to end your turn, start \`duet status --wait\` in the background first — it wakes you the moment the turn settles, so the result gets collected instead of sitting idle while the run stalls. A turn to the other role can run in parallel.`;
+    return `Dispatched to the ${roles[0]} — running in the background; collect it with check_turns when it settles.`;
   }
-  return `Dispatched to the ${joinRoles(roles)} — the turns run in the background and this session stays live: keep talking with the human, steer, or check status meanwhile, then pull them with check_turns once they land (it returns the moment a turn settles; a phase can't advance while any turn is uncollected). If you've nothing to do meanwhile and are about to end your turn, start \`duet status --wait\` in the background first — it wakes you the moment a turn settles, so the results get collected instead of sitting idle while the run stalls.`;
+  return `Dispatched to the ${joinRoles(roles)} — running in the background; collect them with check_turns as they settle.`;
 }
 
 /**
