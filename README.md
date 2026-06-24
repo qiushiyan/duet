@@ -25,7 +25,7 @@ full  frame → DIRECTION → spec → COMMIT-SPEC → plan → PLAN (walk away)
 rir   research → DIRECTION (walk away) → implementation (AFK) → SHIP → done
 ```
 
-**full** is the thorough arc — settle the design on paper, end in a pull request. **rir** (Research → Implement → Review) is lighter: the research decisions are the design, so it skips spec, plan, docs, and PR and ends at a verified Ship. Use full for epic-shaped work, rir for small, well-understood changes.
+**full** is the thorough arc — settle the design on paper, end in a pull request. **rir** (Research → Implement → Review) is lighter: the research decisions are the design, so it skips spec, plan, and PR — its docs update folds into the build before a verified Ship. Use full for epic-shaped work, rir for small, well-understood changes.
 
 The gates are enforced in code (an XState statechart), not a prompt the orchestrator could be talked out of. Between stops a detached background process drives the phase; nothing runs while a run is parked, and you get a desktop notification at every stop. The final **OPEN-PR** gate opens the PR for you by default — list `pr` in `--gates-at` for a pre-open stop to read the description first; the merge is always yours.
 

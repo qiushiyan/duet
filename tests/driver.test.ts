@@ -146,9 +146,16 @@ describe('the RIR entry prompts', () => {
     expect.soft(at('review-direct')).toBeLessThan(at('apply-review'));
     // The lean Ship packet — handoff + review-and-fix, no CEO summary.
     expect.soft(brief.toLowerCase()).toContain('ship');
+    // Docs fold into the implement phase before Ship — RIR opens no PR, so the
+    // docs become part of the shippable state, written directly after the review
+    // round (not a separate post-Ship phase as in Full).
+    expect.soft(at('apply-review')).toBeLessThan(brief.indexOf('docs'));
+    expect.soft(brief).toContain('no PR');
+    expect.soft(brief).toContain('no separate docs review round');
     // Full-arc ceremony the RIR implement phase deliberately drops — checked
     // against the instructional spine, not the anti-example (which names the
-    // Full ceremony precisely to warn against importing it).
+    // Full ceremony precisely to warn against importing it). The folded docs
+    // step rides the live build session, so no compaction (`/compact`) appears.
     const spine = brief.slice(0, brief.indexOf('## Implement phase examples'));
     expect.soft(spine.length).toBeGreaterThan(0);
     for (const absent of ['midpoint', 'ceo-summary', 'respond-review', 'compact-for-impl', '/compact']) {
