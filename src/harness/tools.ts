@@ -1,7 +1,7 @@
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { execa } from 'execa';
 import { z } from 'zod';
-import { PHASE, isGatePhase } from '../phases.ts';
+import { PHASE, acceptanceContractPathForSpec, isGatePhase } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
 import { providerFor } from '../providers/index.ts';
 import { BudgetCutoffError } from '../providers/types.ts';
@@ -301,6 +301,25 @@ export function settleTurn(
     fresh.costs.codexTokens.output += turn.tokens.output;
   }
   if (turn.context) recordContextUsage(fresh, role, turn.context);
+  // Acceptance-contract authorship/verification evidence — durable proof THIS run's
+  // consultant ran the checkpoint, which the freeze and the advance_phase rails
+  // require (so guarantee 2 holds mechanically, not by prompt compliance). Keyed on
+  // the registry checkpoint mode, so only full's plan/impl ever set it.
+  if (role === 'consultant') {
+    const mode = PHASE[phase].consultantCheckpoint;
+    if (mode === 'contract' && fresh.specPath) {
+      // A consultant turn settled at the contract checkpoint — this run authored.
+      fresh.acceptanceContractDraft = {
+        path: acceptanceContractPathForSpec(fresh.specPath),
+        sessionId: turn.sessionId,
+        authoredAt: new Date().toISOString(),
+      };
+    } else if (mode === 'verify' && fresh.acceptanceContract) {
+      // A consultant turn settled at the verify checkpoint — verification RAN
+      // (pass/fail rides the gate packet; this only records that it happened).
+      fresh.acceptanceContract = { ...fresh.acceptanceContract, verifiedAt: new Date().toISOString() };
+    }
+  }
   fresh.lastActivity = `send_prompt → ${role} (${tag})`;
   saveRunState(fresh);
   Object.assign(state, fresh);
@@ -1015,6 +1034,38 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             ],
             isError: true,
           };
+        }
+        // Acceptance-contract checkpoint rail (full + consultant): the contract
+        // can't be SILENTLY skipped — guarantee 2 holds mechanically, not by prompt
+        // compliance. Mirrors the review-round rail above. The escape hatch is a
+        // `high` (the orchestrator flagging the checkpoint's absence/failure as a
+        // human decision), which itself holds the AFK crossing — so the run can
+        // never auto-cross past a missing contract or an unrun verification.
+        if (state.bindings.consultant) {
+          const mode = PHASE[phase].consultantCheckpoint;
+          const hasHigh = (args.human_decisions ?? []).some((d) => d.severity === 'high');
+          if (mode === 'contract' && !state.acceptanceContractDraft && !hasHigh) {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: 'A consultant is bound, so this phase owes its acceptance contract before it advances: send the consultant a consultant-contract turn (it authors the contract, blind to the plan), then advance. If it genuinely could not author one, record a high human_decision ("acceptance contract not authored — proceeding freezes no target") so the gate stops for the human rather than shipping with no frozen target.',
+                },
+              ],
+              isError: true,
+            };
+          }
+          if (mode === 'verify' && state.acceptanceContract && !state.acceptanceContract.verifiedAt && !hasHigh) {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: 'A frozen acceptance contract exists for this run but has not been verified: send the consultant a consultant-verify turn (it runs the built system and returns a per-assertion pass/fail), then advance. Record each failed assertion as a high human_decision; if verification genuinely could not run, record a high so the gate stops for the human rather than shipping unverified.',
+                },
+              ],
+              isError: true,
+            };
+          }
         }
         if (args.spec_path) state.specPath = args.spec_path;
         state.phaseSummaries[phase] = {

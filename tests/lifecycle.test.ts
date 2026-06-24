@@ -939,11 +939,14 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
   /**
    * A consultant-bound Full run with a committed spec and an AUTHORED-but-
    * uncommitted contract file — the consultant writes, never commits, so the
-   * working tree at the plan gate is exactly what freeze must commit.
+   * working tree at the plan gate is exactly what freeze must commit. A `draft`
+   * marker (set in production by settleTurn when the consultant's contract turn
+   * settles) is the authorship proof freeze now requires; `draft: false` models a
+   * stale/pre-existing file this run never authored.
    */
   const contractRun = async (
     projectDir: string,
-    opts: { consultant?: boolean; writeContract?: boolean } = {},
+    opts: { consultant?: boolean; writeContract?: boolean; draft?: boolean } = {},
   ): Promise<{ state: RunState; specPath: string; contractPath: string }> => {
     await initGit(projectDir);
     const specPath = 'docs/specs/test.md';
@@ -960,6 +963,10 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
     const contractPath = acceptanceContractPathForSpec(specPath);
     if (opts.writeContract !== false) {
       writeFileSync(join(projectDir, contractPath), '[A1] When X, the system SHALL Y.\n  Verify by: run the tests\n');
+    }
+    if (opts.draft !== false && opts.consultant !== false) {
+      state.acceptanceContractDraft = { path: contractPath, sessionId: 'c-author', authoredAt: '2026-06-24T00:00:00.000Z' };
+      saveRunState(state);
     }
     return { state, specPath, contractPath };
   };
@@ -1013,6 +1020,22 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
     await freezeContractAt(state, 'plan');
 
     expect.soft(state.acceptanceContract).toBeUndefined();
+    expect.soft(await headOf(projectDir)).toBe(head);
+  });
+
+  test('no-ops on a stale/pre-existing file this run never authored — no draft marker (finding 3)', async ({ projectDir }) => {
+    // A contract file is present at the derived path, but no draft marker proves
+    // THIS run authored it (e.g. it was committed by a prior run). Freeze must not
+    // ratify it — even when the file is already committed and clean.
+    const { state, contractPath } = await contractRun(projectDir, { draft: false });
+    await execa('git', ['add', '--', contractPath], { cwd: projectDir });
+    await execa('git', ['commit', '-qm', 'stale contract from a prior run'], { cwd: projectDir });
+    const head = await headOf(projectDir);
+    expect.soft(state.acceptanceContractDraft).toBeUndefined(); // this run authored nothing
+
+    await freezeContractAt(state, 'plan');
+
+    expect.soft(state.acceptanceContract).toBeUndefined(); // not frozen — no authorship proof
     expect.soft(await headOf(projectDir)).toBe(head);
   });
 

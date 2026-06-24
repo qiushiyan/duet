@@ -619,6 +619,19 @@ const CONSULTANT_CHECKPOINT_SNIPPET: Record<ConsultantCheckpoint, string> = {
  */
 export const CONSULTANT_SNIPPETS: ReadonlySet<string> = new Set(Object.values(CONSULTANT_CHECKPOINT_SNIPPET));
 
+/**
+ * The consultant snippets a WORKFLOW's checkpoints actually reach — full's
+ * {frame, spec, contract, verify} snippets; rir's {frame, impl}. The flat
+ * `all=true` renderer filters the consultant bucket against this so a bound run's
+ * library exposes only the snippets ITS arc can use: a bound rir run never sees
+ * `consultant-contract`/`consultant-verify` (nor the Full-only `consultant-spec`)
+ * — the contract feature does not leak into the arc that deferred it, and the
+ * surface stays per-arc honest, not merely "any consultant snippet".
+ */
+export function consultantSnippetsForWorkflow(workflow: WorkflowName): ReadonlySet<string> {
+  return new Set(phasesOf(workflow).map((p) => consultantSnippetFor(p.name)).filter((s): s is string => s !== undefined));
+}
+
 /** A phase's consultant checkpoint mode, or undefined when it carries none. */
 export function consultantCheckpointOf(phase: PhaseName): ConsultantCheckpoint | undefined {
   return PHASE[phase].consultantCheckpoint;

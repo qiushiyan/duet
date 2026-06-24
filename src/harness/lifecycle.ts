@@ -497,6 +497,13 @@ export async function freezeContractAt(state: RunState, gatePhase: PhaseName): P
   if (gatePhase !== contractAuthorPhaseOf(workflowOf(state))) return; // not the contract gate
   if (!state.bindings.consultant || !state.specPath) return; // default-off / nothing to derive from
   const path = acceptanceContractPathForSpec(state.specPath);
+  // Require THIS run's authoring: a draft marker the consultant's contract turn
+  // settled, at this derived path. A pre-existing/stale contract file from a prior
+  // run (no draft marker, or a stale path) is NOT this run's contract — freezing it
+  // would ratify a target nobody authored this run (the verify checkpoint then
+  // checks the built system against it). Without the marker, no freeze; impl treats
+  // it as "no contract" and the plan rail already required a high for the absence.
+  if (state.acceptanceContractDraft?.path !== path) return;
   if (!existsSync(join(state.cwd, path))) return; // authoring produced no file
   const git = (args: string[]): Promise<{ stdout: string }> => execa('git', args, { cwd: state.cwd, timeout: 30_000 });
   const dirty = (await git(['status', '--porcelain', '--', path])).stdout.trim();

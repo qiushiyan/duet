@@ -165,16 +165,28 @@ export interface RunState {
   /** advance_phase outputs, shown at gates. */
   phaseSummaries: Partial<Record<PhaseName, { summary: string; artifacts: string[]; humanDecisions?: HumanDecision[] }>>;
   /**
-   * The frozen acceptance contract (the optional consultant's contract feature,
-   * Full arc) — set when the contract gate (plan) is crossed and the consultant
-   * authored a contract file: its repo-relative `path` and the `commit` that
-   * froze it. ADDITIVE and consultant-only: absent on every run with no
-   * consultant bound (and on any run whose authoring did not produce a file), so
-   * the default-off byte-for-byte invariant holds — nothing reads it unless it is
-   * present. The impl verify checkpoint reads it to know there is a frozen target
-   * to verify against (absent ⇒ the checkpoint is a noted skip).
+   * Proof THIS run's consultant authored a contract — set in `settleTurn` when a
+   * consultant turn settles in the contract-author phase (full's plan), recording
+   * the derived `path`, the authoring `sessionId`, and `authoredAt`. It is the
+   * authorship evidence the freeze and the advance_phase rail require: a stale
+   * pre-existing contract file with no draft marker is NOT this run's contract and
+   * must not be frozen. ADDITIVE and consultant-only (absent otherwise).
    */
-  acceptanceContract?: { path: string; commit: string };
+  acceptanceContractDraft?: { path: string; sessionId: string; authoredAt: string };
+  /**
+   * The frozen acceptance contract (the optional consultant's contract feature,
+   * Full arc) — set when the contract gate (plan) is crossed and this run's
+   * consultant authored a contract file (a matching draft marker): its
+   * repo-relative `path`, the `commit` that froze it, and `verifiedAt` (stamped in
+   * `settleTurn` when a consultant turn settles in the verify phase — evidence the
+   * verify checkpoint RAN; pass/fail stays in the gate packet). ADDITIVE and
+   * consultant-only: absent on every run with no consultant bound (and on any run
+   * whose authoring did not produce a draft-backed file), so the default-off
+   * byte-for-byte invariant holds — nothing reads it unless it is present. The
+   * impl verify checkpoint reads it to know there is a frozen target to verify
+   * against (absent ⇒ a noted skip), and the impl rail requires `verifiedAt`.
+   */
+  acceptanceContract?: { path: string; commit: string; verifiedAt?: string };
 
   /**
    * Persisted hint: which worker has a turn in flight right now, set at a
