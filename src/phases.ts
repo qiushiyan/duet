@@ -313,8 +313,10 @@ export const WORKFLOWS = {
       },
       {
         name: 'implement',
-        // The spine order: build, orient the reviewer, one writable review round.
-        snippets: ['implement-direct', 'handoff-direct', 'review-direct', 'apply-review'],
+        // The spine order: build, orient the reviewer, one writable review round,
+        // then reconcile the docs (shared with full's finish) — this arc opens no
+        // PR, so the docs are part of the shippable state the human reviews at Ship.
+        snippets: ['implement-direct', 'handoff-direct', 'review-direct', 'apply-review', 'reconcile-docs'],
         gate: {
           state: 'shipGate',
           heading: 'SHIP gate — the implementation packet',
