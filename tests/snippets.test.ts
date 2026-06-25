@@ -34,10 +34,10 @@ describe('the snippet library', () => {
     }
   });
 
-  // The PLAN snippets cite duet's methodology by a {{skills_dir}}/… token that
-  // resolves to the vendored skills/internal copy at serve time — so the
-  // discipline ships with the package instead of pointing at the author's
-  // machine. These five layers guard that the references stay shippable and that
+  // The PLAN snippets and the RIR build snippet (implement-direct) cite duet's
+  // methodology by a {{skills_dir}}/… token that resolves to the vendored
+  // skills/internal copy at serve time — so the discipline ships with the package
+  // instead of pointing at the author's machine. These five layers guard that the
   // the resolution is invisible at the run surface (a worker never sees a token,
   // a personal path never re-enters the library). The earlier F7 guard asserted
   // the *opposite* state (~/.claude paths present); this supersedes it.
@@ -54,7 +54,7 @@ describe('the snippet library', () => {
     test('layer 2 — every {{skills_dir}} reference resolves to a vendored file', () => {
       const refs: string[] = [];
       for (const m of rawBodies().matchAll(/\{\{skills_dir\}\}\/([\w./-]+)/g)) if (m[1]) refs.push(m[1]);
-      expect(refs.length, 'no {{skills_dir}} references found — the PLAN snippets stopped citing the methodology').toBeGreaterThan(0);
+      expect(refs.length, 'no {{skills_dir}} references found — the snippets stopped citing the methodology').toBeGreaterThan(0);
       // the two SKILL.md roots the snippets name explicitly
       expect.soft(refs).toContain('tdd/SKILL.md');
       expect.soft(refs).toContain('improve-codebase-architecture/SKILL.md');
@@ -232,6 +232,16 @@ describe('the snippet library', () => {
     // Load-bearing: tools.ts counts a review round by tag.startsWith('review').
     expect(getSnippet('review-direct')).toBeDefined();
     expect('review-direct'.startsWith('review')).toBe(true);
+
+    // implement-direct carries the PLAN-stage methodology into the no-plan arc by
+    // citing the two SKILL.md roots (layer 2 above guards they resolve). Pin it
+    // here so a future edit can't silently strip the citations while start-plan
+    // keeps the all-bodies scan green.
+    const implDirect = getSnippet('implement-direct')?.expand ?? '';
+    expect.soft(implDirect, 'implement-direct stopped citing the TDD methodology').toContain('{{skills_dir}}/tdd/SKILL.md');
+    expect.soft(implDirect, 'implement-direct stopped citing the architecture methodology').toContain(
+      '{{skills_dir}}/improve-codebase-architecture/SKILL.md',
+    );
   });
 
   test('a phase given without a workflow infers its owning arc (no Full default crash)', () => {
