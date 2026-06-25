@@ -37,6 +37,7 @@ What maintainers get from depth. Change, bugs, knowledge, and verification conce
 - **The deletion test.** Imagine deleting the module. If complexity vanishes, the module wasn't hiding anything (it was a pass-through). If complexity reappears across N callers, the module was earning its keep.
 - **The interface is the test surface.** Callers and tests cross the same seam. If you want to test *past* the interface, the module is probably the wrong shape.
 - **One adapter means a hypothetical seam. Two adapters means a real one.** Don't introduce a seam unless something actually varies across it.
+- **Make illegal states unrepresentable.** Encode a module's invariants in its types and constructors so a caller *can't* express an invalid value, and validate untrusted input once at the boundary (*parse, don't validate*) rather than guarding at every call site. It is depth in the small: the check lives behind the interface (**leverage** — callers receive a value they can already trust), the invariant has one home (**locality**), and a whole class of downstream defensive branches simply stops existing. Where a state can't cheaply be made unrepresentable, validate at that one boundary — not everywhere it's read — and let a real violation fail loudly rather than papering it over with a fallback that hides the bug.
 
 ## Relationships
 

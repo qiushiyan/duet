@@ -26,6 +26,7 @@ Key principles (see [LANGUAGE.md](LANGUAGE.md) for the full list):
 - **Deletion test**: imagine deleting the module. If complexity vanishes, it was a pass-through. If complexity reappears across N callers, it was earning its keep.
 - **The interface is the test surface.**
 - **One adapter = hypothetical seam. Two adapters = real seam.**
+- **Make illegal states unrepresentable**: encode invariants in types/constructors and validate once at the boundary (*parse, don't validate*), so a caller can't express a bad value and you aren't guarding at every call site.
 
 This skill is _informed_ by the project's domain model. The domain language gives names to good seams; ADRs record decisions the skill should not re-litigate.
 
