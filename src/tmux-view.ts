@@ -116,20 +116,27 @@ async function columnLayout(state: RunState, anchor: string): Promise<Array<[Voi
 }
 
 /**
- * The narrow-anchor arrangement: every voice full-width, stacked top-to-bottom
- * in voice order (orchestrator, implementer, reviewer[, consultant]) and evened
- * by `select-layout even-vertical`. Each pane splits off the previous so the
- * stack order is deterministic; trading width for height keeps log lines wide
- * enough to read in a half-window pane.
+ * The narrow-anchor arrangement: every voice full-width stacked top-to-bottom
+ * in voice order (orchestrator, implementer, reviewer[, consultant]), confined
+ * to the anchor's own region. Each voice splits off the previous so the order
+ * is deterministic, with an explicit per-split percentage that evens the stack
+ * — NOT `select-layout even-vertical`, which is window-global and would restack
+ * the user's OTHER panes too (e.g. an interactive session beside a `--here`
+ * viewer). The k-th of the N-1 splits hands its new pane (N-k)/(N-k+1) of the
+ * space being divided, leaving the current voice an equal share on top: N=3 →
+ * 67%, 50%; N=4 → 75%, 67%, 50%. Trading width for height keeps log lines
+ * readable in a half-window pane.
  */
 async function stackLayout(state: RunState, anchor: string): Promise<Array<[Voice, string]>> {
+  const workers = workerRolesFor(state);
+  const total = workers.length + 1; // + orchestrator (the anchor)
   const panes: Array<[Voice, string]> = [['orchestrator', anchor]];
   let prev = anchor;
-  for (const voice of workerRolesFor(state)) {
-    prev = await tmux('split-window', '-d', '-v', '-t', prev, '-P', '-F', '#{pane_id}', tailCommand(state, voice));
+  for (const [i, voice] of workers.entries()) {
+    const pct = Math.round((100 * (total - i - 1)) / (total - i));
+    prev = await tmux('split-window', '-d', '-v', '-l', `${pct}%`, '-t', prev, '-P', '-F', '#{pane_id}', tailCommand(state, voice));
     panes.push([voice, prev]);
   }
-  await tmux('select-layout', '-t', anchor, 'even-vertical');
   return panes;
 }
 
