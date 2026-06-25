@@ -749,6 +749,23 @@ export function recordContextUsage(state: RunState, voice: Voice, usage: Context
 }
 
 /**
+ * Refresh the plain-text `context/phase` sidecar the tmux orchestrator pane border
+ * re-reads at its refresh interval (a `cat` per interval, no view-time parsing),
+ * so the pane shows which phase the run is in. The view-only twin of the context
+ * sidecar — best-effort and fail-soft: a write failure is swallowed so a cosmetic
+ * sidecar can never affect the run. Writes only the sidecar, never state.json.
+ */
+export function recordPhaseLabel(state: RunState, phase: PhaseName): void {
+  try {
+    const dir = join(runDirOf(state.cwd, state.runId), 'context');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'phase'), `${phase}\n`);
+  } catch {
+    // A view-time sidecar must never affect the run — drop the write silently.
+  }
+}
+
+/**
  * The statechart snapshot (xstate's persisted form), written only at
  * quiescent states. Typed as Snapshot<unknown> at this boundary so hydration
  * sites can pass it straight to createActor without casts.

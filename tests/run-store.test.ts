@@ -17,6 +17,7 @@ import {
   loadMachineSnapshot,
   loadRunState,
   markSteersDelivered,
+  recordPhaseLabel,
   runDirOf,
   saveMachineSnapshot,
   saveRunState,
@@ -25,6 +26,16 @@ import {
   workflowOf,
 } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
+
+describe('recordPhaseLabel — the view-only tmux phase sidecar', () => {
+  test('writes the current phase to context/phase, overwriting on the next phase', ({ projectDir, run }) => {
+    recordPhaseLabel(run, 'impl');
+    const sidecar = join(runDirOf(projectDir, run.runId), 'context', 'phase');
+    expect.soft(readFileSync(sidecar, 'utf8')).toBe('impl\n');
+    recordPhaseLabel(run, 'finish');
+    expect.soft(readFileSync(sidecar, 'utf8')).toBe('finish\n'); // refreshed, not appended
+  });
+});
 
 describe('the single-writer MCP lease (mcp-owner.json)', () => {
   test('acquire writes the lease file and the returned nonce holds', ({ projectDir, run }) => {
