@@ -106,16 +106,29 @@ Constraints:
 
 ### `implement-direct`
 
-The rir arc's only draft — it builds straight from the settled research decisions, since rir has no spec or plan.
+The rir arc's only draft — it builds straight from the settled research decisions, since rir has no spec or plan. Because there's no plan stage to apply it, this snippet carries the plan stage's high-value engineering signal inline — vertical slices, deep modules and the deletion test, preparatory refactoring, and what-to-test calibration — and cites the same two `{{skills_dir}}` methodology roots as `start-plan` for depth. It leaves behind the plan-*document* mechanics (naming slices, listing test cases, line citations) that have no artifact here.
 
 ```text
-Build the change directly from the research decisions we settled — those decisions are the spec here; there is no separate spec or plan document.
+Build the change directly from the research decisions we settled — those decisions are the spec here; there is no separate spec or plan document. This is small, well-understood work, so treat what follows as a lens scaled to the change, not ceremony — adapt it, drop what doesn't fit.
 
 Before writing code:
-- **Re-read the research decisions and the cross-review notes**, so you build the agreed direction rather than a half-remembered version of it.
+- **Re-read the research decisions and the cross-review notes** — they settled the direction and the target shape; your job is to execute it, not re-decide it.
 - **Re-read the code you're about to touch** — trace the real data/control flow and the existing patterns, so the change fits what's already there.
 
-Then implement: work in small, coherent commits, and build the tests alongside the code — behavior through the public interface, at the right altitude, not internals. Run them as you go and keep them green. If a decision turns out wrong or underspecified once you're in the code, stop and flag it rather than guessing your way past it.
+Build in **vertical slices** — one meaningful unit at a time (a behavior plus the wiring that belongs with it), each independently committable, one slice per commit. Lean larger; group related behavior rather than splitting mechanical steps into their own commits. **Prefer a shape that deletes concepts** (a branch, mode, or helper layer disappears) over one that just rearranges them. If the direction called for reshaping the foundation first (*make the change easy, then make the easy change*), do that as a **behavior-preserving step kept green** — pin uncovered code with a characterization test first — and keep it proportionate; a prep step that balloons into a rewrite is the failure mode.
+
+**Architecture, as you build:** aim for **deep modules** — a small interface over a hidden implementation, not shallow pass-throughs. Before adding a module, apply the **deletion test**: if removing it just moves complexity around, inline it; keep it only if it concentrates complexity that would otherwise spread across callers. Keep logic in its canonical module rather than leaking it across seams.
+
+**Tests, built alongside the code:**
+- **Behavior through the public interface, at the right altitude** — what the system does, not how; tests that survive a refactor. The interface is the test surface.
+- **You can't test everything** — focus on critical paths and complex logic, not every edge case; pure logic over UI (skip UI tests unless asked).
+- Write each test against **real** behavior as you build its slice, not a batch up front against imagined shapes. Apply red-green-refactor inside a slice when design is uncertain or behavior is subtle; test and code together is fine for straightforward slices. Run them as you go and keep them green.
+
+Read these as a lens for depth — adapt, drop what doesn't fit; don't go hunting them mid-build, ask me for the path if one's missing:
+- `{{skills_dir}}/tdd/SKILL.md` — vertical slices, behavior-focused tests, anti-patterns
+- `{{skills_dir}}/improve-codebase-architecture/SKILL.md` — deep modules, the deletion test, seams
+
+If a decision turns out wrong or underspecified once you're in the code, **stop and flag it** rather than guessing your way past it.
 ```
 
 ---
@@ -235,9 +248,9 @@ There's no spec or plan for this arc — the bar is the **research decisions we 
 **Evaluate:**
 - **Correctness** — bugs, edge cases, failure modes.
 - **Solves the problem** — does this achieve the goal behind the decisions, not just run?
-- **Test quality** — right altitude (behavior, not internals), covers the real cases, survives plausible refactors, uses project patterns.
+- **Test quality** — right altitude (behavior, not internals), covers the real cases, survives plausible refactors, uses project patterns. Flag the anti-patterns: tests of *shape* (signatures, data structures) that pass when behavior breaks, and over-testing — every edge case or internals instead of the critical paths.
 - **UX & performance** — user-facing impact, performance characteristics.
-- **Structural quality — be ambitious, not just local:** look for a reframing that deletes whole branches/helpers/modes, not just rearranges them; push ad-hoc conditionals and special cases behind their own abstraction; flag thin pass-through wrappers and casts/`any`/`unknown` papering over unclear invariants; keep logic in its canonical module rather than leaking across boundaries.
+- **Structural quality — be ambitious, not just local:** look for a reframing that deletes whole branches/helpers/modes, not just rearranges them; apply the **deletion test** to new modules (does it concentrate complexity, or just move it?) and flag **shallow** ones — a thin pass-through wrapper, an interface nearly as complex as its implementation; push ad-hoc conditionals and special cases behind their own abstraction; flag casts/`any`/`unknown` papering over unclear invariants; keep logic in its canonical module rather than leaking across boundaries. If the build did preparatory refactoring, check it stayed **behavior-preserving and proportionate** — not a rewrite smuggled in alongside the change.
 
 **Per issue:** severity — **critical** (blocks ship) / **moderate** (fix before ship) / **minor** (nice-to-have); a concrete fix with file/function references; no "this could be cleaner" without a concrete alternative.
 
