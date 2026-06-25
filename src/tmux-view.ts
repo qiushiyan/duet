@@ -108,10 +108,14 @@ export async function openTmuxView(state: RunState): Promise<void> {
   try {
     if (process.env['TMUX']) {
       // Inside tmux: a new window in the current session, created without
-      // stealing focus. Reuse the existing viewer on re-invocations.
+      // stealing focus (-d). `-a` inserts it immediately after the current
+      // window rather than at the end of the list, so the viewer for this run
+      // sits next to where you're working. (`-a` finds the next free index
+      // after the current window; with `renumber-windows on` later indices
+      // shift — cosmetic, the window is named and -d.) Reuse on re-invocations.
       const windows = await tmux('list-windows', '-F', '#{window_name}');
       if (!windows.split('\n').includes(name)) {
-        const first = await tmux('new-window', '-d', '-n', name, '-P', '-F', '#{pane_id}', tailCommand(state, 'orchestrator'));
+        const first = await tmux('new-window', '-d', '-a', '-n', name, '-P', '-F', '#{pane_id}', tailCommand(state, 'orchestrator'));
         await layoutPanes(state, first);
       }
       console.log(`tmux viewer: window "${name}" (tmux select-window -t '=${name}')`);
