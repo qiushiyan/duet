@@ -27,6 +27,7 @@ import type { HumanEvent } from './harness/lifecycle.ts';
 import { machineFor } from './harness/machine.ts';
 import { serveKernelStdio, serveRunScopedKernelStdio } from './harness/mcp-server.ts';
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
+import { buildStatsModel, renderStats } from './stats.ts';
 import { runOrchestrate } from './orchestrate.ts';
 import { entryOf, handoffWatchLabel, phaseOfGateState } from './phases.ts';
 import { getEffectiveSnippet, loadEffectiveSnippets, runtimeLibraryContext } from './snippets.ts';
@@ -990,6 +991,21 @@ program
     if (!state) fail('no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
     const model = await buildDoctorModel(state, { now: Date.now() });
     console.log(opts.json ? JSON.stringify(model, null, 2) : renderDoctor(model));
+  });
+
+program
+  .command('stats')
+  .description(
+    'Effort per phase, derived from the voice logs at view time: each phase’s elapsed window and the worker-turn time inside it, plus a per-tag breakdown. Read-only and fail-soft — a missing or interactive-only log degrades to a note. Distinct from status (which never reads logs).',
+  )
+  .argument('[runId]', 'run id (defaults to the latest run in this project)')
+  .option('--json', 'emit the StatsModel for automation')
+  .action((runId: string | undefined, opts: { json?: boolean }) => {
+    const cwd = process.cwd();
+    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
+    if (!state) fail('no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
+    const model = buildStatsModel(state);
+    console.log(opts.json ? JSON.stringify(model, null, 2) : renderStats(model));
   });
 
 program

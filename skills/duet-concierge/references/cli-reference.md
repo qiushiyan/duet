@@ -28,6 +28,7 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | `duet status --brief` | A lean digest — position, a one-line headline, the next command, pending steers, auto-approvals, and the gate's `humanDecisions` — for fast polling. Composes with `--json` (lean JSON) and `--wait` (block, then print). |
 | `duet doctor [run-id]` | Per-role health: working / long-inference / retrying / silent-stuck / crashed, with last-activity age, retry count, recent classified errors, and a connectivity probe. Reads the workers' own transcripts (heavier than `status`) — the answer to "is this run healthy, or stuck?" |
 | `duet doctor [run-id] --json` | The full health model, including each role's resolved transcript path, for automation. |
+| `duet stats [run-id] [--json]` | Effort per phase, derived from the voice logs at view time: each phase's elapsed window and the worker-turn time inside it, plus a per-tag breakdown. Read-only and fail-soft (a missing or interactive-only log degrades to a note); distinct from `status`, which never reads logs. |
 | `duet runs` | List the project's runs, newest first. |
 | `duet snippets` | List the effective snippet library and where each snippet resolves from — the shipped default, or a user (`~/.config/duet/snippets.toml`) / project (`<repo>/.duet/snippets.toml`) override. Read-only; project-independent of any run. |
 | `duet snippets show <key>` | Print the full effective body of one snippet, with the layer it resolved from. |
