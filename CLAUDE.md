@@ -54,6 +54,7 @@ Each cluster pairs the doc that explains a subsystem with the code that implemen
 - `src/status.ts` — the status model + two renderers (text, `--json` verbatim, additive-only) + `--brief`.
 - `src/sessions.ts` — locating provider transcripts by id (the one module reaching outside `.duet/`, what `--purge` deletes).
 - `src/worker-health.ts` / `src/doctor.ts` — the pure health substrate (taxonomy, `probeRole`, `retryDecision`) and `duet doctor`'s composer + connectivity probe.
+- `src/stats.ts` — `duet stats`'s view-time effort model (per-phase windows + per-tag worker time) parsed from the voice logs; doctor's log-reading sibling, fail-soft.
 - view glue: `src/colorize.ts`, `src/timefmt.ts`, `src/tmux-view.ts`, `src/notify.ts` — best-effort, never allowed to affect a run.
 
 **Shipped skills** (prompts, not code; all pinned to the CLI by `tests/skill.test.ts`)
@@ -78,7 +79,7 @@ Cross-cutting rules; full reasoning in `docs/engineering.md` and `docs/open-ques
 - **Compaction:** claude workers compact via a literal `/compact` prompt; codex auto-compacts and must never be sent a command.
 - **One branch per run,** fixed before the first worker prompt.
 - **Worker budget is per-turn, opt-in, off by default** (off ≡ absent, never `0`); it must never shape scope (Q19); a hit cap is a resumable checkpoint, not an infra crash.
-- **`gates_at` is the complete attend set, not a delta** (so `--gates-at pr` attends only the Open-PR gate). The full arc's Open-PR gate auto-opens by default; an attended gate still takes a human tap, as does the interactive orchestrator's one `ask` rule on `duet continue`.
+- **`gates_at` is the complete attend set, not a delta** (so `--gates-at finish` attends only the Open-PR gate). full's default posture is `overnight` (attend frame,spec); its Open-PR gate sits *after* the open and auto-crosses the auto-opened draft PR by default; an attended gate still takes a human tap, as does the interactive orchestrator's one `ask` rule on `duet continue`.
 - **A `high` `human_decisions` entry** holds a non-explicit crossing (`gates_at` auto-cross, `duet afk`) but never an explicit `--approve`.
 - **Steers live in `steers/`, never `state.json`** (a CLI write there would race the live driver's saves); deliver-then-consume, so a crash redelivers a steer rather than loses one.
 - **Runtime artifacts under self-ignored `.duet/`, never the repo root; log files stay plain text** — color and local time are view-time only (`--json` and stored logs stay raw UTC).
