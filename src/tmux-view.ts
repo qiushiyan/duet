@@ -1,7 +1,7 @@
 import { join, resolve } from 'node:path';
 import { execa } from 'execa';
 import { ROLE_GLYPH, ROLE_TMUX_COLOR } from './colorize.ts';
-import { voicesFor } from './roles.ts';
+import { voicesFor, workerRolesFor } from './roles.ts';
 import { runDirOf } from './run-store.ts';
 import type { RunState, Voice } from './run-store.ts';
 
@@ -38,7 +38,7 @@ function tailCommand(state: RunState, voice: Voice): string {
 }
 
 /**
- * Split the first pane (orchestrator) into the three-voice layout:
+ * The wide-anchor (2-column) arrangement, built by `columnLayout` below:
  *
  * ```
  * ┌──────────────┬──────────────┐
@@ -67,23 +67,73 @@ function paneBranch(voices: Voice[], then: (v: Voice) => string): string {
   return `#{?#{m:${ROLE_GLYPH[head]}*,#{pane_title}},${then(head)},${paneBranch(rest, then)}}`;
 }
 
-async function layoutPanes(state: RunState, orchestratorPane: string): Promise<void> {
-  // New pane sizes are percentages of the pane being split: -h 50% peels
-  // the right column off the window, then -v 45% peels the reviewer off
-  // the left column's height.
-  const implementer = await tmux('split-window', '-d', '-h', '-l', '50%', '-t', orchestratorPane, '-P', '-F', '#{pane_id}', tailCommand(state, 'implementer'));
-  const reviewer = await tmux('split-window', '-d', '-v', '-l', '45%', '-t', orchestratorPane, '-P', '-F', '#{pane_id}', tailCommand(state, 'reviewer'));
+/** The anchor pane's current cell width, or +Infinity when it can't be read — fail wide, so a measurement hiccup keeps the 2-column layout. */
+async function anchorWidth(pane: string): Promise<number> {
+  const out = await tmux('display-message', '-p', '-t', pane, '#{pane_width}');
+  const n = Number.parseInt(out, 10);
+  return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Below this anchor width the 2-column split leaves each voice too few columns
+ * to read a log line (~80 readable columns per voice → ~160 total), so the
+ * panes stack full-width instead. Width is the binding constraint; height is
+ * not — the tail shows the latest lines regardless of pane height.
+ */
+const TWO_COLUMN_MIN_WIDTH = 160;
+
+/**
+ * The wide-anchor arrangement (diagrammed above): orchestrator over reviewer on
+ * the left, implementer full-height on the right (+ consultant in its column
+ * when bound). New pane sizes are percentages of the pane being split — -h 50%
+ * peels the right column off the anchor, -v 45% peels the reviewer off the left.
+ */
+async function columnLayout(state: RunState, anchor: string): Promise<Array<[Voice, string]>> {
+  const implementer = await tmux('split-window', '-d', '-h', '-l', '50%', '-t', anchor, '-P', '-F', '#{pane_id}', tailCommand(state, 'implementer'));
+  const reviewer = await tmux('split-window', '-d', '-v', '-l', '45%', '-t', anchor, '-P', '-F', '#{pane_id}', tailCommand(state, 'reviewer'));
   const panes: Array<[Voice, string]> = [
-    ['orchestrator', orchestratorPane],
+    ['orchestrator', anchor],
     ['implementer', implementer],
     ['reviewer', reviewer],
   ];
-  // The consultant is a fourth voice when bound: split the implementer's column
-  // to give it a pane. Unbound, the three-pane layout is byte-for-byte today's.
   if (state.bindings.consultant) {
     const consultant = await tmux('split-window', '-d', '-v', '-l', '45%', '-t', implementer, '-P', '-F', '#{pane_id}', tailCommand(state, 'consultant'));
     panes.push(['consultant', consultant]);
   }
+  return panes;
+}
+
+/**
+ * The narrow-anchor arrangement: every voice full-width, stacked top-to-bottom
+ * in voice order (orchestrator, implementer, reviewer[, consultant]) and evened
+ * by `select-layout even-vertical`. Each pane splits off the previous so the
+ * stack order is deterministic; trading width for height keeps log lines wide
+ * enough to read in a half-window pane.
+ */
+async function stackLayout(state: RunState, anchor: string): Promise<Array<[Voice, string]>> {
+  const panes: Array<[Voice, string]> = [['orchestrator', anchor]];
+  let prev = anchor;
+  for (const voice of workerRolesFor(state)) {
+    prev = await tmux('split-window', '-d', '-v', '-t', prev, '-P', '-F', '#{pane_id}', tailCommand(state, voice));
+    panes.push([voice, prev]);
+  }
+  await tmux('select-layout', '-t', anchor, 'even-vertical');
+  return panes;
+}
+
+/**
+ * Lay the voices out around the anchor (orchestrator) pane, choosing the
+ * arrangement from the anchor's measured width: wide keeps the 2-column layout,
+ * narrow stacks full-width. The choice keys on the *available* width, so one
+ * path serves all three anchor targets — a full window, a fixed-width detached
+ * session (always wide), or an inline pane (often narrow). Titles and the
+ * role-colored border format are arrangement-independent and shared.
+ */
+async function layoutPanes(state: RunState, orchestratorPane: string): Promise<void> {
+  const panes =
+    (await anchorWidth(orchestratorPane)) >= TWO_COLUMN_MIN_WIDTH
+      ? await columnLayout(state, orchestratorPane)
+      : await stackLayout(state, orchestratorPane);
   await tmux('set-option', '-w', '-t', orchestratorPane, 'pane-border-status', 'top');
   for (const [voice, pane] of panes) {
     await tmux('select-pane', '-t', pane, '-T', `${ROLE_GLYPH[voice]} ${voice}`);
