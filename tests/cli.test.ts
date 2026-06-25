@@ -1,5 +1,5 @@
 import { describe, expect } from 'vitest';
-import { newRunInputOpts, resolveAfkArgs, takeoverPlan } from '../src/cli.ts';
+import { newRunInputOpts, renderSnippetListing, resolveAfkArgs, takeoverPlan } from '../src/cli.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**
@@ -79,5 +79,39 @@ describe('takeoverPlan — the takeover decision (resume vs inspect vs clear-orp
 
   test('no session and no orphan is no-session', ({ run }) => {
     expect(takeoverPlan(run, 'reviewer')).toEqual({ kind: 'no-session' });
+  });
+});
+
+describe('renderSnippetListing — the `duet snippets` provenance view', () => {
+  test('all shipped → a no-overrides summary, no layer counts', () => {
+    const out = renderSnippetListing([
+      { key: 'write-spec', expand: 'x', source: 'shipped' },
+      { key: 'review-spec', expand: 'y', source: 'shipped' },
+    ]);
+    expect.soft(out.split('\n')[0]).toBe('2 snippets — all shipped defaults (no overrides)');
+    expect.soft(out).toMatch(/write-spec\s+shipped/);
+    expect.soft(out).not.toContain('overridden');
+  });
+
+  test('mixed layers → the summary counts each layer and each line names its source', () => {
+    const out = renderSnippetListing([
+      { key: 'write-spec', expand: 'x', source: 'shipped' },
+      { key: 'review-spec', expand: 'y', source: 'user' },
+      { key: 'start-plan', expand: 'z', source: 'project' },
+    ]);
+    expect.soft(out.split('\n')[0]).toBe('3 snippets — 2 overridden (user: 1, project: 1)');
+    expect.soft(out).toMatch(/write-spec\s+shipped/);
+    expect.soft(out).toMatch(/review-spec\s+user/);
+    expect.soft(out).toMatch(/start-plan\s+project/);
+  });
+
+  test('shipped order is preserved and the source column is aligned to the widest key', () => {
+    const out = renderSnippetListing([
+      { key: 'a', expand: '', source: 'shipped' },
+      { key: 'longer-key', expand: '', source: 'user' },
+    ]);
+    const [l1, l2] = out.split('\n').slice(2); // drop the summary line and the blank
+    expect.soft(l1?.startsWith('a ')).toBe(true); // order preserved (shortest first as given)
+    expect.soft(l1?.indexOf('shipped')).toBe(l2?.indexOf('user')); // columns line up
   });
 });

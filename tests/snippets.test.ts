@@ -1,9 +1,20 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test } from 'vitest';
 import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, UNLISTED_SNIPPETS, WORKFLOWS, consultantSnippetFor } from '../src/phases.ts';
 import type { WorkflowName } from '../src/phases.ts';
-import { SKILLS_DIR, getSnippet, loadSnippets, renderSnippetLibrary } from '../src/snippets.ts';
+import {
+  SKILLS_DIR,
+  getEffectiveSnippet,
+  getSnippet,
+  loadEffectiveSnippets,
+  loadSnippets,
+  mergeSnippetLayers,
+  renderSnippetLibrary,
+  runtimeLibraryContext,
+} from '../src/snippets.ts';
+import type { Snippet, SnippetOverrideLayer, SnippetRenderOpts } from '../src/snippets.ts';
 
 const WORKFLOW_NAMES = Object.keys(WORKFLOWS) as WorkflowName[];
 
@@ -91,7 +102,7 @@ describe('the snippet library', () => {
       'write-spec',
       'review-spec',
       'update-spec',
-      'tdd-plan',
+      'start-plan',
       'review-plan',
       'update-plan',
       'midpoint-status',
@@ -256,7 +267,7 @@ describe('the snippet library', () => {
     expect(rendered).toContain('<snippet key="reread-context">');
     // a later phase: key-only index, not a body
     expect(rendered).toContain('<phase name="plan">');
-    expect(rendered).not.toContain('<snippet key="tdd-plan">');
+    expect(rendered).not.toContain('<snippet key="start-plan">');
     // an earlier phase: listed under done
     expect(rendered).toContain('<already_done>');
     expect(rendered).toContain('think-holistic');
@@ -267,7 +278,7 @@ describe('the snippet library', () => {
   test('all=true renders every body, ungrouped', () => {
     const rendered = renderSnippetLibrary({ phase: 'spec', all: true });
     expect(rendered.startsWith('<snippet_library all="true">')).toBe(true);
-    expect(rendered).toContain('<snippet key="tdd-plan">'); // a non-spec template, in full
+    expect(rendered).toContain('<snippet key="start-plan">'); // a non-spec template, in full
     expect(rendered).toContain('<snippet key="compact-for-plan">'); // even the unlisted one
   });
 
@@ -331,5 +342,243 @@ describe('the snippet library', () => {
       expect.soft(atResearch).toContain('consultant-impl'); // implement owns implGate → indexed
       expect.soft(atResearch).not.toContain('consultant-spec'); // RIR has no spec checkpoint
     });
+  });
+});
+
+// ── Custom snippet override layers (feat/custom-snippets) ──────────────────
+// A user (`~/.config/duet/snippets.toml`) and a project (`<cwd>/.duet/snippets.toml`)
+// override file may replace individual snippet BODIES, stacked on the shipped
+// base, project winning. Whole-body per key, fail-closed on unknown keys, and —
+// with no override file present — byte-for-byte today's served library.
+
+/** Build a snippets.toml override body from key→expand entries (basic TOML strings via JSON.stringify). */
+function overrideToml(entries: Array<[key: string, expand: string]>): string {
+  return entries.map(([key, expand]) => `[[snippets]]\nkey = ${JSON.stringify(key)}\nexpand = ${JSON.stringify(expand)}\n`).join('\n');
+}
+
+// Shared real-fs tmpdir plumbing — these suites plant override files and clean up.
+const tmpDirs: string[] = [];
+afterEach(() => {
+  for (const d of tmpDirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
+function tmpEmpty(): string {
+  const d = mkdtempSync(join(tmpdir(), 'duet-snip-'));
+  tmpDirs.push(d);
+  return d;
+}
+/** A config dir holding a user-layer snippets.toml. */
+function withUserSnippets(toml: string): string {
+  const d = tmpEmpty();
+  writeFileSync(join(d, 'snippets.toml'), toml);
+  return d;
+}
+/** A project root holding a project-layer .duet/snippets.toml. */
+function withProjectSnippets(toml: string): string {
+  const d = tmpEmpty();
+  mkdirSync(join(d, '.duet'), { recursive: true });
+  writeFileSync(join(d, '.duet', 'snippets.toml'), toml);
+  return d;
+}
+
+describe('mergeSnippetLayers — the pure merge core', () => {
+  const base: Snippet[] = [
+    { key: 'a', expand: 'A-base' },
+    { key: 'b', expand: 'B-base' },
+    { key: 'c', expand: 'C-base' },
+  ];
+  const layer = (source: 'user' | 'project', snippets: Snippet[]): SnippetOverrideLayer => ({ source, path: `/fake/${source}.toml`, snippets });
+
+  test('no overrides → base verbatim, every element tagged shipped', () => {
+    expect(mergeSnippetLayers(base)).toEqual([
+      { key: 'a', expand: 'A-base', source: 'shipped' },
+      { key: 'b', expand: 'B-base', source: 'shipped' },
+      { key: 'c', expand: 'C-base', source: 'shipped' },
+    ]);
+  });
+
+  test('an override replaces a key’s WHOLE body and tags it with the layer; siblings stay shipped', () => {
+    const merged = mergeSnippetLayers(base, [layer('user', [{ key: 'b', expand: 'B-user' }])]);
+    expect.soft(merged.find((s) => s.key === 'b')).toEqual({ key: 'b', expand: 'B-user', source: 'user' });
+    expect.soft(merged.find((s) => s.key === 'a')).toEqual({ key: 'a', expand: 'A-base', source: 'shipped' });
+  });
+
+  test('whole-body, not partial — the merged body is exactly the override body (no concat/merge)', () => {
+    const merged = mergeSnippetLayers(base, [layer('user', [{ key: 'a', expand: 'totally new' }])]);
+    expect(merged.find((s) => s.key === 'a')?.expand).toBe('totally new');
+  });
+
+  test('precedence: project beats user for the same key (last-wins), source = project', () => {
+    const merged = mergeSnippetLayers(base, [
+      layer('user', [{ key: 'b', expand: 'B-user' }]),
+      layer('project', [{ key: 'b', expand: 'B-project' }]),
+    ]);
+    expect(merged.find((s) => s.key === 'b')).toEqual({ key: 'b', expand: 'B-project', source: 'project' });
+  });
+
+  test('base order is preserved regardless of override order', () => {
+    const merged = mergeSnippetLayers(base, [layer('user', [{ key: 'c', expand: 'C2' }, { key: 'a', expand: 'A2' }])]);
+    expect(merged.map((s) => s.key)).toEqual(['a', 'b', 'c']);
+  });
+
+  test('duplicate key WITHIN one layer → last entry wins', () => {
+    const merged = mergeSnippetLayers(base, [layer('user', [{ key: 'a', expand: 'first' }, { key: 'a', expand: 'second' }])]);
+    expect(merged.find((s) => s.key === 'a')?.expand).toBe('second');
+  });
+
+  test('fail-closed: an override naming an unknown key throws, naming the path and the key', () => {
+    const bad = (): unknown => mergeSnippetLayers(base, [layer('project', [{ key: 'nope', expand: 'x' }])]);
+    expect.soft(bad).toThrow(/\/fake\/project\.toml/);
+    expect.soft(bad).toThrow(/"nope"/);
+    expect.soft(bad).toThrow(/Overrides can only replace existing/);
+  });
+
+  test('the base array is not mutated (the cached shipped library must stay clean)', () => {
+    mergeSnippetLayers(base, [layer('user', [{ key: 'a', expand: 'mutated?' }])]);
+    expect(base.find((s) => s.key === 'a')?.expand).toBe('A-base');
+  });
+});
+
+describe('loadEffectiveSnippets — contextual resolution over real files', () => {
+  test('no override files → element-for-element identical to the shipped library, all shipped', () => {
+    const effective = loadEffectiveSnippets({ cwd: tmpEmpty(), configDir: tmpEmpty() });
+    expect.soft(effective.map((s) => ({ key: s.key, expand: s.expand }))).toEqual(loadSnippets());
+    expect.soft(effective.every((s) => s.source === 'shipped')).toBe(true);
+  });
+
+  test('a user override changes one body and marks it user; the rest stay shipped', () => {
+    const configDir = withUserSnippets(overrideToml([['write-spec', 'USER write-spec body']]));
+    const effective = loadEffectiveSnippets({ cwd: tmpEmpty(), configDir });
+    expect.soft(effective.find((s) => s.key === 'write-spec')).toEqual({ key: 'write-spec', expand: 'USER write-spec body', source: 'user' });
+    expect.soft(effective.find((s) => s.key === 'review-spec')?.source).toBe('shipped');
+  });
+
+  test('project beats user when both override the same key', () => {
+    const configDir = withUserSnippets(overrideToml([['write-spec', 'USER body']]));
+    const cwd = withProjectSnippets(overrideToml([['write-spec', 'PROJECT body']]));
+    expect(loadEffectiveSnippets({ cwd, configDir }).find((s) => s.key === 'write-spec')).toEqual({
+      key: 'write-spec',
+      expand: 'PROJECT body',
+      source: 'project',
+    });
+  });
+
+  test('user and project overriding DIFFERENT keys both apply', () => {
+    const configDir = withUserSnippets(overrideToml([['write-spec', 'U']]));
+    const cwd = withProjectSnippets(overrideToml([['review-spec', 'P']]));
+    const eff = loadEffectiveSnippets({ cwd, configDir });
+    expect.soft(eff.find((s) => s.key === 'write-spec')?.source).toBe('user');
+    expect.soft(eff.find((s) => s.key === 'review-spec')?.source).toBe('project');
+  });
+
+  test('fail-closed: a project override of an unknown key throws naming the project file', () => {
+    const cwd = withProjectSnippets(overrideToml([['no-such-key', 'x']]));
+    const bad = (): unknown => loadEffectiveSnippets({ cwd, configDir: tmpEmpty() });
+    expect.soft(bad).toThrow(/no-such-key/);
+    expect.soft(bad).toThrow(/snippets\.toml/);
+  });
+
+  test('a schema-invalid override (missing expand) throws the clear library error naming the path', () => {
+    const configDir = withUserSnippets('[[snippets]]\nkey = "write-spec"\n'); // valid TOML, missing expand
+    const bad = (): unknown => loadEffectiveSnippets({ cwd: tmpEmpty(), configDir });
+    expect.soft(bad).toThrow(/not a valid snippet library/);
+    expect.soft(bad).toThrow(/snippets\.toml/);
+  });
+
+  test('a TOML *syntax* error names the path and the recovery action (not a bare throw)', () => {
+    const configDir = withUserSnippets('this is not valid toml [[[');
+    const bad = (): unknown => loadEffectiveSnippets({ cwd: tmpEmpty(), configDir });
+    expect.soft(bad).toThrow(/is not valid TOML/);
+    expect.soft(bad).toThrow(/snippets\.toml/);
+    expect.soft(bad).toThrow(/fix or remove the file/i);
+  });
+});
+
+describe('the contextual API takes explicit dirs — no ambient home read', () => {
+  test('an empty context (no fields) is shipped-only, every element shipped (the honest contract)', () => {
+    // Point 4: loadEffectiveSnippets({}) must NOT default the config dir to the
+    // real ~/.config/duet — with neither field it is the shipped base verbatim.
+    const eff = loadEffectiveSnippets({});
+    expect.soft(eff.map((s) => ({ key: s.key, expand: s.expand }))).toEqual(loadSnippets());
+    expect.soft(eff.every((s) => s.source === 'shipped')).toBe(true);
+  });
+
+  test('runtimeLibraryContext points configDir at <home>/.config/duet and resolves the user layer there', () => {
+    // The production path (the ONE place home is read), tested with an explicit
+    // home arg — no env mutation needed.
+    const home = tmpEmpty();
+    mkdirSync(join(home, '.config', 'duet'), { recursive: true });
+    writeFileSync(join(home, '.config', 'duet', 'snippets.toml'), overrideToml([['write-spec', 'HOME user override']]));
+    const ctx = runtimeLibraryContext(tmpEmpty(), home);
+    expect.soft(ctx.configDir).toBe(join(home, '.config', 'duet'));
+    expect.soft(loadEffectiveSnippets(ctx).find((s) => s.key === 'write-spec')).toEqual({
+      key: 'write-spec',
+      expand: 'HOME user override',
+      source: 'user',
+    });
+  });
+});
+
+describe('byte-for-byte identity — no override files ⇒ today’s served library', () => {
+  // The hard invariant: a libraryContext pointing at EMPTY dirs (no override
+  // files) must render byte-identical to the no-context render, across every
+  // render mode. This is the no-override author's "nothing changes for me".
+  test.for<[string, SnippetRenderOpts]>([
+    ['flat menu (no args)', {}],
+    ['all=true', { all: true }],
+    ['phase: spec', { phase: 'spec' }],
+    ['phase: plan / full', { phase: 'plan', workflow: 'full' }],
+    ['phase: research / rir', { phase: 'research', workflow: 'rir' }],
+    ['phase: impl / full + all', { phase: 'impl', workflow: 'full', all: true }],
+    ['consultant-bound, frame, all', { phase: 'frame', workflow: 'full', consultantBound: true, all: true }],
+  ])('%s renders identically with an empty libraryContext', ([, opts]) => {
+    const libraryContext = { cwd: tmpEmpty(), configDir: tmpEmpty() };
+    expect(renderSnippetLibrary({ ...opts, libraryContext })).toBe(renderSnippetLibrary(opts));
+  });
+});
+
+describe('overrides serve through the render path (provenance never leaks to workers)', () => {
+  test('an overridden body is served; the XML tag keeps its exact shape (no source marker)', () => {
+    const cwd = withProjectSnippets(overrideToml([['write-spec', 'PROJECT-OVERRIDDEN write-spec body']]));
+    const rendered = renderSnippetLibrary({ phase: 'spec', libraryContext: { cwd, configDir: tmpEmpty() } });
+    expect.soft(rendered).toContain('PROJECT-OVERRIDDEN write-spec body');
+    expect.soft(rendered).toContain('<snippet key="write-spec">'); // tag closes right after key — no provenance attr
+    expect.soft(rendered).not.toContain('source="project"'); // the marker we'd emit if provenance leaked
+  });
+
+  test('the override actually takes effect — the served library differs from the no-context render', () => {
+    const cwd = withProjectSnippets(overrideToml([['write-spec', 'DISTINCT override marker']]));
+    expect(renderSnippetLibrary({ phase: 'spec', libraryContext: { cwd, configDir: tmpEmpty() } })).not.toBe(
+      renderSnippetLibrary({ phase: 'spec' }),
+    );
+  });
+
+  test('{{skills_dir}} resolves in an OVERRIDDEN body too (uniform across layers)', () => {
+    const cwd = withProjectSnippets(overrideToml([['start-plan', 'see {{skills_dir}}/tdd/SKILL.md for the method']]));
+    const rendered = renderSnippetLibrary({ all: true, libraryContext: { cwd, configDir: tmpEmpty() } });
+    expect.soft(rendered).toContain(join(SKILLS_DIR, 'tdd/SKILL.md'));
+    expect.soft(rendered).not.toContain('{{skills_dir}}');
+  });
+});
+
+describe('getEffectiveSnippet — the `duet snippets show` data path', () => {
+  test('returns the effective body + provenance for an overridden key', () => {
+    const configDir = withUserSnippets(overrideToml([['review-spec', 'USER review-spec']]));
+    expect(getEffectiveSnippet('review-spec', { cwd: tmpEmpty(), configDir })).toEqual({
+      key: 'review-spec',
+      expand: 'USER review-spec',
+      source: 'user',
+    });
+  });
+
+  test('an un-overridden key resolves from shipped', () => {
+    expect(getEffectiveSnippet('write-spec', { cwd: tmpEmpty(), configDir: tmpEmpty() })?.source).toBe('shipped');
+  });
+
+  test('unknown key → undefined', () => {
+    expect(getEffectiveSnippet('no-such-key', { cwd: tmpEmpty(), configDir: tmpEmpty() })).toBeUndefined();
+  });
+
+  test('the {{skills_dir}} token is left UNRESOLVED in the stored show form (readable, machine-independent)', () => {
+    expect(getEffectiveSnippet('start-plan', { cwd: tmpEmpty(), configDir: tmpEmpty() })?.expand).toContain('{{skills_dir}}');
   });
 });

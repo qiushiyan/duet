@@ -7,7 +7,7 @@ import { providerFor } from '../providers/index.ts';
 import { BudgetCutoffError } from '../providers/types.ts';
 import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
 import { countsReviewRound, orphanRecoveryFor, readOnlyFor, sessionIdFor, workerRolesFor } from '../roles.ts';
-import { getSnippet, renderSnippetLibrary } from '../snippets.ts';
+import { getSnippet, renderSnippetLibrary, runtimeLibraryContext } from '../snippets.ts';
 import {
   appendNote,
   appendVoiceLog,
@@ -726,7 +726,24 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             (sent[tag] ??= []).push(role);
           }
         }
-        return { content: [{ type: 'text' as const, text: renderSnippetLibrary({ phase, workflow: workflowOf(state), sentTo: sent, all: args.all, consultantBound: Boolean(state.bindings.consultant) }) }] };
+        // Resolve against the run's project root (the `<cwd>/.duet/snippets.toml`
+        // project override) and the user config dir; runtimeLibraryContext owns the
+        // single OS-home read, which the test suite isolates via $HOME.
+        const libraryContext = runtimeLibraryContext(state.cwd);
+        // A malformed or unknown-key override file fails closed — surface it as a
+        // readable tool error (not a crashed turn): the orchestrator can't compose
+        // prompts from a broken library, so it must stop and flag rather than serve
+        // a silently-partial one.
+        let library: string;
+        try {
+          library = renderSnippetLibrary({ phase, workflow: workflowOf(state), sentTo: sent, all: args.all, consultantBound: Boolean(state.bindings.consultant), libraryContext });
+        } catch (err) {
+          return {
+            content: [{ type: 'text' as const, text: `The snippet library could not be loaded — ${err instanceof Error ? err.message : String(err)} Fix or remove the override file before composing worker prompts; ask_human if you need the human to resolve it.` }],
+            isError: true,
+          };
+        }
+        return { content: [{ type: 'text' as const, text: library }] };
       },
       { annotations: { readOnlyHint: true } }, // genuinely read-only; also batches with parallel sends
     ),

@@ -29,6 +29,8 @@ rir   research → DIRECTION (walk away) → implementation (AFK) → SHIP → d
 
 The gates are enforced in code (an XState statechart), not a prompt the orchestrator could be talked out of. Between stops a detached background process drives the phase; nothing runs while a run is parked, and you get a desktop notification at every stop. The final **OPEN-PR** gate opens the PR for you by default — list `pr` in `--gates-at` for a pre-open stop to read the description first; the merge is always yours.
 
+Each phase runs a handful of prompt templates — **snippets** — that carry the workflow's conventions. The implementer drafts each artifact from one — [`write-spec`](docs/snippets.md#write-spec) in spec, [`start-plan`](docs/snippets.md#start-plan) in plan, [`implement-direct`](docs/snippets.md#implement-direct) on the lighter rir arc — and the reviewer critiques through altitude-tuned lenses like [`review-spec`](docs/snippets.md#review-spec) and [`review-plan`](docs/snippets.md#review-plan). The snippets are the substance of the workflow, and the part you can reshape to your own methodology — see [Customizing the snippets](#customizing-the-snippets), or the full [snippet reference](docs/snippets.md).
+
 ## What it is — and isn't
 
 Four ideas shape every design choice:
@@ -117,7 +119,7 @@ When most of a framing repeats run to run, save the common part as a template un
 
 ## Configure
 
-duet ships sensible defaults, so config is optional. To change which provider/model backs each role, create `~/.config/duet/config.toml`:
+duet's one config file binds each role to a provider and model, plus your billing posture — and nothing else. It's optional: the defaults work out of the box. Reach for it when you want a different provider or model behind a role, or a different billing setup — create `~/.config/duet/config.toml`:
 
 ```toml
 budget = "off"              # opt-in per-turn cost caps: "off" (default), "default", or a multiplier like 0.5/2
@@ -138,6 +140,40 @@ That's the only config duet has — role-to-provider bindings plus billing postu
 
 - **Consultant (optional, off by default).** Add `[roles.consultant]`, or pass `--consultant <provider[:model]>` per run, for a second, read-only reviewer that questions the *bet* (assumptions, product fit) rather than the build — ideally on a different model family from your reviewer, which is the point. `--no-consultant` disables a configured one for a single run. On the full arc it also authors an **acceptance contract** — a short, frozen list of falsifiable assertions of what success means, written blind to the plan, which you ratify at the plan gate and a fresh session verifies against the built system before the Ship gate.
 - **Interactive implementer transport (advanced, experimental).** Add `transport = "interactive"` under `[roles.implementer]` to drive the interactive `claude` TUI instead of headless `claude -p`, so its turns bill your flat subscription quota rather than the metered credit pool. tmux-driven, implementer-only, pending one live-auth check — see [`docs/interactive-transport.md`](docs/interactive-transport.md).
+
+## Customizing the snippets
+
+**What they are.** The snippets are the prompt templates the orchestrator sends the workers — they *are* the workflow, and duet ships an opinionated set: leader-facing specs, TDD-shaped vertical-slice planning, altitude-tuned review lenses. The catalog of the ones worth customizing, with their full bodies, is the [snippet reference](docs/snippets.md).
+
+**Why you'd change one.** To make duet work *your* way without forking it — plan to a different methodology, write specs in a different shape, dial your reviewer's altitude up or down. The biggest levers are the **generative drafts** — [`write-spec`](docs/snippets.md#write-spec), [`start-plan`](docs/snippets.md#start-plan), [`implement-direct`](docs/snippets.md#implement-direct) — which write the *first* artifact of each phase, so reshaping one reshapes everything downstream.
+
+**How — two grains.**
+
+- **Coarse: swap the methodology.** The two planning snippets cite duet's vendored TDD and architecture skills through a `{{skills_dir}}` token. Point it at your own methodology skill and one swap shifts how the whole plan phase reasons — without editing individual prompts.
+- **Fine: override a snippet.** Replace any single snippet's body, by key, from two optional files layered over the shipped defaults:
+
+  | Layer | File | Scope |
+  |---|---|---|
+  | user | `~/.config/duet/snippets.toml` | you, every project |
+  | project | `<repo>/.duet/snippets.toml` | one repo |
+
+  Both use the shipped library's `[[snippets]]` schema (`key` + `expand`). Precedence is **shipped → user → project**, last-wins per key; an override replaces a snippet's *whole* body (no partial patching). The reference doc has a [worked example](docs/snippets.md#worked-example-overriding-start-plan-to-a-non-tdd-methodology) — overriding `start-plan` to a walking-skeleton (non-TDD) methodology, with the actual `[[snippets]]` block.
+
+Mechanics:
+
+- **Fail-closed.** An override naming a key that isn't in the shipped library is a hard error — naming the file and the bad key, so a typo can't silently vanish.
+- **Invisible when unused.** With no override files present, the served library is byte-for-byte the shipped one; overriding is opt-out, and a run with no overrides behaves exactly as before.
+- **Inspect it.** `duet snippets` lists every key and the layer it resolves from; `duet snippets show <key>` prints the effective body.
+- **Commit a project override** by carving `!/snippets.toml` into the repo's `.duet/.gitignore` (the same move `.duet/templates/` uses); without that line, `.duet/` ignores it like other run artifacts.
+
+**Override at your own cost.** The surface is unrestricted on purpose — every key is overridable, including the ones below — but a few snippets are load-bearing for duet's safety machinery, and a weaker version quietly weakens the guardrail:
+
+- `consultant-contract` / `consultant-verify` carry the acceptance-contract pair; softening them degrades the falsifiable-success check a fresh session runs before the Ship gate.
+- The gate-adjacent prompts — the severity wording the consultant assigns, the `implementation-handoff` that frames the final review — shape what reaches a human gate.
+
+The *structural* gates are code and can't be forged from a prompt; what an override can erode is the *quality of the signal* feeding a gate decision. Override these knowingly.
+
+**Framing stays primary.** A snippet override customizes the *tool* — it's the same kind of artifact as duet's own shipped library — not your project. It is **not** the place to tell duet about your codebase; that is the framing's job, the single project-knowledge seam. The project layer is a deliberate, opt-in, at-your-own-cost secondary channel, nothing more.
 
 ## Going deeper
 

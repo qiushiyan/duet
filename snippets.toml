@@ -183,8 +183,9 @@ key = "reread-context"
 expand = '''
 Reread the files this change touches and rebuild your mental model from the actual code, not memory — trace the real data/control flow, note existing constraints, and find the seams the work will build on. **No code yet.**'''
 
+# tabtype: tdd-plan
 [[snippets]]
-key = "tdd-plan"
+key = "start-plan"
 expand = '''
 Plan the implementation as vertical slices based on the latest spec. Reread the spec first.
 

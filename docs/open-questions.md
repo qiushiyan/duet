@@ -58,6 +58,8 @@ Numbering note: Q1–Q10 predate the 2026-06-11 pivot to an intelligent orchestr
 
 **Duet owns `snippets.toml` at the repo root (2026-06-11),** mirroring tabtype's schema, seeded from the live tabtype config plus `ceo-summary`. Approved `propose_snippet_edit` diffs apply here; porting back to tabtype is a manual human step — no automatic sync. Guarded by `tests/snippets.test.ts`; re-seed from `~/.config/tabtype/config.toml` if the copies drift the wrong way.
 
+**Extended 2026-06-25 — duet owns the *default* library.** Users may layer per-key overrides without forking: a user `~/.config/duet/snippets.toml` and a project `<repo>/.duet/snippets.toml` replace whole snippet bodies, shipped → user → project last-wins, fail-closed on an unknown key, byte-identical to the defaults when absent (`duet snippets` inspects provenance). These are *library* artifacts — the same kind as the shipped `snippets.toml`, customizing the tool — not config and not a project-knowledge channel; framing stays the single seam (`docs/automation-design.md` §"What the MVP should *not* do"; mechanics in README §"Customizing the snippets"). The `propose_snippet_edit` proposal path is unchanged — it still targets the shipped source.
+
 ## Q13. Will the triage rules over-flag or under-flag?
 
 **Why it matters.** The orchestrator's value during AFK depends on flag precision: under-flagging silently absorbs product decisions the human owns (the worst failure); over-flagging turns AFK into a pager. The rules (product/direction → always flag; environment → always flag; tactical → bounce to worker with process-not-substance) are instructions, not mechanisms.

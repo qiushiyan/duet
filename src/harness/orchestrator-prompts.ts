@@ -433,7 +433,7 @@ ${approvalClause(
 ${attendancePosture(state, 'plan')}
 1. Have the implementer commit the approved spec file (${specRef}) with a conventional message, as its own commit.${consultantContractStep(state)}
 2. Decide where the plan file lives: the framing names the project's plan location (path or directory convention). The plan must be a file in the repo — implementation may compact the implementer's context, and the plan file is what later turns re-anchor on. If the framing doesn't name a plan location, ask_human for one before drafting.
-3. Send the implementer a planning prompt based on the tdd-plan snippet. The implementer writes the plan to the file and reports it.
+3. Send the implementer a planning prompt based on the start-plan snippet. The implementer writes the plan to the file and reports it.
 4. Run the plan review loop: review-plan to the reviewer (point it at the plan file's path as well as the content), update-plan to the implementer, -again variants for later rounds. Plans are reviewable at a finer altitude than specs — test cases, fixtures, and line-level references are fair game; only full code bodies are deferred.
 5. The backstop cap for this phase is ${roundCap} review rounds; converge well before it.
 6. When converged, call advance_phase with a summary, listing the plan file among the artifacts. Implementation runs AFK after this gate, so the summary should give the human confidence the plan is workable end to end.

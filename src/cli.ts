@@ -29,6 +29,8 @@ import { serveKernelStdio, serveRunScopedKernelStdio } from './harness/mcp-serve
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
 import { runOrchestrate } from './orchestrate.ts';
 import { entryOf, handoffWatchLabel, phaseOfGateState } from './phases.ts';
+import { getEffectiveSnippet, loadEffectiveSnippets, runtimeLibraryContext } from './snippets.ts';
+import type { EffectiveSnippet } from './snippets.ts';
 import { buildBrief, buildStatusModel, renderBrief, renderStatus, steerRefusal } from './status.ts';
 import { openTmuxView } from './tmux-view.ts';
 import {
@@ -76,6 +78,26 @@ function printWatchHints(state: RunState, pid: number, phaseLabel: string): void
   console.log(`  tmux panes:   duet view ${state.runId}`);
   console.log(`  status:       duet status ${state.runId}`);
   console.log(`you'll get a notification at the next gate or queued question`);
+}
+
+/**
+ * Render the `duet snippets` listing: a summary line, then every effective key
+ * in shipped order with the layer it resolved from (shipped / user / project).
+ * Pure (the `console.log` is the thin action body), so it is tested directly.
+ * Provenance lives ONLY here — the library served to workers carries no source
+ * marker (that is what byte-for-byte identity requires).
+ */
+export function renderSnippetListing(snippets: EffectiveSnippet[]): string {
+  const overridden = snippets.filter((s) => s.source !== 'shipped');
+  const userCount = overridden.filter((s) => s.source === 'user').length;
+  const projectCount = overridden.filter((s) => s.source === 'project').length;
+  const summary =
+    overridden.length === 0
+      ? `${snippets.length} snippets — all shipped defaults (no overrides)`
+      : `${snippets.length} snippets — ${overridden.length} overridden (user: ${userCount}, project: ${projectCount})`;
+  const width = snippets.reduce((m, s) => Math.max(m, s.key.length), 0);
+  const lines = snippets.map((s) => `${s.key.padEnd(width)}  ${s.source}`);
+  return [summary, '', ...lines].join('\n');
 }
 
 /**
@@ -982,6 +1004,45 @@ program
       const waiting = r.abandoned ? 'abandoned' : r.pendingQuestion ? 'waiting-on-answer' : '';
       console.log(`${r.runId}  ${r.machineState ?? '?'}  ${waiting}  ${r.specPath ?? '(framing-only)'}`);
     }
+  });
+
+// Read-only inspector for the effective snippet library (shipped base + the user
+// and project override layers), resolved as a run launched from here would see
+// it. The override channel is fully unrestricted by design — any key is
+// overridable, the guardrail against overriding the safety-coupled snippets is
+// documentation, not code — so this listing stays uniform: keys + provenance, no
+// per-key risk markers.
+const snippetsCmd = program
+  .command('snippets')
+  .description('List the effective snippet library and where each snippet resolves from (shipped / user / project override).')
+  .action(() => {
+    // A malformed/unknown-key override fails closed — surface the (already
+    // recovery-worded) message cleanly via fail(), not a raw stack trace.
+    let snippets: EffectiveSnippet[];
+    try {
+      snippets = loadEffectiveSnippets(runtimeLibraryContext(process.cwd()));
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+    }
+    console.log(renderSnippetListing(snippets));
+  });
+
+snippetsCmd
+  .command('show <key>')
+  .description('Print the full effective body of one snippet, with the layer it resolved from.')
+  .action((key: string) => {
+    let snippet: EffectiveSnippet | undefined;
+    try {
+      snippet = getEffectiveSnippet(key, runtimeLibraryContext(process.cwd()));
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+    }
+    if (!snippet) fail(`unknown snippet key "${key}" — run "duet snippets" to list valid keys.`);
+    // The stored form: the {{skills_dir}} token is left unresolved (readable and
+    // machine-independent — the serve-time resolution is the orchestrator's concern).
+    console.log(`# key: ${snippet.key}`);
+    console.log(`# source: ${snippet.source}`);
+    console.log(snippet.expand);
   });
 
 if (import.meta.main) {
