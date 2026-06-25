@@ -101,16 +101,23 @@ function parsePhaseWindows(log: string): { windows: Window[]; sawOpen: boolean }
   return { windows, sawOpen };
 }
 
-/** Parse one worker log into completed turns (start → next terminal line). */
-function parseTurns(log: string): Turn[] {
+/**
+ * Parse one worker log into completed turns (start → next terminal line).
+ * `dangling` counts prompts left without a terminal line — an in-flight turn (the
+ * log read mid-turn) or a truncated log; the caller notes it rather than letting
+ * the turn silently vanish from the totals.
+ */
+function parseTurns(log: string): { turns: Turn[]; dangling: number } {
   const turns: Turn[] = [];
   let pending: { tag: string; startMs: number } | undefined;
+  let dangling = 0;
   for (const line of log.split('\n')) {
     const start = TURN_START.exec(line);
     if (start) {
-      const ms = Date.parse(start[1]!);
       // A new prompt with a prior turn still open means that turn never logged a
-      // terminal line (the log ended mid-turn) — drop it, start the new one.
+      // terminal line (the log ended mid-turn) — count it as dangling, not dropped.
+      if (pending) dangling++;
+      const ms = Date.parse(start[1]!);
       pending = Number.isNaN(ms) ? undefined : { tag: start[2]!, startMs: ms };
       continue;
     }
@@ -121,18 +128,22 @@ function parseTurns(log: string): Turn[] {
       pending = undefined;
     }
   }
-  return turns;
+  if (pending) dangling++; // open at EOF — in flight, or the log ends mid-turn
+  return { turns, dangling };
 }
 
 /**
  * Assemble the stats model from already-read log strings — the pure core. The
- * orchestrator log may be undefined (no log); each worker log may be undefined
- * (no session yet). `arcOrder` is the workflow's phase order for the display sort.
+ * orchestrator log may be undefined (no log). Each worker is role-tagged so a
+ * missing-but-EXPECTED log (`log` undefined) becomes a note rather than a silent
+ * undercount, and a role's in-flight/truncated turns are named; the composer
+ * decides which absent logs are expected (it omits never-run workers entirely).
+ * `arcOrder` is the workflow's phase order for the display sort.
  */
 export function buildStats(
   runId: string,
   orchestratorLog: string | undefined,
-  workerLogs: string[],
+  workers: Array<{ role: string; log?: string }>,
   arcOrder: readonly PhaseName[],
 ): StatsModel {
   const notes: string[] = [];
@@ -140,7 +151,18 @@ export function buildStats(
   if (orchestratorLog === undefined) notes.push('no orchestrator log yet — phase windows unavailable.');
   else if (!sawOpen) notes.push('no headless phase windows found — this run may have been orchestrated interactively.');
 
-  const turns = workerLogs.flatMap((log) => parseTurns(log));
+  const turns: Turn[] = [];
+  for (const { role, log } of workers) {
+    if (log === undefined) {
+      notes.push(`${role} log missing — its turns aren't counted.`);
+      continue;
+    }
+    const parsed = parseTurns(log);
+    turns.push(...parsed.turns);
+    if (parsed.dangling > 0) {
+      notes.push(`${role}: ${parsed.dangling} turn(s) still open (in flight, or a truncated log) — not counted.`);
+    }
+  }
 
   const windowMs = new Map<string, number>();
   for (const w of windows) windowMs.set(w.phase, (windowMs.get(w.phase) ?? 0) + (w.endMs - w.startMs));
@@ -196,11 +218,16 @@ export function buildStatsModel(state: RunState): StatsModel {
       return undefined; // fail-soft: a disappearing log degrades to a note, never throws
     }
   };
-  const workerLogs = workerRolesFor(state)
-    .map((role) => read(role))
-    .filter((log): log is string => log !== undefined);
+  // A worker with a session but no log is an EXPECTED-missing log (a real
+  // undercount → buildStats notes it); a never-prompted worker (no session) is
+  // simply absent and omitted, so the note fires only when it means something.
+  const workers = workerRolesFor(state).flatMap((role) => {
+    const log = read(role);
+    if (log !== undefined) return [{ role, log }];
+    return state.workerSessions[role] ? [{ role }] : [];
+  });
   const arcOrder = phasesOf(workflowOf(state)).map((p) => p.name);
-  return buildStats(state.runId, read('orchestrator'), workerLogs, arcOrder);
+  return buildStats(state.runId, read('orchestrator'), workers, arcOrder);
 }
 
 /** The human one-screen render — a phase table, a tag breakdown, and any notes. */

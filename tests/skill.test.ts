@@ -266,6 +266,22 @@ describe('no CLI help / template copy carries a Full-only-arc claim', () => {
     }
   });
 
+  test('no live CLI help or the framing seed teaches the deleted `pr` gate token or the old docs/pr/open tail (H/Critical)', () => {
+    // After H, `pr` is no longer a gate token (parseGatesAt rejects it), so any
+    // live surface that tells a user to list `pr`, lists pr as a full gate, or
+    // shows the old docs→pr→open tail points them at an invalid value. The
+    // shipped-skill .md narrative is DEFERRED (migrated in the docs step) and so
+    // is NOT scanned here — only the live surfaces must already be clean.
+    const live = [...cliCopyStrings(), { label: 'framing seed template', text: FRAMING_TEMPLATE }];
+    for (const { label, text } of live) {
+      const lower = text.toLowerCase();
+      expect.soft(lower, `"${label}" still tells users to list \`pr\``).not.toContain('list `pr`');
+      expect.soft(lower, `"${label}" still lists pr as a full gate`).not.toContain('impl, pr');
+      expect.soft(lower, `"${label}" still describes a pre-open stop`).not.toContain('pre-open');
+      expect.soft(lower, `"${label}" still shows the "docs (one pass)" tail`).not.toContain('docs (one pass)');
+    }
+  });
+
   test('the arc-bearing surfaces name both arcs (the finding-1 residual sites)', () => {
     const opt = (cmd: string, long: string) =>
       (publicCommands.get(cmd)?.options.find((o) => o.long === long)?.description ?? '').toLowerCase();
@@ -292,11 +308,13 @@ describe('no CLI help / template copy carries a Full-only-arc claim', () => {
 
 describe('shipped gate-posture copy teaches the auto-open-PR default (rails bundle #2)', () => {
   // The PR auto-opens by default now (phases.ts: full's forceAttend: [],
-  // defaultPreAuthorized: ['pr']). Any "always attended" claim about the Open-PR
-  // gate, or an unqualified "Default: every gate", is the pre-bundle model — a
-  // shipped skill that teaches it would steer the framing author / concierge to
-  // the wrong posture. These guards pin the corrected model so a future edit
-  // can't quietly reintroduce the old one.
+  // defaultPreAuthorized: ['plan','impl','finish']). Any "always attended" claim
+  // about the Open-PR gate, or an unqualified "Default: every gate", is the
+  // pre-bundle model — a shipped skill that teaches it would steer the framing
+  // author / concierge to the wrong posture. The LIVE surfaces (CLI help, framing
+  // seed) have migrated to the post-open `finish` model (the dead-`pr`-token guard
+  // pins that); the shipped-skill .md NARRATIVE migrates later in the dedicated
+  // docs step, so it still reads the auto-open model here.
   const gatesAtHelp = (publicCommands.get('new')?.options.find((o) => o.long === '--gates-at')?.description ?? '');
   // All three shipped prose surfaces — including the root concierge SKILL.md the
   // round-1 guard missed (round 2).
@@ -321,12 +339,13 @@ describe('shipped gate-posture copy teaches the auto-open-PR default (rails bund
     expect.soft(gatesAtHelp).not.toMatch(/default:\s*every gate/i);
   });
 
-  test('the gate-posture surfaces teach the auto-open model', () => {
+  test('the deferred shipped-skill narrative still teaches the auto-open model (migrated in the docs step)', () => {
+    // Only the .md narrative is checked here — it is deferred. The live CLI help
+    // and framing seed have already migrated to the post-open `finish` model, so
+    // they must NOT still say "auto-open" (the dead-token guard below covers that).
     for (const [label, md] of shippedDocs) {
       expect.soft(md.toLowerCase(), `${label} omits the auto-open model`).toContain('auto-open');
     }
-    expect.soft(FRAMING_TEMPLATE.toLowerCase()).toContain('auto-open');
-    expect.soft(gatesAtHelp.toLowerCase()).toContain('auto-open');
   });
 
   test('the concierge cause docs name the budget cause (slice 5)', () => {

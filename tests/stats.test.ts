@@ -46,7 +46,7 @@ describe('buildStats — the pure parse core', () => {
     const implementer = [line(at(1), '◀ prompt (tag=write-spec, from orchestrator)'), 'body', '', line(at(4), '▶ response (session s1)'), 'reply', ''].join('\n');
     const reviewer = [line(at(5), '◀ prompt (tag=review-spec, from orchestrator)'), 'body', '', line(at(7), '▶ response (session s2)'), 'reply', ''].join('\n');
 
-    const model = buildStats('run-1', orchestrator, [implementer, reviewer], FULL_ORDER);
+    const model = buildStats('run-1', orchestrator, [{ role: 'implementer', log: implementer }, { role: 'reviewer', log: reviewer }], FULL_ORDER);
 
     expect.soft(model.phases).toEqual([{ phase: 'spec', windowMs: 10 * 60_000, workerMs: 5 * 60_000, turns: 2 }]);
     expect.soft(model.totalWindowMs).toBe(10 * 60_000);
@@ -92,7 +92,7 @@ describe('buildStats — the pure parse core', () => {
       line(at(40), '◼ budget-control stop: per-turn cap reached'), // a capped turn still counts (39m)
     ].join('\n');
 
-    const model = buildStats('run-4', orchestrator, [implementer], FULL_ORDER);
+    const model = buildStats('run-4', orchestrator, [{ role: 'implementer', log: implementer }], FULL_ORDER);
     expect.soft(model.tags).toEqual([{ tag: 'implement-direct', totalMs: 39 * 60_000, turns: 1 }]);
     expect.soft(model.phases[0]).toMatchObject({ phase: 'impl', workerMs: 39 * 60_000, turns: 1 });
   });
@@ -107,11 +107,28 @@ describe('buildStats — the pure parse core', () => {
     const orchestrator = [line(at(0), '▶ orchestrator'), 'some narration', ''].join('\n'); // no harness-prompt lines
     const implementer = [line(at(1), '◀ prompt (tag=implement-direct, from orchestrator)'), line(at(6), '▶ response (session s1)')].join('\n');
 
-    const model = buildStats('run-6', orchestrator, [implementer], FULL_ORDER);
+    const model = buildStats('run-6', orchestrator, [{ role: 'implementer', log: implementer }], FULL_ORDER);
     expect.soft(model.phases).toEqual([]); // no windows → no phase rows
     expect.soft(model.tags).toEqual([{ tag: 'implement-direct', totalMs: 5 * 60_000, turns: 1 }]); // still tallied by tag
     expect.soft(model.notes.join('\n')).toContain('interactively');
     expect.soft(model.notes.join('\n')).toContain('outside any phase window');
+  });
+
+  plain('an EXPECTED-but-missing worker log degrades to a note (not a silent undercount)', () => {
+    const orchestrator = [line(at(0), '◀ harness prompt (phase=spec)'), line(at(10), 'advance_phase (spec)')].join('\n');
+    // The composer passes a session-bearing worker with no log as { role } (no log).
+    const model = buildStats('run-7', orchestrator, [{ role: 'reviewer' }], FULL_ORDER);
+    expect.soft(model.notes.join('\n')).toContain('reviewer log missing');
+  });
+
+  plain('a worker prompt with no terminal line is noted as still-open, not dropped', () => {
+    const orchestrator = [line(at(0), '◀ harness prompt (phase=impl)'), line(at(50), 'advance_phase (impl)')].join('\n');
+    // A prompt with no ▶ response / stop / failure after it — an in-flight turn.
+    const implementer = [line(at(1), '◀ prompt (tag=implement-direct, from orchestrator)'), 'body, then the log ends mid-turn'].join('\n');
+
+    const model = buildStats('run-8', orchestrator, [{ role: 'implementer', log: implementer }], FULL_ORDER);
+    expect.soft(model.tags).toEqual([]); // the open turn contributes no duration
+    expect.soft(model.notes.join('\n')).toContain('implementer: 1 turn(s) still open');
   });
 });
 

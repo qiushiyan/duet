@@ -134,9 +134,9 @@ function buildStates(spec: WorkflowSpecInput): Record<string, object> {
     const loop = `${name}Loop`;
     const flagWait = flagWaitStateOf(name);
     const next = phases[i + 1];
-    // A gated phase advances to its gate; a gate-less phase advances to the next
-    // phase's loop (Full's `docs` → `pr`, no human stop), or to done when it is
-    // the last phase (Full's `open`).
+    // A gated phase advances to its gate; a gate-less phase (none in either arc
+    // today — both gate every phase — but the registry allows one) would advance
+    // to the next phase's loop, or to done when it is the last phase.
     states[loop] = phaseState(name, {
       advanced: p.gate?.state ?? (next ? `${next.name}Loop` : 'done'),
       flagWait,
