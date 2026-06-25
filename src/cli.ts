@@ -845,11 +845,12 @@ program
   .command('view')
   .description('Open (or reuse) the tmux viewer: one live pane per voice, tailing the run logs.')
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
-  .action(async (runId: string | undefined) => {
+  .option('--here', 'replace the current tmux pane with the viewer instead of opening a window (ephemeral; needs tmux)')
+  .action(async (runId: string | undefined, opts: { here?: boolean }) => {
     const cwd = process.cwd();
     const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
     if (!state) fail('no runs found in this project');
-    await openTmuxView(state);
+    await openTmuxView(state, { here: opts.here });
     // The voice set is the run's bound voices (consultant included when bound),
     // not a static list — the slice-3 enumeration rule reaches this hint too.
     const logNames = [...voicesFor(state), 'driver'].join(',');

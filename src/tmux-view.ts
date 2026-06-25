@@ -153,9 +153,26 @@ async function layoutPanes(state: RunState, orchestratorPane: string): Promise<v
   await tmux('set-option', '-w', '-t', orchestratorPane, 'pane-border-format', fmt);
 }
 
-export async function openTmuxView(state: RunState): Promise<void> {
+export async function openTmuxView(state: RunState, opts: { here?: boolean } = {}): Promise<void> {
   const name = `duet-${state.runId}`;
   try {
+    if (opts.here && process.env['TMUX'] && process.env['TMUX_PANE']) {
+      // --here: replace the current pane with the viewer (ephemeral, no new
+      // window or session). Split the OTHER voices off the current pane first —
+      // all the fallible layout work — so a failure here leaves the pane intact
+      // (duet view just exits to its shell). Then respawn the current pane into
+      // the orchestrator tail LAST: respawn-pane -k replaces THIS process, and
+      // by then every other pane is already placed, so the self-kill races
+      // nothing. layoutPanes splits off and titles the anchor regardless of the
+      // command it currently runs, and the manual title survives the respawn.
+      const anchor = process.env['TMUX_PANE'];
+      await layoutPanes(state, anchor);
+      await tmux('respawn-pane', '-k', '-t', anchor, tailCommand(state, 'orchestrator'));
+      return;
+    }
+    if (opts.here) {
+      console.log('duet view --here needs a current tmux pane to replace — opening the usual viewer instead');
+    }
     if (process.env['TMUX']) {
       // Inside tmux: a new window in the current session, created without
       // stealing focus (-d). `-a` inserts it immediately after the current
