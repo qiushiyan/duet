@@ -25,8 +25,8 @@
  * The arcs (docs/automation-design.md §"Phases and gates"):
  *
  *   full:  frame → Direction → spec → Commit-spec → plan → Plan-approval
- *          (walk away) → impl (AFK) → Ship → docs (one pass, no gate) → pr →
- *          Open-PR → open → done
+ *          (walk away) → impl (AFK) → Ship → finish (reconcile docs → draft PR
+ *          → Open-PR) → done
  */
 
 import { basename, dirname, extname } from 'node:path';
@@ -138,7 +138,7 @@ export interface WorkflowSpecInput {
 export const WORKFLOWS = {
   full: {
     name: 'full',
-    displayName: 'Full (spec → plan → implement → ship → docs → PR)',
+    displayName: 'Full (spec → plan → implement → ship → PR)',
     phases: [
       {
         name: 'frame',
@@ -218,7 +218,7 @@ export const WORKFLOWS = {
           state: 'shipGate',
           heading: 'SHIP gate — the orchestrator’s packet (CEO summary first)',
           ready: 'Ship gate — implementation packet ready',
-          hint: '(verify in your environment before deciding — migrations, smoke tests; approving enters FINAL REVIEW: docs → PR description → Open-PR gate)',
+          hint: '(verify in your environment before deciding — migrations, smoke tests; approving enters FINISH: reconcile docs → draft PR → Open-PR gate)',
         },
         artifactLabel: 'implementation',
         reviewLoop: true,
@@ -232,52 +232,34 @@ export const WORKFLOWS = {
         consultantCheckpoint: 'verify',
       },
       {
-        // No gate (2026-06-23). The docs are updated and committed in one pass:
-        // the doc diff rides the branch into the PR, where the human reviews it
-        // like any other change (a doc commit on an unmerged branch is reversible,
-        // and the human's Ship-gate approval already covers the implementation the
-        // docs describe). A genuine doc-scope product call — deleting a documented
-        // concept, rewriting a design claim, pruning a superseded spec/plan — still
-        // flags via ask_human, which pauses the run; the substance was never in the
-        // gate. Replaces the propose → Docs-plan gate → apply round trip, whose
-        // orchestrator "approval" was pure routing and whose gate auto-crossed
-        // unattended in every overnight run (see docs/open-questions.md Q2).
-        name: 'docs',
-        snippets: ['compact-for-cleanup'],
-        gate: null,
-        artifactLabel: 'docs',
-        reviewLoop: false,
-        roundCap: 2,
-        orchestratorBudgetUsd: 10,
-        workerBudgetUsd: 10,
-        workerTurnTimeoutMs: 30 * 60_000,
-      },
-      {
-        name: 'pr',
-        snippets: ['pr-description'],
+        // The finishing tail, collapsed to one phase (2026-06-26; was docs → pr
+        // → open, three orchestrator sessions for one logical step). Open-then-
+        // review in one continuous session: reconcile docs + commit → write the
+        // PR description → open the PR as a DRAFT — and only THEN does the gate
+        // interpose. Pre-authorized (the default), the draft PR opens and the gate
+        // auto-crosses to done with the URL leading the packet; attended (`finish`
+        // in gates_at), the run stops at the opened draft PR — approve marks it
+        // done, reject re-enters this loop to AMEND the open PR (gh pr edit / more
+        // commits), never to re-open. Reject-as-amend is sound only because a
+        // draft PR is reversible. The open is idempotent by a worker-side gh-pr-
+        // view check, not run-state. No consultant checkpoint (the verify
+        // checkpoint already ran at impl); compact-for-cleanup stays reachable for
+        // the rare bloated-context case. (Q2 retired the Docs-plan gate for the
+        // identical reasons; this finishes that line.)
+        name: 'finish',
+        snippets: ['reconcile-docs', 'pr-description', 'compact-for-cleanup'],
         gate: {
           state: 'openPrGate',
-          heading: 'OPEN-PR gate — the PR description',
-          ready: 'Open-PR gate — PR description ready',
-          hint: '(the PR auto-opens by default; this stop exists only when you list `pr` in gates_at — approving then opens it: the implementer pushes the branch and runs gh pr create)',
+          heading: 'OPEN-PR gate — docs reconciled, draft PR open',
+          ready: 'Open-PR gate — draft PR open, ready for your review',
+          hint: '(the PR is already open as a draft and auto-crosses to done by default; list `finish` in gates_at for a post-open review stop — approve marks it done, reject amends the open PR. The merge is always yours.)',
         },
-        artifactLabel: 'PR description',
+        artifactLabel: 'PR',
         reviewLoop: false,
         roundCap: 2,
-        orchestratorBudgetUsd: 10,
-        workerBudgetUsd: 10,
+        orchestratorBudgetUsd: 15,
+        workerBudgetUsd: 15,
         workerTurnTimeoutMs: 30 * 60_000,
-      },
-      {
-        name: 'open',
-        snippets: [], // push + gh pr create — mechanics, no library template
-        gate: null, // runs after the last gate; advances straight to done
-        artifactLabel: 'PR opening',
-        reviewLoop: false,
-        roundCap: 1,
-        orchestratorBudgetUsd: 5,
-        workerBudgetUsd: 5,
-        workerTurnTimeoutMs: 15 * 60_000,
       },
     ],
     entry: { firstPhase: 'frame', specSkipsTo: 'spec' },
@@ -292,14 +274,18 @@ export const WORKFLOWS = {
        */
       'skip-plan': ['frame', 'spec', 'impl'],
     },
-    // Opening a PR is non-destructive and reversible, so the Open-PR gate is no
-    // longer force-attended — it is pre-authorized by default (the PR auto-opens)
-    // and attended only when `pr` is listed in gates_at. forceAttend and
-    // defaultPreAuthorized must change together: validateRegistry rejects an
-    // overlap at module load, and the materialization (createRun) reads the new
-    // default-pre-authorized set.
+    // The full sleep posture is the default (2026-06-26, Q20 resolved to it):
+    // plan, impl (Ship), and finish (Open-PR) are all pre-authorized, so a new
+    // run materializes gatesAt = ['frame','spec'] — the `overnight` preset. The
+    // Ship auto-cross shifts environment verification (migrations, smoke tests)
+    // from before-the-PR to PR-review time; the draft PR carries a Verification
+    // (pending) checklist as the standing reminder. forceAttend stays empty:
+    // opening a DRAFT PR is non-destructive and reversible, so the Open-PR gate is
+    // never force-attended, only attended when `finish` is listed in gates_at.
+    // forceAttend and defaultPreAuthorized must stay disjoint (validateRegistry
+    // guards it at load).
     forceAttend: [],
-    defaultPreAuthorized: ['pr'],
+    defaultPreAuthorized: ['plan', 'impl', 'finish'],
   },
   rir: {
     name: 'rir',

@@ -1111,7 +1111,9 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         appendVoiceLog(state, 'orchestrator', `advance_phase (${phase})`, args.summary);
         // Convention 5 (docs/prompting-and-tool-design.md): the result must
         // say what actually happens next — a live gate decision, an
-        // auto-crossed pre-authorized gate, or (open phase) run completion.
+        // auto-crossed pre-authorized gate, or (a gate-less phase) run
+        // completion. Both arcs now gate every phase, so the gate-less arm is a
+        // total-function guard, not a live path (PhaseSpec.gate stays nullable).
         const next =
           !isGatePhase(phase)
             ? 'the run is complete. End your turn with a one-line status.'

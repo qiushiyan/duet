@@ -198,7 +198,7 @@ describe('attended stops', () => {
   });
 
   test('a flag-wait stops the driver even when the phase gate is pre-authorized', async ({ projectDir, run }) => {
-    run.gatesAt = ['pr'];
+    run.gatesAt = ['finish'];
     saveRunState(run);
     const { machine } = scriptedMachine([{ type: 'phase.flag' }]);
     const { notify } = recordingNotify();
@@ -320,10 +320,12 @@ describe('probeRunPosition', () => {
   });
 
   test('a finished run is done', async ({ projectDir, run }) => {
-    // Attend only the un-skippable Open-PR gate; everything else auto-crosses.
-    run.gatesAt = ['pr'];
+    // Attend the Open-PR (finish) gate; everything before it auto-crosses.
+    run.gatesAt = ['finish'];
     saveRunState(run);
-    const { machine } = scriptedMachine([advanced, advanced, advanced, advanced, advanced, advanced, advanced]);
+    // Five phase drives (frame, spec, plan, impl, finish) reach the openPrGate;
+    // the approve below crosses it straight to done (finish is the last phase).
+    const { machine } = scriptedMachine([advanced, advanced, advanced, advanced, advanced]);
     await driveToQuiescence(run, undefined, { machine, notify: quiet });
     const atPrGate = await driveToQuiescence(
       loadRunState(projectDir, run.runId),
@@ -705,17 +707,17 @@ describe('gate pre-authorization (gates_at)', () => {
     projectDir,
     run,
   }) => {
-    run.gatesAt = ['pr']; // attend only the Open-PR gate
+    run.gatesAt = ['finish']; // attend only the Open-PR (finish) gate
     saveRunState(run);
-    const { machine, calls } = scriptedMachine([advanced, advanced, advanced, advanced, advanced, advanced]);
+    const { machine, calls } = scriptedMachine([advanced, advanced, advanced, advanced, advanced]);
     const { notify, notifications } = recordingNotify();
 
     const stop = await driveToQuiescence(run, undefined, { machine, notify });
 
     expect.soft(stop.snapshot.value).toBe('openPrGate');
-    expect.soft(calls).toEqual(['frame', 'spec', 'plan', 'impl', 'docs', 'pr']);
-    // docs is gate-less (one-pass update + commit) — it runs but records no
-    // auto-crossing, so the recorded crossings are the four gates before it.
+    expect.soft(calls).toEqual(['frame', 'spec', 'plan', 'impl', 'finish']);
+    // The four gates before finish auto-cross; finish opens the draft PR and
+    // stops at its (attended) openPrGate.
     expect.soft(loadRunState(projectDir, run.runId).autoApprovals?.map((a) => a.gate)).toEqual([
       'directionGate',
       'commitSpecGate',
@@ -744,7 +746,7 @@ describe('gate pre-authorization (gates_at)', () => {
   });
 
   test('crash-recovery re-entry at the same gate does not record the crossing twice', async ({ projectDir, run }) => {
-    run.gatesAt = ['spec', 'pr'];
+    run.gatesAt = ['spec', 'finish'];
     saveRunState(run);
 
     // First drive: frame advances, directionGate auto-crosses, spec flags.
@@ -785,7 +787,7 @@ describe('enterAfk — the mid-session AFK handoff (#1)', () => {
     expect.soft(persisted.orchestrationHost).toBeUndefined(); // handed off to headless
     expect.soft(probeRunPosition(persisted)).not.toEqual({ kind: 'gate', phase: 'frame' }); // frame crossed
     expect.soft(split.attended).toEqual(['spec']);
-    expect.soft(split.preAuthorized).toEqual(['frame', 'plan', 'impl', 'pr']);
+    expect.soft(split.preAuthorized).toEqual(['frame', 'plan', 'impl', 'finish']);
   });
 
   test('is legal at a PRE-AUTHORIZED interactive gate — legality keys on the gate position, not gateAttended (the F1 case)', async ({
@@ -840,7 +842,7 @@ describe('the severity hold — a high human decision withholds a NON-EXPLICIT c
     run,
     projectDir,
   }) => {
-    run.gatesAt = ['pr']; // frame is pre-authorized (would normally auto-cross)
+    run.gatesAt = ['finish']; // frame is pre-authorized (would normally auto-cross)
     highFrame(run, 'high');
     const { machine } = scriptedMachine([advanced]);
     const { notify, notifications } = recordingNotify();

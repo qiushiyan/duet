@@ -157,8 +157,8 @@ export function orchestratorSystemPrompt(state: RunState): string {
  * teaches a read the rule can only state abstractly — what the instruction
  * leaves implicit — and carries an anti-example, per
  * docs/prompting-and-tool-design.md §Examples. They append to the phase entry
- * prompt's task block; the mechanical phases (docs, pr, open) get none, because
- * an example there would only restate the steps. Reasoning models need few
+ * prompt's task block; the mechanical phase (finish) gets none, because an
+ * example there would only restate the steps. Reasoning models need few
  * examples, so each set is two or three short cases, not an enumeration.
  */
 const FRAME_EXAMPLES = `## Frame phase examples
@@ -490,53 +490,41 @@ ${IMPL_EXAMPLES}
 </task>`;
 }
 
-export function docsPhaseEntryPrompt(state: RunState, roundCap: number): string {
+/**
+ * Full's FINISH phase — the collapsed finishing tail (was docs → pr → open).
+ * One continuous orchestrator session: reconcile docs + commit → write the PR
+ * description → open the PR as a DRAFT, then the Open-PR gate. The gate sits
+ * AFTER the open: pre-authorized (the default), the draft PR opens and the gate
+ * auto-crosses to done; attended (`finish` in gates_at), the run stops at the
+ * opened draft PR — approve completes the run, reject re-enters to amend the
+ * open PR (feedbackResumePrompt's amend clause). The open is idempotent by a
+ * worker-side `gh pr view` check, so a re-entry or crash-resume edits the
+ * existing PR rather than failing on a second create.
+ */
+export function finishPhaseEntryPrompt(state: RunState, roundCap: number): string {
+  const attended = gateAttended(state, 'finish');
   return `<task>
 ${approvalClause(
     state,
     'impl',
     'The human approved the Ship gate — the implementation is verified and shipping.',
-    'The Ship gate was pre-authorized at run start and auto-crossed — the implementation packet is recorded for the human, and their environment verification (smoke tests, migrations) is still pending; the docs you produce describe work that has not yet had a human eye.',
-  )} Run the DOCS phase — update the docs and commit, in one pass:
+    'The Ship gate was pre-authorized at run start and auto-crossed — the implementation packet is recorded for the human, and their environment verification (migrations, smoke tests) is still pending; what you ship here describes work that has not yet had a human eye.',
+  )} Run the FINISH phase — reconcile the docs, write the PR description, and open the PR as a draft, in one continuous pass:
 
-1. The framing names how this project updates its docs (often a docs or skill file named by PATH — send the implementer that path, never a slash command, which a headless worker can't expand — otherwise the conventions to follow); if the framing gives only a slash command with no path, treat it as incomplete and ask_human rather than inventing a path. If the framing names nothing, have the implementer survey the repo's docs and derive the impact from what shipped.
-2. Drive the implementer to run that method end to end in a single turn: assess what shipped, update the affected docs, and commit. There is no docs gate — the doc changes ride this branch into the PR, where the human reviews them with the rest of the diff, so the implementer applies and commits rather than pausing for approval. If the project's docs skill has its own internal approval step, the framing names the marker that runs it straight through; pass that marker so the skill applies its changes instead of stopping.
-3. A genuine product or direction call about the docs stays the human's — deleting a documented concept, rewriting a design claim the docs assert, pruning a spec or plan the work superseded. Flag those with ask_human (it pauses the run until the human returns); the implementer settles everything tactical against the project's doc standards.
-4. A review round is available when the doc changes are large enough to warrant a second set of eyes (backstop cap ${roundCap}); most updates are a single pass. Then call advance_phase summarizing what the docs now cover and what changed — the run continues to the PR description.
-
-Throughout: flag product or direction questions with ask_human; tactical questions bounce to the worker.
-</task>`;
-}
-
-export function prPhaseEntryPrompt(state: RunState, roundCap: number): string {
-  return `<task>
-The implementation shipped and the docs are updated and committed. Write the PR description:
-
-1. Send the implementer the pr-description snippet — the PR body for a technical colleague who won't read the diff.
-2. A review round on the description is available when it warrants one (backstop cap ${roundCap}).
-3. Call advance_phase with the PR title and description verbatim in the summary — this becomes the Open-PR packet. ${
-    gateAttended(state, 'pr')
-      ? 'The Open-PR gate is attended: the human reads the packet there and decides whether to open.'
-      : 'The Open-PR gate is pre-authorized (the PR auto-opens by default): your packet is recorded and auto-crossed straight into PR creation, with no human tap — so make it self-contained.'
+1. Reconcile the docs with what shipped: send the implementer a reconcile-docs prompt. The framing names how this project updates its docs (often a docs or skill file given by PATH — send the implementer that path, never a slash command a headless worker can't expand; if the framing gives only a slash command with no path, treat it as incomplete and ask_human rather than inventing one; if it names nothing, have the implementer survey the repo's docs and derive the impact from what shipped). The implementer applies and commits the doc changes directly — there is no docs gate; the diff rides the branch into the PR where the human reviews it with the rest. A genuine doc-scope product call — deleting a documented concept, rewriting a design claim, pruning a superseded spec/plan — stays the human's: flag it with ask_human (it pauses the run).
+2. Write the PR description: send the implementer the pr-description snippet. The body must carry a "Verification (pending)" checklist of the environment checks the human still owes before merge — migrations, smoke tests, anything the Ship packet flagged — ${
+    attended
+      ? 'so the human verifies in their own environment before merging the PR they review here'
+      : 'because the Ship gate auto-crossed unattended: this checklist is the human\'s standing reminder to verify before they mark the draft ready and merge'
+  }. A review round on the description is available when it warrants one (backstop cap ${roundCap}); most are a single pass.
+3. Open the PR as a draft. Have the implementer FIRST check whether a PR already exists for this branch (gh pr view, or gh pr list --head <branch>): if none exists, push the branch and run gh pr create --draft with the title and description; if one already exists (a re-entry, or a resumed run), do NOT create a second one — amend it instead (gh pr edit for the body, push any new commits). Report the PR URL. A draft PR fires no review request and is fully reversible, which is what lets a gate rejection amend it rather than redo it. If the push or PR creation fails for an environment reason (auth, remote, permissions), that's the human's to fix: ask_human with the error.
+4. Call advance_phase with the PR URL leading the summary — this is the Open-PR packet. ${
+    attended
+      ? 'The Open-PR gate is attended: the human reads the packet and the opened draft PR, then approves (the run completes) or rejects with feedback (you re-enter to amend the open PR).'
+      : 'The Open-PR gate is pre-authorized: the draft PR is already open, so your packet is recorded and the gate auto-crosses straight to done — make the summary self-contained, leading with the PR URL.'
   }
 
 Throughout: flag product or direction questions with ask_human; tactical questions bounce to the worker.
-</task>`;
-}
-
-export function openPhaseEntryPrompt(state: RunState): string {
-  return `<task>
-${approvalClause(
-    state,
-    'pr',
-    'The human approved opening the PR — that approval covers the mechanics, so run them:',
-    'The Open-PR gate was pre-authorized (the PR auto-opens by default), so no human tap was needed — run the mechanics:',
-  )}
-
-1. Have the implementer push the working branch and open the PR with gh pr create, using the approved title and description, and report the PR URL.
-2. Call advance_phase with the PR URL leading the summary — this completes the run.
-
-If the push or PR creation fails for an environment reason (auth, remote, permissions), that's the human's to fix: ask_human with the error.
 </task>`;
 }
 
@@ -618,9 +606,7 @@ const phaseBriefBuilders = {
   spec: specPhaseEntryPrompt,
   plan: planPhaseEntryPrompt,
   impl: implPhaseEntryPrompt,
-  docs: docsPhaseEntryPrompt,
-  pr: prPhaseEntryPrompt,
-  open: (state: RunState, _cap: number) => openPhaseEntryPrompt(state),
+  finish: finishPhaseEntryPrompt,
   research: researchPhaseEntryPrompt,
   implement: implementPhaseEntryPrompt,
 } satisfies Record<PhaseName, (state: RunState, cap: number) => string>;
@@ -688,9 +674,17 @@ export function feedbackResumePrompt(phase: PhaseName, feedback: string): string
   const docsRefresh = PHASE[phase].foldsDocs
     ? ' If the feedback changes what the code does, have the implementer refresh the docs it updated before this gate so they still describe the shipped behavior — this arc folds docs into the build and opens no PR, so a stale docs commit would ship uncaught.'
     : '';
+  // The PR is already open by the time this gate is reached (Full's finish opens
+  // a draft PR before advancing), so a reject AMENDS it in place — gh pr edit /
+  // more commits — never re-opens it; a second gh pr create would error. Keyed off
+  // the gate state, the same way status derives "this phase opens a PR".
+  const amendsOpenPr = PHASE[phase].gate?.state === 'openPrGate';
+  const amendClause = amendsOpenPr
+    ? ' The PR is already open as a draft — have the implementer amend it in place (gh pr edit for the description, more commits + push for code or doc changes) and never run gh pr create again (it errors on an existing PR). If the feedback changes what shipped, refresh the docs commit too so it still describes the branch. Re-advance with the PR URL still leading the packet.'
+    : '';
   return `At the gate, the human sent the ${artifact} back with this feedback: ${JSON.stringify(
     feedback,
-  )}. Re-enter the phase to address it — route the feedback to the implementer (the human is the editor-in-chief; their feedback outranks reviewer opinions), ${reviseClause}.${docsRefresh} Your workers kept their full context from before the gate: steer them with deltas to the frames they already hold (what changed and why), not by re-running templates they've already received.`;
+  )}. Re-enter the phase to address it — route the feedback to the implementer (the human is the editor-in-chief; their feedback outranks reviewer opinions), ${reviseClause}.${docsRefresh}${amendClause} Your workers kept their full context from before the gate: steer them with deltas to the frames they already hold (what changed and why), not by re-running templates they've already received.`;
 }
 
 export function nudgeContinuePrompt(): string {

@@ -310,8 +310,8 @@ export function parseRetryInfra(value: string): number {
  * Parse a `--gates-at` value: a preset name or a comma/space-separated list
  * of gate-bearing phase names. Any workflow forceAttend gates are appended (the
  * generic non-pre-authorizable mechanism; currently empty for both workflows —
- * the Open-PR gate is pre-authorized-by-default now, attended only when `pr` is
- * listed). Throws with the full vocabulary on bad input.
+ * the Open-PR gate is pre-authorized-by-default now, attended only when `finish`
+ * is listed). Throws with the full vocabulary on bad input.
  */
 export function parseGatesAt(value: string, workflow: WorkflowName = "full"): GatePhase[] {
   const gatePhases = gatePhasesOf(workflow);

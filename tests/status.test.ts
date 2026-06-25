@@ -124,7 +124,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
   test('discriminates the stop across all five kinds, each carrying its acting command', ({ run }) => {
     run.pendingQuestion = { question: 'migrate?', context: 'slice 3' };
     run.phaseSummaries.spec = { summary: 'spec summary', artifacts: ['docs/spec.md'] };
-    run.phaseSummaries.open = { summary: 'PR: https://example.com/pr/7', artifacts: [] };
+    run.phaseSummaries.finish = { summary: 'PR: https://example.com/pr/7', artifacts: [] };
 
     const gate = buildStatusModel(run, { kind: 'gate', phase: 'spec' }, []).stop;
     expect.soft(gate).toMatchObject({
@@ -172,7 +172,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     run.branch = 'feat/x';
     run.specPath = 'docs/spec.md';
     run.machineState = 'shipGate';
-    run.gatesAt = ['impl', 'pr'];
+    run.gatesAt = ['impl', 'finish'];
     run.autoApprovals = [{ gate: 'directionGate', at: '2026-06-12T03:14:00.000Z' }];
     run.lastActivity = 'send_prompt → reviewer';
     const model = buildStatusModel(run, { kind: 'gate', phase: 'impl' }, [
@@ -395,7 +395,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
 
     expect.soft(model.rounds).toContainEqual({ phase: 'spec', used: 2, cap: 3 });
     expect.soft(model.rounds).toContainEqual({ phase: 'frame', used: 1, cap: 2 });
-    expect.soft(model.rounds.find((r) => r.phase === 'docs')).toBeUndefined();
+    expect.soft(model.rounds.find((r) => r.phase === 'finish')).toBeUndefined();
     expect.soft(model.autoApprovals[0]?.headline).toBe('Direction: invert the scope');
   });
 });
@@ -418,7 +418,7 @@ describe('renderStatus', () => {
     expect(render(run, { kind: 'gate', phase: 'impl' })).toContain('verify in your environment before deciding');
 
     run.machineState = 'openPrGate';
-    expect(render(run, { kind: 'gate', phase: 'pr' })).toContain('PR auto-opens by default');
+    expect(render(run, { kind: 'gate', phase: 'finish' })).toContain('auto-crosses to done by default');
   });
 
   test('a queued question takes over the action section', ({ run }) => {
@@ -446,7 +446,7 @@ describe('renderStatus', () => {
 
   test('the while-you-were-away section lists auto-crossed gates with packet headlines', ({ run }) => {
     run.machineState = 'shipGate';
-    run.gatesAt = ['impl', 'pr'];
+    run.gatesAt = ['impl', 'finish'];
     run.autoApprovals = [{ gate: 'directionGate', at: '2026-06-12T03:14:00.000Z' }];
     run.phaseSummaries.frame = { summary: 'Direction: invert the scope\nmore detail', artifacts: [] };
     const out = render(run, { kind: 'gate', phase: 'impl' });
@@ -455,12 +455,12 @@ describe('renderStatus', () => {
     // The stamp is localized to the human's zone (the stored field stays UTC) —
     // derive the expected local form so the assertion is timezone-robust.
     expect.soft(out).toContain(`✓ directionGate  ${localStamp('2026-06-12T03:14:00.000Z')}  Direction: invert the scope`);
-    expect.soft(out).toContain('gates:    attending impl, pr — other gates pre-authorized');
+    expect.soft(out).toContain('gates:    attending impl, finish — other gates pre-authorized');
   });
 
   test('a completed run shows the final summary and queued snippet proposals', ({ run }) => {
     run.machineState = 'done';
-    run.phaseSummaries.open = { summary: 'PR: https://example.com/pr/7', artifacts: [] };
+    run.phaseSummaries.finish = { summary: 'PR: https://example.com/pr/7', artifacts: [] };
     run.snippetProposals.push({ snippetKey: 'review-spec', proposedBody: 'b', rationale: 'missed X', at: 'now' });
     const out = render(run, { kind: 'done' });
 
@@ -557,7 +557,7 @@ describe('displayState — the truthful state label (F5)', () => {
     expect.soft(displayState({ kind: 'interactive', phase: 'spec' })).toBe('spec');
     expect.soft(displayState({ kind: 'running', pid: 1, phase: 'impl' })).toBe('impl');
     expect.soft(displayState({ kind: 'crashed', phase: 'plan', command: 'c' })).toBe('plan');
-    expect.soft(displayState({ kind: 'gate', phase: 'pr', gate: 'openPrGate', heading: 'h', commands: { approve: 'a', reject: 'r' } } as StopModel)).toBe('openPrGate');
+    expect.soft(displayState({ kind: 'gate', phase: 'finish', gate: 'openPrGate', heading: 'h', commands: { approve: 'a', reject: 'r' } } as StopModel)).toBe('openPrGate');
     expect.soft(displayState({ kind: 'flag', question: 'q?', command: 'c' } as StopModel)).toBe('flag');
     expect.soft(displayState({ kind: 'done', summary: 's' } as StopModel)).toBe('done');
   });

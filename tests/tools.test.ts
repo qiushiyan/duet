@@ -1557,7 +1557,7 @@ describe('advance_phase (the gate packet)', () => {
   });
 
   test('a pre-authorized gate is reported as auto-crossing, not as a live decision', async ({ run }) => {
-    run.gatesAt = ['pr'];
+    run.gatesAt = ['finish'];
     run.rounds.spec = 1;
     const { call } = harness(run, { phase: 'spec' });
     const result = await call('advance_phase', { summary: 'converged', artifacts: [] });
@@ -1568,7 +1568,7 @@ describe('advance_phase (the gate packet)', () => {
   });
 
   test('a pre-authorized gate on the interactive host names the handoff, not auto-continuation (F1)', async ({ run }) => {
-    run.gatesAt = ['pr'];
+    run.gatesAt = ['finish'];
     run.rounds.spec = 1;
     // The interactive host: a dispatcher is present (the host switch). A
     // pre-authorized gate does NOT auto-continue here — only the headless driver
@@ -1582,14 +1582,18 @@ describe('advance_phase (the gate packet)', () => {
     expect.soft(text(result)).not.toContain('continues immediately');
   });
 
-  test('synthesis phases may advance without a review round; open completes the run', async ({ run }) => {
+  test('non-review-loop phases may advance without a review round (frame synthesizes, finish ships)', async ({ run }) => {
     const frame = harness(run, { phase: 'frame' });
     const frameResult = await frame.call('advance_phase', { summary: 'direction', artifacts: [] });
     expect(frameResult.isError).toBeUndefined();
 
-    const open = harness(run, { phase: 'open' });
-    const openResult = await open.call('advance_phase', { summary: 'PR: https://example.com/pr/1', artifacts: [] });
-    expect(text(openResult)).toContain('the run is complete');
+    // finish has reviewLoop:false, so advance_phase requires no review round; it
+    // lands on the Open-PR gate (the run completes when that gate crosses — see
+    // lifecycle.test.ts), so the tool records the advance rather than erroring.
+    const finish = harness(run, { phase: 'finish' });
+    const finishResult = await finish.call('advance_phase', { summary: 'PR: https://example.com/pr/1', artifacts: [] });
+    expect.soft(finishResult.isError).toBeUndefined();
+    expect.soft(text(finishResult)).toContain('Phase advance recorded');
   });
 });
 
