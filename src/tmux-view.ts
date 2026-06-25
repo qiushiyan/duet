@@ -67,20 +67,32 @@ function paneBranch(voices: Voice[], then: (v: Voice) => string): string {
   return `#{?#{m:${ROLE_GLYPH[head]}*,#{pane_title}},${then(head)},${paneBranch(rest, then)}}`;
 }
 
-/** The anchor pane's current cell width, or +Infinity when it can't be read — fail wide, so a measurement hiccup keeps the 2-column layout. */
-async function anchorWidth(pane: string): Promise<number> {
-  const out = await tmux('display-message', '-p', '-t', pane, '#{pane_width}');
-  const n = Number.parseInt(out, 10);
-  return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
-}
+/** The detached-session viewer is created at this fixed width (no client to size it), so it always lands in the wide/2-column branch. */
+const DETACHED_SESSION_WIDTH = 220;
 
 /**
- * Below this anchor width the 2-column split leaves each voice too few columns
- * to read a log line (~80 readable columns per voice → ~160 total), so the
- * panes stack full-width instead. Width is the binding constraint; height is
- * not — the tail shows the latest lines regardless of pane height.
+ * Below this DISPLAY width the 2-column split gives each voice too few columns
+ * to read comfortably (~45 per column at the threshold), so the panes stack
+ * full-width instead. A normal full terminal window clears this easily; the
+ * stack is really for a deliberately narrow inline (--here) split. Width is the
+ * binding constraint; height is not — the tail shows the latest lines regardless
+ * of pane height.
  */
-const TWO_COLUMN_MIN_WIDTH = 160;
+const TWO_COLUMN_MIN_WIDTH = 90;
+
+/**
+ * Parse a tmux width query (cells), failing wide (+Infinity) so a measurement
+ * hiccup keeps the 2-column layout. The width MUST be read from a surface a
+ * client is already displaying — the current window, or the current --here pane
+ * — never a freshly-created `-d` window, which reports a stale background size
+ * until a client first shows it (that was the always-stacks bug). Splits are
+ * percentage-based, so they rescale when the window is displayed; only the
+ * arrangement choice needs the true display width.
+ */
+function parseWidth(out: string): number {
+  const n = Number.parseInt(out, 10);
+  return Number.isFinite(n) && n > 0 ? n : Number.POSITIVE_INFINITY;
+}
 
 /**
  * The wide-anchor arrangement (diagrammed above): orchestrator over reviewer on
@@ -123,15 +135,16 @@ async function stackLayout(state: RunState, anchor: string): Promise<Array<[Voic
 
 /**
  * Lay the voices out around the anchor (orchestrator) pane, choosing the
- * arrangement from the anchor's measured width: wide keeps the 2-column layout,
- * narrow stacks full-width. The choice keys on the *available* width, so one
- * path serves all three anchor targets — a full window, a fixed-width detached
- * session (always wide), or an inline pane (often narrow). Titles and the
+ * arrangement from the `displayWidth` the caller measured: wide keeps the
+ * 2-column layout, narrow stacks full-width. The caller passes the width of a
+ * displayed surface (the current window for a new window, the current pane for
+ * --here, the fixed -x size for a detached session) — not the anchor's own
+ * pane_width, which lies for a not-yet-shown `-d` window. Titles and the
  * role-colored border format are arrangement-independent and shared.
  */
-async function layoutPanes(state: RunState, orchestratorPane: string): Promise<void> {
+async function layoutPanes(state: RunState, orchestratorPane: string, displayWidth: number): Promise<void> {
   const panes =
-    (await anchorWidth(orchestratorPane)) >= TWO_COLUMN_MIN_WIDTH
+    displayWidth >= TWO_COLUMN_MIN_WIDTH
       ? await columnLayout(state, orchestratorPane)
       : await stackLayout(state, orchestratorPane);
   await tmux('set-option', '-w', '-t', orchestratorPane, 'pane-border-status', 'top');
@@ -166,7 +179,8 @@ export async function openTmuxView(state: RunState, opts: { here?: boolean } = {
       // nothing. layoutPanes splits off and titles the anchor regardless of the
       // command it currently runs, and the manual title survives the respawn.
       const anchor = process.env['TMUX_PANE'];
-      await layoutPanes(state, anchor);
+      const paneWidth = parseWidth(await tmux('display-message', '-p', '-t', anchor, '#{pane_width}'));
+      await layoutPanes(state, anchor, paneWidth);
       await tmux('respawn-pane', '-k', '-t', anchor, tailCommand(state, 'orchestrator'));
       return;
     }
@@ -182,8 +196,12 @@ export async function openTmuxView(state: RunState, opts: { here?: boolean } = {
       // shift — cosmetic, the window is named and -d.) Reuse on re-invocations.
       const windows = await tmux('list-windows', '-F', '#{window_name}');
       if (!windows.split('\n').includes(name)) {
+        // The new window will be displayed at the current client's width; read
+        // it from the current (displayed) window, since the `-d` window's own
+        // pane_width is a stale background size until a client first shows it.
+        const winWidth = parseWidth(await tmux('display-message', '-p', '#{window_width}'));
         const first = await tmux('new-window', '-d', '-a', '-n', name, '-P', '-F', '#{pane_id}', tailCommand(state, 'orchestrator'));
-        await layoutPanes(state, first);
+        await layoutPanes(state, first, winWidth);
       }
       console.log(`tmux viewer: window "${name}" (tmux select-window -t '=${name}')`);
     } else {
@@ -191,8 +209,8 @@ export async function openTmuxView(state: RunState, opts: { here?: boolean } = {
       // terminal; sized explicitly since detached sessions default to 80×24.
       const has = await execa('tmux', ['has-session', '-t', `=${name}`], { reject: false, timeout: 10_000 });
       if (has.exitCode !== 0) {
-        const first = await tmux('new-session', '-d', '-s', name, '-x', '220', '-y', '50', '-P', '-F', '#{pane_id}', tailCommand(state, 'orchestrator'));
-        await layoutPanes(state, first);
+        const first = await tmux('new-session', '-d', '-s', name, '-x', String(DETACHED_SESSION_WIDTH), '-y', '50', '-P', '-F', '#{pane_id}', tailCommand(state, 'orchestrator'));
+        await layoutPanes(state, first, DETACHED_SESSION_WIDTH);
       }
       console.log(`tmux viewer: attach with  tmux attach -t '=${name}'`);
     }
