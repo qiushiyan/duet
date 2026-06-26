@@ -23,7 +23,7 @@ PLANNING (attended — orchestrator drives, human acts at gates and flags)
   SPEC ⇄ review/update rounds          loop exit: orchestrator judgment
     ── Commit-spec gate ──
   PLAN ⇄ review/update rounds          planning keeps full spec-exploration context
-    ── Plan-approval gate ──            ← human walks away
+    ── Plan-approval gate ──            ← interactive→headless handoff; under the default `overnight` the human already walked away after the spec
 
 IMPLEMENTATION (AFK — flags queue, process exits on them)
   COMPACT            compact-for-impl, then re-anchor read (plan→impl boundary)

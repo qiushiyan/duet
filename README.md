@@ -2,7 +2,7 @@
 
 **A semi-AFK orchestrator for a two-agent AI coding workflow — one agent implements, another reviews, and an LLM routes between them while you stay the editor-in-chief.**
 
-If you already run two coding agents in parallel — one writing specs/plans/code, one critiquing them — and spend your day copy-pasting between them and nudging each along, that's the workflow duet automates. A read-only **orchestrator** drives the hand-offs — it picks the right prompt, routes each agent's output to the other, and decides when a review loop has converged — and pauses at **human gates** that no agent can cross. You approve the direction, walk away at the handoff gate, and come back to a finished pull request or a verified ship — or a well-formed question waiting for you.
+If you already run two coding agents in parallel — one writing specs/plans/code, one critiquing them — and spend your day copy-pasting between them and nudging each along, that's the workflow duet automates. A read-only **orchestrator** drives the hand-offs — it picks the right prompt, routes each agent's output to the other, and decides when a review loop has converged — and pauses at **human gates** that no agent can cross. You approve the direction and the spec, walk away, and come back to an opened pull request or a well-formed question waiting for you.
 
 It's a personal tool, built for one developer's workflow across their own projects, and published in case the shape is useful to you — not a polished product. Expect rough edges.
 
@@ -73,7 +73,7 @@ The smoothest way to run duet is to let a Claude Code session sharpen your probl
    duet new --interactive --framing .duet/<your-framing>.md
    ```
    Your own Claude Code session becomes the orchestrator: you approve the direction (and, on the full arc, the spec and plan) right in the chat.
-4. **Walk away.** At the handoff gate — plan approval (full) or the Direction gate (rir) — the run hands off to a background driver and implements semi-AFK, often for an hour or more. You return to a Ship-gate packet (a CEO-style summary on top) and, on the full arc, an opened pull request — or a well-formed question waiting for you.
+4. **Walk away.** The interactive session hands the run off to a background driver at the handoff gate — plan approval (full) or the Direction gate (rir) — and it implements semi-AFK, often for an hour or more. Under the default `overnight` posture it then auto-crosses the Ship gate and opens a draft PR, so on the full arc you return to an opened pull request (with the Ship packet — a CEO-style summary — recorded for your morning review) — or a well-formed question waiting for you. Prefer to verify the build before it ships? Attend the Ship gate with `--gates-at skip-plan`.
 
 > **Prefer the terminal?** Skip `--interactive` and run a headless framing turn instead — `duet new` opens your editor on a framing draft, then the orchestrator runs in the background and you act at each gate with `duet continue`.
 

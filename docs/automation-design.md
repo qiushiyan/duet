@@ -179,7 +179,7 @@ PLANNING (attended)
   spec draft → review/update rounds
     ── GATE: Commit spec ──
   plan draft → review/update rounds   (planning keeps full spec-exploration context)
-    ── GATE: Plan approval ──            ← human walks away here
+    ── GATE: Plan approval ──            ← interactive→headless handoff; under the default `overnight` posture the human has already walked away (after the spec)
 IMPLEMENTATION (AFK)
   commit plan → compact-for-impl + reread → single implementation pass (one midpoint checkpoint only if large)
   → compact-for-review (judgment) → implementation-handoff
@@ -196,7 +196,7 @@ FINAL REVIEW (finishing — unattended by default)
 | **Opening framing** | start of run | Provides issue text, product context, scope. The input, not a pause. |
 | **Direction** | inside PLANNING | "Does this direction match what I meant?" |
 | **Commit spec** | inside PLANNING | "Spec is solid; commit and move on." |
-| **Plan approval** | PLANNING → IMPLEMENTATION | "Plan is workable." This is the walk-away point. |
+| **Plan approval** | PLANNING → IMPLEMENTATION | "Plan is workable." The interactive→headless handoff gate; the walk-away point only under a posture that attends plan — under the default `overnight` the human has already walked away after the spec. |
 | **Ship** | IMPLEMENTATION → FINAL REVIEW | Reads the final-gate packet (below); runs environment verification (migrations, smoke tests — the human as environment proxy acts *here*, before deciding); "ship" / "another round" / specific changes. |
 | **Open PR** | end of `finish` (end of run) | **The draft PR is already open** when this gate is reached: `finish` reconciles the docs, writes the description, and runs `gh pr create --draft` *before* advancing, so the gate reviews an opened PR (open-then-review), not a pending one. The open is idempotent and draft-guaranteed — a pre-existing PR on the branch is amended (not re-created) and forced back to draft (`gh pr ready --undo`) if it was marked ready, so the draft-until-verified forcing function holds on every path, not just fresh-create. Auto-crosses to done by default (opening a draft PR is non-destructive and reversible); the run ends with the PR URL leading its summary. List `finish` in `gates_at` for a post-open review stop — the human reads the opened draft PR and approves (done) or rejects with feedback, which re-enters `finish` to *amend* the open PR (`gh pr edit` / more commits), never to re-open it. The merge is the human's either way; it is never automated. |
 

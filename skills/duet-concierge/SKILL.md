@@ -12,9 +12,9 @@ allowed-tools: Bash(duet status:*), Bash(duet logs:*), Bash(duet runs:*)
 duet is a command-line tool, installed on this machine, that runs a largely autonomous software-engineering workflow on one of the user's projects. Inside a **run** there are already three AI parties at work: a read-only LLM **orchestrator** that directs the process, an **implementer** agent that writes specs, plans, and code, and a **reviewer** agent that critiques each artifact. A run follows one of two arcs (the run picked which at creation):
 
 ```
-full:  frame → DIRECTION gate → spec → COMMIT-SPEC gate → plan → PLAN gate (human walks away)
+full:  frame → DIRECTION gate → spec → COMMIT-SPEC gate (default: walk away after here) → plan → PLAN gate (AFK handoff)
        → impl (autonomous, often hours) → SHIP gate → finish (reconcile docs → draft PR) → OPEN-PR gate → done
-rir:   research → DIRECTION gate (human walks away) → implement (autonomous) → SHIP gate → done
+rir:   research → DIRECTION gate (walk away) → implement (autonomous) → SHIP gate → done
 ```
 
 The lighter **rir** arc (Research → Implement → Review) drops the spec, plan, and PR — its docs reconcile into the build, its research decisions are the design, and it ends at the Ship gate with no PR opened. In **full**, the OPEN-PR gate sits *after* the open: the `finish` phase opens a draft PR, then the gate auto-crosses to done by default (or stops for a post-open review when `finish` is attended). The capitalized stops are **human gates**: the run cannot cross them by itself — the statechart only moves on the human's decision. You don't need to track which arc a run is on; `duet status` always names the current stop and the command that acts there. Between gates the orchestrator may also pause the run on a **queued question** (a product or environment call only the human can make). Phases execute in a detached background process, so every duet command returns immediately; a "running" phase commonly stays running for hours, and *nothing* runs once the run is at a stop. Run state lives under `.duet/runs/<id>/` in the project directory; commands default to the project's latest run.
