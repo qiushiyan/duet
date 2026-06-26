@@ -1,11 +1,13 @@
 ---
 name: duet-frame
-description: Turn a rough, natural-language problem into a polished duet framing document, ready to start a run — sharpening the wording, using the codebase's real names, structuring it for a clean read, and settling setup posture (workflow, gates, and whether to add an outside reviewer), all without changing what you want or proposing how to build it. Use when you have a problem in mind for a duet run and want it shaped into a solid framing before launching the orchestrator. Explicit invocation only.
+description: Turn a rough, natural-language problem into a polished duet framing document.
 disable-model-invocation: true
 allowed-tools: Read, Grep, Glob, Write, Bash(git:*), Bash(grep:*), Bash(rg:*), Bash(ls:*), Bash(find:*)
 ---
 
 # duet-frame — sharpen a problem into a framing
+
+You are about to write a framing document for the **duet** CLI.
 
 ## What duet is
 
@@ -51,7 +53,7 @@ If the user hasn't said: suggest `rir` when the problem is small and clearly und
 
 A framing can pre-authorize gates so the user can walk away. Before finalizing, ask how hands-off they want the run unless they've already said — the gates depend on the workflow you picked:
 
-- **full** has five gates — Direction, Commit-spec, Plan-approval, Ship, Open-PR (their `gates_at` tokens are `frame`, `spec`, `plan`, `impl`, `finish`). The **default is `overnight`** (= `frame,spec`): attend the first two, auto-cross the rest — the Open-PR gate sits *after* the open, so a draft PR auto-opens and the gate auto-crosses to done. Postures: **`overnight`** (the default — walk away once the spec is approved); **`skip-plan`** (= `frame,spec,impl`) — walk away at spec approval but return at the Ship gate; or a custom token list (e.g. add `finish` for a post-open review stop on the opened draft PR — reject there amends it).
+- **full** has five gates — Direction, Commit-spec, Plan-approval, Ship, Open-PR (their `gates_at` tokens are `frame`, `spec`, `plan`, `impl`, `finish`). The **default is `overnight`** (= `frame,spec`): attend the first two, auto-cross the rest — the Open-PR gate sits _after_ the open, so a draft PR auto-opens and the gate auto-crosses to done. Postures: **`overnight`** (the default — walk away once the spec is approved); **`skip-plan`** (= `frame,spec,impl`) — walk away at spec approval but return at the Ship gate; or a custom token list (e.g. add `finish` for a post-open review stop on the opened draft PR — reject there amends it).
 - **rir** has just two gates — **Direction** (the walk-away / headless-handoff point) and **Ship** (the return). Postures: **attend both** (default), or **`afk`** — pre-authorize both and run straight through to done.
 
 Record their choice as `gates_at:` in the framing frontmatter. A preset must belong to the chosen workflow (`overnight` / `skip-plan` are full's; `afk` is rir's), so duet rejects a mismatch.
