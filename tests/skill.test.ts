@@ -315,7 +315,7 @@ describe('no CLI help / template copy carries a Full-only-arc claim', () => {
 describe('shipped gate-posture copy teaches the overnight-default, post-open finish model', () => {
   // full pre-authorizes plan/impl/finish by default now (phases.ts:
   // defaultPreAuthorized: ['plan','impl','finish']), so `overnight` is the default
-  // posture and the Open-PR gate sits AFTER the draft-PR open. Any "always
+  // posture and the Open-PR gate sits AFTER the PR open. Any "always
   // attended" claim about the Open-PR gate, or an unqualified "Default: every
   // gate", is the pre-bundle model — a shipped skill that teaches it would steer
   // the framing author / concierge to the wrong posture. These guards pin the

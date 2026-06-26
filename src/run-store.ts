@@ -119,7 +119,7 @@ export interface RunState {
    * createRun (gate phases − the workflow's defaultPreAuthorized). Gates of
    * phases not listed are pre-authorized: the harness records the packet,
    * notifies, and auto-approves. The Open-PR gate is pre-authorized by default
-   * now (the draft PR auto-opens), attended only when `finish` is listed here.
+   * now (the PR auto-opens), attended only when `finish` is listed here.
    */
   gatesAt?: GatePhase[];
   /** Gates auto-crossed under pre-authorization, for the morning review. */

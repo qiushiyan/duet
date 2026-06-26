@@ -716,7 +716,7 @@ describe('gate pre-authorization (gates_at)', () => {
 
     expect.soft(stop.snapshot.value).toBe('openPrGate');
     expect.soft(calls).toEqual(['frame', 'spec', 'plan', 'impl', 'finish']);
-    // The four gates before finish auto-cross; finish opens the draft PR and
+    // The four gates before finish auto-cross; finish opens the PR and
     // stops at its (attended) openPrGate.
     expect.soft(loadRunState(projectDir, run.runId).autoApprovals?.map((a) => a.gate)).toEqual([
       'directionGate',

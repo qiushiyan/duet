@@ -8,11 +8,10 @@ import {
   ORCHESTRATOR_SYSTEM_PROMPT,
   buildPhaseBrief,
   feedbackResumePrompt,
-  finishPhaseEntryPrompt,
   framePhaseEntryPrompt,
   implementPhaseEntryPrompt,
+  openPrPhaseEntryPrompt,
   planPhaseEntryPrompt,
-  publishPhaseEntryPrompt,
   researchPhaseEntryPrompt,
   specPhaseEntryPrompt,
 } from '../src/harness/orchestrator-prompts.ts';
@@ -81,10 +80,10 @@ describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)
     expect.soft(buildPhaseBrief(run, 'frame')).toBe(framePhaseEntryPrompt(run, PHASE.frame.roundCap));
     expect.soft(buildPhaseBrief(run, 'spec')).toBe(specPhaseEntryPrompt(run, PHASE.spec.roundCap));
     expect.soft(buildPhaseBrief(run, 'plan')).toBe(planPhaseEntryPrompt(run, PHASE.plan.roundCap));
-    expect.soft(buildPhaseBrief(run, 'finish')).toBe(finishPhaseEntryPrompt(run, PHASE.finish.roundCap));
+    expect.soft(buildPhaseBrief(run, 'finish')).toBe(openPrPhaseEntryPrompt(run, PHASE.finish.roundCap, 'finish'));
     expect.soft(buildPhaseBrief(run, 'research')).toBe(researchPhaseEntryPrompt(run, PHASE.research.roundCap));
     expect.soft(buildPhaseBrief(run, 'implement')).toBe(implementPhaseEntryPrompt(run, PHASE.implement.roundCap));
-    expect.soft(buildPhaseBrief(run, 'publish')).toBe(publishPhaseEntryPrompt(run, PHASE.publish.roundCap));
+    expect.soft(buildPhaseBrief(run, 'publish')).toBe(openPrPhaseEntryPrompt(run, PHASE.publish.roundCap, 'publish'));
   });
 
   // Belt-and-braces for the exhaustive `satisfies Record<PhaseName, …>` — the
@@ -99,9 +98,9 @@ describe('feedbackResumePrompt — the human feedback reaches the worker', () =>
   // The load-bearing behavior of a gate rejection is that the human's exact words
   // reach the re-entry prompt verbatim (the editor-in-chief is never paraphrased).
   // The branching it layers on top — re-run review rounds vs apply directly, amend
-  // a draft PR vs a real one — is driven by registry facts (reviewLoop, roundCap,
-  // gate state, draftPr) asserted directly in phases.test.ts, not re-pinned to the
-  // prompt's prose, which only made these tests brittle to any rewording.
+  // an already-open PR vs not — is driven by registry facts (reviewLoop, roundCap,
+  // gate state) asserted directly in phases.test.ts, not re-pinned to the prompt's
+  // prose, which only made these tests brittle to any rewording.
   test.for(['spec', 'plan', 'impl', 'finish', 'research', 'implement', 'publish'] as const)(
     '%s carries the human feedback verbatim',
     (phase) => {
@@ -716,7 +715,7 @@ describe('provider-agnostic onboarding — workers get document paths, not slash
   test('the onboarding entry prompts name a path and never instruct slash-command expansion', ({ run }) => {
     const frame = framePhaseEntryPrompt(run, PHASE.frame.roundCap);
     const research = researchPhaseEntryPrompt(run, PHASE.research.roundCap);
-    const finish = finishPhaseEntryPrompt(run, PHASE.finish.roundCap);
+    const finish = openPrPhaseEntryPrompt(run, PHASE.finish.roundCap, 'finish');
 
     for (const p of [frame, research, finish]) {
       expect.soft(p).not.toContain('CLI expands it'); // the now-wrong slash-command instruction is gone

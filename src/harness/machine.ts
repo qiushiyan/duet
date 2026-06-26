@@ -37,7 +37,7 @@ import type { PhaseName, WorkflowName, WorkflowSpecInput } from '../phases.ts';
  *                  │ approve                                  ▲ (walk away)
  *                  ▼
  *               finishLoop ──▶ openPrGate ─approve─▶ done
- *               (opens draft PR)    │ reject (amend the open draft PR)
+ *               (opens the PR)      │ reject (amend the open PR)
  *                                   └──────────────▶ finishLoop
  * ```
  *

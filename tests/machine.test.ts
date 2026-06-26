@@ -253,7 +253,7 @@ describe('the full arc', () => {
       { type: 'phase.advance' }, // plan → plan-approval gate
       { type: 'phase.flag' }, // impl entry → queued question
       { type: 'phase.advance' }, // impl resume → ship gate
-      { type: 'phase.advance' }, // finish (reconcile docs, open draft PR) → open-pr gate
+      { type: 'phase.advance' }, // finish (reconcile docs, open PR) → open-pr gate
       { type: 'phase.advance' }, // finish re-entry after gate reject → gate again
     ]);
     const actor = startActor(machine);
@@ -285,8 +285,8 @@ describe('the full arc', () => {
     snap = await waitFor(actor, quiescent);
     expect(snap.value).toBe('shipGate');
 
-    // Approving Ship enters finish, which reconciles docs and opens the draft
-    // PR in one pass, landing at the (post-open) Open-PR gate.
+    // Approving Ship enters finish, which reconciles docs and opens the PR
+    // in one pass, landing at the (post-open) Open-PR gate.
     actor.send({ type: 'human.approve' });
     snap = await waitFor(actor, quiescent);
     expect(snap.value).toBe('openPrGate');

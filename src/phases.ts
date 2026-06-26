@@ -25,10 +25,10 @@
  * The arcs (docs/automation-design.md §"Phases and gates"):
  *
  *   full:  frame → Direction → spec → Commit-spec → plan → Plan-approval
- *          (walk away) → impl (AFK) → Ship → finish (reconcile docs → draft PR
+ *          (walk away) → impl (AFK) → Ship → finish (reconcile docs → PR
  *          → Open-PR) → done
  *   rir:   research → Direction (walk away) → implement (AFK) → Ship
- *          → publish (reconcile docs → real PR → Open-PR) → done
+ *          → publish (reconcile docs → PR → Open-PR) → done
  */
 
 import { basename, dirname, extname } from 'node:path';
@@ -92,14 +92,6 @@ interface PhaseSpecInput<Name extends string = string> {
    * unbound run never reads it.
    */
   readonly consultantCheckpoint?: ConsultantCheckpoint;
-  /**
-   * For a PR-opening phase (gate state `openPrGate`): whether it opens the PR as
-   * a DRAFT (full's `finish`) or a ready/real PR (rir's `publish`). The single
-   * fact the SHARED reject-amend clause reads (feedbackResumePrompt) — each
-   * phase's own entry brief encodes the `gh pr create` flag structurally, since a
-   * builder is phase-specific. Absent ⇒ this phase opens no PR.
-   */
-  readonly draftPr?: boolean;
 }
 
 /** A workflow definition as written in the registry (string-typed input shape). */
@@ -220,7 +212,7 @@ export const WORKFLOWS = {
           state: 'shipGate',
           heading: 'SHIP gate — the orchestrator’s packet (CEO summary first)',
           ready: 'Ship gate — implementation packet ready',
-          hint: '(verify in your environment before deciding — migrations, smoke tests; approving enters FINISH: reconcile docs → draft PR → Open-PR gate)',
+          hint: '(verify in your environment before deciding — migrations, smoke tests; approving enters FINISH: reconcile docs → PR → Open-PR gate)',
         },
         artifactLabel: 'implementation',
         reviewLoop: true,
@@ -237,24 +229,27 @@ export const WORKFLOWS = {
         // The finishing tail, collapsed to one phase (2026-06-26; was docs → pr
         // → open, three orchestrator sessions for one logical step). Open-then-
         // review in one continuous session: reconcile docs + commit → write the
-        // PR description → open the PR as a DRAFT — and only THEN does the gate
-        // interpose. Pre-authorized (the default), the draft PR opens and the gate
-        // auto-crosses to done with the URL leading the packet; attended (`finish`
-        // in gates_at), the run stops at the opened draft PR — approve marks it
-        // done, reject re-enters this loop to AMEND the open PR (gh pr edit / more
-        // commits), never to re-open. Reject-as-amend is sound only because a
-        // draft PR is reversible. The open is idempotent by a worker-side gh-pr-
-        // view check, not run-state. No consultant checkpoint (the verify
-        // checkpoint already ran at impl); compact-for-cleanup stays reachable for
-        // the rare bloated-context case. (Q2 retired the Docs-plan gate for the
-        // identical reasons; this finishes that line.)
+        // PR description → open the PR — and only THEN does the gate interpose.
+        // Pre-authorized (the default), the PR opens and the gate auto-crosses to
+        // done with the URL leading the packet; attended (`finish` in gates_at),
+        // the run stops at the opened PR — approve marks it done, reject re-enters
+        // this loop to AMEND the open PR (gh pr edit / more commits), never to
+        // re-open. Reject-as-amend is sound because amending an open PR is itself
+        // reversible. The open is idempotent by a worker-side gh-pr-view check, not
+        // run-state. The PR is mergeable on open (the bug-review bots fire on it),
+        // so the env-verification reminder rides the body as a "Verification
+        // (pending)" checklist rather than a draft state. No consultant checkpoint
+        // (the verify checkpoint already ran at impl); compact-for-cleanup stays
+        // reachable for the rare bloated-context case. (Q2 retired the Docs-plan
+        // gate for the identical reasons; this finishes that line.) Mirror of rir's
+        // `publish` — same shape, same entry brief (openPrPhaseEntryPrompt).
         name: 'finish',
         snippets: ['reconcile-docs', 'pr-description', 'compact-for-cleanup'],
         gate: {
           state: 'openPrGate',
-          heading: 'OPEN-PR gate — docs reconciled, draft PR open',
-          ready: 'Open-PR gate — draft PR open, ready for your review',
-          hint: '(the PR is already open as a draft and auto-crosses to done by default; list `finish` in gates_at for a post-open review stop — approve marks it done, reject amends the open PR. The merge is always yours.)',
+          heading: 'OPEN-PR gate — docs reconciled, PR open',
+          ready: 'Open-PR gate — PR open, ready for your review',
+          hint: '(the PR is already open and auto-crosses to done by default; list `finish` in gates_at for a post-open review stop — approve marks it done, reject amends the open PR. The merge is always yours.)',
         },
         artifactLabel: 'PR',
         reviewLoop: false,
@@ -262,9 +257,6 @@ export const WORKFLOWS = {
         orchestratorBudgetUsd: 15,
         workerBudgetUsd: 15,
         workerTurnTimeoutMs: 30 * 60_000,
-        // Full opens a DRAFT PR (the draft-until-verified forcing function, so an
-        // unattended Open-PR auto-cross can't ship a mergeable, env-unverified PR).
-        draftPr: true,
       },
     ],
     entry: { firstPhase: 'frame', specSkipsTo: 'spec' },
@@ -283,12 +275,12 @@ export const WORKFLOWS = {
     // plan, impl (Ship), and finish (Open-PR) are all pre-authorized, so a new
     // run materializes gatesAt = ['frame','spec'] — the `overnight` preset. The
     // Ship auto-cross shifts environment verification (migrations, smoke tests)
-    // from before-the-PR to PR-review time; the draft PR carries a Verification
+    // from before-the-PR to PR-review time; the opened PR carries a Verification
     // (pending) checklist as the standing reminder. forceAttend stays empty:
-    // opening a DRAFT PR is non-destructive and reversible, so the Open-PR gate is
-    // never force-attended, only attended when `finish` is listed in gates_at.
-    // forceAttend and defaultPreAuthorized must stay disjoint (validateRegistry
-    // guards it at load).
+    // opening a PR is non-destructive (the human still owns the merge) and a
+    // gate-reject amends it in place, so the Open-PR gate is never force-attended,
+    // only attended when `finish` is listed in gates_at. forceAttend and
+    // defaultPreAuthorized must stay disjoint (validateRegistry guards it at load).
     forceAttend: [],
     defaultPreAuthorized: ['plan', 'impl', 'finish'],
   },
@@ -340,15 +332,14 @@ export const WORKFLOWS = {
         consultantCheckpoint: 'implGate',
       },
       {
-        // The finishing tail for rir — the mirror of full's `finish`, but it opens
-        // a REAL (non-draft) PR (the user's call: rir is small, well-understood
-        // work and the human owns the merge regardless). Reconcile docs (they ride
-        // the PR now that the arc has one) → write the PR description → gh pr
-        // create. Pre-authorized (the `afk` posture), the PR opens and the Open-PR
-        // gate auto-crosses to done; attended (`publish` in gates_at), the run
-        // stops at the opened PR — approve marks it done, reject re-enters to AMEND
-        // it (gh pr edit / more commits), never to re-open. No consultant
-        // checkpoint (the implGate bet-audit already ran at implement).
+        // The finishing tail for rir — the mirror of full's `finish`: same shape,
+        // same entry brief (openPrPhaseEntryPrompt). Reconcile docs (they ride the
+        // PR now that the arc has one) → write the PR description → gh pr create.
+        // Pre-authorized (the `afk` posture), the PR opens and the Open-PR gate
+        // auto-crosses to done; attended (`publish` in gates_at), the run stops at
+        // the opened PR — approve marks it done, reject re-enters to AMEND it (gh pr
+        // edit / more commits), never to re-open. No consultant checkpoint (the
+        // implGate bet-audit already ran at implement).
         name: 'publish',
         snippets: ['reconcile-docs', 'pr-description', 'compact-for-cleanup'],
         gate: {
@@ -366,8 +357,6 @@ export const WORKFLOWS = {
         orchestratorBudgetUsd: 15,
         workerBudgetUsd: 15,
         workerTurnTimeoutMs: 30 * 60_000,
-        // A real, ready PR — not a draft (contrast full's finish).
-        draftPr: false,
       },
     ],
     entry: { firstPhase: 'research' },
@@ -442,11 +431,6 @@ export interface PhaseSpec {
   workerTurnTimeoutMs: number;
   /** The consultant checkpoint this phase carries, when any (registry data). */
   consultantCheckpoint?: ConsultantCheckpoint;
-  /**
-   * For a PR-opening phase (`openPrGate`): draft (full `finish`) vs ready/real
-   * (rir `publish`) — read by feedbackResumePrompt's shared amend clause.
-   */
-  draftPr?: boolean;
 }
 
 /**

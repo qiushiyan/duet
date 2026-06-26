@@ -139,7 +139,7 @@ describe("the Full workflow derives today's arc", () => {
   });
 
   test('full pre-authorizes plan, impl, and finish by default (the overnight posture) and force-attends nothing', () => {
-    expect.soft(WORKFLOWS.full.forceAttend).toEqual([]); // a draft PR open is reversible
+    expect.soft(WORKFLOWS.full.forceAttend).toEqual([]); // an open PR is reversible (the human owns the merge; a reject amends it)
     expect.soft(WORKFLOWS.full.defaultPreAuthorized).toEqual(['plan', 'impl', 'finish']); // disjoint from forceAttend (validateRegistry guards it)
   });
 
@@ -184,14 +184,20 @@ describe('the RIR workflow', () => {
     expect.soft(implement.roundCap).toBe(1);
   });
 
-  test('publish opens a REAL (non-draft) PR — the finishing tail, mechanics not a review loop', () => {
-    const publish = phasesOf('rir').find((p) => p.name === 'publish')!;
-    expect.soft(publish.gate?.state).toBe('openPrGate');
-    expect.soft(publish.reviewLoop).toBe(false);
-    // draftPr distinguishes RIR's real PR from Full's draft — the single fact the
-    // shared reject-amend clause reads.
-    expect.soft(publish.draftPr).toBe(false);
-    expect.soft(PHASE['finish'].draftPr).toBe(true);
+  test('publish and full’s finish are the same finishing-tail shape — both open the PR via the shared brief', () => {
+    // The full→real-PR change converged the two: same gate, same no-review-loop
+    // discipline, same caps, same snippet set. They differ only by name (their gate
+    // tokens) and the prior gate that approves into them; openPrPhaseEntryPrompt is
+    // shared. No draft/real PR-mode flag remains — deleting it from PhaseSpec makes
+    // any `.draftPr` read a compile error, so the type system is the regression
+    // guard. We assert the shape, not the entry prose.
+    for (const p of [PHASE['finish'], PHASE['publish']]) {
+      expect.soft(p.gate?.state).toBe('openPrGate');
+      expect.soft(p.reviewLoop).toBe(false);
+      expect.soft(p.roundCap).toBe(2);
+      expect.soft(p.artifactLabel).toBe('PR');
+      expect.soft(p.snippets).toEqual(['reconcile-docs', 'pr-description', 'compact-for-cleanup']);
+    }
   });
 
   test('the rir snippet assignments encode the build spine and the docs→publish move', () => {
