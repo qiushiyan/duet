@@ -139,13 +139,13 @@ describe("the Full workflow derives today's arc", () => {
   });
 
   test('full pre-authorizes plan, impl, and finish by default (the overnight posture) and force-attends nothing', () => {
-    expect.soft(WORKFLOWS.full.forceAttend).toEqual([]); // a draft PR open is reversible
+    expect.soft(WORKFLOWS.full.forceAttend).toEqual([]); // an open PR is reversible (the human owns the merge; a reject amends it)
     expect.soft(WORKFLOWS.full.defaultPreAuthorized).toEqual(['plan', 'impl', 'finish']); // disjoint from forceAttend (validateRegistry guards it)
   });
 
   test('PHASE indexes every phase across all workflows, flat', () => {
     expect(Object.keys(PHASE).sort()).toEqual(
-      ['frame', 'impl', 'implement', 'finish', 'plan', 'research', 'spec'].sort(),
+      ['frame', 'impl', 'implement', 'finish', 'plan', 'publish', 'research', 'spec'].sort(),
     );
     expect(PHASE['impl'].gate?.state).toBe('shipGate');
     expect(PHASE['finish'].gate?.state).toBe('openPrGate'); // open-then-review in one phase
@@ -163,23 +163,52 @@ describe("the Full workflow derives today's arc", () => {
 });
 
 describe('the RIR workflow', () => {
-  test('phasesOf("rir") is research → implement', () => {
-    expect(phasesOf('rir').map((p) => p.name)).toEqual(['research', 'implement']);
+  test('phasesOf("rir") is research → implement → publish', () => {
+    expect(phasesOf('rir').map((p) => p.name)).toEqual(['research', 'implement', 'publish']);
   });
 
-  test('both RIR phases are gates; reused gate-state names resolve within the workflow', () => {
-    expect(gatePhasesOf('rir')).toEqual(['research', 'implement']);
+  test('all three RIR phases are gates; reused gate-state names resolve within the workflow', () => {
+    expect(gatePhasesOf('rir')).toEqual(['research', 'implement', 'publish']);
     expect(phaseOfGateState('rir', 'directionGate')).toBe('research');
     expect(phaseOfGateState('rir', 'shipGate')).toBe('implement');
-    // The Full-only gate states do not resolve inside RIR.
+    // openPrGate is reused from Full (resolution is workflow-scoped) — in RIR it
+    // maps to the publish phase, the finishing tail that opens the PR.
+    expect(phaseOfGateState('rir', 'openPrGate')).toBe('publish');
+    // A Full-only gate state still does not resolve inside RIR.
     expect(phaseOfGateState('rir', 'commitSpecGate')).toBeUndefined();
-    expect(phaseOfGateState('rir', 'openPrGate')).toBeUndefined();
   });
 
   test('implement is the writable single review round (roundCap 1)', () => {
     const implement = phasesOf('rir').find((p) => p.name === 'implement')!;
     expect.soft(implement.reviewLoop).toBe(true);
     expect.soft(implement.roundCap).toBe(1);
+  });
+
+  test('publish and full’s finish are the same finishing-tail shape — both open the PR via the shared brief', () => {
+    // The full→real-PR change converged the two: same gate, same no-review-loop
+    // discipline, same caps, same snippet set. They differ only by name (their gate
+    // tokens) and the prior gate that approves into them; openPrPhaseEntryPrompt is
+    // shared. No draft/real PR-mode flag remains — deleting it from PhaseSpec makes
+    // any `.draftPr` read a compile error, so the type system is the regression
+    // guard. We assert the shape, not the entry prose.
+    for (const p of [PHASE['finish'], PHASE['publish']]) {
+      expect.soft(p.gate?.state).toBe('openPrGate');
+      expect.soft(p.reviewLoop).toBe(false);
+      expect.soft(p.roundCap).toBe(2);
+      expect.soft(p.artifactLabel).toBe('PR');
+      expect.soft(p.snippets).toEqual(['reconcile-docs', 'pr-description', 'compact-for-cleanup']);
+    }
+  });
+
+  test('the rir snippet assignments encode the build spine and the docs→publish move', () => {
+    const snippetsOf = (name: string) => phasesOf('rir').find((p) => p.name === name)!.snippets;
+    // research synthesizes the direction (this arc drafts no spec).
+    expect.soft(snippetsOf('research')).toEqual(['think-holistic', 'compare-notes']);
+    // the build spine, in order — handoff orients the reviewer before the review
+    // round; reconcile-docs is absent here, having moved to publish.
+    expect.soft(snippetsOf('implement')).toEqual(['implement-direct', 'handoff-direct', 'review-direct', 'apply-review']);
+    // publish reconciles docs (they ride the PR now) and writes the description.
+    expect.soft(snippetsOf('publish')).toEqual(['reconcile-docs', 'pr-description', 'compact-for-cleanup']);
   });
 });
 
@@ -195,10 +224,11 @@ describe('consultant checkpoints (registry data per arc)', () => {
     expect.soft(consultantCheckpointOf('finish')).toBeUndefined();
   });
 
-  test('RIR is unchanged: frame@research, implGate@implement, and NO contract/verify/specGate', () => {
+  test('RIR consultant modes: frame@research, implGate@implement, publish carries none; NO contract/verify/specGate', () => {
     expect.soft(consultantCheckpointOf('research')).toBe('frame');
     expect.soft(consultantCheckpointOf('implement')).toBe('implGate');
-    const rirModes = [...WORKFLOWS.rir.phases].map((p) => p.consultantCheckpoint);
+    expect.soft(consultantCheckpointOf('publish')).toBeUndefined();
+    const rirModes = phasesOf('rir').map((p) => p.consultantCheckpoint);
     // RIR authors no contract (no plan phase), so it never verifies one — implGate
     // stays the open-ended bet audit; it is not globally re-pointed to verify.
     expect.soft(rirModes).not.toContain('specGate');

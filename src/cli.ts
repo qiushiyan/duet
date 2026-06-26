@@ -195,8 +195,9 @@ program
     `
 The shape of a run (pick the arc with --workflow on duet new):
   full:  frame → DIRECTION gate → spec → COMMIT-SPEC gate → plan → PLAN gate (walk away)
-         → impl (AFK, often hours) → SHIP gate → finish (reconcile docs → draft PR) → OPEN-PR gate → done
-  rir:   research → DIRECTION gate (walk away) → implement (AFK) → SHIP gate → done
+         → impl (AFK, often hours) → SHIP gate → finish (reconcile docs → PR) → OPEN-PR gate → done
+  rir:   research → DIRECTION gate (walk away) → implement (AFK) → SHIP gate
+         → publish (reconcile docs → PR) → OPEN-PR gate → done
 
 Each phase runs in a detached background driver; every command above returns
 immediately, and nothing runs between stops. A stop is a gate (decision), a
@@ -223,7 +224,7 @@ program
   .option('--workflow <name>', 'which arc to run: full (spec → plan → implement → ship → PR) or rir (research → implement → review); default full. Also settable via a workflow: framing key (flag wins)')
   .option(
     '--gates-at <phases>',
-    'phases whose gates you attend — the set and presets are workflow-specific (full gates: frame, spec, plan, impl, finish; presets "skip-plan" = walk away at spec approval and return at the Ship gate, "overnight" = frame,spec. rir gates: research, implement; preset "afk" = attend none). The rest are pre-authorized and auto-cross with their packets recorded. Default for full: overnight (frame,spec) — plan, Ship, and the draft PR all auto-cross; list `finish` for a post-open review stop on the opened draft PR. rir attends both its gates',
+    'phases whose gates you attend — the set and presets are workflow-specific (full gates: frame, spec, plan, impl, finish; presets "skip-plan" = walk away at spec approval and return at the Ship gate, "overnight" = frame,spec. rir gates: research, implement, publish; preset "afk" = attend none). The rest are pre-authorized and auto-cross with their packets recorded. Default for full: overnight (frame,spec) — plan, Ship, and the Open-PR gate all auto-cross; list `finish` for a post-open review stop on the opened PR. rir attends all three of its gates',
   )
   .option(
     '--retry-infra <n>',

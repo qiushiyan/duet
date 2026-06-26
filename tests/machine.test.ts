@@ -253,7 +253,7 @@ describe('the full arc', () => {
       { type: 'phase.advance' }, // plan → plan-approval gate
       { type: 'phase.flag' }, // impl entry → queued question
       { type: 'phase.advance' }, // impl resume → ship gate
-      { type: 'phase.advance' }, // finish (reconcile docs, open draft PR) → open-pr gate
+      { type: 'phase.advance' }, // finish (reconcile docs, open PR) → open-pr gate
       { type: 'phase.advance' }, // finish re-entry after gate reject → gate again
     ]);
     const actor = startActor(machine);
@@ -285,8 +285,8 @@ describe('the full arc', () => {
     snap = await waitFor(actor, quiescent);
     expect(snap.value).toBe('shipGate');
 
-    // Approving Ship enters finish, which reconciles docs and opens the draft
-    // PR in one pass, landing at the (post-open) Open-PR gate.
+    // Approving Ship enters finish, which reconciles docs and opens the PR
+    // in one pass, landing at the (post-open) Open-PR gate.
     actor.send({ type: 'human.approve' });
     snap = await waitFor(actor, quiescent);
     expect(snap.value).toBe('openPrGate');
@@ -306,8 +306,11 @@ describe('the full arc', () => {
 });
 
 describe('the RIR arc', () => {
-  test('research → Direction → implement → Ship → done, exactly two gates, no full-only states', async () => {
-    const { machine, calls } = scriptedMachine([{ type: 'phase.advance' }, { type: 'phase.advance' }], 'rir');
+  test('research → Direction → implement → Ship → publish → Open-PR → done, three gates, no full-only states', async () => {
+    const { machine, calls } = scriptedMachine(
+      [{ type: 'phase.advance' }, { type: 'phase.advance' }, { type: 'phase.advance' }],
+      'rir',
+    );
     const actor = startActor(machine);
 
     let snap = await waitFor(actor, quiescent);
@@ -318,21 +321,17 @@ describe('the RIR arc', () => {
     expect.soft(snap.value).toBe('shipGate');
 
     actor.send({ type: 'human.approve' });
+    snap = await waitFor(actor, quiescent);
+    expect.soft(snap.value).toBe('openPrGate'); // the publish phase's gate (reused from Full)
+
+    actor.send({ type: 'human.approve' });
     snap = await waitFor(actor, (s) => s.status === 'done');
     expect.soft(snap.value).toBe('done');
 
-    expect.soft(calls).toEqual(['research', 'implement']);
-    // No Full-only state leaks into the RIR machine.
-    for (const s of [
-      'specLoop',
-      'planLoop',
-      'docsLoop',
-      'prLoop',
-      'openLoop',
-      'commitSpecGate',
-      'planApprovalGate',
-      'openPrGate',
-    ]) {
+    expect.soft(calls).toEqual(['research', 'implement', 'publish']);
+    // No Full-only state leaks into the RIR machine — openPrGate is now shared, but
+    // the spec/plan/finish states stay Full-only.
+    for (const s of ['specLoop', 'planLoop', 'finishLoop', 'commitSpecGate', 'planApprovalGate']) {
       expect.soft(machine.states[s], s).toBeUndefined();
     }
   });

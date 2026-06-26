@@ -40,13 +40,13 @@ IMPLEMENTATION (AFK — flags queue, process exits on them)
 FINAL REVIEW (one phase, finish — unattended by default)
   RECONCILE_DOCS     reconcile-docs; one pass — update and commit, no gate
   PR_DESCRIPTION     implementer drafts for the PR body
-  OPEN               gh pr create --draft
-    ── Open-PR gate ──                  ← after the open: the draft PR is already open. Auto-crosses to done by default; gates_at: finish adds a post-open review stop
+  OPEN               gh pr create
+    ── Open-PR gate ──                  ← after the open: the PR is already open. Auto-crosses to done by default; gates_at: finish adds a post-open review stop
 ```
 
 Observed round counts: spec 2, plan 1, impl review 1 in the original example session; the user's general description says impl review runs 2–3. Under the pivot these inform the orchestrator's judgment and the sizing of the harness's runaway backstops (see `docs/automation-design.md` §"Loop semantics"), not a fixed exit rule.
 
-Gates may be **pre-authorized per run** (`gates_at`, 2026-06-12 — `docs/automation-design.md` §"Gate pre-authorization"): the harness auto-crosses them on the human's standing approval, packet recorded and notification fired, and the orchestrator carries the would-be gate questions forward as encoded recommendations (with an `ask_human` escape hatch for calls that would make downstream work throwaway). `overnight` (= `frame,spec`) is full's default posture (2026-06-26): plan, Ship, and the Open-PR gate auto-cross unless listed. The Open-PR gate sits *after* the open — the draft PR is already open when it is reached, so it auto-crosses to done by default; list `finish` in `gates_at` for a post-open review stop (reject re-enters `finish` to amend the open PR). The orchestrator's posture instructions are rendered deterministically from the parsed value, never inferred from framing prose.
+Gates may be **pre-authorized per run** (`gates_at`, 2026-06-12 — `docs/automation-design.md` §"Gate pre-authorization"): the harness auto-crosses them on the human's standing approval, packet recorded and notification fired, and the orchestrator carries the would-be gate questions forward as encoded recommendations (with an `ask_human` escape hatch for calls that would make downstream work throwaway). `overnight` (= `frame,spec`) is full's default posture (2026-06-26): plan, Ship, and the Open-PR gate auto-cross unless listed. The Open-PR gate sits *after* the open — the PR is already open when it is reached, so it auto-crosses to done by default; list `finish` in `gates_at` for a post-open review stop (reject re-enters `finish` to amend the open PR). The orchestrator's posture instructions are rendered deterministically from the parsed value, never inferred from framing prose.
 
 ## The snippet vocabulary
 

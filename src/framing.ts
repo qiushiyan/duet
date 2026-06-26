@@ -52,9 +52,9 @@ export const FRAMING_TEMPLATE = `---
 # Machine-parsed options (fixed values the harness acts on; judgment-weighed
 # detail belongs in the prose below). Uncomment to use.
 # workflow: full          — full (default): frame → spec → plan → impl →
-#                           finish (reconcile docs, open a draft PR). rir:
-#                           research → implement → review → ship (no
-#                           spec/plan/PR), for small, well-understood work.
+#                           finish (reconcile docs, open a PR). rir:
+#                           research → implement → review → publish (open a PR;
+#                           no spec/plan), for small, well-understood work.
 # gates_at: overnight     — phases whose gates you attend; the rest are
 #                           pre-authorized and auto-cross with packets
 #                           recorded. Presets are workflow-specific: full →
@@ -62,9 +62,9 @@ export const FRAMING_TEMPLATE = `---
 #                           Ship gate) / overnight (= frame,spec); rir → afk
 #                           (attend none). Or a list, e.g. "frame, spec".
 #                           Default: overnight — attend frame and spec; plan,
-#                           Ship, and the draft PR all auto-cross. List "finish"
-#                           to stop and review the opened draft PR. rir attends
-#                           both its gates by default.
+#                           Ship, and the Open-PR gate all auto-cross. List
+#                           "finish" to stop and review the opened PR. rir
+#                           attends all three of its gates by default.
 # spec: path/to/draft.md  — enter at the spec review loop (skips FRAME). full-only.
 ---
 

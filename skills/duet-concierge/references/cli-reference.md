@@ -7,8 +7,8 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | Command | What it does |
 |---|---|
 | `duet new --framing <file>` | Start a run from a framing file (the project briefing — the only place project knowledge enters). Returns immediately; the first phase runs in a detached driver. Runs the **full** arc unless `--workflow` says otherwise. |
-| `duet new --workflow <full\|rir> --framing <file>` | Pick the arc. **full** (default): frame → spec → plan → implementation → PR. **rir**: research → implement → one review round → Ship, with no spec, plan, or PR (docs reconcile into the build) — for small, well-understood work. Also settable as `workflow:` in the framing frontmatter; the flag wins. |
-| `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates; the rest are pre-authorized and auto-cross with their packets recorded. Phases and presets are **workflow-specific**. full: gates `frame, spec, plan, impl, finish` — **default `overnight` (= frame,spec)**; preset `skip-plan` (= walk away at spec approval, return at the Ship gate). The Open-PR gate (end of `finish`) sits *after* the open — the draft PR auto-opens and the gate auto-crosses to done; list `finish` to attend a post-open review stop. rir: gates `research, implement` — or the preset `afk` (= attend none, run straight to done). |
+| `duet new --workflow <full\|rir> --framing <file>` | Pick the arc. **full** (default): frame → spec → plan → implementation → PR. **rir**: research → implement → one review round → `publish` (reconcile docs → PR), with no spec or plan — for small, well-understood work. Also settable as `workflow:` in the framing frontmatter; the flag wins. |
+| `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates; the rest are pre-authorized and auto-cross with their packets recorded. Phases and presets are **workflow-specific**. full: gates `frame, spec, plan, impl, finish` — **default `overnight` (= frame,spec)**; preset `skip-plan` (= walk away at spec approval, return at the Ship gate). The Open-PR gate (end of `finish`) sits *after* the open — the PR auto-opens and the gate auto-crosses to done; list `finish` to attend a post-open review stop. rir: gates `research, implement, publish` — or the preset `afk` (= attend none, run straight to done with the PR open). |
 | `duet new --spec <path>` | Start at the spec review loop from a draft spec (skips the FRAME phase). **full-only** — rir has no spec phase and rejects `--spec`. |
 | `duet new --framing <file> --retry-infra <n>` | Opt the headless run into bounded auto-retry of transient infra failures (network/server/rate-limit), default-off; or set `retry_infra:` in the framing frontmatter (the flag wins). `auth` retries once then escalates; login/quota/dns/unknown never retry; exhaustion flags. |
 | `duet new --framing <file> --consultant <provider[:model]>` | Bind the optional **consultant** for the run — a read-only second reviewer that questions the *bet* (assumptions, product fit), ideally on a different model family from the reviewer. Off by default; relay it only when the user asks for it. Also settable for every run via `[roles.consultant]` in config; `--no-consultant` disables a config-bound one for this run. |
@@ -119,7 +119,7 @@ Top-level fields:
 }
 ```
 
-**`done`** — the run is complete. A **full** run's `summary` leads with the PR URL; a **rir** run ends at the Ship gate with no PR, so its summary leads with what shipped.
+**`done`** — the run is complete. Both arcs open a PR, so the `summary` leads with the PR URL.
 
 ```json
 { "kind": "done", "summary": "PR: https://github.com/…" }
@@ -132,8 +132,8 @@ A markdown file: an optional `---`-fenced frontmatter block holding only fixed m
 ```markdown
 ---
 # workflow: full           — full (default) or rir. full: frame → spec → plan →
-#                             impl → PR. rir: research → implement → review →
-#                             ship (no spec/plan/PR), for small work.
+#                             impl → PR. rir: research → implement → publish
+#                             (a PR; no spec/plan), for small work.
 # gates_at: overnight       — phases whose gates the human attends; the rest
 #                             auto-cross. full's default is overnight. Presets
 #                             are workflow-specific: full → skip-plan (walk away
@@ -163,7 +163,7 @@ A markdown file: an optional `---`-fenced frontmatter block holding only fixed m
 - Environment-only actions (migrations, deploys): flag the human — never attempt.
 
 # Docs
-<for reconciling docs after the implementation (full's `finish` phase; folded
- into rir's build): a docs-update skill if one exists, else where docs live and
+<for reconciling docs after the implementation (full's `finish` phase, rir's
+ `publish` phase): a docs-update skill if one exists, else where docs live and
  what a change like this should update>
 ```

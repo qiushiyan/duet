@@ -1,6 +1,6 @@
 # Rails-and-UX bundle — opt-in rails with friction-free defaults
 
-> **Historical (pre-`finish`).** Dated record from before the 2026-06-26 collapse of the `docs`/`pr`/`open` tail into one `finish` phase (open-then-review, draft-PR-by-default, `overnight` as full's default posture). Its **"no phase collapse"** decision (keep `pr`/`open` as separate states for the pause-before/act-after stop) was *reversed* by that collapse — the Open-PR gate now sits after a draft open. Its arc / tail / gate-posture descriptions are the topology of their time; the current arc lives in [`../automation-design.md`](../automation-design.md).
+> **Historical (pre-`finish`).** Dated record from before the 2026-06-26 collapse of the `docs`/`pr`/`open` tail into one `finish` phase (open-then-review, PR-auto-open-by-default, `overnight` as full's default posture). Its **"no phase collapse"** decision (keep `pr`/`open` as separate states for the pause-before/act-after stop) was *reversed* by that collapse — the Open-PR gate now sits after the open. Its arc / tail / gate-posture descriptions are the topology of their time; the current arc lives in [`../automation-design.md`](../automation-design.md).
 
 **Status:** Spec. **Date:** 2026-06-21. **Branch:** `feat-rails-ux-bundle`.
 

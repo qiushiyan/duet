@@ -25,8 +25,10 @@
  * The arcs (docs/automation-design.md §"Phases and gates"):
  *
  *   full:  frame → Direction → spec → Commit-spec → plan → Plan-approval
- *          (walk away) → impl (AFK) → Ship → finish (reconcile docs → draft PR
+ *          (walk away) → impl (AFK) → Ship → finish (reconcile docs → PR
  *          → Open-PR) → done
+ *   rir:   research → Direction (walk away) → implement (AFK) → Ship
+ *          → publish (reconcile docs → PR → Open-PR) → done
  */
 
 import { basename, dirname, extname } from 'node:path';
@@ -90,14 +92,6 @@ interface PhaseSpecInput<Name extends string = string> {
    * unbound run never reads it.
    */
   readonly consultantCheckpoint?: ConsultantCheckpoint;
-  /**
-   * Whether this phase folds a docs update into itself before its gate (absent ⇒
-   * no). The RIR implement phase sets it: with no separate docs phase and no PR,
-   * the docs are made part of the shippable state inside the build. Read by the
-   * gate-reject resume prompt so the docs-before-gate invariant survives a
-   * rejection, not only the initial brief (src/harness/orchestrator-prompts.ts).
-   */
-  readonly foldsDocs?: boolean;
 }
 
 /** A workflow definition as written in the registry (string-typed input shape). */
@@ -218,7 +212,7 @@ export const WORKFLOWS = {
           state: 'shipGate',
           heading: 'SHIP gate — the orchestrator’s packet (CEO summary first)',
           ready: 'Ship gate — implementation packet ready',
-          hint: '(verify in your environment before deciding — migrations, smoke tests; approving enters FINISH: reconcile docs → draft PR → Open-PR gate)',
+          hint: '(verify in your environment before deciding — migrations, smoke tests; approving enters FINISH: reconcile docs → PR → Open-PR gate)',
         },
         artifactLabel: 'implementation',
         reviewLoop: true,
@@ -235,24 +229,27 @@ export const WORKFLOWS = {
         // The finishing tail, collapsed to one phase (2026-06-26; was docs → pr
         // → open, three orchestrator sessions for one logical step). Open-then-
         // review in one continuous session: reconcile docs + commit → write the
-        // PR description → open the PR as a DRAFT — and only THEN does the gate
-        // interpose. Pre-authorized (the default), the draft PR opens and the gate
-        // auto-crosses to done with the URL leading the packet; attended (`finish`
-        // in gates_at), the run stops at the opened draft PR — approve marks it
-        // done, reject re-enters this loop to AMEND the open PR (gh pr edit / more
-        // commits), never to re-open. Reject-as-amend is sound only because a
-        // draft PR is reversible. The open is idempotent by a worker-side gh-pr-
-        // view check, not run-state. No consultant checkpoint (the verify
-        // checkpoint already ran at impl); compact-for-cleanup stays reachable for
-        // the rare bloated-context case. (Q2 retired the Docs-plan gate for the
-        // identical reasons; this finishes that line.)
+        // PR description → open the PR — and only THEN does the gate interpose.
+        // Pre-authorized (the default), the PR opens and the gate auto-crosses to
+        // done with the URL leading the packet; attended (`finish` in gates_at),
+        // the run stops at the opened PR — approve marks it done, reject re-enters
+        // this loop to AMEND the open PR (gh pr edit / more commits), never to
+        // re-open. Reject-as-amend is sound because amending an open PR is itself
+        // reversible. The open is idempotent by a worker-side gh-pr-view check, not
+        // run-state. The PR is mergeable on open (the bug-review bots fire on it),
+        // so the env-verification reminder rides the body as a "Verification
+        // (pending)" checklist rather than a draft state. No consultant checkpoint
+        // (the verify checkpoint already ran at impl); compact-for-cleanup stays
+        // reachable for the rare bloated-context case. (Q2 retired the Docs-plan
+        // gate for the identical reasons; this finishes that line.) Mirror of rir's
+        // `publish` — same shape, same entry brief (openPrPhaseEntryPrompt).
         name: 'finish',
         snippets: ['reconcile-docs', 'pr-description', 'compact-for-cleanup'],
         gate: {
           state: 'openPrGate',
-          heading: 'OPEN-PR gate — docs reconciled, draft PR open',
-          ready: 'Open-PR gate — draft PR open, ready for your review',
-          hint: '(the PR is already open as a draft and auto-crosses to done by default; list `finish` in gates_at for a post-open review stop — approve marks it done, reject amends the open PR. The merge is always yours.)',
+          heading: 'OPEN-PR gate — docs reconciled, PR open',
+          ready: 'Open-PR gate — PR open, ready for your review',
+          hint: '(the PR is already open and auto-crosses to done by default; list `finish` in gates_at for a post-open review stop — approve marks it done, reject amends the open PR. The merge is always yours.)',
         },
         artifactLabel: 'PR',
         reviewLoop: false,
@@ -278,12 +275,12 @@ export const WORKFLOWS = {
     // plan, impl (Ship), and finish (Open-PR) are all pre-authorized, so a new
     // run materializes gatesAt = ['frame','spec'] — the `overnight` preset. The
     // Ship auto-cross shifts environment verification (migrations, smoke tests)
-    // from before-the-PR to PR-review time; the draft PR carries a Verification
+    // from before-the-PR to PR-review time; the opened PR carries a Verification
     // (pending) checklist as the standing reminder. forceAttend stays empty:
-    // opening a DRAFT PR is non-destructive and reversible, so the Open-PR gate is
-    // never force-attended, only attended when `finish` is listed in gates_at.
-    // forceAttend and defaultPreAuthorized must stay disjoint (validateRegistry
-    // guards it at load).
+    // opening a PR is non-destructive (the human still owns the merge) and a
+    // gate-reject amends it in place, so the Open-PR gate is never force-attended,
+    // only attended when `finish` is listed in gates_at. forceAttend and
+    // defaultPreAuthorized must stay disjoint (validateRegistry guards it at load).
     forceAttend: [],
     defaultPreAuthorized: ['plan', 'impl', 'finish'],
   },
@@ -314,15 +311,16 @@ export const WORKFLOWS = {
       },
       {
         name: 'implement',
-        // The spine order: build, orient the reviewer, one writable review round,
-        // then reconcile the docs (shared with full's finish) — this arc opens no
-        // PR, so the docs are part of the shippable state the human reviews at Ship.
-        snippets: ['implement-direct', 'handoff-direct', 'review-direct', 'apply-review', 'reconcile-docs'],
+        // The spine order: build, orient the reviewer, one writable review round.
+        // Docs no longer fold in here — they moved to the `publish` phase, where
+        // they ride the PR (the arc now opens one). So the Ship gate reviews the
+        // code + review outcome, like full's impl Ship gate.
+        snippets: ['implement-direct', 'handoff-direct', 'review-direct', 'apply-review'],
         gate: {
           state: 'shipGate',
           heading: 'SHIP gate — the implementation packet',
           ready: 'Ship gate — implementation packet ready',
-          hint: '(verify in your environment before deciding — migrations, smoke tests; approving completes the run)',
+          hint: '(verify in your environment before deciding — migrations, smoke tests; approving enters PUBLISH: reconcile docs → open the real PR)',
         },
         artifactLabel: 'implementation',
         reviewLoop: true,
@@ -332,16 +330,41 @@ export const WORKFLOWS = {
         workerBudgetUsd: 25,
         workerTurnTimeoutMs: 60 * 60_000,
         consultantCheckpoint: 'implGate',
-        // Docs fold into this phase before Ship (no separate docs phase, no PR),
-        // so a gate rejection must refresh them too — feedbackResumePrompt reads this.
-        foldsDocs: true,
+      },
+      {
+        // The finishing tail for rir — the mirror of full's `finish`: same shape,
+        // same entry brief (openPrPhaseEntryPrompt). Reconcile docs (they ride the
+        // PR now that the arc has one) → write the PR description → gh pr create.
+        // Pre-authorized (the `afk` posture), the PR opens and the Open-PR gate
+        // auto-crosses to done; attended (`publish` in gates_at), the run stops at
+        // the opened PR — approve marks it done, reject re-enters to AMEND it (gh pr
+        // edit / more commits), never to re-open. No consultant checkpoint (the
+        // implGate bet-audit already ran at implement).
+        name: 'publish',
+        snippets: ['reconcile-docs', 'pr-description', 'compact-for-cleanup'],
+        gate: {
+          // Gate-state name reused from Full — legal because resolution is
+          // workflow-scoped (phaseOfGateState(workflow, …)); reusing it lights up
+          // status's opensPr and the shared reject-amend clause for rir too.
+          state: 'openPrGate',
+          heading: 'OPEN-PR gate — docs reconciled, PR open',
+          ready: 'Open-PR gate — PR open, ready for your review',
+          hint: '(the PR is already open and auto-crosses to done by default; list `publish` in gates_at for a post-open review stop — approve marks it done, reject amends the open PR. The merge is always yours.)',
+        },
+        artifactLabel: 'PR',
+        reviewLoop: false,
+        roundCap: 2,
+        orchestratorBudgetUsd: 15,
+        workerBudgetUsd: 15,
+        workerTurnTimeoutMs: 30 * 60_000,
       },
     ],
     entry: { firstPhase: 'research' },
     handoffGate: 'research',
-    // afk attends no gates — a headless RIR run auto-crosses Direction and Ship
-    // straight to done. A matched preset may resolve to an empty list (Slice 6);
-    // forceAttend pins nothing for RIR (no outward-facing action).
+    // afk attends no gates — a headless RIR run auto-crosses Direction, Ship, and
+    // the new Open-PR gate straight to done (the user's walk-away-after-research
+    // flow). forceAttend pins nothing for RIR; defaultPreAuthorized stays empty,
+    // so a bare run attends all three gates (legacy attend-all default).
     presets: { afk: [] },
     forceAttend: [],
     defaultPreAuthorized: [],
@@ -408,11 +431,6 @@ export interface PhaseSpec {
   workerTurnTimeoutMs: number;
   /** The consultant checkpoint this phase carries, when any (registry data). */
   consultantCheckpoint?: ConsultantCheckpoint;
-  /**
-   * Whether this phase folds a docs update in before its gate (RIR implement) —
-   * read by feedbackResumePrompt so a gate rejection refreshes the docs too.
-   */
-  foldsDocs?: boolean;
 }
 
 /**
@@ -520,6 +538,19 @@ export function workflowOfPhase(phase: PhaseName): WorkflowName {
   );
   if (!owner) throw new Error(`no workflow owns phase "${phase}" — the registry and PhaseName disagree`);
   return owner;
+}
+
+/**
+ * The phase immediately before `phase` in its own arc — the predecessor whose
+ * gate approval enters `phase`. Registry-derived so a renamed or reordered arc
+ * stays correct (Full: finish ← impl; RIR: publish ← implement). Throws if
+ * `phase` is the first in its arc (it has no predecessor) — a caller bug.
+ */
+export function priorPhaseOf(phase: PhaseName): PhaseName {
+  const phases = phasesOf(workflowOfPhase(phase));
+  const prior = phases[phases.findIndex((p) => p.name === phase) - 1];
+  if (!prior) throw new Error(`phase "${phase}" is first in its arc — it has no predecessor`);
+  return prior.name;
 }
 
 /** Every phase across all workflows, widened to the consumer-facing view. */
