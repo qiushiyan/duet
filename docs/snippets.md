@@ -13,7 +13,7 @@ Each phase pulls a few snippets in the order the orchestrator reaches for them; 
 | [`write-spec`](#write-spec) | full · spec | implementer | the first spec draft |
 | [`start-plan`](#start-plan) | full · plan | implementer | the implementation plan (vertical slices) |
 | [`implement-direct`](#implement-direct) | rir · implement | implementer | code built straight from the research decisions |
-| [`reconcile-docs`](#reconcile-docs) | full · finish, rir · implement | implementer | docs reconciled with what shipped, then committed |
+| [`reconcile-docs`](#reconcile-docs) | full · finish, rir · publish | implementer | docs reconciled with what shipped, then committed |
 | [`review-spec`](#review-spec) | full · spec | reviewer | spec critique (at spec altitude) |
 | [`review-plan`](#review-plan) | full · plan | reviewer | plan critique |
 | [`review-implementation`](#review-implementation) | full · impl | reviewer | code review |
@@ -166,18 +166,18 @@ If a decision turns out wrong or underspecified once you're in the code, **stop 
 
 ### `reconcile-docs`
 
-Shared by full's `finish` phase and rir's `implement` phase — the docs step. The docs ride into the PR (full) or *are* the shippable record (rir, which opens no PR), so this reconciles them with what actually shipped, commits directly (no docs gate), and holds the one product boundary back to the human (deleting a documented concept, rewriting a load-bearing design claim, pruning a superseded doc). Self-contained — it derives the doc convention from the framing, so it cites no vendored skill. Override it to change how a project reconciles docs (a different altitude, a project-specific doc skill).
+Shared by full's `finish` phase and rir's `publish` phase — the docs step; both arcs ride the docs into the PR. It reconciles them with what actually shipped — preferring the project's own doc-update skill (under `.claude/`/`.agents/`) when one exists, else a consolidate-don't-patch default pitched for a senior engineer — commits directly (no docs gate), and holds the one product boundary back to the human (deleting a documented concept, rewriting a load-bearing design claim, pruning a superseded doc). Self-contained — it names no vendored skill of its own. Override it to change how a project reconciles docs.
 
 ```text
-The docs are part of what ships with this change — they ride the same branch (and PR, where there is one) as the code, so where there's no PR they *are* the shippable record. Reconcile them with what actually shipped before we hand off, in one pass: survey, update, commit.
+The docs ship with this change — they ride the branch (and the PR, where there is one) into the shippable record. Reconcile them with what actually shipped, in one pass.
 
-**Derive the impact from the code, not memory.** Survey the repo's docs against the change you just made, and update what the change left **stale or made newly true** — at the project's own altitude (the level the existing docs are pitched at), nothing finer. Follow the project's doc conventions (the doc path or skill the framing names). No manufactured churn: if a doc still reads true, leave it; touch what the change actually moved.
+**Use the project's own doc method first.** If a doc-update skill lives under `.claude/` or `.agents/` (e.g. an `update-docs` skill), follow it — it's the project's authoritative guide. Otherwise: **consolidate, don't patch** — fold the change into the existing prose so a senior engineer still gets the mental model, not a changelog; stay at the docs' own altitude (the *what* and *why*, never an implementation play-by-play); derive the impact from the code, and leave what still reads true (no manufactured churn).
 
-**Commit the docs directly** — no approval step. The doc commit rides with the rest of the change, so apply and commit rather than pausing for sign-off.
+**Commit the docs directly**, on top of the implementation — no approval step.
 
-**One boundary stays mine, not yours:** a genuine product or design call — deleting a documented concept, rewriting a load-bearing design claim, pruning a doc the work superseded — flag it and leave it, don't decide it. Everything tactical settles against the project's doc standards.
+**One boundary stays mine:** a genuine product or design call — deleting a documented concept, rewriting a load-bearing design claim, pruning a doc the work superseded — flag it and leave it, don't decide it.
 
-When you're done, **report what you touched** — the docs changed, a one-line impact each, and anything you flagged for me.
+**Report what you touched** when done — the docs changed, a one-line impact each, and anything you flagged for me.
 ```
 
 ---

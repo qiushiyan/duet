@@ -22,10 +22,11 @@ A run moves through an arc you pick at the start (`--workflow`). Each `→` is a
 full  frame → DIRECTION → spec → COMMIT-SPEC → plan → PLAN (walk away)
         → implementation (AFK, often hours) → SHIP → finish (reconcile docs → draft PR) → OPEN-PR → done
 
-rir   research → DIRECTION (walk away) → implementation (AFK) → SHIP → done
+rir   research → DIRECTION (walk away) → implementation (AFK) → SHIP
+        → publish (reconcile docs → real PR) → OPEN-PR → done
 ```
 
-**full** is the thorough arc — settle the design on paper, end in a pull request. **rir** (Research → Implement → Review) is lighter: the research decisions are the design, so it skips spec, plan, and PR — its docs update folds into the build before a verified Ship. Use full for epic-shaped work, rir for small, well-understood changes.
+**full** is the thorough arc — settle the design on paper, end in a pull request. **rir** (Research → Implement → Review) is lighter: the research decisions are the design, so it skips spec and plan. Use full for epic-shaped work, rir for small, well-understood changes. Both end in a PR — rir's `publish` phase mirrors full's `finish`, but opens a **real** (non-draft) PR rather than a draft, since rir is small, owned work.
 
 The gates are enforced in code (an XState statechart), not a prompt the orchestrator could be talked out of. Between stops a detached background process drives the phase; nothing runs while a run is parked, and you get a desktop notification at every stop. The `finish` phase reconciles the docs, writes the description, and opens a **draft** PR; the final **OPEN-PR** gate sits *after* the open and auto-crosses to done by default — list `finish` in `--gates-at` for a post-open review stop on the opened draft PR (rejecting there amends it). The merge is always yours.
 
@@ -73,7 +74,7 @@ The smoothest way to run duet is to let a Claude Code session sharpen your probl
    duet new --interactive --framing .duet/<your-framing>.md
    ```
    Your own Claude Code session becomes the orchestrator: you approve the direction (and, on the full arc, the spec and plan) right in the chat.
-4. **Walk away.** The interactive session hands the run off to a background driver at the handoff gate — plan approval (full) or the Direction gate (rir) — and it implements semi-AFK, often for an hour or more. Under the default `overnight` posture it then auto-crosses the Ship gate and opens a draft PR, so on the full arc you return to an opened pull request (with the Ship packet — a CEO-style summary — recorded for your morning review) — or a well-formed question waiting for you. Prefer to verify the build before it ships? Attend the Ship gate with `--gates-at skip-plan`.
+4. **Walk away.** The interactive session hands the run off to a background driver at the handoff gate — plan approval (full) or the Direction gate (rir) — and it implements semi-AFK, often for an hour or more. Under the default `overnight` posture (full) it then auto-crosses the Ship gate and opens a draft PR, so you return to an opened pull request (with the Ship packet — a CEO-style summary — recorded for your morning review) — or a well-formed question waiting for you. The rir `afk` posture is the same shape, ending in a real PR. Prefer to verify the build before it ships? Attend the Ship gate (`--gates-at skip-plan` on full).
 
 > **Prefer the terminal?** Skip `--interactive` and run a headless framing turn instead — `duet new` opens your editor on a framing draft, then the orchestrator runs in the background and you act at each gate with `duet continue`.
 
@@ -83,7 +84,7 @@ Common ways to start a run:
 duet new                       # editor on a framing draft (issue, context, scope)
 duet new --template bug        # seed the draft from .duet/templates/bug.md
 duet new --spec spec.md        # start from a spec you already wrote (full arc)
-duet new --workflow rir        # the lighter arc (add --gates-at afk to run unattended)
+duet new --workflow rir        # the lighter arc (add --gates-at afk to run unattended → real PR open)
 duet new --gates-at skip-plan  # default is hands-off after the spec; this returns you at the Ship gate
 duet new --budget default      # opt in to per-turn cost caps (off by default)
 ```
@@ -189,7 +190,7 @@ Two Claude Code skills ship with duet (installed with `npx skills add` above): *
 
 ## Development & status
 
-**Status.** Early and personal, but the whole workflow is now live-verified end to end: both the **full** and **rir** arcs, the headless and interactive orchestrator hosts, the optional **consultant**, run supervision (`duet doctor`, opt-in infra retry), and the interactive-Claude implementer transport have all run on real work. The consultant's **acceptance contract** (full arc) is built and test-verified but has not yet run live. The **`finish` phase** that collapsed the docs/pr/open tail (open-then-review, draft-PR-by-default, `overnight` as full's new default posture) and the `duet stats` verb are test-verified but await their first live crossing. Expect rough edges — the open *design* questions and their evidence live in [`docs/open-questions.md`](docs/open-questions.md).
+**Status.** Early and personal, but the whole workflow is now live-verified end to end: both the **full** and **rir** arcs, the headless and interactive orchestrator hosts, the optional **consultant**, run supervision (`duet doctor`, opt-in infra retry), and the interactive-Claude implementer transport have all run on real work. The consultant's **acceptance contract** (full arc) is built and test-verified but has not yet run live. The full arc's **`finish` phase** that collapsed the docs/pr/open tail (open-then-review, draft-PR-by-default, `overnight` as full's new default posture), **rir's `publish` phase** (its parallel finishing tail, opening a real PR), and the `duet stats` verb are test-verified but await their first live crossing. Expect rough edges — the open *design* questions and their evidence live in [`docs/open-questions.md`](docs/open-questions.md).
 
 No build step in dev — Node 24 runs the TypeScript directly:
 

@@ -45,7 +45,7 @@ Surface a conflict as an observation and a question, never a redesign — naming
 duet runs one of two arcs; settle which before gate posture, because the gates differ between them. Choose by how much ceremony the problem warrants, and record it as `workflow:` in the frontmatter (default `full`):
 
 - **`full`** — the thorough arc: frame → spec → plan → implementation → PR. Use it when the work is epic-shaped, the design needs settling on paper before code, or an opened PR is the deliverable.
-- **`rir`** (Research → Implement → Review) — the fast arc: research → implement → one review round, ending at a Ship gate. No spec, no plan, no PR tail; docs reconcile into the build, and the research decisions are the design. Use it for quick, well-understood iteration where the spec-and-plan ceremony would cost more than it returns.
+- **`rir`** (Research → Implement → Review) — the fast arc: research → implement → one review round → a `publish` phase that reconciles docs and opens a **real** (non-draft) PR. No spec, no plan; the research decisions are the design. Use it for quick, well-understood iteration where the spec-and-plan ceremony would cost more than it returns.
 
 If the user hasn't said: suggest `rir` when the problem is small and clearly understood, otherwise default to `full`, and confirm.
 
@@ -54,7 +54,7 @@ If the user hasn't said: suggest `rir` when the problem is small and clearly und
 A framing can pre-authorize gates so the user can walk away. Before finalizing, ask how hands-off they want the run unless they've already said — the gates depend on the workflow you picked:
 
 - **full** has five gates — Direction, Commit-spec, Plan-approval, Ship, Open-PR (their `gates_at` tokens are `frame`, `spec`, `plan`, `impl`, `finish`). The **default is `overnight`** (= `frame,spec`): attend the first two, auto-cross the rest — the Open-PR gate sits _after_ the open, so a draft PR auto-opens and the gate auto-crosses to done. Postures: **`overnight`** (the default — walk away once the spec is approved); **`skip-plan`** (= `frame,spec,impl`) — walk away at spec approval but return at the Ship gate; or a custom token list (e.g. add `finish` for a post-open review stop on the opened draft PR — reject there amends it).
-- **rir** has just two gates — **Direction** (the walk-away / headless-handoff point) and **Ship** (the return). Postures: **attend both** (default), or **`afk`** — pre-authorize both and run straight through to done.
+- **rir** has three gates — **Direction** (the walk-away / headless-handoff point), **Ship**, and **Open-PR** (after the PR opens; their `gates_at` tokens are `research`, `implement`, `publish`). Postures: **attend all** (default), or **`afk`** — pre-authorize all three and run straight through to done with the PR open.
 
 Record their choice as `gates_at:` in the framing frontmatter. A preset must belong to the chosen workflow (`overnight` / `skip-plan` are full's; `afk` is rir's), so duet rejects a mismatch.
 

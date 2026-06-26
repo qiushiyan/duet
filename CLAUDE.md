@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What
 
-`duet` — personal semi-AFK orchestrator for one developer's two-agent workflow: a read-only LLM **orchestrator** routes a snippet protocol between an **implementer** and a **reviewer**, inside a code-enforced statechart whose human gates agents cannot cross. Workflow-aware: a run picks one arc — the thorough `full` (spec → plan → … → PR) or the lighter `rir` (research → implement → ship). Repo = design docs (authoritative for _what_ to build) + implementation at root (pnpm + TS, no build step in dev).
+`duet` — personal semi-AFK orchestrator for one developer's two-agent workflow: a read-only LLM **orchestrator** routes a snippet protocol between an **implementer** and a **reviewer**, inside a code-enforced statechart whose human gates agents cannot cross. Workflow-aware: a run picks one arc — the thorough `full` (spec → plan → … → PR) or the lighter `rir` (research → implement → … → PR; a real, non-draft PR). Repo = design docs (authoritative for _what_ to build) + implementation at root (pnpm + TS, no build step in dev).
 
 Product goals — the bar every change is measured against:
 
