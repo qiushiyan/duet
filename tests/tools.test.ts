@@ -1,10 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { CONSULTANT_IDENTITY_CLAUSE, ORCHESTRATOR_SYSTEM_PROMPT, buildPhaseBrief, orchestratorSystemPrompt } from '../src/harness/orchestrator-prompts.ts';
-import { createPhaseTools, projectDetail } from '../src/harness/tools.ts';
+import { createPhaseTools, projectDetail, stageSessionId } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
 import { SKILLS_DIR } from '../src/snippets.ts';
 import { createTurnDispatcher } from '../src/harness/turn-dispatcher.ts';
@@ -843,6 +843,50 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
     expect.soft(activity.some((l) => l.includes('old.ts'))).toBe(false); // never the stale one
     finish({ text: 'done', sessionId: 'live-now' });
     await pending;
+  });
+
+  test('the located cache follows a mid-turn session-id change, never sticks to the first', async ({ run, projectDir, onTestFinished }) => {
+    // codex resume announces once from the resume id, again from thread.started; if
+    // they differ the second wins. The cache is keyed by the id it located for, so
+    // a re-announce drops it and re-locates — it doesn't keep reading the first file.
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const base = Date.parse('2026-06-20T12:00:00.000Z');
+    vi.setSystemTime(base);
+    const home = join(projectDir, 'home');
+    plantClaudeTranscript(home, 'sess-old', jsonl(claudeToolUse([{ name: 'Read', input: { file_path: '/repo/old.ts' }, id: 'toolu_old' }], { ts: new Date(base).toISOString() })));
+    plantClaudeTranscript(home, 'sess-new', jsonl(claudeToolUse([{ name: 'Read', input: { file_path: '/repo/new.ts' }, id: 'toolu_new' }], { ts: new Date(base).toISOString() })));
+    let finish!: (t: { text: string; sessionId: string }) => void;
+    const worker = new FakeWorker('claude');
+    worker.runTurn = (opts) => {
+      opts.onSessionId?.('sess-old'); // first announce → poll locates old
+      setTimeout(() => opts.onSessionId?.('sess-new'), 40_000); // a mid-turn re-announce
+      return new Promise((r) => (finish = r));
+    };
+    const { call, lines } = harness(run, { implementer: worker, home });
+    const pending = call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'x' });
+    await vi.advanceTimersByTimeAsync(30_000); // tick 1: locates + emits old
+    await vi.advanceTimersByTimeAsync(30_000); // re-announce at 40s; tick 2 at 60s re-locates new
+    const activity = lines.filter((l) => l.includes('⋯'));
+    expect.soft(activity.some((l) => l.includes('old.ts'))).toBe(true); // followed the first id
+    expect.soft(activity.some((l) => l.includes('new.ts'))).toBe(true); // then the second (cache re-keyed)
+    finish({ text: 'done', sessionId: 'sess-new' });
+    await pending;
+  });
+});
+
+describe('stageSessionId (the best-effort telemetry guard)', () => {
+  test('a staging fault is swallowed — onSessionId never fails the worker turn', ({ run }) => {
+    // onSessionId is invoked at load-bearing moments (claude before spawn, codex
+    // inside its stream reduction), so a thrown staging write would fail the turn.
+    // Remove the run dir so recordTurnSessionId's loadRunState throws.
+    const logs: string[] = [];
+    rmSync(runDirOf(run.cwd, run.runId), { recursive: true, force: true });
+    const stage = stageSessionId(run, 'implementer', (l) => logs.push(l));
+    expect.soft(() => stage('some-id')).not.toThrow();
+    expect.soft(logs.some((l) => l.includes('could not stage'))).toBe(true);
   });
 });
 

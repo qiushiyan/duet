@@ -5,7 +5,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { COMPACT_CONFIRMATION, ClaudeWorker, claudeArgs, claudeExecaOptions, parseClaudeTurn } from '../src/providers/claude.ts';
 import { codexThreadOptions, parseRolloutContext, reconstructCodexTurn } from '../src/providers/codex.ts';
 import type { ThreadEvent } from '@openai/codex-sdk';
-import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn } from '../src/providers/interactive-claude.ts';
+import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn, sessionIdForNonce } from '../src/providers/interactive-claude.ts';
 import { createWorkers, providerFor } from '../src/providers/index.ts';
 import { BudgetCutoffError } from '../src/providers/types.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
@@ -200,6 +200,20 @@ describe('parseInteractiveTurn (the interactive-transcript boundary)', () => {
   });
 });
 
+describe('sessionIdForNonce (the interactive early-id extractor)', () => {
+  test('reads the id from the nonce-bearing record before any turn-close', () => {
+    // Only the turn-open + a mid-turn tool step — no final assistant yet. The id
+    // is still extractable, which is the whole point (announce mid-turn).
+    const tail = session('sess-live', userTurn('do the thing', 'nonce-1'), toolStep('Read', 'still reading'));
+    expect(sessionIdForNonce(tail, 'nonce-1')).toBe('sess-live');
+  });
+
+  test('is undefined until the nonce-bearing record is visible', () => {
+    const tail = session('sess-live', userMessage('an unrelated message'));
+    expect(sessionIdForNonce(tail, 'nonce-1')).toBeUndefined();
+  });
+});
+
 describe('InteractiveClaudeWorker (driving over FakePane + a tmpdir, no live auth)', () => {
   const withFakeTimers = async (fn: () => Promise<void>): Promise<void> => {
     vi.useFakeTimers();
@@ -277,6 +291,47 @@ describe('InteractiveClaudeWorker (driving over FakePane + a tmpdir, no live aut
         context: { usedTokens: 1050, windowTokens: 200_000 },
       });
       expect.soft(pane().events.filter((e) => e === 'kill')).toHaveLength(1);
+      rmSync(dir, { recursive: true, force: true });
+    }));
+
+  test('a fresh turn announces its id from the transcript BEFORE the turn completes', async () =>
+    withFakeTimers(async () => {
+      const dir = tmpRoot();
+      const announced: string[] = [];
+      const { worker, pane } = wire(dir, {
+        readyAfter: 0,
+        // First only the turn-open + a mid-turn tool step land — id visible, turn open.
+        onSubmit: (text) =>
+          writeFileSync(join(dir, 'ours.jsonl'), session('sess-live', userMessage(text), toolStep('Read', 'mid-turn'))),
+      });
+
+      const promise = worker.runTurn({ prompt: 'do it', cwd: dir, onSessionId: (id) => announced.push(id) });
+      await vi.advanceTimersByTimeAsync(5_000); // poll ticks: id located + announced, turn not yet closed
+      expect.soft(announced).toEqual(['sess-live']); // announced while still running
+
+      // Now close the turn, reusing the captured body so the nonce matches.
+      writeFileSync(join(dir, 'ours.jsonl'), session('sess-live', userMessage(pane().submitted[0]!), assistantFinal('done')));
+      await vi.advanceTimersByTimeAsync(5_000);
+      const turn = await promise;
+      expect.soft(turn.text).toBe('done');
+      expect.soft(announced).toEqual(['sess-live']); // exactly once
+      rmSync(dir, { recursive: true, force: true });
+    }));
+
+  test('a resume turn announces its id immediately, without waiting on the transcript', async () =>
+    withFakeTimers(async () => {
+      const dir = tmpRoot();
+      const announced: string[] = [];
+      const { worker } = wire(dir, {
+        readyAfter: 1,
+        onSubmit: (text) => writeFileSync(join(dir, 'ours.jsonl'), session('sess-resumed', userMessage(text), assistantFinal('done'))),
+      });
+
+      const promise = worker.runTurn({ prompt: 'go', cwd: dir, sessionId: 'sess-resumed', onSessionId: (id) => announced.push(id) });
+      expect.soft(announced).toEqual(['sess-resumed']); // fired synchronously, before any await/poll
+      await vi.advanceTimersByTimeAsync(5_000);
+      await promise;
+      expect.soft(announced).toEqual(['sess-resumed']); // and not re-announced from the transcript
       rmSync(dir, { recursive: true, force: true });
     }));
 

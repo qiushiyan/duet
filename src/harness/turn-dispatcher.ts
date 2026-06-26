@@ -10,11 +10,10 @@ import {
   markPendingTurn,
   markTurnActive,
   markWorkerDispatched,
-  recordTurnSessionId,
   settlePendingTurn,
 } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
-import { renderTurnResult, settleTurn, startHeartbeat } from './tools.ts';
+import { renderTurnResult, settleTurn, stageSessionId, startHeartbeat } from './tools.ts';
 
 /**
  * The interactive host's pending-turn engine — what makes send_prompt async.
@@ -214,7 +213,7 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
               cwd: fresh.cwd,
               // Stage this turn's id onto `fresh` — the same copy startHeartbeat
               // closed over above — so the poll locates the transcript mid-turn.
-              onSessionId: (id) => recordTurnSessionId(fresh, role, id),
+              onSessionId: stageSessionId(fresh, role, log),
             }),
           )
           .then(

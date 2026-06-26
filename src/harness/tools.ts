@@ -220,18 +220,22 @@ export function startHeartbeat(
   let lastActivityId: string | undefined;
   // Cache the located transcript path/schema after the first successful read so
   // the 30s poll does not re-scan the sessions dir every tick (codex's locate is
-  // a recursive readdir). The path is stable across a turn (resume appends to the
-  // same file); if it ever vanishes the cached read returns undefined and we
-  // re-locate. The full locate stays as the fallback / first read.
-  let located: { path: string; schema: 'claude' | 'codex' } | undefined;
+  // a recursive readdir). KEYED BY the session id it was located for: the in-flight
+  // id can change mid-turn (codex resume announces once from the resume id and
+  // again from `thread.started`), so a cache that ignored the id would keep
+  // following the FIRST transcript after a re-announce. On an id change we drop the
+  // cache and re-locate. If the path vanishes the cached read returns undefined and
+  // we re-locate too. The full locate stays as the fallback / first read.
+  let located: { sessionId: string; path: string; schema: 'claude' | 'codex' } | undefined;
   const activity = setInterval(() => {
     try {
       const sessionId = state.activeTurns?.[role]?.sessionId;
       if (!sessionId) return; // the provider hasn't announced this turn's id yet
+      if (located && located.sessionId !== sessionId) located = undefined; // id changed → re-locate
       let tail = located ? readTranscriptTailAtPath(located.path, located.schema) : undefined;
       if (!tail) {
         tail = readTranscriptTailForSession(bindingFor(state.bindings, role).provider, sessionId, home !== undefined ? { home } : {});
-        located = tail ? { path: tail.path, schema: tail.schema } : undefined;
+        located = tail ? { sessionId, path: tail.path, schema: tail.schema } : undefined;
       }
       if (!tail) return;
       const act = latestActivity(tail.jsonl, tail.schema);
@@ -251,6 +255,25 @@ export function startHeartbeat(
   return () => {
     clearInterval(heartbeat);
     clearInterval(activity);
+  };
+}
+
+/**
+ * The `onSessionId` callback both hosts hand a provider: stage this turn's id onto
+ * the active-turn hint, swallowing any staging fault. `onSessionId` is best-effort
+ * telemetry — it feeds only the live-activity poll — yet providers invoke it at
+ * load-bearing moments (claude before spawn, codex inside its stream reduction), so
+ * a throw out of the staging write would fail the worker turn itself. Guarding here,
+ * once, keeps every provider's call site a plain `opts.onSessionId?.(id)` and keeps
+ * the telemetry's failure mode (no activity line) off the turn's success path.
+ */
+export function stageSessionId(state: RunState, role: WorkerRole, log: (line: string) => void): (id: string) => void {
+  return (id) => {
+    try {
+      recordTurnSessionId(state, role, id);
+    } catch (err) {
+      log(`[send_prompt] could not stage the ${role} session id for the activity trace (${err instanceof Error ? err.message : String(err)}) — the turn is unaffected`);
+    }
   };
 }
 
@@ -909,7 +932,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
               // Stage this turn's id onto the active-turn hint the moment the
               // provider announces it, so the heartbeat poll (closed over the
               // same `state`) can locate the transcript from the turn's start.
-              onSessionId: (id) => recordTurnSessionId(state, role, id),
+              onSessionId: stageSessionId(state, role, log),
             });
             settleTurn({ state, phase, providers, log }, { role, tag, isReviewRound }, turn);
             return turn;
