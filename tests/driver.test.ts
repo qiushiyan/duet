@@ -111,7 +111,18 @@ describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)
   test('the finish-phase prompt makes the open idempotent (gh pr view check, amend not re-create) (C)', ({ run }) => {
     const finish = finishPhaseEntryPrompt(run, PHASE.finish.roundCap);
     expect.soft(finish).toContain('gh pr view');
-    expect.soft(finish).toContain('amend it instead');
+    expect.soft(finish).toContain('amend it in place');
+  });
+
+  test('the finish-phase prompt guards the draft forcing function even when a non-draft PR already exists (enhancement 1)', ({ run }) => {
+    // A pre-existing non-draft PR on the branch must be converted back to draft
+    // before advancing, or the unattended Open-PR gate would auto-cross a
+    // mergeable, env-unverified PR.
+    const finish = finishPhaseEntryPrompt(run, PHASE.finish.roundCap);
+    expect.soft(finish).toContain('gh pr view --json isDraft');
+    expect.soft(finish).toContain('gh pr ready --undo');
+    // And the reject-to-amend re-entry keeps the same draft invariant.
+    expect.soft(feedbackResumePrompt('finish', 'tweak the body')).toContain('gh pr ready --undo');
   });
 });
 
