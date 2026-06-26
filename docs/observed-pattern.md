@@ -71,7 +71,7 @@ Other snippets in the config (`refactor-guidelines`, `pr-description`, `find-sim
 
 **Stable (the protocol):**
 - The seven-snippet vocabulary.
-- The phase order: onboard → frame → spec → plan → implement → review → docs → PR.
+- The phase order: onboard → frame → spec → plan → implement → review → docs → PR. (This is the *observed human* flow — the evidence duet was drawn from. duet's shipped `full` arc since collapsed the docs→PR tail into one `finish` phase, 2026-06-26; the current arc is in `docs/automation-design.md`.)
 - The cross-agent ping-pong inside each spec/plan/review phase.
 - `/compact` after the spec is committed (preserves implementation context).
 

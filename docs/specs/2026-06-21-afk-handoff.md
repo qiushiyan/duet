@@ -1,5 +1,7 @@
 # Mid-session AFK handoff — pre-authorization set in flight
 
+> **Historical (pre-`finish`).** Dated record from before the 2026-06-26 collapse of the `docs`/`pr`/`open` tail into one `finish` phase and the move of `overnight` to full's default posture. Its "semi-AFK promise is *plan approval; return to a ship packet*" framing predates that default (the default walk-away is now after the spec); the `duet afk` feature it specs is live. Current arc / posture: [`../automation-design.md`](../automation-design.md).
+
 **Status:** Design spec. **Date:** 2026-06-21. Implement after the workflow-aware/RIR run lands — it builds on workflow-awareness and touches the same surfaces (`framing.ts`, `cli.ts`, `lifecycle.ts`, `run-store.ts`). Drafted as a standalone design artifact; no open-questions/ledger writeup attached (the relevant ledger touchpoint is Q20, pre-authorization precision).
 
 ## Summary

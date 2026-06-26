@@ -1,5 +1,7 @@
 # Plan — Workflow-aware duet + the RIR arc
 
+> **Historical (pre-`finish`).** Dated record from before the 2026-06-26 collapse of the `docs`/`pr`/`open` tail into one `finish` phase (open-then-review, draft-PR-by-default, `overnight` as full's default posture). Its Full-arc walks still name the `docs`/`pr`/`open` states — the topology of their time; the current arc lives in [`../automation-design.md`](../automation-design.md).
+
 **Spec:** `docs/specs/2026-06-21-workflow-aware-rir.md` (committed). **Date:** 2026-06-21. This plan runs AFK off the plan-approval gate; it must be workable end to end, and a later turn re-anchors on it after a context compaction.
 
 ## Orientation

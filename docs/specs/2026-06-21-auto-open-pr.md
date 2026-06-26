@@ -1,5 +1,7 @@
 # Collapse the PR phase and auto-open — is the Open-PR gate earning its keep?
 
+> **Historical (pre-`finish`).** Dated record from before the 2026-06-26 collapse of the `docs`/`pr`/`open` tail into one `finish` phase (open-then-review, draft-PR-by-default, `overnight` as full's default posture). It explored merging the PR phases and auto-opening; the shipped change went further — full collapse with the Open-PR gate *after* a draft open. Its arc / tail / gate-posture descriptions are the topology of their time; the current arc lives in [`../automation-design.md`](../automation-design.md).
+
 **Status:** Problem definition (real-observation-driven; not a full spec). **Date:** 2026-06-21. Sibling to `2026-06-21-afk-handoff.md` and `2026-06-21-worker-budget-policy.md` — the third instance of one pattern (below). Revisits the "Open-PR non-negotiable" product goal.
 
 ## The observation
