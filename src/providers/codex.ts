@@ -1,7 +1,7 @@
 import { closeSync, openSync, readSync, readdirSync, fstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { Codex, type ThreadOptions } from '@openai/codex-sdk';
+import { Codex, type ThreadEvent, type ThreadOptions, type Usage } from '@openai/codex-sdk';
 import type { ContextUsage, RunTurnOptions, WorkerProvider, WorkerTurn } from './types.ts';
 
 /**
@@ -73,6 +73,35 @@ export function codexThreadOptions(opts: { cwd?: string }): ThreadOptions {
   return { ...(opts.cwd !== undefined ? { workingDirectory: opts.cwd } : {}) };
 }
 
+/**
+ * Drain a codex event stream into the turn's final text + usage, announcing the
+ * session id on the first `thread.started` event (the earliest a FRESH thread
+ * knows it). This is exactly the reduction the SDK's own non-streaming `run()`
+ * performs over the same events — lifted out so duet can observe the id mid-turn
+ * (run() surfaces it only after the whole turn resolves) and can be tested
+ * against a synthetic event stream, the parseClaudeTurn-style provider seam. A
+ * `turn.failed` throws its message, matching run()'s own behavior.
+ */
+export async function reconstructCodexTurn(
+  events: AsyncIterable<ThreadEvent>,
+  onSessionId?: (id: string) => void,
+): Promise<{ finalResponse: string; usage: Usage | null }> {
+  let finalResponse = '';
+  let usage: Usage | null = null;
+  for await (const event of events) {
+    if (event.type === 'thread.started') {
+      onSessionId?.(event.thread_id);
+    } else if (event.type === 'item.completed') {
+      if (event.item.type === 'agent_message') finalResponse = event.item.text;
+    } else if (event.type === 'turn.completed') {
+      usage = event.usage;
+    } else if (event.type === 'turn.failed') {
+      throw new Error(event.error.message);
+    }
+  }
+  return { finalResponse, usage };
+}
+
 export class CodexWorker implements WorkerProvider {
   readonly name = 'codex' as const;
   private readonly codex = new Codex();
@@ -89,22 +118,31 @@ export class CodexWorker implements WorkerProvider {
     const thread = opts.sessionId
       ? this.codex.resumeThread(opts.sessionId, threadOptions)
       : this.codex.startThread(threadOptions);
+    // A resume already knows its id (resumeThread seeds it), so announce it now;
+    // a fresh thread learns its id on the first stream event, where
+    // reconstructCodexTurn announces it. Either way the live-activity poll has
+    // this turn's id at/near its start — not only after it settles.
+    if (opts.sessionId) opts.onSessionId?.(opts.sessionId);
 
-    const turn = await thread.run(opts.prompt, { signal: AbortSignal.timeout(this.timeoutMs) });
+    // runStreamed (not run): draining the events ourselves is what lets us see
+    // thread.started — and the session id — mid-turn. run() exposes the id only
+    // after it resolves, which is the blindness this whole change removes.
+    const { events } = await thread.runStreamed(opts.prompt, { signal: AbortSignal.timeout(this.timeoutMs) });
+    const { finalResponse, usage } = await reconstructCodexTurn(events, opts.onSessionId);
 
     const sessionId = thread.id;
     if (!sessionId) throw new Error('codex worker turn completed without a thread id');
     const context = this.contextUsage(sessionId);
     return {
-      text: turn.finalResponse,
+      text: finalResponse,
       sessionId,
-      tokens: turn.usage
+      tokens: usage
         ? {
             // input_tokens already includes the cached subset (rollout
             // arithmetic: total = input + output) — adding cached_input_tokens
             // would double-count it.
-            input: turn.usage.input_tokens,
-            output: turn.usage.output_tokens,
+            input: usage.input_tokens,
+            output: usage.output_tokens,
           }
         : undefined,
       ...(context ? { context } : {}),

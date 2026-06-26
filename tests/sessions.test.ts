@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
-import { readRoleTranscriptTail, readTranscriptTailAtPath, resolveSessions } from '../src/sessions.ts';
+import { readRoleTranscriptTail, readTranscriptTailAtPath, readTranscriptTailForSession, resolveSessions } from '../src/sessions.ts';
 import { test } from './helpers/fixtures.ts';
 import { claudeUserToolResult, jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
 
@@ -102,6 +102,37 @@ describe('readRoleTranscriptTail — the fs tail wrapper', () => {
     expect.soft(readRoleTranscriptTail(run, 'implementer', { home })).toBeUndefined();
     // A role with no session id at all is also undefined.
     expect.soft(readRoleTranscriptTail(run, 'reviewer', { home })).toBeUndefined();
+  });
+});
+
+describe('readTranscriptTailForSession — the locate-by-explicit-id core (the live-activity poll)', () => {
+  test('locates a transcript by an EXACT session id, with no role/state lookup', ({ projectDir }) => {
+    const home = join(projectDir, 'home');
+    const path = plantClaudeTranscript(home, 'live-1', jsonl(claudeUserToolResult({ ts: TS })));
+    const tail = readTranscriptTailForSession('claude', 'live-1', { home });
+    expect.soft(tail?.path).toBe(path);
+    expect.soft(tail?.schema).toBe('claude');
+    expect.soft(tail?.jsonl.includes('tool_result')).toBe(true);
+  });
+
+  test('ignores an unrelated sibling id in the same dir (the exact-match purge contract)', ({ projectDir }) => {
+    const home = join(projectDir, 'home');
+    // A different live session writing into the same project dir — concurrent
+    // same-provider first turns (FRAME's claude implementer + claude consultant).
+    plantClaudeTranscript(home, 'someone-else', jsonl(claudeUserToolResult({ ts: TS })));
+    // The id we want has no file yet → undefined, never the sibling's transcript.
+    expect.soft(readTranscriptTailForSession('claude', 'wanted', { home })).toBeUndefined();
+    plantClaudeTranscript(home, 'wanted', jsonl({ type: 'user', timestamp: TS, message: { content: [{ type: 'tool_result', content: 'mine' }] } }));
+    expect.soft(readTranscriptTailForSession('claude', 'wanted', { home })?.jsonl.includes('mine')).toBe(true);
+  });
+
+  test('on multiple located paths for the id, the newest by mtime wins', ({ projectDir }) => {
+    const home = join(projectDir, 'home');
+    plantClaudeTranscript(home, 'shared', jsonl(claudeUserToolResult({ ts: TS })), { slug: 'proj-old', mtime: 1_000_000_000_000 });
+    const newer = plantClaudeTranscript(home, 'shared', jsonl({ type: 'user', timestamp: TS, message: { content: [{ type: 'tool_result', content: 'newest' }] } }), { slug: 'proj-new', mtime: 2_000_000_000_000 });
+    const tail = readTranscriptTailForSession('claude', 'shared', { home });
+    expect.soft(tail?.path).toBe(newer);
+    expect.soft(tail?.jsonl.includes('newest')).toBe(true);
   });
 });
 

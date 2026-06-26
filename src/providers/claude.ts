@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { execa } from 'execa';
 import { z } from 'zod';
 import { BudgetCutoffError } from './types.ts';
@@ -314,17 +315,23 @@ export function claudeExecaOptions(opts: { cwd?: string; prompt: string }, confi
 
 /**
  * The `claude -p` argv for a turn, extracted as a pure builder (mirroring
- * claudeExecaOptions) so the budget-cap behavior is verifiable by test:
- * `--max-budget-usd` is on the argv only when the cap is a number, and left off
- * entirely when it is undefined (budgets off). The arg order matches the live
- * call exactly — runTurn delegates here.
+ * claudeExecaOptions) so two behaviors are verifiable by test:
+ *   - the session-id flag: a fresh turn predeclares its id with `--session-id`
+ *     (so the id is known BEFORE spawn — the live-activity poll can find this
+ *     turn's transcript from its start); a resume turn uses `--resume`. Every
+ *     claude turn therefore carries an id on the argv (the caller resolves
+ *     fresh-vs-resume and mints when fresh), so the "no locate key on a first
+ *     turn" state is unrepresentable here.
+ *   - the budget cap: `--max-budget-usd` is on the argv only when the cap is a
+ *     number, and left off entirely when undefined (budgets off).
+ * The arg order matches the live call exactly — runTurn delegates here.
  */
 export function claudeArgs(
-  opts: { sessionId?: string; readOnly?: boolean },
+  opts: { sessionId: string; resume: boolean },
   config: { model: string; maxBudgetUsd?: number },
 ): string[] {
   const args = ['-p', '--output-format', 'json', '--model', config.model];
-  if (opts.sessionId) args.push('--resume', opts.sessionId);
+  args.push(opts.resume ? '--resume' : '--session-id', opts.sessionId);
   if (config.maxBudgetUsd !== undefined) {
     args.push('--max-budget-usd', String(config.maxBudgetUsd));
   }
@@ -334,9 +341,9 @@ export function claudeArgs(
   // their own repos: 2026-06-11 for the implementer, extended to the reviewer
   // 2026-06-22, superseding the per-role read-only/bypass split). The reviewer's
   // review-only behavior is a prompt-level convention (the review-* snippets ask
-  // for critique, not edits), so opts.readOnly no longer gates the argv.
-  // bypassPermissions still honors explicit deny rules and the CLI refuses to
-  // run as root.
+  // for critique, not edits) — never an argv flag — so claudeArgs takes no
+  // readOnly at all. bypassPermissions still honors explicit deny rules and the
+  // CLI refuses to run as root.
   args.push('--permission-mode', 'bypassPermissions');
   return args;
 }
@@ -356,11 +363,20 @@ export class ClaudeWorker implements WorkerProvider {
   }
 
   async runTurn(opts: RunTurnOptions): Promise<WorkerTurn> {
+    // Resume an existing session, or mint a fresh id and predeclare it with
+    // --session-id. Minting (rather than letting the CLI assign one) is what
+    // lets us announce the id BEFORE spawn — the live-activity poll then locates
+    // this turn's transcript from its start. The CLI writes/echoes this exact id,
+    // so the minted id equals the session_id parseClaudeTurn reads back and that
+    // settleTurn persists; the transcript stays a standard resumable <id>.jsonl.
+    const resume = opts.sessionId !== undefined;
+    const sessionId = opts.sessionId ?? randomUUID();
+    opts.onSessionId?.(sessionId);
     // Prompt goes through stdin (argv has length limits; snippet bodies wrapping
     // whole artifacts can be long). The argv comes from the pinned claudeArgs
     // builder; execa options (incl. the load-bearing `cleanup` default) come
     // from the pinned claudeExecaOptions builder.
-    const args = claudeArgs(opts, this.config);
+    const args = claudeArgs({ sessionId, resume }, this.config);
     try {
       const { stdout } = await execa('claude', args, claudeExecaOptions(opts, this.config));
       return parseClaudeTurn(stdout, opts.prompt);

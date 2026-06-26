@@ -22,11 +22,13 @@ import {
   markSteersDelivered,
   markTurnActive,
   recordContextUsage,
+  recordTurnSessionId,
   saveRunState,
   workflowOf,
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
-import { readRoleTranscriptTail, readTranscriptTailAtPath } from '../sessions.ts';
+import { bindingFor } from '../config.ts';
+import { readTranscriptTailAtPath, readTranscriptTailForSession } from '../sessions.ts';
 import type { TurnDispatcher } from './turn-dispatcher.ts';
 import { formatAge, probeRole } from '../worker-health.ts';
 import { activityLine, latestActivity, repoRelative } from '../worker-activity.ts';
@@ -135,14 +137,17 @@ export interface PhaseTools {
  * ago · <N> retries`, or ` · RETRYING (<N> retries)` when this turn has retried
  * (the COUNT, never a fabricated class — api_retry carries no usable status).
  * Reads the worker's own transcript tail and probes it scoped to THIS turn (the
- * turn start anchors both in-flight and retry attribution). Returns '' on the
- * first turn (no session id yet) or on ANY read/probe failure — telemetry never
- * throws into a worker turn.
+ * turn start anchors both in-flight and retry attribution). Locates by the
+ * in-flight session id (staged on the active-turn hint as soon as the provider
+ * announces it), so it works from at/near a turn's start — including a first
+ * turn. Returns '' before the id is announced or on ANY read/probe failure —
+ * telemetry never throws into a worker turn.
  */
 function heartbeatHealth(state: RunState, role: WorkerRole, startedAt: number, now: number, home?: string): string {
   try {
-    if (!state.workerSessions[role]) return ''; // first turn — session id learned only on return
-    const tail = readRoleTranscriptTail(state, role, home !== undefined ? { home } : {});
+    const sessionId = state.activeTurns?.[role]?.sessionId;
+    if (!sessionId) return ''; // the provider hasn't announced this turn's id yet
+    const tail = readTranscriptTailForSession(bindingFor(state.bindings, role).provider, sessionId, home !== undefined ? { home } : {});
     if (!tail) return '';
     const h = probeRole(tail.jsonl, { schema: tail.schema, now, inFlightSince: startedAt, retriesSince: startedAt });
     const activity = h.lastActivityAgeMs !== undefined ? ` · last activity ${formatAge(h.lastActivityAgeMs)} ago` : '';
@@ -181,8 +186,12 @@ const ACTIVITY_POLL_MS = 30_000;
  *     file it is reading, that an edit happened), read from the same transcript
  *     tail and emitted only when it changed since the last tick — so a healthy
  *     worker grinding for 30 minutes reads differently from a stalled one.
- * Both cadences degrade to silence on the first turn (no session id yet) or any
- * read/parse failure — telemetry never throws into a worker turn. Returns one
+ * Both cadences locate the transcript by THIS turn's session id off the
+ * active-turn hint (`state.activeTurns[role].sessionId`), staged as soon as the
+ * provider announces it — so they work from at/near a turn's start, on EVERY
+ * turn and for every role (the implementer's first turn, the codex reviewer, the
+ * ephemeral consultant). They degrade to silence before the id is announced or on
+ * any read/parse failure — telemetry never throws into a worker turn. Returns one
  * stop fn that clears both intervals.
  */
 export function startHeartbeat(
@@ -211,17 +220,22 @@ export function startHeartbeat(
   let lastActivityId: string | undefined;
   // Cache the located transcript path/schema after the first successful read so
   // the 30s poll does not re-scan the sessions dir every tick (codex's locate is
-  // a recursive readdir). The path is stable across a turn (resume appends to the
-  // same file); if it ever vanishes the cached read returns undefined and we
-  // re-locate. The full locate stays as the fallback / first read.
-  let located: { path: string; schema: 'claude' | 'codex' } | undefined;
+  // a recursive readdir). KEYED BY the session id it was located for: the in-flight
+  // id can change mid-turn (codex resume announces once from the resume id and
+  // again from `thread.started`), so a cache that ignored the id would keep
+  // following the FIRST transcript after a re-announce. On an id change we drop the
+  // cache and re-locate. If the path vanishes the cached read returns undefined and
+  // we re-locate too. The full locate stays as the fallback / first read.
+  let located: { sessionId: string; path: string; schema: 'claude' | 'codex' } | undefined;
   const activity = setInterval(() => {
     try {
-      if (!state.workerSessions[role]) return; // first turn — session id learned only on return
+      const sessionId = state.activeTurns?.[role]?.sessionId;
+      if (!sessionId) return; // the provider hasn't announced this turn's id yet
+      if (located && located.sessionId !== sessionId) located = undefined; // id changed → re-locate
       let tail = located ? readTranscriptTailAtPath(located.path, located.schema) : undefined;
       if (!tail) {
-        tail = readRoleTranscriptTail(state, role, home !== undefined ? { home } : {});
-        located = tail ? { path: tail.path, schema: tail.schema } : undefined;
+        tail = readTranscriptTailForSession(bindingFor(state.bindings, role).provider, sessionId, home !== undefined ? { home } : {});
+        located = tail ? { sessionId, path: tail.path, schema: tail.schema } : undefined;
       }
       if (!tail) return;
       const act = latestActivity(tail.jsonl, tail.schema);
@@ -241,6 +255,25 @@ export function startHeartbeat(
   return () => {
     clearInterval(heartbeat);
     clearInterval(activity);
+  };
+}
+
+/**
+ * The `onSessionId` callback both hosts hand a provider: stage this turn's id onto
+ * the active-turn hint, swallowing any staging fault. `onSessionId` is best-effort
+ * telemetry — it feeds only the live-activity poll — yet providers invoke it at
+ * load-bearing moments (claude before spawn, codex inside its stream reduction), so
+ * a throw out of the staging write would fail the worker turn itself. Guarding here,
+ * once, keeps every provider's call site a plain `opts.onSessionId?.(id)` and keeps
+ * the telemetry's failure mode (no activity line) off the turn's success path.
+ */
+export function stageSessionId(state: RunState, role: WorkerRole, log: (line: string) => void): (id: string) => void {
+  return (id) => {
+    try {
+      recordTurnSessionId(state, role, id);
+    } catch (err) {
+      log(`[send_prompt] could not stage the ${role} session id for the activity trace (${err instanceof Error ? err.message : String(err)}) — the turn is unaffected`);
+    }
   };
 }
 
@@ -896,6 +929,10 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
               sessionId: sessionIdFor(state, role),
               readOnly: readOnlyFor(role),
               cwd: state.cwd,
+              // Stage this turn's id onto the active-turn hint the moment the
+              // provider announces it, so the heartbeat poll (closed over the
+              // same `state`) can locate the transcript from the turn's start.
+              onSessionId: stageSessionId(state, role, log),
             });
             settleTurn({ state, phase, providers, log }, { role, tag, isReviewRound }, turn);
             return turn;

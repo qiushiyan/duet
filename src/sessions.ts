@@ -106,15 +106,32 @@ export function readRoleTranscriptTail(
   role: Voice,
   opts: { home?: string; maxBytes?: number } = {},
 ): { jsonl: string; schema: Provider; path: string } | undefined {
-  const home = opts.home ?? homedir();
-  const maxBytes = opts.maxBytes ?? 262_144;
   const session = resolveSessions(state).find((s) => s.role === role);
   if (!session) return undefined;
+  return readTranscriptTailForSession(session.provider, session.sessionId, opts);
+}
 
-  const paths = locateSessionTranscripts(session.provider, session.sessionId, home);
+/**
+ * Read the tail of a transcript for an EXPLICIT (provider, session id) — the
+ * locate-by-exact-id core `readRoleTranscriptTail` delegates to once it has
+ * resolved a role's settled id. Split out because the live-activity poll locates
+ * by THIS turn's id (staged on the active-turn hint as soon as the provider
+ * announces it), which is not yet in `workerSessions` on a first turn — so it
+ * can't route through the role-resolving wrapper. Still an exact `<id>.jsonl`
+ * match (never a directory sweep), so the purge contract above is unchanged. On
+ * multiple located paths it picks the NEWEST by mtime; unlocatable → undefined.
+ */
+export function readTranscriptTailForSession(
+  provider: Provider,
+  sessionId: string,
+  opts: { home?: string; maxBytes?: number } = {},
+): { jsonl: string; schema: Provider; path: string } | undefined {
+  const home = opts.home ?? homedir();
+  const maxBytes = opts.maxBytes ?? 262_144;
+  const paths = locateSessionTranscripts(provider, sessionId, home);
   const chosen = paths.map((p) => ({ p, mtime: statSync(p).mtimeMs })).sort((a, b) => b.mtime - a.mtime)[0];
   if (!chosen) return undefined;
-  return readTranscriptTailAtPath(chosen.p, session.provider, maxBytes);
+  return readTranscriptTailAtPath(chosen.p, provider, maxBytes);
 }
 
 /**

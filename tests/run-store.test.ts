@@ -315,7 +315,7 @@ describe('budgetFor — the opt-in knob', () => {
   test('off ⇒ a worker built from the resolved cap omits --max-budget-usd', ({ run }) => {
     const cap = budgetFor(run, 'impl').worker; // off → undefined
     expect.soft(cap).toBeUndefined();
-    expect.soft(claudeArgs({}, { model: 'claude-opus-4-8', maxBudgetUsd: cap })).not.toContain('--max-budget-usd');
+    expect.soft(claudeArgs({ sessionId: 's', resume: false }, { model: 'claude-opus-4-8', maxBudgetUsd: cap })).not.toContain('--max-budget-usd');
   });
 });
 
