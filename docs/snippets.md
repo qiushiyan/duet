@@ -76,62 +76,90 @@ If you have remaining product questions or major technical uncertainty, intervie
 ### `start-plan`
 
 ```text
-Plan the implementation as vertical slices based on the latest spec. Reread the spec first.
+Plan the implementation as vertical slices against the latest spec — reread the spec first.
 
-Write this plan so that it is complementary to the spec, not overlapping. Don't re-summarize the spec's goals or re-argue its approach — point to it, and spend the tokens on the tactics it deferred (answer its open questions here). The relay that earns its tokens is a load-bearing gotcha, invariant, or constraint **bolded in the exact slice that must honor it** — surfaced at the point of action, where rereading the spec wouldn't put it in front of you.
-
-Go detailed — name each slice, list specific test cases, sketch helpers and fixtures, cite line numbers for changes in existing code. **Don't pre-write full code bodies** — describe tests and helpers; actual code happens during red-green-refactor.
-
-Read these as a lens, not a checklist (adapt; drop what doesn't fit):
-- `{{skills_dir}}/tdd/SKILL.md` — vertical slices, what to test, anti-patterns
+## Read these first, then plan
+Read each one and adapt it to this change — they're the bar for a good plan, not optional background. If a path is missing, ask me rather than guessing.
+- `{{skills_dir}}/tdd/SKILL.md` — vertical slices, what to test, the anti-patterns
 - `{{skills_dir}}/tdd/tests.md` — behavior-focused tests; `test.for`, `expect.soft`, custom matchers
 - `{{skills_dir}}/tdd/mocking.md` — mock only at boundaries, never your own modules
 - `{{skills_dir}}/tdd/interface-design.md` — testability via `test.extend` fixtures
-- `{{skills_dir}}/tdd/deep-modules.md` — small interface, deep implementation; keeps the test surface small and tests stable across refactors
+- `{{skills_dir}}/tdd/deep-modules.md` — small interface over hidden implementation
+- `{{skills_dir}}/improve-codebase-architecture/SKILL.md` — deep modules, seams, the deletion test
 - `{{skills_dir}}/tdd/vitest-patterns.md` — Vitest APIs *(TS-Vitest projects only)*
-- `{{skills_dir}}/improve-codebase-architecture/SKILL.md` — also informs designing well from the start
 
-**What to test:** observable behavior through public interfaces and critical paths — not implementation details or every edge case. Skip UI tests unless requested; focus on pure business logic. Confirm with me if unclear.
+## What you're producing
+A plan written **complementary to the spec**, not overlapping it. Don't re-summarize its goals or re-argue its approach — point to it, and spend the tokens on the tactics it deferred (answer its open questions here). The relay that earns its tokens is a load-bearing gotcha, invariant, or constraint **bolded in the exact slice that must honor it** — surfaced at the point of action, where rereading the spec wouldn't put it in front of you.
 
-**Slice = one meaningful unit — a subsystem or a cluster of related behaviors.** Be ambitious: group a behavior with the behaviors and wiring that belong with it into one slice a reviewer can grasp as a single idea — the mechanical steps that serve it (an import, mounting a component, wiring) ride in that slice, not slices of their own. Lean larger; split only when two parts are genuinely unrelated or a slice grows too big to hold in your head. Aim for deep modules (small interface, hidden implementation) — shrinks the test surface, keeps slices independently committable. **Prefer slicings that delete concepts** (branches, modes, helper layers disappear) over ones that just spread them. Commits follow slices — that's implied; don't engineer commit boundaries.
+Go detailed: name each slice, list specific test cases, sketch helpers and fixtures, cite line numbers for changes to existing code. **Don't pre-write full code bodies** — describe the tests and helpers; the code itself happens during the build.
 
-**Preparatory refactoring first, when the foundation blocks the design** (Kent Beck: *make the change easy, then make the easy change*). If the spec named a blocking foundation — or you find one now — make the first slice or two a behavior-preserving reshaping — kept green by existing tests, or, if that code isn't covered, pinned with a characterization test first — that lays the groundwork before the feature slices land on it. Refactor only what the feature actually rests on; a prep slice that balloons into a module rewrite is the failure mode, not the goal.
+## How to plan it
 
-Strict red-green-refactor isn't required throughout — apply it inside a slice when design is uncertain or behavior is subtle and a failing test gives real signal. For straightforward slices, writing test + code together is fine. **The discipline is "one slice per commit", not keystroke order.**
+### Slicing
+**Slice = one meaningful unit** — a subsystem or a cluster of related behaviors a reviewer can grasp as a single idea. Be ambitious: group a behavior with the wiring that serves it (an import, mounting a component) into one slice, not slices of their own. Lean larger; split only when two parts are genuinely unrelated or a slice grows too big to hold in your head. **Prefer slicings that delete a concept** — a branch, mode, or helper layer disappears — over ones that just spread it around.
 
-**Build on the right layer.** When a slice needs non-trivial, solved mechanical logic (retries/backoff, concurrency limits, parsing, date/time math), choose deliberately between platform primitives, a small specialized library, and your own code. Prefer current stable platform primitives when they cover it (in TS, `Intl` over `date-fns`); reach for a small specialized library when it owns a genuinely tricky problem (`p-retry`, `p-queue`), never a giant for one function; a dependency weighty enough to be an architecture call gets surfaced, not silently added. Training data lags releases, so confirm current APIs (Context7 / web search) before committing.
+### Preparatory refactoring
+When the foundation blocks the design, reshape it first (Kent Beck: *make the change easy, then make the easy change*). If the spec named a blocking foundation — or you find one now — make the first slice or two a **behavior-preserving** reshaping, kept green by existing tests (or pinned with a characterization test first if that code isn't covered), before the feature slices land on it. Refactor only what the feature actually rests on; a prep slice that balloons into a module rewrite is the failure mode.
 
-Constraints:
+### Right-size the code
+The default failure here is too much code, not too little — defensive branches for cases that can't occur, and abstractions invented before the pattern is real. Plan against it:
+- **Make a bad state impossible to construct, don't guard against it.** Reach for a type, a narrow constructor, or an enum an invalid value can't inhabit, over runtime guards repeated at every call site. Validate untrusted input once at the boundary so everything downstream can trust it (*parse, don't validate*); where a state genuinely can't be made unrepresentable, validate at that **one** boundary, not everywhere it's read. A real invariant violation should fail loudly — not get a fallback that hides the bug, or a local defense wherever it happened to surface.
+- **Prefer a little duplication over the wrong abstraction.** Plan a shared abstraction only when the pattern is real (around the third occurrence) and pulling it out *concentrates* complexity instead of just moving it (the deletion test) — un-abstracting later costs more than the duplication did.
+- **Plan only what the spec settled.** No speculative features, config knobs, or extensibility seams it didn't ask for — each is maintenance forever and earns its place only when something uses it.
+
+### Build on the right layer
+Choosing what to build *on* is part of the plan. When a slice needs non-trivial, well-understood mechanical logic — retries/backoff, concurrency limits, parsing, date/time math — decide deliberately between the platform's own primitives, a small specialized library, and writing it yourself. Hand-rolling a solved problem wastes effort; a new dependency is maintenance forever — plan the lightest option that genuinely fits, and record the call and why in the slice that needs it. Training data lags real releases, so ground the choice in what the stack offers *now*, not memory.
+- **Prefer current stable platform primitives when they cover the need** — runtimes keep absorbing what libraries used to own (in TypeScript, `Intl` handles most date/time and number formatting without `date-fns`; native `fetch`, `structuredClone`, and `AbortController` replaced their old library equivalents). Confirm what's stable now rather than reaching for a dependency from habit.
+- **Reach for a small, specialized library when it owns a genuinely tricky problem the platform doesn't** — retry/backoff and concurrency queues are the clear wins (e.g. `p-retry`, `p-queue`). Keep it specialized: a general-purpose giant pulled in for one function (Lodash for a `groupBy`) is its own cost, and a larger framework earns its place only for the genuinely complex state it's built for.
+- **When the plan adopts a dependency**, check the repo doesn't already depend on something that covers it, then **confirm its current API with Context7** and **web-search for best practices, pitfalls, the latest version, and breaking changes**, and match how nearby code already wires its dependencies.
+
+A dependency weighty enough to be an architecture decision in its own right is mine to weigh — flag it rather than committing the repo to it.
+
+### Tests
+**What to test:** observable behavior through public interfaces and the critical paths — not internals or every edge case. Skip UI tests unless asked; confirm with me if unclear. **Red-green-refactor is a tool, not a mandate:** reach for it inside a slice when design is uncertain or behavior is subtle and a failing test gives real signal; writing test and code together is fine otherwise. The discipline is **one slice per commit**, not keystroke order.
+
+## Constraints
 - Follow the settled spec and the project's conventions. Tweak small details if exploration warrants; pause before challenging major direction.
 - Skip doc updates — we'll do those after implementation.
-- Commit per slice, not all at the end.
 ```
 
 ### `implement-direct`
 
-The rir arc's only draft — it builds straight from the settled research decisions, since rir has no spec or plan. Because there's no plan stage to apply it, this snippet carries the plan stage's high-value engineering signal inline — vertical slices, deep modules and the deletion test, preparatory refactoring, and what-to-test calibration — and cites the same two `{{skills_dir}}` methodology roots as `start-plan` for depth. It leaves behind the plan-*document* mechanics (naming slices, listing test cases, line citations) that have no artifact here.
+The rir arc's only draft — it builds straight from the settled research decisions, since rir has no spec or plan. Because there's no plan stage to apply it, this snippet carries the plan stage's high-value engineering signal inline — vertical slices, deep modules and the deletion test, preparatory refactoring, what-to-test calibration, and the build-on-the-right-layer (library-vs-platform) call — and cites the same two `{{skills_dir}}` methodology roots as `start-plan` for depth. It leaves behind the plan-*document* mechanics (naming slices, listing test cases, line citations) that have no artifact here.
 
 ```text
 Build the change directly from the research decisions we settled — those decisions are the spec here; there is no separate spec or plan document. This is small, well-understood work, so treat what follows as a lens scaled to the change, not ceremony — adapt it, drop what doesn't fit.
 
-Before writing code:
-- **Re-read the research decisions and the cross-review notes** — they settled the direction and the target shape; your job is to execute it, not re-decide it.
+## Read these first, then build
+Read each one and adapt it to this change — they're the bar, not optional background; don't go hunting them mid-build, and ask me for a path if one's missing.
+- `{{skills_dir}}/tdd/SKILL.md` — vertical slices, behavior-focused tests, mock only at boundaries, anti-patterns
+- `{{skills_dir}}/improve-codebase-architecture/SKILL.md` — deep modules, seams, the deletion test
+
+## Before you write code
+- **Re-read the research decisions and the cross-review notes** — they settled the direction and the target shape; execute it, don't re-decide it.
 - **Re-read the code you're about to touch** — trace the real data/control flow and the existing patterns, so the change fits what's already there.
 
-Build in **vertical slices** — one meaningful unit at a time (a behavior plus the wiring that belongs with it), each independently committable, one slice per commit. Lean larger; group related behavior rather than splitting mechanical steps into their own commits. **Prefer a shape that deletes concepts** (a branch, mode, or helper layer disappears) over one that just rearranges them. If the direction called for reshaping the foundation first (*make the change easy, then make the easy change*), do that as a **behavior-preserving step kept green** — pin uncovered code with a characterization test first — and keep it proportionate; a prep step that balloons into a rewrite is the failure mode.
+## How to build it
 
-**Architecture, as you build:** aim for **deep modules** — a small interface over a hidden implementation, not shallow pass-throughs. Before adding a module, apply the **deletion test**: if removing it just moves complexity around, inline it; keep it only if it concentrates complexity that would otherwise spread across callers. Keep logic in its canonical module rather than leaking it across seams.
+### Slicing
+Build in **vertical slices** — one meaningful unit at a time (a behavior plus the wiring that belongs with it), each independently committable, one slice per commit. Lean larger; group related behavior rather than splitting mechanical steps into their own commits. **Prefer a shape that deletes a concept** — a branch, mode, or helper layer disappears — over one that just rearranges it. If the direction called for reshaping the foundation first (*make the change easy, then make the easy change*), do it as a **behavior-preserving** step kept green — pin uncovered code with a characterization test first — and keep it proportionate; a prep step that balloons into a rewrite is the failure mode.
 
-**Build on the right layer.** When a slice needs non-trivial, solved mechanical logic (retries/backoff, concurrency limits, parsing, date/time math), choose deliberately between platform primitives, a small specialized library, and your own code. Prefer current stable platform primitives when they cover it (in TS, `Intl` over `date-fns`); reach for a small specialized library when it owns a genuinely tricky problem (`p-retry`, `p-queue`), never a giant for one function; a dependency weighty enough to be an architecture call gets surfaced, not silently added. Training data lags releases, so confirm current APIs (Context7 / web search) before committing.
+### Right-size the code
+The default failure here is too much code, not too little — defensive branches for cases that can't occur, and abstractions invented before the pattern is real. Build against it:
+- **Make a bad state impossible to construct, don't guard against it.** Reach for a type, a narrow constructor, or an enum an invalid value can't inhabit, over runtime guards repeated at every call site. Validate untrusted input once at the boundary so everything downstream can trust it (*parse, don't validate*); where a state genuinely can't be made unrepresentable, validate at that **one** boundary. Let a real invariant violation fail loudly — not a fallback that hides the bug, or a local defense wherever it happened to surface.
+- **Prefer a little duplication over the wrong abstraction.** Pull out a shared abstraction only when the pattern is real (around the third occurrence) and doing so *concentrates* complexity instead of just moving it (the deletion test).
+- **Build only what the decisions settled** — no speculative features, config knobs, or extensibility seams nobody asked for; each is maintenance forever.
 
-**Tests, built alongside the code:**
-- **Behavior through the public interface, at the right altitude** — what the system does, not how; tests that survive a refactor. The interface is the test surface.
-- **You can't test everything** — focus on critical paths and complex logic, not every edge case; pure logic over UI (skip UI tests unless asked).
-- Write each test against **real** behavior as you build its slice, not a batch up front against imagined shapes. Apply red-green-refactor inside a slice when design is uncertain or behavior is subtle; test and code together is fine for straightforward slices. Run them as you go and keep them green.
+### Build on the right layer
+Choosing what to build *on* is part of the work. When a slice needs non-trivial, well-understood mechanical logic — retries/backoff, concurrency limits, parsing, date/time math — decide deliberately between the platform's own primitives, a small specialized library, and writing it yourself. Hand-rolling a solved problem wastes effort; a new dependency is maintenance forever — take the lightest option that genuinely fits. Training data lags real releases, so ground the choice in what the stack offers *now*, not memory.
+- **Prefer current stable platform primitives when they cover the need** — runtimes keep absorbing what libraries used to own (in TypeScript, `Intl` handles most date/time and number formatting without `date-fns`; native `fetch`, `structuredClone`, and `AbortController` replaced their old library equivalents). Confirm what's stable now rather than reaching for a dependency from habit.
+- **Reach for a small, specialized library when it owns a genuinely tricky problem the platform doesn't** — retry/backoff and concurrency queues are the clear wins (e.g. `p-retry`, `p-queue`). Keep it specialized: a general-purpose giant pulled in for one function (Lodash for a `groupBy`) is its own cost, and a larger framework earns its place only for the genuinely complex state it's built for.
+- **When you adopt one**, check the repo doesn't already depend on something that covers it, then **confirm its current API with Context7** and **web-search for best practices, pitfalls, the latest version, and breaking changes**, and match how nearby code already wires its dependencies.
 
-Read these as a lens for depth — adapt, drop what doesn't fit; don't go hunting them mid-build, ask me for the path if one's missing:
-- `{{skills_dir}}/tdd/SKILL.md` — vertical slices, behavior-focused tests, anti-patterns
-- `{{skills_dir}}/improve-codebase-architecture/SKILL.md` — deep modules, the deletion test, seams
+A dependency weighty enough to be an architecture decision in its own right is mine to weigh — flag it rather than committing the repo to it.
+
+### Tests
+Write each test against **real** behavior as you build its slice, not a batch up front against imagined shapes — behavior through the public interface, covering the critical paths and complex logic, not every edge case (skip UI tests unless asked). Apply red-green-refactor inside a slice when design is uncertain or behavior is subtle; test and code together is fine otherwise. Run them as you go and keep them green.
 
 If a decision turns out wrong or underspecified once you're in the code, **stop and flag it** rather than guessing your way past it.
 ```
