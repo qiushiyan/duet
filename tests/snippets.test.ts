@@ -224,8 +224,8 @@ describe('the snippet library', () => {
     }
   });
 
-  test('the RIR arc snippets + the shared doc-currency helper exist with non-empty bodies; review-direct keeps the review- prefix', () => {
-    for (const key of ['use-latest-docs', 'implement-direct', 'handoff-direct', 'review-direct', 'apply-review']) {
+  test('the RIR arc snippets exist with non-empty bodies; review-direct keeps the review- prefix', () => {
+    for (const key of ['implement-direct', 'handoff-direct', 'review-direct', 'apply-review']) {
       const snippet = getSnippet(key);
       expect.soft(snippet, `snippet "${key}"`).toBeDefined();
       expect.soft(snippet?.expand.trim(), `snippet "${key}" body`).toBeTruthy();
@@ -251,15 +251,13 @@ describe('the snippet library', () => {
     // from the globally-unique phase name.
     const rendered = renderSnippetLibrary({ phase: 'research' });
     expect.soft(rendered.startsWith('<snippet_library phase="research">')).toBe(true);
-    expect.soft(rendered).toContain('<snippet key="use-latest-docs">');
+    expect.soft(rendered).toContain('<snippet key="think-holistic">');
     expect.soft(rendered).toContain('<phase name="implement">');
   });
 
   test('the phase-grouped view renders a RIR phase against the RIR arc', () => {
     const rendered = renderSnippetLibrary({ phase: 'research', workflow: 'rir' });
     expect.soft(rendered.startsWith('<snippet_library phase="research">')).toBe(true);
-    // anytime doc-currency helper, in full (reclassified from RIR-only)
-    expect.soft(rendered).toContain('<snippet key="use-latest-docs">');
     // anytime helper, in full
     expect.soft(rendered).toContain('<snippet key="reread-context">');
     // implement comes next in the RIR arc — indexed by key, not body

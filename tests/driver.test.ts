@@ -133,7 +133,6 @@ describe('the RIR entry prompts', () => {
     expect.soft(brief).toContain('Direction gate');
     expect.soft(brief).toContain('think-holistic');
     expect.soft(brief).toContain('compare-notes');
-    expect.soft(brief).toContain('use-latest-docs');
     // RIR has no spec phase — research must not instruct drafting one.
     expect.soft(brief).not.toContain('write-spec');
     expect.soft(brief.toLowerCase()).not.toContain('draft the spec');

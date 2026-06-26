@@ -1101,19 +1101,16 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
     expect.soft(unbound).toContain('["implementer", "reviewer"]');
   });
 
-  test('the RIR research brief takes the same conditional shape, keeping its use-latest-docs sentence', ({ run, consultantRun }) => {
+  test('the RIR research brief takes the same conditional shape', ({ run, consultantRun }) => {
     const bound = buildPhaseBrief(consultantRun, 'research');
     expect.soft(bound).toContain('one fan-out call');
     expect.soft(bound).toContain('consultant-frame'); // research maps to the frame checkpoint mode
     expect.soft(bound).toContain('separate send');
     expect.soft(bound).toContain('anonymized peers');
-    // The research-specific use-latest-docs guidance survives the rewrite.
-    expect.soft(bound).toContain('use-latest-docs');
 
     const unbound = buildPhaseBrief(run, 'research');
     expect.soft(unbound.toLowerCase()).not.toContain('consultant');
     expect.soft(unbound).toContain('one fan-out call');
-    expect.soft(unbound).toContain('use-latest-docs');
   });
 
   test('the spec brief gains the bet-audit step (folding severity into human_decisions) when bound; unbound is clean', ({
@@ -1837,7 +1834,7 @@ describe('the library and the journal', () => {
     const library = text(await call('list_snippets'));
 
     expect.soft(library.startsWith('<snippet_library phase="research">')).toBe(true);
-    expect.soft(library).toContain('<snippet key="use-latest-docs">'); // research's own template, in full
+    expect.soft(library).toContain('<snippet key="think-holistic">'); // research's own template, in full
     expect.soft(library).toContain('<phase name="implement">'); // the next RIR phase, indexed by key
     expect.soft(library).not.toContain('<phase name="plan">'); // no Full-only phase leaks in
     expect.soft(library).not.toContain('<phase name="spec">');

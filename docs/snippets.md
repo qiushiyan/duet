@@ -99,6 +99,8 @@ Read these as a lens, not a checklist (adapt; drop what doesn't fit):
 
 Strict red-green-refactor isn't required throughout — apply it inside a slice when design is uncertain or behavior is subtle and a failing test gives real signal. For straightforward slices, writing test + code together is fine. **The discipline is "one slice per commit", not keystroke order.**
 
+**Build on the right layer.** When a slice needs non-trivial, solved mechanical logic (retries/backoff, concurrency limits, parsing, date/time math), choose deliberately between platform primitives, a small specialized library, and your own code. Prefer current stable platform primitives when they cover it (in TS, `Intl` over `date-fns`); reach for a small specialized library when it owns a genuinely tricky problem (`p-retry`, `p-queue`), never a giant for one function; a dependency weighty enough to be an architecture call gets surfaced, not silently added. Training data lags releases, so confirm current APIs (Context7 / web search) before committing.
+
 Constraints:
 - Follow the settled spec and the project's conventions. Tweak small details if exploration warrants; pause before challenging major direction.
 - Skip doc updates — we'll do those after implementation.
@@ -119,6 +121,8 @@ Before writing code:
 Build in **vertical slices** — one meaningful unit at a time (a behavior plus the wiring that belongs with it), each independently committable, one slice per commit. Lean larger; group related behavior rather than splitting mechanical steps into their own commits. **Prefer a shape that deletes concepts** (a branch, mode, or helper layer disappears) over one that just rearranges them. If the direction called for reshaping the foundation first (*make the change easy, then make the easy change*), do that as a **behavior-preserving step kept green** — pin uncovered code with a characterization test first — and keep it proportionate; a prep step that balloons into a rewrite is the failure mode.
 
 **Architecture, as you build:** aim for **deep modules** — a small interface over a hidden implementation, not shallow pass-throughs. Before adding a module, apply the **deletion test**: if removing it just moves complexity around, inline it; keep it only if it concentrates complexity that would otherwise spread across callers. Keep logic in its canonical module rather than leaking it across seams.
+
+**Build on the right layer.** When a slice needs non-trivial, solved mechanical logic (retries/backoff, concurrency limits, parsing, date/time math), choose deliberately between platform primitives, a small specialized library, and your own code. Prefer current stable platform primitives when they cover it (in TS, `Intl` over `date-fns`); reach for a small specialized library when it owns a genuinely tricky problem (`p-retry`, `p-queue`), never a giant for one function; a dependency weighty enough to be an architecture call gets surfaced, not silently added. Training data lags releases, so confirm current APIs (Context7 / web search) before committing.
 
 **Tests, built alongside the code:**
 - **Behavior through the public interface, at the right altitude** — what the system does, not how; tests that survive a refactor. The interface is the test surface.

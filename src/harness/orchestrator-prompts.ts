@@ -542,9 +542,9 @@ export function researchPhaseEntryPrompt(state: RunState, roundCap: number): str
 Run the RESEARCH phase: both workers build an independent understanding of the problem, then the implementer synthesizes, and the direction lands on the Direction gate. This is the lighter arc — the research decisions ARE the design; there is no spec or plan to draft, and approving the gate hands the run off to AFK implementation.
 ${branchPolicyParagraph(state)}${attendancePosture(state, 'research')}
 The shape of the phase:
-1. Read the snippet library (list_snippets) — think-holistic, compare-notes, and use-latest-docs are this phase's templates.
+1. Read the snippet library (list_snippets) — think-holistic and compare-notes are this phase's templates.
 2. Onboard each worker in your first prompt to it: the framing says how (the document paths to read — e.g. an onboarding or skill file named by path). Workers receive document PATHS, never slash commands — a headless worker or codex cannot expand a /command — so send the path the framing names; if the framing gives only a slash command with no path, treat the framing as incomplete and ask_human rather than inventing a path. Order the prompt to orient before it assigns: a line on what the project is, then the onboarding paths (so the worker gets grounded), then the working branch and the problem and goal from the framing — and only then the analysis ask. The worker reads it cold, so lead with the work in plain terms, not duet's machinery (the arc, gate, or checkpoint names).
-3. ${analysisSendStep(state, 'research')} When the work leans on an external library or SDK, fold use-latest-docs into the prompt so the analysis is grounded in current APIs rather than stale memory.
+3. ${analysisSendStep(state, 'research')}
 4. ${synthesisStep(state)}
 5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The implementer builds directly from these decisions, so the summary must carry enough that the build can proceed without a spec. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
 

@@ -293,7 +293,8 @@ export const WORKFLOWS = {
     phases: [
       {
         name: 'research',
-        // Shared with Full's frame; use-latest-docs rides in as an anytime helper.
+        // Shared with Full's frame. Library-choice guidance lives in implement-direct
+        // (rir's plan-discipline home), not here — research is the direction phase.
         snippets: ['think-holistic', 'compare-notes'],
         gate: {
           // Gate-state name reused from Full — legal because resolution is
@@ -591,7 +592,6 @@ export const ANYTIME_SNIPPETS: readonly string[] = [
   'trace-execution',
   'smart-adapt-skills',
   'technical-difficulty',
-  'use-latest-docs',
 ];
 
 /**
