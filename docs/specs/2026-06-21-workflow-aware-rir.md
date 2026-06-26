@@ -1,6 +1,6 @@
 # Workflow-aware duet — the RIR arc
 
-> **Historical (pre-`finish`).** Dated record from before the 2026-06-26 collapse of the `docs`/`pr`/`open` tail into one `finish` phase (open-then-review, draft-PR-by-default, `overnight` as full's default posture). Its Full-arc diagrams still show the `… → docs → pr → open` tail and `pr` force-attend — the topology of their time; the current arc lives in [`../automation-design.md`](../automation-design.md).
+> **Historical (pre-`finish`).** Dated record from before the 2026-06-26 collapse of the `docs`/`pr`/`open` tail into one `finish` phase (open-then-review, PR-auto-open-by-default, `overnight` as full's default posture). Its Full-arc diagrams still show the `… → docs → pr → open` tail and `pr` force-attend — the topology of their time; the current arc lives in [`../automation-design.md`](../automation-design.md).
 
 **Status:** Approved direction (Direction gate, 2026-06-21); spec for planning. **Date:** 2026-06-21. Plan: forthcoming. On adoption the surviving design folds, present tense, into `docs/automation-design.md` and `docs/engineering.md`; this stays the dated proposal record.
 
