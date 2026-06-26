@@ -15,10 +15,9 @@ describe('workflow-neutral status surfaces (RIR)', () => {
   const rirRun = (projectDir: string): RunState =>
     createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'x' });
 
-  test('describeStop completion makes no PR claim for a non-PR arc', ({ projectDir }) => {
+  test('describeStop completion claims the PR for both arcs now (rir opens one too)', ({ projectDir }) => {
     const rir = rirRun(projectDir);
-    expect.soft(describeStop(rir, true)).toBe('run complete');
-    // Full still claims the PR.
+    expect.soft(describeStop(rir, true)).toBe('run complete — the PR is open');
     expect.soft(describeStop({ ...rir, workflow: 'full' }, true)).toBe('run complete — the PR is open');
   });
 
@@ -30,24 +29,23 @@ describe('workflow-neutral status surfaces (RIR)', () => {
     expect.soft(model.rounds.map((r) => r.phase)).toEqual(['implement']);
   });
 
-  test('the done summary reads the run’s last phase (implement), and the render makes no PR/spec claim', ({
+  test('the done summary reads the run’s last phase (publish), and the render claims the PR', ({
     projectDir,
   }) => {
     const rir = rirRun(projectDir);
-    rir.phaseSummaries.implement = { summary: 'shipped the thing', artifacts: [] };
+    rir.phaseSummaries.publish = { summary: 'opened the PR', artifacts: [] };
     const model = buildStatusModel(rir, { kind: 'done' }, []);
-    expect.soft(model.stop.kind === 'done' && model.stop.summary).toBe('shipped the thing');
+    expect.soft(model.stop.kind === 'done' && model.stop.summary).toBe('opened the PR');
     const text = renderStatus(model);
     expect.soft(text).toContain('run complete');
-    expect.soft(text).not.toContain('the PR is open');
-    expect.soft(text).not.toContain('merge the PR');
-    expect.soft(text).not.toContain('spec:'); // RIR has no spec phase
+    expect.soft(text).toContain('the PR is open'); // rir opens a (real) PR now too
+    expect.soft(text).not.toContain('spec:'); // RIR still has no spec phase
     expect.soft(text).toContain('workflow: Research → Implement → Review');
   });
 
-  test('the brief headline is workflow-neutral on completion', ({ projectDir }) => {
+  test('the brief headline reports the open PR on completion', ({ projectDir }) => {
     const brief = buildBrief(buildStatusModel(rirRun(projectDir), { kind: 'done' }, []));
-    expect(brief.headline).toBe('run complete');
+    expect(brief.headline).toBe('run complete — the PR is open');
   });
 
   test('an empty gatesAt (afk: attend none) renders explicit copy and survives in the JSON model', ({

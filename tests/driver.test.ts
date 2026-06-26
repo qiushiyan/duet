@@ -12,6 +12,7 @@ import {
   framePhaseEntryPrompt,
   implementPhaseEntryPrompt,
   planPhaseEntryPrompt,
+  publishPhaseEntryPrompt,
   researchPhaseEntryPrompt,
   specPhaseEntryPrompt,
 } from '../src/harness/orchestrator-prompts.ts';
@@ -138,7 +139,7 @@ describe('the RIR entry prompts', () => {
     expect.soft(brief.toLowerCase()).not.toContain('draft the spec');
   });
 
-  test('implement sequences kickoff → handoff → review → apply, names the lean packet, and drops Full ceremony', ({
+  test('implement sequences kickoff → handoff → review → apply, names the lean packet, drops Full ceremony, and defers docs to PUBLISH', ({
     projectDir,
   }) => {
     const rir = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'build a thing' });
@@ -151,22 +152,33 @@ describe('the RIR entry prompts', () => {
     expect.soft(at('review-direct')).toBeLessThan(at('apply-review'));
     // The lean Ship packet — handoff + review-and-fix, no CEO summary.
     expect.soft(brief.toLowerCase()).toContain('ship');
-    // Docs fold into the implement phase before Ship via the shared reconcile-docs
-    // template — RIR opens no PR, so the docs become part of the shippable state,
-    // written directly after the review round (not a separate post-Ship phase as
-    // in Full).
-    expect.soft(at('apply-review')).toBeLessThan(at('reconcile-docs'));
-    expect.soft(brief).toContain('no PR');
-    expect.soft(brief).toContain('no separate docs review round');
+    // Docs are NOT reconciled here anymore — that moved to the PUBLISH phase, where
+    // they ride the PR. The implement brief sends no reconcile-docs and defers to it.
+    expect.soft(at('reconcile-docs')).toBe(-1);
+    expect.soft(brief).toContain('PUBLISH');
     // Full-arc ceremony the RIR implement phase deliberately drops — checked
     // against the instructional spine, not the anti-example (which names the
-    // Full ceremony precisely to warn against importing it). The folded docs
-    // step rides the live build session, so no compaction (`/compact`) appears.
+    // Full ceremony precisely to warn against importing it).
     const spine = brief.slice(0, brief.indexOf('## Implement phase examples'));
     expect.soft(spine.length).toBeGreaterThan(0);
     for (const absent of ['midpoint', 'ceo-summary', 'respond-review', 'compact-for-impl', '/compact']) {
       expect.soft(spine, `implement spine should not mention "${absent}"`).not.toContain(absent);
     }
+  });
+
+  test('the publish-phase prompt opens a REAL (non-draft) PR, idempotently, with the verification checklist', ({
+    projectDir,
+  }) => {
+    const rir = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'build a thing' });
+    rir.gatesAt = []; // afk: the Open-PR gate auto-crosses
+    const brief = publishPhaseEntryPrompt(rir, PHASE.publish.roundCap);
+    expect.soft(brief).toContain('gh pr create');
+    expect.soft(brief).not.toContain('gh pr create --draft'); // a real PR, not a draft
+    expect.soft(brief).not.toContain('gh pr ready --undo'); // no draft state to force
+    expect.soft(brief).toContain('Verification (pending)'); // standing env-verify reminder still rides the PR
+    expect.soft(brief).toContain('gh pr view'); // idempotent: check-then-create-or-amend
+    expect.soft(brief).toContain('amend it in place');
+    expect.soft(brief).toContain('auto-crosses straight to done'); // afk → the pre-authorized branch
   });
 });
 
@@ -191,29 +203,36 @@ describe('feedbackResumePrompt routes a gate rejection per the phase', () => {
     // The Full multi-round language must not leak into the single-round arc.
     expect.soft(prompt).not.toContain('review rounds');
     expect.soft(prompt).not.toContain('-again');
-    // RIR folds docs into this phase before Ship and opens no PR, so a rejection
-    // must carry the docs-refresh reminder — the docs-before-Ship invariant can't
-    // live only in the initial brief, or a re-advance could ship docs describing
-    // rejected code with no downstream docs/PR phase to catch it.
-    expect.soft(prompt).toContain('refresh the docs');
+    // Implement no longer folds docs (they moved to PUBLISH), so a Ship-gate reject
+    // carries no docs-refresh clause — it just routes the feedback into the build.
+    expect.soft(prompt).not.toContain('refresh the docs');
   });
 
-  test("a folded-docs phase's rejection refreshes docs, a mid-arc phase's does not", () => {
-    // The folded-docs reminder is keyed on the registry's foldsDocs flag (RIR
-    // implement), not the phase name. Full's impl is followed by the finish phase,
-    // which reconciles docs after a re-approved Ship, so its rejection must NOT
-    // carry the reminder.
-    expect.soft(feedbackResumePrompt('implement', 'x')).toContain('refresh the docs');
+  test("a PR-opening phase's rejection amends the PR and refreshes its docs; a mid-arc phase's does not", () => {
+    // The amend + docs-refresh reminder is keyed on the openPrGate gate state (the
+    // PR is already open), not a phase name — so it fires for both Full's finish
+    // (draft) and RIR's publish (real), and not for a mid-arc phase like Full's impl.
+    const publish = feedbackResumePrompt('publish', 'x');
+    expect.soft(publish).toContain('amend it in place');
+    expect.soft(publish).toContain('refresh the docs');
+    expect.soft(feedbackResumePrompt('impl', 'x')).not.toContain('amend it in place');
     expect.soft(feedbackResumePrompt('impl', 'x')).not.toContain('refresh the docs');
   });
 
-  test('the open-PR gate phase (full finish) routes directly and AMENDS the open draft PR, not a re-open (A/C)', () => {
-    const prompt = feedbackResumePrompt('finish', 'tighten the PR description');
-    expect.soft(prompt).toContain('route the feedback to the implementer');
-    expect.soft(prompt).toContain("doesn't re-run a reviewer round"); // reviewLoop:false → direct
-    expect.soft(prompt).toContain('gh pr edit'); // amend the open PR in place
-    expect.soft(prompt).toContain('never run gh pr create again'); // a second create would error
-    expect.soft(prompt).not.toContain('review rounds'); // not the multi-round path
+  test('the open-PR gate phases route directly and AMEND the open PR, not a re-open — draft forcing only for Full (A/C)', () => {
+    const finish = feedbackResumePrompt('finish', 'tighten the PR description');
+    expect.soft(finish).toContain('route the feedback to the implementer');
+    expect.soft(finish).toContain("doesn't re-run a reviewer round"); // reviewLoop:false → direct
+    expect.soft(finish).toContain('gh pr edit'); // amend the open PR in place
+    expect.soft(finish).toContain('never run gh pr create again'); // a second create would error
+    expect.soft(finish).not.toContain('review rounds'); // not the multi-round path
+    expect.soft(finish).toContain('gh pr ready --undo'); // Full's draft → re-force draft on reject
+
+    // RIR's publish amends the same way but opens a REAL PR — no draft to force.
+    const publish = feedbackResumePrompt('publish', 'tweak the PR body');
+    expect.soft(publish).toContain('gh pr edit');
+    expect.soft(publish).toContain('never run gh pr create again');
+    expect.soft(publish).not.toContain('gh pr ready --undo');
   });
 
   test('a non-loop gate phase (rir research) also routes directly, no review round', () => {

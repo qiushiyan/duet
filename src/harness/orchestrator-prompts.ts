@@ -557,13 +557,10 @@ ${RESEARCH_EXAMPLES}
 /**
  * RIR's implement phase — the AFK build, lighter than Full's impl: no plan to
  * commit, no compaction ceremony, no midpoint, and one writable review round
- * (review-direct → apply-review) instead of the reflect-then-round-2 loop. The
- * docs update folds into this phase just before the Ship gate — the arc opens
- * no PR, so the docs become part of the shippable state the human reviews at
- * Ship rather than a separate post-Ship phase as in Full. The docs ride the
- * live build session (fresh build context is what writing accurate docs needs),
- * so there is no compaction reset before them. The Ship packet is the handoff,
- * the review-and-fix summary, and the docs — no CEO summary.
+ * (review-direct → apply-review) instead of the reflect-then-round-2 loop. Docs
+ * are NOT reconciled here — they moved to the `publish` phase, where they ride
+ * the PR (the arc now opens one). The Ship packet is the handoff and the
+ * review-and-fix summary — no docs, no CEO summary; approving it enters PUBLISH.
  */
 export function implementPhaseEntryPrompt(state: RunState, roundCap: number): string {
   return `<task>
@@ -579,12 +576,56 @@ The arc — there is no spec or plan here; the research decisions are the source
 1. Send the implementer the implement-direct prompt: build the change directly from the research decisions, rereading the decisions and the code it touches first, working in coherent commits and keeping tests green as it goes. There is no plan file to commit — the decisions carry the design. Never descope or thin tests to fit a turn: a fresh prompt carries a fresh budget ceiling, so trimming scope for budget is a product decision that needs work-content reasons and an honest line in the Ship packet. Have the implementer keep ephemeral verification harnesses (throwaway tsconfigs, scratch scripts) under .duet/scratch/ or delete them before handoff, so they don't ride the worktree as untracked strays. (Gotcha: a worker can't watch its own budget — a turn that hits the per-turn cap or time limit is cut off mechanically, surfacing as a failed or short response, not a graceful "I'm low" report. Its committed work is on disk, so just resume that session with a short continue prompt for the rest; that's resumption, not a content failure, so don't re-send the original prompt.)
 2. When the build is in: handoff-direct from the implementer — it orients the reviewer fast (what changed, where to look hardest), tied to the research decisions rather than a spec/plan.
 3. One writable review round — this arc has exactly one, no second pass: review-direct to the reviewer (it reviews against the research decisions and the actual goal, not a document), then apply-review to the implementer. apply-review is writable: the implementer assesses each point, fixes the valid ones in place, pushes back on the rest with reasons, and reports what it changed. The backstop cap for this phase is ${roundCap} review round.
-4. Reconcile the docs before you advance — send the implementer a reconcile-docs prompt. This arc opens no PR, so the docs have to be part of the shippable state the human reviews at the Ship gate, not a later step. The framing names how this project updates its docs (usually a docs or skill file given by PATH — send the implementer that path, never a slash command a headless worker can't expand; if the framing gives only a slash command, ask_human, and if it names nothing, have the implementer survey the repo's docs and derive the impact from what shipped). The implementer still holds the build it just made, so it documents from that fresh context and commits directly — no separate docs review round. A genuine product call about the docs stays the human's — deleting a documented concept, rewriting a design claim, pruning a superseded doc — so flag those with ask_human; tactical choices settle against the project's doc standards.
-5. Call advance_phase with a lean Ship packet: the implementation handoff, the review-and-fix summary (what the reviewer raised, what was fixed, anything disputed), the docs you updated, and the test state. There is no CEO summary in this arc — the human reads what shipped, the review outcome, and the docs. The human returns from away and decides to ship from this packet, so it must reflect the final state of the code and docs.${consultantAuditStep(state, 'implement', "the research decisions treated as the design, the implemented change, and the consultant's own prior research-checkpoint findings — not the raw build or review traffic.")}
+4. Call advance_phase with a lean Ship packet: the implementation handoff, the review-and-fix summary (what the reviewer raised, what was fixed, anything disputed), and the test state. There is no CEO summary in this arc — the human reads what shipped and the review outcome. Docs are not reconciled here — that happens next, in the PUBLISH phase, where they ride the PR. Approving the Ship gate enters PUBLISH (reconcile docs → open the real PR); rejecting returns the work to you here. The human returns from away and decides to ship from this packet, so it must reflect the final state of the code.${consultantAuditStep(state, 'implement', "the research decisions treated as the design, the implemented change, and the consultant's own prior research-checkpoint findings — not the raw build or review traffic.")}
 
 Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
 
 ${IMPLEMENT_EXAMPLES}
+</task>`;
+}
+
+/**
+ * RIR's PUBLISH phase — the finishing tail, the mirror of Full's `finish`, but it
+ * opens a REAL (non-draft) PR. One continuous orchestrator session: reconcile the
+ * docs (they ride the PR now that the arc opens one) → write the PR description →
+ * open the PR with `gh pr create`. The Open-PR gate sits AFTER the open:
+ * pre-authorized (the `afk` posture), the PR opens and the gate auto-crosses to
+ * done; attended (`publish` in gates_at), the run stops at the opened PR — approve
+ * completes the run, reject re-enters to amend it (feedbackResumePrompt's amend
+ * clause, which reads draftPr=false so it never forces a draft). The open is
+ * idempotent by a worker-side `gh pr view` check, so a re-entry or crash-resume
+ * edits the existing PR rather than failing on a second create.
+ *
+ * Why no draft (unlike Full): rir is small, well-understood work and the human
+ * owns the merge regardless. The env-verification reminder still rides the PR as a
+ * "Verification (pending)" checklist, because under the afk posture the Ship gate
+ * auto-crossed unattended — the PR opens before the human has run migrations/smoke
+ * tests, so the checklist is their standing reminder before they merge.
+ */
+export function publishPhaseEntryPrompt(state: RunState, roundCap: number): string {
+  const attended = gateAttended(state, 'publish');
+  return `<task>
+${approvalClause(
+    state,
+    'implement',
+    'The human approved the Ship gate — the implementation is verified and shipping.',
+    'The Ship gate was pre-authorized at run start and auto-crossed — the implementation packet is recorded for the human, and their environment verification (migrations, smoke tests) is still pending; what you ship here describes work that has not yet had a human eye.',
+  )} Run the PUBLISH phase — reconcile the docs, write the PR description, and open the PR (a real PR, not a draft), in one continuous pass:
+
+1. Reconcile the docs with what shipped: send the implementer a reconcile-docs prompt. The framing names how this project updates its docs (often a docs or skill file given by PATH — send the implementer that path, never a slash command a headless worker can't expand; if the framing gives only a slash command with no path, treat it as incomplete and ask_human rather than inventing one; if it names nothing, have the implementer survey the repo's docs and derive the impact from what shipped). The implementer applies and commits the doc changes directly — there is no docs gate; the diff rides the branch into the PR where the human reviews it with the rest. A genuine doc-scope product call — deleting a documented concept, rewriting a design claim, pruning a superseded doc — stays the human's: flag it with ask_human (it pauses the run).
+2. Write the PR description: send the implementer the pr-description snippet. The body must carry a "Verification (pending)" checklist of the environment checks the human still owes before merge — migrations, smoke tests, anything the Ship packet flagged — ${
+    attended
+      ? 'so the human verifies in their own environment before merging the PR they review here'
+      : 'because under the afk posture the Ship gate auto-crossed unattended: this PR opens before the human has verified the environment, so the checklist is their standing reminder to verify before they merge'
+  }. A review round on the description is available when it warrants one (backstop cap ${roundCap}); most are a single pass.
+3. Open the PR, idempotently. Have the implementer first check whether a PR already exists for this branch (gh pr view, or gh pr list --head <branch>): if none exists, push the branch and run gh pr create with the title and description; if one already exists (a re-entry, a resumed run, or a PR already on the branch), don't create a second one — amend it in place (gh pr edit for the body, push any new commits). This arc opens a real, ready PR — not a draft — so there is no draft state to force. Report the PR URL. If the push or PR creation fails for an environment reason (auth, remote, permissions), that's the human's to fix: ask_human with the error.
+4. Call advance_phase with the PR URL leading the summary — this is the Open-PR packet. ${
+    attended
+      ? 'The Open-PR gate is attended: the human reads the packet and the opened PR, then approves (the run completes) or rejects with feedback (you re-enter to amend the open PR).'
+      : 'The Open-PR gate is pre-authorized: the PR is already open, so your packet is recorded and the gate auto-crosses straight to done — make the summary self-contained, leading with the PR URL.'
+  }
+
+Throughout: flag product or direction questions with ask_human; tactical questions bounce to the worker.
 </task>`;
 }
 
@@ -609,6 +650,7 @@ const phaseBriefBuilders = {
   finish: finishPhaseEntryPrompt,
   research: researchPhaseEntryPrompt,
   implement: implementPhaseEntryPrompt,
+  publish: publishPhaseEntryPrompt,
 } satisfies Record<PhaseName, (state: RunState, cap: number) => string>;
 
 export function buildPhaseBrief(state: RunState, phase: PhaseName): string {
@@ -666,25 +708,25 @@ export function feedbackResumePrompt(phase: PhaseName, feedback: string): string
   const reviseClause = reRunsReviewLoop
     ? 'run whatever review rounds the changes warrant (with the -again variants), and advance the phase again when converged'
     : "have the implementer apply the changes directly and advance the phase again — this phase doesn't re-run a reviewer round on re-entry, so the human's feedback is the revision itself, not the trigger for a new review pass";
-  // A phase that folds its docs in before the gate (RIR implement) carries the
-  // docs requirement only in its initial brief — not in this resume prompt — and
-  // has no downstream docs/PR phase to catch drift. So on a rejection, remind the
-  // orchestrator to refresh the docs when the feedback changes the code, or a
-  // re-advance can ship a docs commit describing the rejected implementation.
-  const docsRefresh = PHASE[phase].foldsDocs
-    ? ' If the feedback changes what the code does, have the implementer refresh the docs it updated before this gate so they still describe the shipped behavior — this arc folds docs into the build and opens no PR, so a stale docs commit would ship uncaught.'
+  // The PR is already open by the time an openPrGate reject is reached (Full's
+  // finish opens a draft PR, rir's publish a real one — both before advancing), so
+  // a reject AMENDS it in place — gh pr edit / more commits — never re-opens it; a
+  // second gh pr create would error. Keyed off the gate state (the same fact
+  // status's opensPr reads); the draft-forcing tail is draftPr-conditional — Full
+  // forces draft-until-verified, rir's real PR has no draft state to hold. (RIR's
+  // implement no longer folds docs in, so there is no foldsDocs clause here — a
+  // Ship-gate reject just routes feedback to the build, and docs reconcile later
+  // in the publish phase regardless.)
+  const opensPr = PHASE[phase].gate?.state === 'openPrGate';
+  const draftClause = PHASE[phase].draftPr
+    ? ' Keep it a draft (gh pr ready --undo if it has been marked ready), so re-advancing can\'t auto-cross a mergeable, env-unverified PR.'
     : '';
-  // The PR is already open by the time this gate is reached (Full's finish opens
-  // a draft PR before advancing), so a reject AMENDS it in place — gh pr edit /
-  // more commits — never re-opens it; a second gh pr create would error. Keyed off
-  // the gate state, the same way status derives "this phase opens a PR".
-  const amendsOpenPr = PHASE[phase].gate?.state === 'openPrGate';
-  const amendClause = amendsOpenPr
-    ? ' The PR is already open as a draft — have the implementer amend it in place (gh pr edit for the description, more commits + push for code or doc changes) and never run gh pr create again (it errors on an existing PR); keep it a draft (gh pr ready --undo if it has been marked ready), so re-advancing can\'t auto-cross a mergeable, env-unverified PR. If the feedback changes what shipped, refresh the docs commit too so it still describes the branch. Re-advance with the PR URL still leading the packet.'
+  const amendClause = opensPr
+    ? ` The PR is already open — have the implementer amend it in place (gh pr edit for the description, more commits + push for code or doc changes) and never run gh pr create again (it errors on an existing PR).${draftClause} If the feedback changes what shipped, refresh the docs commit too so it still describes the branch. Re-advance with the PR URL still leading the packet.`
     : '';
   return `At the gate, the human sent the ${artifact} back with this feedback: ${JSON.stringify(
     feedback,
-  )}. Re-enter the phase to address it — route the feedback to the implementer (the human is the editor-in-chief; their feedback outranks reviewer opinions), ${reviseClause}.${docsRefresh}${amendClause} Your workers kept their full context from before the gate: steer them with deltas to the frames they already hold (what changed and why), not by re-running templates they've already received.`;
+  )}. Re-enter the phase to address it — route the feedback to the implementer (the human is the editor-in-chief; their feedback outranks reviewer opinions), ${reviseClause}.${amendClause} Your workers kept their full context from before the gate: steer them with deltas to the frames they already hold (what changed and why), not by re-running templates they've already received.`;
 }
 
 export function nudgeContinuePrompt(): string {

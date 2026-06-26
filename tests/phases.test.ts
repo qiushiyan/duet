@@ -145,7 +145,7 @@ describe("the Full workflow derives today's arc", () => {
 
   test('PHASE indexes every phase across all workflows, flat', () => {
     expect(Object.keys(PHASE).sort()).toEqual(
-      ['frame', 'impl', 'implement', 'finish', 'plan', 'research', 'spec'].sort(),
+      ['frame', 'impl', 'implement', 'finish', 'plan', 'publish', 'research', 'spec'].sort(),
     );
     expect(PHASE['impl'].gate?.state).toBe('shipGate');
     expect(PHASE['finish'].gate?.state).toBe('openPrGate'); // open-then-review in one phase
@@ -163,23 +163,35 @@ describe("the Full workflow derives today's arc", () => {
 });
 
 describe('the RIR workflow', () => {
-  test('phasesOf("rir") is research → implement', () => {
-    expect(phasesOf('rir').map((p) => p.name)).toEqual(['research', 'implement']);
+  test('phasesOf("rir") is research → implement → publish', () => {
+    expect(phasesOf('rir').map((p) => p.name)).toEqual(['research', 'implement', 'publish']);
   });
 
-  test('both RIR phases are gates; reused gate-state names resolve within the workflow', () => {
-    expect(gatePhasesOf('rir')).toEqual(['research', 'implement']);
+  test('all three RIR phases are gates; reused gate-state names resolve within the workflow', () => {
+    expect(gatePhasesOf('rir')).toEqual(['research', 'implement', 'publish']);
     expect(phaseOfGateState('rir', 'directionGate')).toBe('research');
     expect(phaseOfGateState('rir', 'shipGate')).toBe('implement');
-    // The Full-only gate states do not resolve inside RIR.
+    // openPrGate is reused from Full (resolution is workflow-scoped) — in RIR it
+    // maps to the publish phase, the finishing tail that opens the PR.
+    expect(phaseOfGateState('rir', 'openPrGate')).toBe('publish');
+    // A Full-only gate state still does not resolve inside RIR.
     expect(phaseOfGateState('rir', 'commitSpecGate')).toBeUndefined();
-    expect(phaseOfGateState('rir', 'openPrGate')).toBeUndefined();
   });
 
   test('implement is the writable single review round (roundCap 1)', () => {
     const implement = phasesOf('rir').find((p) => p.name === 'implement')!;
     expect.soft(implement.reviewLoop).toBe(true);
     expect.soft(implement.roundCap).toBe(1);
+  });
+
+  test('publish opens a REAL (non-draft) PR — the finishing tail, mechanics not a review loop', () => {
+    const publish = phasesOf('rir').find((p) => p.name === 'publish')!;
+    expect.soft(publish.gate?.state).toBe('openPrGate');
+    expect.soft(publish.reviewLoop).toBe(false);
+    // draftPr distinguishes RIR's real PR from Full's draft — the single fact the
+    // shared reject-amend clause reads.
+    expect.soft(publish.draftPr).toBe(false);
+    expect.soft(PHASE['finish'].draftPr).toBe(true);
   });
 });
 
@@ -195,10 +207,11 @@ describe('consultant checkpoints (registry data per arc)', () => {
     expect.soft(consultantCheckpointOf('finish')).toBeUndefined();
   });
 
-  test('RIR is unchanged: frame@research, implGate@implement, and NO contract/verify/specGate', () => {
+  test('RIR consultant modes: frame@research, implGate@implement, publish carries none; NO contract/verify/specGate', () => {
     expect.soft(consultantCheckpointOf('research')).toBe('frame');
     expect.soft(consultantCheckpointOf('implement')).toBe('implGate');
-    const rirModes = [...WORKFLOWS.rir.phases].map((p) => p.consultantCheckpoint);
+    expect.soft(consultantCheckpointOf('publish')).toBeUndefined();
+    const rirModes = phasesOf('rir').map((p) => p.consultantCheckpoint);
     // RIR authors no contract (no plan phase), so it never verifies one — implGate
     // stays the open-ended bet audit; it is not globally re-pointed to verify.
     expect.soft(rirModes).not.toContain('specGate');
