@@ -196,8 +196,15 @@ export interface RunState {
    * turn, not a live one. Distinct from the in-memory `turnsInFlight`
    * concurrency guard, which never persists. A hint like everything here:
    * stale-after-crash is acceptable because doctor cross-checks it.
+   *
+   * `sessionId` is THIS turn's provider session id, staged as soon as the
+   * provider announces it (`recordTurnSessionId`, from RunTurnOptions.onSessionId)
+   * — at/near turn start, not at settle. The live-activity heartbeat locates the
+   * worker's transcript by it, so a worker's FIRST turn (and every ephemeral
+   * consultant turn, whose settled `workerSessions` id is the *prior* session) is
+   * no longer blind. Absent until the announce; never load-bearing.
    */
-  activeTurns?: Partial<Record<WorkerRole, { tag: string; startedAt: string }>>;
+  activeTurns?: Partial<Record<WorkerRole, { tag: string; startedAt: string; sessionId?: string }>>;
   /**
    * The interactive-host pending-turn lifecycle projection (async send_prompt):
    * a dispatched worker turn carried through `running` → `ready`|`failed` →
@@ -482,6 +489,26 @@ export function clearTurnActive(state: RunState, role: WorkerRole): void {
     saveRunState(fresh);
   }
   if (state.activeTurns) delete state.activeTurns[role];
+}
+
+/**
+ * Stage THIS turn's provider session id onto the active-turn hint, as soon as the
+ * provider announces it (RunTurnOptions.onSessionId). The live-activity heartbeat
+ * locates the worker's transcript by this id — known at/near turn start — instead
+ * of the settled `workerSessions` id (which only lands at settle, so a first turn
+ * was blind, and which for the ephemeral consultant is the *prior* session). Same
+ * fresh-load → mutate-this-role → save discipline as markTurnActive, with the
+ * passed copy kept in sync. A no-op when the role has no active-turn entry (a
+ * settle already cleared it), so a late announce can't resurrect a finished turn.
+ */
+export function recordTurnSessionId(state: RunState, role: WorkerRole, sessionId: string): void {
+  const fresh = loadRunState(state.cwd, state.runId);
+  const entry = fresh.activeTurns?.[role];
+  if (entry) {
+    entry.sessionId = sessionId;
+    saveRunState(fresh);
+  }
+  if (state.activeTurns?.[role]) state.activeTurns[role].sessionId = sessionId;
 }
 
 /**

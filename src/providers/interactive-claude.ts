@@ -147,6 +147,31 @@ export function parseInteractiveTurn(tail: string, opts: { nonce: string }): Wor
   return undefined;
 }
 
+/**
+ * This turn's session id as soon as the transcript reveals it — the nonce-bearing
+ * user record (turn-open), or the first record after it, carrying a `sessionId`.
+ * Unlike the headless transports, the interactive worker does not predeclare an id
+ * (it cannot pass `--session-id` through the TUI), so a FRESH turn learns its id
+ * only from the transcript — but well before turn-close, which is what lets the
+ * live-activity poll locate the transcript mid-turn instead of waiting for settle.
+ * Reads the SAME `sessionId` field `parseInteractiveTurn` already trusts; undefined
+ * until one is visible (the watcher keeps polling).
+ */
+export function sessionIdForNonce(tail: string, nonce: string): string | undefined {
+  const records: ParsedRecord[] = [];
+  for (const line of tail.split('\n')) {
+    const rec = parseLine(line);
+    if (rec) records.push(rec);
+  }
+  const openIdx = records.findIndex((r) => isTurnOpen(r, nonce));
+  if (openIdx < 0) return undefined;
+  for (const rec of records.slice(openIdx)) {
+    const id = sessionIdOf(rec);
+    if (id !== undefined) return id;
+  }
+  return undefined;
+}
+
 // === injection ===
 
 /** The per-turn correlation marker the injection appends to the prompt body. */
@@ -264,13 +289,27 @@ async function waitUntilReady(pane: PaneController, deadline: number): Promise<v
   throw new Error('interactive claude: the session was not ready for input before the per-turn timeout');
 }
 
-/** Watch the transcript until this turn closes, or throw at the per-turn deadline. */
-async function watchForTurn(store: TranscriptStore, nonce: string, deadline: number): Promise<WorkerTurn> {
+/**
+ * Watch the transcript until this turn closes, or throw at the per-turn deadline.
+ * `onSessionId` (a FRESH turn's only id source — see runTurn) fires once, the first
+ * time the located transcript reveals this turn's session id, so the live-activity
+ * poll can start mid-turn rather than at settle.
+ */
+async function watchForTurn(store: TranscriptStore, nonce: string, deadline: number, onSessionId?: (id: string) => void): Promise<WorkerTurn> {
   let located: string | undefined;
+  let announced = false;
   while (Date.now() < deadline) {
     if (!located) located = store.locate(nonce); // throws on an ambiguous match
     if (located) {
-      const turn = parseInteractiveTurn(store.read(located), { nonce });
+      const tail = store.read(located);
+      if (!announced) {
+        const sessionId = sessionIdForNonce(tail, nonce);
+        if (sessionId !== undefined) {
+          onSessionId?.(sessionId);
+          announced = true;
+        }
+      }
+      const turn = parseInteractiveTurn(tail, { nonce });
       if (turn) return turn;
     }
     await sleep(POLL_INTERVAL_MS);
@@ -326,6 +365,11 @@ export class InteractiveClaudeWorker implements WorkerProvider {
         'interactive claude cannot run a read-only turn: the interactive transport always launches with bypass permissions, so it serves the read-write implementer only. A read-only interactive worker (a claude reviewer) is a production item — bind that role to headless claude or codex instead.',
       );
     }
+    // A resume already knows its id — announce it now (as early as the headless
+    // transports do). A fresh turn has no predeclared id (the TUI takes no
+    // --session-id), so it learns its id from the transcript: watchForTurn fires
+    // onSessionId the first time the nonce-bearing record reveals it.
+    if (opts.sessionId) opts.onSessionId?.(opts.sessionId);
     const nonce = randomBytes(8).toString('hex');
     const store = new TranscriptStore(searchDirs(this.transcriptRoot, opts.cwd));
     const pane = this.newPane({
@@ -338,7 +382,7 @@ export class InteractiveClaudeWorker implements WorkerProvider {
       await pane.open();
       await waitUntilReady(pane, deadline);
       await pane.submitPrompt(injectionBody(opts.prompt, nonce));
-      return await watchForTurn(store, nonce, deadline);
+      return await watchForTurn(store, nonce, deadline, opts.sessionId ? undefined : opts.onSessionId);
     } finally {
       await pane.kill().catch(() => {});
     }
