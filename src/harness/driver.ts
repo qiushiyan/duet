@@ -13,6 +13,7 @@ import {
   loadRunState,
   markSteersDelivered,
   recordContextUsage,
+  recordPhaseLabel,
   saveRunState,
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
@@ -250,6 +251,8 @@ async function drivePhase(
 
   const prompt = buildPrompt(state, phase, pendingMessage);
 
+  // Refresh the view-only phase sidecar the tmux orchestrator border reads.
+  recordPhaseLabel(state, phase);
   appendVoiceLog(state, 'orchestrator', `◀ harness prompt (phase=${phase})`, prompt);
   let result = await driveTurn(prompt, options);
 

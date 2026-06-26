@@ -7,13 +7,11 @@ import { claudeApiError, claudeAssistantText, jsonl, plantClaudeTranscript } fro
 import {
   ORCHESTRATOR_SYSTEM_PROMPT,
   buildPhaseBrief,
-  docsPhaseEntryPrompt,
   feedbackResumePrompt,
+  finishPhaseEntryPrompt,
   framePhaseEntryPrompt,
   implementPhaseEntryPrompt,
-  openPhaseEntryPrompt,
   planPhaseEntryPrompt,
-  prPhaseEntryPrompt,
   researchPhaseEntryPrompt,
   specPhaseEntryPrompt,
 } from '../src/harness/orchestrator-prompts.ts';
@@ -94,29 +92,37 @@ describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)
     expect(buildPhaseBrief(run, phase).trim().length).toBeGreaterThan(0);
   });
 
-  test('the open-phase prompt is honest about how the Open-PR gate was crossed (#2)', ({ run }) => {
-    run.gatesAt = ['pr']; // attended: the human approved opening the PR
-    expect.soft(openPhaseEntryPrompt(run)).toContain('The human approved opening the PR');
+  test('the finish-phase prompt is open-then-review: opens a draft PR, then attended reviews it / pre-authorized auto-crosses (A/B/D)', ({ run }) => {
+    // The PR opens (as a draft) regardless of attendance — attendance only gates
+    // the POST-open stop. Both postures carry the Verification (pending) checklist.
+    run.gatesAt = ['finish']; // attended: the human reviews the opened draft PR
+    const attended = finishPhaseEntryPrompt(run, PHASE.finish.roundCap);
+    expect.soft(attended).toContain('gh pr create --draft');
+    expect.soft(attended).toContain('Verification (pending)');
+    expect.soft(attended).toContain('the human reads the packet and the opened draft PR');
 
-    run.gatesAt = ['frame']; // pr not listed → pre-authorized, auto-opened (no human tap)
-    const preAuth = openPhaseEntryPrompt(run);
-    expect.soft(preAuth).toContain('pre-authorized');
-    expect.soft(preAuth).not.toContain('The human approved opening the PR');
+    run.gatesAt = ['frame']; // finish not listed → pre-authorized: opens, then auto-crosses
+    const preAuth = finishPhaseEntryPrompt(run, PHASE.finish.roundCap);
+    expect.soft(preAuth).toContain('gh pr create --draft');
+    expect.soft(preAuth).toContain('auto-crosses straight to done');
+    expect.soft(preAuth).not.toContain('the human reads the packet and the opened draft PR');
   });
 
-  test('the pr-phase prompt is state-aware about the Open-PR packet, not a mandatory stop (#2)', ({ run }) => {
-    // Attended: the human decides from the packet at the gate.
-    run.gatesAt = ['pr'];
-    const attended = prPhaseEntryPrompt(run, PHASE.pr.roundCap);
-    expect.soft(attended).toContain('decides whether to open');
-    expect.soft(attended).not.toContain('auto-opens by default');
+  test('the finish-phase prompt makes the open idempotent (gh pr view check, amend not re-create) (C)', ({ run }) => {
+    const finish = finishPhaseEntryPrompt(run, PHASE.finish.roundCap);
+    expect.soft(finish).toContain('gh pr view');
+    expect.soft(finish).toContain('amend it in place');
+  });
 
-    // Pre-authorized (the default): the packet is recorded and auto-crossed —
-    // no "the human decides whether to open" mandatory-stop framing.
-    run.gatesAt = ['frame'];
-    const preAuth = prPhaseEntryPrompt(run, PHASE.pr.roundCap);
-    expect.soft(preAuth).toContain('auto-opens by default');
-    expect.soft(preAuth).not.toContain('decides whether to open');
+  test('the finish-phase prompt guards the draft forcing function even when a non-draft PR already exists (enhancement 1)', ({ run }) => {
+    // A pre-existing non-draft PR on the branch must be converted back to draft
+    // before advancing, or the unattended Open-PR gate would auto-cross a
+    // mergeable, env-unverified PR.
+    const finish = finishPhaseEntryPrompt(run, PHASE.finish.roundCap);
+    expect.soft(finish).toContain('gh pr view --json isDraft');
+    expect.soft(finish).toContain('gh pr ready --undo');
+    // And the reject-to-amend re-entry keeps the same draft invariant.
+    expect.soft(feedbackResumePrompt('finish', 'tweak the body')).toContain('gh pr ready --undo');
   });
 });
 
@@ -146,10 +152,11 @@ describe('the RIR entry prompts', () => {
     expect.soft(at('review-direct')).toBeLessThan(at('apply-review'));
     // The lean Ship packet — handoff + review-and-fix, no CEO summary.
     expect.soft(brief.toLowerCase()).toContain('ship');
-    // Docs fold into the implement phase before Ship — RIR opens no PR, so the
-    // docs become part of the shippable state, written directly after the review
-    // round (not a separate post-Ship phase as in Full).
-    expect.soft(at('apply-review')).toBeLessThan(brief.indexOf('Update the docs'));
+    // Docs fold into the implement phase before Ship via the shared reconcile-docs
+    // template — RIR opens no PR, so the docs become part of the shippable state,
+    // written directly after the review round (not a separate post-Ship phase as
+    // in Full).
+    expect.soft(at('apply-review')).toBeLessThan(at('reconcile-docs'));
     expect.soft(brief).toContain('no PR');
     expect.soft(brief).toContain('no separate docs review round');
     // Full-arc ceremony the RIR implement phase deliberately drops — checked
@@ -192,12 +199,22 @@ describe('feedbackResumePrompt routes a gate rejection per the phase', () => {
     expect.soft(prompt).toContain('refresh the docs');
   });
 
-  test("a folded-docs phase's rejection refreshes docs, a downstream-docs phase's does not", () => {
+  test("a folded-docs phase's rejection refreshes docs, a mid-arc phase's does not", () => {
     // The folded-docs reminder is keyed on the registry's foldsDocs flag (RIR
-    // implement), not the phase name. Full's impl re-runs its separate docs phase
-    // after a re-approved Ship, so its rejection must NOT carry the reminder.
+    // implement), not the phase name. Full's impl is followed by the finish phase,
+    // which reconciles docs after a re-approved Ship, so its rejection must NOT
+    // carry the reminder.
     expect.soft(feedbackResumePrompt('implement', 'x')).toContain('refresh the docs');
     expect.soft(feedbackResumePrompt('impl', 'x')).not.toContain('refresh the docs');
+  });
+
+  test('the open-PR gate phase (full finish) routes directly and AMENDS the open draft PR, not a re-open (A/C)', () => {
+    const prompt = feedbackResumePrompt('finish', 'tighten the PR description');
+    expect.soft(prompt).toContain('route the feedback to the implementer');
+    expect.soft(prompt).toContain("doesn't re-run a reviewer round"); // reviewLoop:false → direct
+    expect.soft(prompt).toContain('gh pr edit'); // amend the open PR in place
+    expect.soft(prompt).toContain('never run gh pr create again'); // a second create would error
+    expect.soft(prompt).not.toContain('review rounds'); // not the multi-round path
   });
 
   test('a non-loop gate phase (rir research) also routes directly, no review round', () => {
@@ -812,9 +829,9 @@ describe('provider-agnostic onboarding — workers get document paths, not slash
   test('the onboarding entry prompts name a path and never instruct slash-command expansion', ({ run }) => {
     const frame = framePhaseEntryPrompt(run, PHASE.frame.roundCap);
     const research = researchPhaseEntryPrompt(run, PHASE.research.roundCap);
-    const docs = docsPhaseEntryPrompt(run, PHASE.docs.roundCap);
+    const finish = finishPhaseEntryPrompt(run, PHASE.finish.roundCap);
 
-    for (const p of [frame, research, docs]) {
+    for (const p of [frame, research, finish]) {
       expect.soft(p).not.toContain('CLI expands it'); // the now-wrong slash-command instruction is gone
       expect.soft(p).not.toContain("include its /name");
     }
@@ -822,8 +839,8 @@ describe('provider-agnostic onboarding — workers get document paths, not slash
     expect.soft(frame).toContain('document PATHS');
     expect.soft(frame).toMatch(/incomplete[\s\S]*ask_human/);
     expect.soft(research).toContain('document PATHS');
-    // docs: send the path, never a slash command; incomplete → ask_human.
-    expect.soft(docs).toContain('never a slash command');
-    expect.soft(docs).toMatch(/incomplete[\s\S]*ask_human/);
+    // finish: the reconcile-docs step sends the path, never a slash command; incomplete → ask_human.
+    expect.soft(finish).toContain('never a slash command');
+    expect.soft(finish).toMatch(/incomplete[\s\S]*ask_human/);
   });
 });

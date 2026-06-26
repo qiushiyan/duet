@@ -13,6 +13,7 @@ Each phase pulls a few snippets in the order the orchestrator reaches for them; 
 | [`write-spec`](#write-spec) | full · spec | implementer | the first spec draft |
 | [`start-plan`](#start-plan) | full · plan | implementer | the implementation plan (vertical slices) |
 | [`implement-direct`](#implement-direct) | rir · implement | implementer | code built straight from the research decisions |
+| [`reconcile-docs`](#reconcile-docs) | full · finish, rir · implement | implementer | docs reconciled with what shipped, then committed |
 | [`review-spec`](#review-spec) | full · spec | reviewer | spec critique (at spec altitude) |
 | [`review-plan`](#review-plan) | full · plan | reviewer | plan critique |
 | [`review-implementation`](#review-implementation) | full · impl | reviewer | code review |
@@ -24,7 +25,7 @@ The full arc has no draft snippet for the implementation phase by design — the
 
 ## The generative drafts
 
-These three write the opening artifact of a phase. They carry duet's strongest opinions (a leader-facing spec summary; TDD-shaped, vertical-slice planning), so they're where customization pays off most. The [worked example](#worked-example-overriding-start-plan-to-a-non-tdd-methodology) below overrides `start-plan`.
+These write the artifact a phase produces. They carry duet's strongest opinions (a leader-facing spec summary; TDD-shaped, vertical-slice planning; how docs get reconciled with what shipped), so they're where customization pays off most. The [worked example](#worked-example-overriding-start-plan-to-a-non-tdd-methodology) below overrides `start-plan`.
 
 ### `write-spec`
 
@@ -129,6 +130,22 @@ Read these as a lens for depth — adapt, drop what doesn't fit; don't go huntin
 - `{{skills_dir}}/improve-codebase-architecture/SKILL.md` — deep modules, the deletion test, seams
 
 If a decision turns out wrong or underspecified once you're in the code, **stop and flag it** rather than guessing your way past it.
+```
+
+### `reconcile-docs`
+
+Shared by full's `finish` phase and rir's `implement` phase — the docs step. The docs ride into the PR (full) or *are* the shippable record (rir, which opens no PR), so this reconciles them with what actually shipped, commits directly (no docs gate), and holds the one product boundary back to the human (deleting a documented concept, rewriting a load-bearing design claim, pruning a superseded doc). Self-contained — it derives the doc convention from the framing, so it cites no vendored skill. Override it to change how a project reconciles docs (a different altitude, a project-specific doc skill).
+
+```text
+The docs are part of what ships with this change — they ride the same branch (and PR, where there is one) as the code, so where there's no PR they *are* the shippable record. Reconcile them with what actually shipped before we hand off, in one pass: survey, update, commit.
+
+**Derive the impact from the code, not memory.** Survey the repo's docs against the change you just made, and update what the change left **stale or made newly true** — at the project's own altitude (the level the existing docs are pitched at), nothing finer. Follow the project's doc conventions (the doc path or skill the framing names). No manufactured churn: if a doc still reads true, leave it; touch what the change actually moved.
+
+**Commit the docs directly** — no approval step. The doc commit rides with the rest of the change, so apply and commit rather than pausing for sign-off.
+
+**One boundary stays mine, not yours:** a genuine product or design call — deleting a documented concept, rewriting a load-bearing design claim, pruning a doc the work superseded — flag it and leave it, don't decide it. Everything tactical settles against the project's doc standards.
+
+When you're done, **report what you touched** — the docs changed, a one-line impact each, and anything you flagged for me.
 ```
 
 ---

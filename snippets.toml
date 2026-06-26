@@ -482,6 +482,19 @@ expand = '''
 - Reasoning debates and superseded critiques — the code already reflects their conclusions.'''
 
 [[snippets]]
+key = "reconcile-docs"
+expand = '''
+The docs are part of what ships with this change — they ride the same branch (and PR, where there is one) as the code, so where there's no PR they *are* the shippable record. Reconcile them with what actually shipped before we hand off, in one pass: survey, update, commit.
+
+**Derive the impact from the code, not memory.** Survey the repo's docs against the change you just made, and update what the change left **stale or made newly true** — at the project's own altitude (the level the existing docs are pitched at), nothing finer. Follow the project's doc conventions (the doc path or skill the framing names). No manufactured churn: if a doc still reads true, leave it; touch what the change actually moved.
+
+**Commit the docs directly** — no approval step. The doc commit rides with the rest of the change, so apply and commit rather than pausing for sign-off.
+
+**One boundary stays mine, not yours:** a genuine product or design call — deleting a documented concept, rewriting a load-bearing design claim, pruning a doc the work superseded — flag it and leave it, don't decide it. Everything tactical settles against the project's doc standards.
+
+When you're done, **report what you touched** — the docs changed, a one-line impact each, and anything you flagged for me.'''
+
+[[snippets]]
 key = "pr-description"
 expand = '''
 Write a PR description aimed at a technical colleague who **won't read the diff**.
@@ -626,7 +639,7 @@ key = "review-direct"
 expand = '''
 Code-review this implementation. **Read the actual code, not just commit messages.**
 
-There's no spec or plan for this arc — the bar is the **research decisions we settled and the actual goal behind them.** Review against those, not a document.
+There's no spec or plan here — the bar is the **research decisions we settled and the actual goal behind them.** Review against those, not a document.
 
 **Lens:**
 - Everything is fair game — correctness, structure, test quality, performance, readability, edge cases, pattern consistency.
@@ -653,7 +666,7 @@ $0'''
 [[snippets]]
 key = "apply-review"
 expand = '''
-Reviewer feedback below. This is the one review round for this arc — there's no second pass — so resolve it here: apply the fixes directly, don't just analyze.
+Reviewer feedback below. This is the one review round — there's no second pass — so resolve it here: apply the fixes directly, don't just analyze.
 
 **For each point:**
 1. **Assess validity** — honestly; don't agree just to agree.
@@ -664,7 +677,7 @@ Reviewer feedback below. This is the one review round for this arc — there's n
 
 **Tests** — when a fix changes behavior, move the tests with it: add a test for the corrected behavior, strengthen a weak one, or delete a test the fix makes obsolete. Keep the suite green.
 
-When you're done, **report what you changed in response to the review** — the fixes you applied and any points you pushed back on, grounded in the actual commits. This review-and-fix summary rides to the Ship gate alongside your handoff, so it must reflect the final state of the code, not your plan for it.
+When you're done, **report what you changed in response to the review** — the fixes you applied and any points you pushed back on, grounded in the actual commits. This review-and-fix summary travels onward to the ship review with your handoff, so it must reflect the final state of the code, not your plan for it.
 
 If a point needs my input to resolve — a real product or direction call — flag it and stop rather than guessing.
 

@@ -1,5 +1,7 @@
 # Rails-and-UX bundle — opt-in rails with friction-free defaults
 
+> **Historical (pre-`finish`).** Dated record from before the 2026-06-26 collapse of the `docs`/`pr`/`open` tail into one `finish` phase (open-then-review, draft-PR-by-default, `overnight` as full's default posture). Its **"no phase collapse"** decision (keep `pr`/`open` as separate states for the pause-before/act-after stop) was *reversed* by that collapse — the Open-PR gate now sits after a draft open. Its arc / tail / gate-posture descriptions are the topology of their time; the current arc lives in [`../automation-design.md`](../automation-design.md).
+
 **Status:** Spec. **Date:** 2026-06-21. **Branch:** `feat-rails-ux-bundle`.
 
 Inputs (problem definitions, not specs — do not edit): `docs/specs/2026-06-21-afk-handoff.md`, `docs/specs/2026-06-21-auto-open-pr.md`, `docs/specs/2026-06-21-worker-budget-policy.md`, `docs/specs/2026-06-21-interactive-run-frictions.md`. The FRAME-phase synthesis (the Direction gate packet) is the design this spec builds on; it is not re-derived here. The human approved that direction with a rider settling change #2 (recorded under "#2" below).

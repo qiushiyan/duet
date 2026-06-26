@@ -170,7 +170,8 @@ export function buildStatusModel(state: RunState, position: RunPosition, pending
     sessions: resolveSessions(state),
     ...(state.gatesAt ? { gatesAt: state.gatesAt } : {}),
     autoApprovals: (state.autoApprovals ?? []).map((a) => ({ ...a, headline: packetHeadline(state, a.gate) })),
-    // A gate-less phase (Full's `open`) is excluded — it runs no review rounds.
+    // A gate-less phase (none today; the filter is total over the registry) is
+    // excluded — it runs no review rounds.
     rounds: phasesOf(workflow)
       .filter((p) => p.gate !== null && ((state.rounds[p.name] ?? 0) > 0 || p.reviewLoop))
       .map((p) => ({ phase: p.name, used: state.rounds[p.name] ?? 0, cap: p.roundCap })),
@@ -237,7 +238,7 @@ function stopModel(state: RunState, position: RunPosition): StopModel {
         purge: `duet abandon ${state.runId} --purge`,
       };
     case 'done': {
-      // The run's last phase carries the completion summary — Full's `open`,
+      // The run's last phase carries the completion summary — Full's `finish`,
       // RIR's `implement` — not a hardcoded phase.
       const lastPhase = phasesOf(workflowOf(state)).at(-1)?.name;
       const summary = lastPhase ? state.phaseSummaries[lastPhase]?.summary : undefined;

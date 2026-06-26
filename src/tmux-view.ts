@@ -164,8 +164,11 @@ async function layoutPanes(state: RunState, orchestratorPane: string, displayWid
   // (.duet/runs/<id>/context/<voice>, e.g. "41%"), written by the harness at
   // each turn boundary and re-read by tmux at its status refresh interval —
   // a cat per interval, nothing parsed at view time. Missing file = no
-  // reading yet = empty.
-  const ctxFor = (voice: Voice) => `#(cat ${shq(join(runDirOf(state.cwd, state.runId), 'context', voice))} 2>/dev/null)`;
+  // reading yet = empty. The orchestrator pane additionally prepends the
+  // run's current phase (context/phase, written at phase entry) — it is the
+  // control-plane pane, so the run-level phase belongs there.
+  const ctxCat = (name: string) => `#(cat ${shq(join(runDirOf(state.cwd, state.runId), 'context', name))} 2>/dev/null)`;
+  const ctxFor = (voice: Voice) => (voice === 'orchestrator' ? `${ctxCat('phase')} ${ctxCat(voice)}` : ctxCat(voice));
   const voices = voicesFor(state);
   const colorBranch = paneBranch(voices, (v) => `#[fg=${ROLE_TMUX_COLOR[v]}]`);
   const ctxBranch = paneBranch(voices, ctxFor);

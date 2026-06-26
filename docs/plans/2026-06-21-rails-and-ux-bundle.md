@@ -1,5 +1,7 @@
 # Plan — Rails-and-UX bundle
 
+> **Historical (pre-`finish`).** Dated record from before the 2026-06-26 collapse of the `docs`/`pr`/`open` tail into one `finish` phase (open-then-review, draft-PR-by-default, `overnight` as full's default posture). Its `pr`/`open` topology and gate-posture copy are the state of their time — the current arc lives in [`../automation-design.md`](../automation-design.md).
+
 **For:** `docs/specs/2026-06-21-rails-and-ux-bundle.md` (committed `1a6def7`). **Date:** 2026-06-21. **Branch:** `feat-rails-ux-bundle`.
 
 Vertical slices, TDD (red→green per behavior, never horizontal). Each slice is one reviewable idea and one commit. Tests exercise behavior through the six seams (`docs/engineering.md` §Seams); **never mock our own modules** — fake only at a seam (the `WorkerProvider` adapters in `tests/helpers/fixtures.ts`, the SDK boundary `RunOrchestratorTurn`, the `ClaudeLauncher`, the Environment fs/process via `projectDir`). `pnpm typecheck && pnpm test` stays green at **every** commit (the suite is ~530 cases; `validateRegistry` runs at module load; `phaseBriefBuilders satisfies Record<PhaseName,…>` is a compile guard).

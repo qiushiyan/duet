@@ -27,6 +27,7 @@ import type { HumanEvent } from './harness/lifecycle.ts';
 import { machineFor } from './harness/machine.ts';
 import { serveKernelStdio, serveRunScopedKernelStdio } from './harness/mcp-server.ts';
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
+import { buildStatsModel, renderStats } from './stats.ts';
 import { runOrchestrate } from './orchestrate.ts';
 import { entryOf, handoffWatchLabel, phaseOfGateState } from './phases.ts';
 import { getEffectiveSnippet, loadEffectiveSnippets, runtimeLibraryContext } from './snippets.ts';
@@ -194,7 +195,7 @@ program
     `
 The shape of a run (pick the arc with --workflow on duet new):
   full:  frame → DIRECTION gate → spec → COMMIT-SPEC gate → plan → PLAN gate (walk away)
-         → impl (AFK, often hours) → SHIP gate → docs (one pass) → pr → OPEN-PR gate → done
+         → impl (AFK, often hours) → SHIP gate → finish (reconcile docs → draft PR) → OPEN-PR gate → done
   rir:   research → DIRECTION gate (walk away) → implement (AFK) → SHIP gate → done
 
 Each phase runs in a detached background driver; every command above returns
@@ -215,14 +216,14 @@ Run state: .duet/runs/<id>/ — state.json is a hint; the JSONL transcripts are 
 
 program
   .command('new')
-  .description('Start a run on the chosen arc (--workflow): full (spec → plan → implement → ship → docs → PR) or rir (research → implement → review → ship).')
+  .description('Start a run on the chosen arc (--workflow): full (spec → plan → implement → ship → PR) or rir (research → implement → review → ship).')
   .option('--spec <path>', 'path to a draft spec file; omit to start from the framing alone (the FRAME phase drafts it)')
   .option('--framing <file>', 'project briefing file — the only place project knowledge enters; omit both flags to write it in your editor')
   .option('--template <name>', 'seed the editor draft from .duet/templates/<name>.md (bare `duet new` uses .duet/templates/default.md when present); conflicts with --spec/--framing')
-  .option('--workflow <name>', 'which arc to run: full (spec → plan → implement → ship → docs → PR) or rir (research → implement → review); default full. Also settable via a workflow: framing key (flag wins)')
+  .option('--workflow <name>', 'which arc to run: full (spec → plan → implement → ship → PR) or rir (research → implement → review); default full. Also settable via a workflow: framing key (flag wins)')
   .option(
     '--gates-at <phases>',
-    'phases whose gates you attend — the set and presets are workflow-specific (full gates: frame, spec, plan, impl, pr; presets "skip-plan" = walk away at spec approval, return at the Ship gate, "overnight" = frame,spec, and full\'s PR auto-opens by default — list `pr` to attend a pre-open stop. rir gates: research, implement; preset "afk" = attend none). The rest are pre-authorized and auto-cross with their packets recorded; default: attend every gate except full\'s auto-opening PR (list `pr` to add a pre-open stop); rir attends both its gates',
+    'phases whose gates you attend — the set and presets are workflow-specific (full gates: frame, spec, plan, impl, finish; presets "skip-plan" = walk away at spec approval and return at the Ship gate, "overnight" = frame,spec. rir gates: research, implement; preset "afk" = attend none). The rest are pre-authorized and auto-cross with their packets recorded. Default for full: overnight (frame,spec) — plan, Ship, and the draft PR all auto-cross; list `finish` for a post-open review stop on the opened draft PR. rir attends both its gates',
   )
   .option(
     '--retry-infra <n>',
@@ -990,6 +991,21 @@ program
     if (!state) fail('no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
     const model = await buildDoctorModel(state, { now: Date.now() });
     console.log(opts.json ? JSON.stringify(model, null, 2) : renderDoctor(model));
+  });
+
+program
+  .command('stats')
+  .description(
+    'Effort per phase, derived from the voice logs at view time: each phase’s elapsed window and the worker-turn time inside it, plus a per-tag breakdown. Read-only and fail-soft — a missing or interactive-only log degrades to a note. Distinct from status (which never reads logs).',
+  )
+  .argument('[runId]', 'run id (defaults to the latest run in this project)')
+  .option('--json', 'emit the StatsModel for automation')
+  .action((runId: string | undefined, opts: { json?: boolean }) => {
+    const cwd = process.cwd();
+    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
+    if (!state) fail('no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
+    const model = buildStatsModel(state);
+    console.log(opts.json ? JSON.stringify(model, null, 2) : renderStats(model));
   });
 
 program

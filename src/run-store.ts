@@ -119,7 +119,7 @@ export interface RunState {
    * createRun (gate phases − the workflow's defaultPreAuthorized). Gates of
    * phases not listed are pre-authorized: the harness records the packet,
    * notifies, and auto-approves. The Open-PR gate is pre-authorized by default
-   * now (the PR auto-opens), attended only when `pr` is listed here.
+   * now (the draft PR auto-opens), attended only when `finish` is listed here.
    */
   gatesAt?: GatePhase[];
   /** Gates auto-crossed under pre-authorization, for the morning review. */
@@ -746,6 +746,23 @@ export function recordContextUsage(state: RunState, voice: Voice, usage: Context
   const dir = join(runDirOf(state.cwd, state.runId), 'context');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, voice), `${contextPercent(usage)}%\n`);
+}
+
+/**
+ * Refresh the plain-text `context/phase` sidecar the tmux orchestrator pane border
+ * re-reads at its refresh interval (a `cat` per interval, no view-time parsing),
+ * so the pane shows which phase the run is in. The view-only twin of the context
+ * sidecar — best-effort and fail-soft: a write failure is swallowed so a cosmetic
+ * sidecar can never affect the run. Writes only the sidecar, never state.json.
+ */
+export function recordPhaseLabel(state: RunState, phase: PhaseName): void {
+  try {
+    const dir = join(runDirOf(state.cwd, state.runId), 'context');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'phase'), `${phase}\n`);
+  } catch {
+    // A view-time sidecar must never affect the run — drop the write silently.
+  }
 }
 
 /**

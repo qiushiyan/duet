@@ -112,46 +112,43 @@ describe('defaultPosture — the materialized default gate posture', () => {
     expect(defaultPosture(gatePhasesOf('full'), [])).toBeUndefined();
   });
 
-  test("excluding ['pr'] over full's gate set drops only pr, order preserved", () => {
-    expect(defaultPosture(gatePhasesOf('full'), ['pr'])).toEqual(['frame', 'spec', 'plan', 'impl']);
+  test("full's default exclusion ['plan','impl','finish'] resolves to ['frame','spec'] (the overnight posture)", () => {
+    expect(defaultPosture(gatePhasesOf('full'), ['plan', 'impl', 'finish'])).toEqual(['frame', 'spec']);
   });
 
-  test('a two-element exclusion drops both, order preserved', () => {
-    expect(defaultPosture(gatePhasesOf('full'), ['spec', 'pr'])).toEqual(['frame', 'plan', 'impl']);
+  test('a single-element exclusion drops only that gate, order preserved', () => {
+    expect(defaultPosture(gatePhasesOf('full'), ['finish'])).toEqual(['frame', 'spec', 'plan', 'impl']);
   });
 });
 
 describe("the Full workflow derives today's arc", () => {
   // A literal pin (not self-derived): a malformed registry can't pass a test
   // that also derives its expectation from the registry.
-  test('phasesOf("full") is the seven-phase arc in order', () => {
+  test('phasesOf("full") is the five-phase arc in order (the finishing tail collapsed to finish)', () => {
     expect(phasesOf('full').map((p) => p.name)).toEqual([
       'frame',
       'spec',
       'plan',
       'impl',
-      'docs',
-      'pr',
-      'open',
+      'finish',
     ]);
   });
 
-  test('gatePhasesOf("full") is every gate phase — docs and open are gate-less', () => {
-    expect(gatePhasesOf('full')).toEqual(['frame', 'spec', 'plan', 'impl', 'pr']);
+  test('gatePhasesOf("full") is every phase — finish carries the Open-PR gate, none are gate-less', () => {
+    expect(gatePhasesOf('full')).toEqual(['frame', 'spec', 'plan', 'impl', 'finish']);
   });
 
-  test('full pre-authorizes the Open-PR gate by default and force-attends nothing (#2)', () => {
-    expect.soft(WORKFLOWS.full.forceAttend).toEqual([]); // pr dropped — opening a PR is reversible
-    expect.soft(WORKFLOWS.full.defaultPreAuthorized).toEqual(['pr']); // disjoint from forceAttend (validateRegistry guards it)
+  test('full pre-authorizes plan, impl, and finish by default (the overnight posture) and force-attends nothing', () => {
+    expect.soft(WORKFLOWS.full.forceAttend).toEqual([]); // a draft PR open is reversible
+    expect.soft(WORKFLOWS.full.defaultPreAuthorized).toEqual(['plan', 'impl', 'finish']); // disjoint from forceAttend (validateRegistry guards it)
   });
 
   test('PHASE indexes every phase across all workflows, flat', () => {
     expect(Object.keys(PHASE).sort()).toEqual(
-      ['docs', 'frame', 'impl', 'implement', 'open', 'pr', 'plan', 'research', 'spec'].sort(),
+      ['frame', 'impl', 'implement', 'finish', 'plan', 'research', 'spec'].sort(),
     );
     expect(PHASE['impl'].gate?.state).toBe('shipGate');
-    expect(PHASE['docs'].gate).toBeNull(); // docs is gate-less — one-pass update + commit
-    expect(PHASE['open'].gate).toBeNull();
+    expect(PHASE['finish'].gate?.state).toBe('openPrGate'); // open-then-review in one phase
   });
 
   test('phaseOfGateState resolves within the workflow, undefined otherwise', () => {
@@ -161,7 +158,7 @@ describe("the Full workflow derives today's arc", () => {
   });
 
   test('gateOf returns the gate spec for a gate phase', () => {
-    expect(gateOf('pr').state).toBe('openPrGate');
+    expect(gateOf('finish').state).toBe('openPrGate');
   });
 });
 
@@ -195,7 +192,7 @@ describe('consultant checkpoints (registry data per arc)', () => {
     expect.soft(consultantCheckpointOf('plan')).toBe('contract');
     expect.soft(consultantCheckpointOf('impl')).toBe('verify');
     // Phases without a checkpoint carry none.
-    expect.soft(consultantCheckpointOf('docs')).toBeUndefined();
+    expect.soft(consultantCheckpointOf('finish')).toBeUndefined();
   });
 
   test('RIR is unchanged: frame@research, implGate@implement, and NO contract/verify/specGate', () => {
@@ -216,7 +213,7 @@ describe('consultant checkpoints (registry data per arc)', () => {
     expect.soft(consultantSnippetFor('impl')).toBe('consultant-verify');
     expect.soft(consultantSnippetFor('research')).toBe('consultant-frame');
     expect.soft(consultantSnippetFor('implement')).toBe('consultant-impl');
-    expect.soft(consultantSnippetFor('docs')).toBeUndefined(); // a non-checkpoint phase
+    expect.soft(consultantSnippetFor('finish')).toBeUndefined(); // a non-checkpoint phase
     // The consultant snippets are phase-bound to their checkpoint phases and
     // never carry the review- prefix (which countsReviewRound keys on).
     for (const snippet of ['consultant-frame', 'consultant-spec', 'consultant-impl', 'consultant-contract', 'consultant-verify']) {

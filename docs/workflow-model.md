@@ -23,7 +23,7 @@ PLANNING (attended — orchestrator drives, human acts at gates and flags)
   SPEC ⇄ review/update rounds          loop exit: orchestrator judgment
     ── Commit-spec gate ──
   PLAN ⇄ review/update rounds          planning keeps full spec-exploration context
-    ── Plan-approval gate ──            ← human walks away
+    ── Plan-approval gate ──            ← interactive→headless handoff; under the default `overnight` the human already walked away after the spec
 
 IMPLEMENTATION (AFK — flags queue, process exits on them)
   COMPACT            compact-for-impl, then re-anchor read (plan→impl boundary)
@@ -35,17 +35,18 @@ IMPLEMENTATION (AFK — flags queue, process exits on them)
   REVIEW ⇄ respond/fix rounds          loop exit: orchestrator judgment,
                                        hard backstop caps in the harness
   CEO-SUMMARY        implementer drafts; last act of the phase
-    ── Ship gate ──                     ← human returns; verifies (migrations, smoke tests) + reads packet
+    ── Ship gate ──                     ← auto-crosses by default (overnight); attended (skip-plan) → human returns, verifies (migrations, smoke tests), reads packet
 
-FINAL REVIEW (finishing — unattended by default)
-  UPDATE_DOCS        skill; one pass — update and commit, no gate
+FINAL REVIEW (one phase, finish — unattended by default)
+  RECONCILE_DOCS     reconcile-docs; one pass — update and commit, no gate
   PR_DESCRIPTION     implementer drafts for the PR body
-    ── Open-PR gate ──                  ← auto-opens by default; gates_at: pr adds a pre-open stop
+  OPEN               gh pr create --draft
+    ── Open-PR gate ──                  ← after the open: the draft PR is already open. Auto-crosses to done by default; gates_at: finish adds a post-open review stop
 ```
 
 Observed round counts: spec 2, plan 1, impl review 1 in the original example session; the user's general description says impl review runs 2–3. Under the pivot these inform the orchestrator's judgment and the sizing of the harness's runaway backstops (see `docs/automation-design.md` §"Loop semantics"), not a fixed exit rule.
 
-Gates may be **pre-authorized per run** (`gates_at`, 2026-06-12 — `docs/automation-design.md` §"Gate pre-authorization"): the harness auto-crosses them on the human's standing approval, packet recorded and notification fired, and the orchestrator carries the would-be gate questions forward as encoded recommendations (with an `ask_human` escape hatch for calls that would make downstream work throwaway). The Open-PR gate is pre-authorized by default (the PR auto-opens; reversed 2026-06-22) — list `pr` in `gates_at` for a pre-open stop. The orchestrator's posture instructions are rendered deterministically from the parsed value, never inferred from framing prose.
+Gates may be **pre-authorized per run** (`gates_at`, 2026-06-12 — `docs/automation-design.md` §"Gate pre-authorization"): the harness auto-crosses them on the human's standing approval, packet recorded and notification fired, and the orchestrator carries the would-be gate questions forward as encoded recommendations (with an `ask_human` escape hatch for calls that would make downstream work throwaway). `overnight` (= `frame,spec`) is full's default posture (2026-06-26): plan, Ship, and the Open-PR gate auto-cross unless listed. The Open-PR gate sits *after* the open — the draft PR is already open when it is reached, so it auto-crosses to done by default; list `finish` in `gates_at` for a post-open review stop (reject re-enters `finish` to amend the open PR). The orchestrator's posture instructions are rendered deterministically from the parsed value, never inferred from framing prose.
 
 ## The snippet vocabulary
 
@@ -98,7 +99,7 @@ Evidence for the move: the user repeatedly makes a free-form "CEO-reframe" reque
 
 - **PLANNING** → a committed spec file (path per project convention, e.g. `docs/superpowers/specs/YYYY-MM-DD-<slug>.md` **(observed)**) and an approved plan file (path named by the framing; a repo file rather than in-conversation, because implementation-phase compaction re-anchors on it — the orchestrator flags the human if the framing names no plan location).
 - **IMPLEMENTATION** → commits (one per slice, plus review-fix commits), the implementation handoff, the review history, and the CEO summary.
-- **FINAL REVIEW** → doc updates, the PR description, a pushed branch, and an opened PR.
+- **FINAL REVIEW** (`finish`) → reconciled-and-committed docs, the PR description, a pushed branch, and an opened **draft** PR.
 
 ## Loop semantics
 

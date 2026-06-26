@@ -266,6 +266,28 @@ describe('no CLI help / template copy carries a Full-only-arc claim', () => {
     }
   });
 
+  test('no user-facing surface teaches the deleted `pr` gate token or the old docs/pr/open tail (H/Critical)', () => {
+    // After H, `pr` is no longer a gate token (parseGatesAt rejects it), so any
+    // surface that tells a user to list `pr`, lists pr as a full gate, or shows
+    // the old docs→pr→open tail points them at an invalid value. Covers every
+    // user-facing surface — the CLI help, the framing seed, AND the shipped-skill
+    // .md narrative (all migrated to the post-open `finish` model).
+    const surfaces = [
+      ...cliCopyStrings(),
+      { label: 'framing seed template', text: FRAMING_TEMPLATE },
+      { label: 'duet-frame SKILL.md', text: duetFrameMd },
+      { label: 'concierge SKILL.md', text: skillMd },
+      { label: 'concierge cli-reference.md', text: referenceMd },
+    ];
+    for (const { label, text } of surfaces) {
+      const lower = text.toLowerCase();
+      expect.soft(lower, `"${label}" still tells users to list \`pr\``).not.toContain('list `pr`');
+      expect.soft(lower, `"${label}" still lists pr as a full gate`).not.toContain('impl, pr');
+      expect.soft(lower, `"${label}" still describes a pre-open stop`).not.toContain('pre-open');
+      expect.soft(lower, `"${label}" still shows the "docs (one pass)" tail`).not.toContain('docs (one pass)');
+    }
+  });
+
   test('the arc-bearing surfaces name both arcs (the finding-1 residual sites)', () => {
     const opt = (cmd: string, long: string) =>
       (publicCommands.get(cmd)?.options.find((o) => o.long === long)?.description ?? '').toLowerCase();
@@ -290,13 +312,14 @@ describe('no CLI help / template copy carries a Full-only-arc claim', () => {
   });
 });
 
-describe('shipped gate-posture copy teaches the auto-open-PR default (rails bundle #2)', () => {
-  // The PR auto-opens by default now (phases.ts: full's forceAttend: [],
-  // defaultPreAuthorized: ['pr']). Any "always attended" claim about the Open-PR
-  // gate, or an unqualified "Default: every gate", is the pre-bundle model — a
-  // shipped skill that teaches it would steer the framing author / concierge to
-  // the wrong posture. These guards pin the corrected model so a future edit
-  // can't quietly reintroduce the old one.
+describe('shipped gate-posture copy teaches the overnight-default, post-open finish model', () => {
+  // full pre-authorizes plan/impl/finish by default now (phases.ts:
+  // defaultPreAuthorized: ['plan','impl','finish']), so `overnight` is the default
+  // posture and the Open-PR gate sits AFTER the draft-PR open. Any "always
+  // attended" claim about the Open-PR gate, or an unqualified "Default: every
+  // gate", is the pre-bundle model — a shipped skill that teaches it would steer
+  // the framing author / concierge to the wrong posture. These guards pin the
+  // corrected model so a future edit can't quietly reintroduce the old one.
   const gatesAtHelp = (publicCommands.get('new')?.options.find((o) => o.long === '--gates-at')?.description ?? '');
   // All three shipped prose surfaces — including the root concierge SKILL.md the
   // round-1 guard missed (round 2).
@@ -321,12 +344,16 @@ describe('shipped gate-posture copy teaches the auto-open-PR default (rails bund
     expect.soft(gatesAtHelp).not.toMatch(/default:\s*every gate/i);
   });
 
-  test('the gate-posture surfaces teach the auto-open model', () => {
-    for (const [label, md] of shippedDocs) {
-      expect.soft(md.toLowerCase(), `${label} omits the auto-open model`).toContain('auto-open');
+  test('the gate-posture surfaces teach the post-open finish model (overnight default, finish token)', () => {
+    // Every gate-posture surface names the new default (`overnight`) and the new
+    // attend token (`finish`) — so a framing author / concierge reading any of
+    // them is steered to the live posture, not the retired auto-open-`pr` one.
+    const surfaces = [...shippedDocs, ['framing seed', FRAMING_TEMPLATE], ['--gates-at help', gatesAtHelp]] as const;
+    for (const [label, text] of surfaces) {
+      const lower = text.toLowerCase();
+      expect.soft(lower, `${label} omits the overnight default`).toContain('overnight');
+      expect.soft(lower, `${label} omits the finish gate token`).toContain('finish');
     }
-    expect.soft(FRAMING_TEMPLATE.toLowerCase()).toContain('auto-open');
-    expect.soft(gatesAtHelp.toLowerCase()).toContain('auto-open');
   });
 
   test('the concierge cause docs name the budget cause (slice 5)', () => {

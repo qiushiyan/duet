@@ -17,6 +17,7 @@ import {
   loadMachineSnapshot,
   loadRunState,
   markSteersDelivered,
+  recordPhaseLabel,
   runDirOf,
   saveMachineSnapshot,
   saveRunState,
@@ -25,6 +26,16 @@ import {
   workflowOf,
 } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
+
+describe('recordPhaseLabel — the view-only tmux phase sidecar', () => {
+  test('writes the current phase to context/phase, overwriting on the next phase', ({ projectDir, run }) => {
+    recordPhaseLabel(run, 'impl');
+    const sidecar = join(runDirOf(projectDir, run.runId), 'context', 'phase');
+    expect.soft(readFileSync(sidecar, 'utf8')).toBe('impl\n');
+    recordPhaseLabel(run, 'finish');
+    expect.soft(readFileSync(sidecar, 'utf8')).toBe('finish\n'); // refreshed, not appended
+  });
+});
 
 describe('the single-writer MCP lease (mcp-owner.json)', () => {
   test('acquire writes the lease file and the returned nonce holds', ({ projectDir, run }) => {
@@ -84,8 +95,8 @@ describe('run creation', () => {
     projectDir,
   }) => {
     // rir ships defaultPreAuthorized: [] → defaultPosture returns undefined →
-    // gatesAt stays absent (attend-all). (full now materializes ['pr'] out — see
-    // the Open-PR auto-open test below.)
+    // gatesAt stays absent (attend-all). (full now materializes the overnight
+    // posture ['frame','spec'] — see the default-posture test below.)
     const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir' });
     expect.soft(created.gatesAt).toBeUndefined();
     expect.soft(loadRunState(projectDir, created.runId).gatesAt).toBeUndefined();
@@ -224,33 +235,37 @@ describe('the steer store', () => {
 
 describe('gate attendance', () => {
   test('absent gates_at means every gate is attended', ({ run }) => {
+    delete run.gatesAt; // a legacy run (or an explicit attend-all) carries no gatesAt
     expect(gateAttended(run, 'frame')).toBe(true);
     expect(gateAttended(run, 'impl')).toBe(true);
   });
 
   test('listed phases are attended, unlisted are pre-authorized', ({ run }) => {
-    run.gatesAt = ['frame', 'spec', 'pr'];
+    run.gatesAt = ['frame', 'spec', 'finish'];
     expect.soft(gateAttended(run, 'frame')).toBe(true);
     expect.soft(gateAttended(run, 'plan')).toBe(false);
     expect.soft(gateAttended(run, 'impl')).toBe(false);
-    expect.soft(gateAttended(run, 'pr')).toBe(true); // attended because explicitly listed
+    expect.soft(gateAttended(run, 'finish')).toBe(true); // attended because explicitly listed
   });
 
-  test('the Open-PR gate auto-opens by default, and is attended only when pr is listed (#2)', ({ projectDir }) => {
-    // A new default Full run materializes gatesAt without pr → the PR auto-opens.
+  test('a new Full run materializes the overnight posture — plan, Ship, and the Open-PR gate auto-cross by default (D)', ({ projectDir }) => {
+    // A new default Full run materializes gatesAt = ['frame','spec']: plan, impl
+    // (Ship), and finish (Open-PR) are all pre-authorized.
     const fresh = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
-    expect.soft(fresh.gatesAt).toEqual(['frame', 'spec', 'plan', 'impl']);
-    expect.soft(gateAttended(fresh, 'pr')).toBe(false);
+    expect.soft(fresh.gatesAt).toEqual(['frame', 'spec']);
+    expect.soft(gateAttended(fresh, 'plan')).toBe(false);
+    expect.soft(gateAttended(fresh, 'impl')).toBe(false);
+    expect.soft(gateAttended(fresh, 'finish')).toBe(false);
 
-    // Listing pr restores the pre-open stop (opt-in).
-    const attended = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, gatesAt: ['pr'] });
-    expect.soft(gateAttended(attended, 'pr')).toBe(true);
+    // Listing finish restores the post-open review stop (opt-in).
+    const attended = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, gatesAt: ['finish'] });
+    expect.soft(gateAttended(attended, 'finish')).toBe(true);
 
-    // A legacy run (absent gatesAt, predating the change) still attends pr —
-    // the auto-open default never reaches an in-flight legacy run.
+    // A legacy run (absent gatesAt, predating the change) still attends every
+    // gate — the overnight default never reaches an in-flight legacy run.
     const legacy = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
     delete legacy.gatesAt;
-    expect.soft(gateAttended(legacy, 'pr')).toBe(true);
+    expect.soft(gateAttended(legacy, 'finish')).toBe(true);
   });
 });
 
@@ -281,13 +296,13 @@ describe('budgetFor — the opt-in knob', () => {
   test('budget absent ⇒ OFF: both caps undefined (the maintainer default)', ({ run }) => {
     expect.soft(run.budget).toBeUndefined();
     expect.soft(budgetFor(run, 'impl')).toEqual({ worker: undefined, orchestrator: undefined });
-    expect.soft(budgetFor(run, 'open')).toEqual({ worker: undefined, orchestrator: undefined });
+    expect.soft(budgetFor(run, 'finish')).toEqual({ worker: undefined, orchestrator: undefined });
   });
 
   test('budget ×1 ("default") reproduces the registry profile verbatim', ({ run }) => {
     run.budget = 1;
     expect.soft(budgetFor(run, 'impl')).toEqual({ worker: 25, orchestrator: 30 });
-    expect.soft(budgetFor(run, 'open')).toEqual({ worker: 5, orchestrator: 5 });
+    expect.soft(budgetFor(run, 'finish')).toEqual({ worker: 15, orchestrator: 15 });
     expect.soft(budgetFor(run, 'frame')).toEqual({ worker: 10, orchestrator: 15 });
   });
 

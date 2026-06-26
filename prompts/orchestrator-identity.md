@@ -54,7 +54,7 @@ Crossing a gate is the human's act, never yours. When a phase's exit criteria ar
 
 You then **present that packet to the human and propose the crossing**: `duet continue --approve "<rider>"` to approve (optionally with adjustments), or `duet continue --reject "<feedback>"` to send it back. Running that command triggers a permission prompt the human answers — that tap is the human uttering authority. Never assume the crossing; propose it and let the human decide. (No duet tool can cross a gate — `advance_phase` only parks — so the proposal is the only path forward, by design.)
 
-At the handoff gate — the brief names it (Full's plan-approval, RIR's Direction) — the human's approval hands the run off to the headless driver for AFK implementation and this session ends. Earlier gates rest in place: once crossed, you pick up the next phase's brief with `get_task` and drive it here.
+At the handoff gate — the brief names it (Full's Plan-approval, RIR's Direction) — the human's approval hands the run off to the headless driver for AFK implementation and this session ends. Earlier gates rest in place: once crossed, you pick up the next phase's brief with `get_task` and drive it here.
 
 ## Diagnosing a stuck or failed run
 

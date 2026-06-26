@@ -244,7 +244,7 @@ describe('the interactive machine variant (Stage 1 — the session drives, the a
 });
 
 describe('the full arc', () => {
-  test('frame → spec → plan → impl → docs → pr → open → done, with flags and rejects along the way', async () => {
+  test('frame → spec → plan → impl → finish → done, with flags and rejects along the way', async () => {
     const { machine, calls } = scriptedMachine([
       { type: 'phase.flag' }, // frame entry → queued question
       { type: 'phase.advance' }, // frame resume after answer → direction gate
@@ -253,10 +253,8 @@ describe('the full arc', () => {
       { type: 'phase.advance' }, // plan → plan-approval gate
       { type: 'phase.flag' }, // impl entry → queued question
       { type: 'phase.advance' }, // impl resume → ship gate
-      { type: 'phase.advance' }, // docs → (no gate) flows straight to pr
-      { type: 'phase.advance' }, // pr → open-pr gate
-      { type: 'phase.advance' }, // pr re-entry after gate reject → gate again
-      { type: 'phase.advance' }, // open → done
+      { type: 'phase.advance' }, // finish (reconcile docs, open draft PR) → open-pr gate
+      { type: 'phase.advance' }, // finish re-entry after gate reject → gate again
     ]);
     const actor = startActor(machine);
 
@@ -287,22 +285,23 @@ describe('the full arc', () => {
     snap = await waitFor(actor, quiescent);
     expect(snap.value).toBe('shipGate');
 
-    // Approving Ship runs docs (gate-less — flows straight to pr) then pr,
-    // landing at the Open-PR gate with no Docs-plan stop in between.
+    // Approving Ship enters finish, which reconciles docs and opens the draft
+    // PR in one pass, landing at the (post-open) Open-PR gate.
     actor.send({ type: 'human.approve' });
     snap = await waitFor(actor, quiescent);
     expect(snap.value).toBe('openPrGate');
 
+    // Reject re-enters finish to amend the open PR, landing back at the gate.
     actor.send({ type: 'human.reject' });
     snap = await waitFor(actor, quiescent);
     expect(snap.value).toBe('openPrGate');
 
-    // The open phase runs after the last gate and advances straight to done.
+    // finish gates the last phase, so approving its gate crosses straight to done.
     actor.send({ type: 'human.approve' });
     snap = await waitFor(actor, (s) => s.status === 'done');
     expect(snap.value).toBe('done');
 
-    expect(calls).toEqual(['frame', 'frame', 'frame', 'spec', 'plan', 'impl', 'impl', 'docs', 'pr', 'pr', 'open']);
+    expect(calls).toEqual(['frame', 'frame', 'frame', 'spec', 'plan', 'impl', 'impl', 'finish', 'finish']);
   });
 });
 

@@ -117,6 +117,7 @@ describe('the snippet library', () => {
       'reread-context',
       'ceo-summary',
       'pr-description',
+      'reconcile-docs',
     ]) {
       expect.soft(getSnippet(key), `snippet "${key}"`).toBeDefined();
     }
@@ -207,7 +208,7 @@ describe('the snippet library', () => {
     expect.soft(consultantSnippetFor('impl')).toBe('consultant-verify');
     expect.soft(consultantSnippetFor('research')).toBe('consultant-frame');
     expect.soft(consultantSnippetFor('implement')).toBe('consultant-impl');
-    expect.soft(consultantSnippetFor('docs'), 'docs carries no consultant checkpoint').toBeUndefined();
+    expect.soft(consultantSnippetFor('finish'), 'finish carries no consultant checkpoint').toBeUndefined();
   });
 
   test('information hiding: no worker-directed snippet names the consultant (only the consultant-* snippets may)', () => {

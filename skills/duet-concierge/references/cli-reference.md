@@ -7,8 +7,8 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | Command | What it does |
 |---|---|
 | `duet new --framing <file>` | Start a run from a framing file (the project briefing — the only place project knowledge enters). Returns immediately; the first phase runs in a detached driver. Runs the **full** arc unless `--workflow` says otherwise. |
-| `duet new --workflow <full\|rir> --framing <file>` | Pick the arc. **full** (default): frame → spec → plan → implementation → docs → PR. **rir**: research → implement → one review round → Ship, with no spec, plan, docs, or PR — for small, well-understood work. Also settable as `workflow:` in the framing frontmatter; the flag wins. |
-| `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates; the rest are pre-authorized and auto-cross with their packets recorded. Phases and presets are **workflow-specific**. full: gates `frame, spec, plan, impl, pr` — or a preset `skip-plan` (= walk away at spec approval, return at the Ship gate) / `overnight` (= frame,spec); `pr` auto-opens by default (pre-authorized) — list it to attend a pre-open stop. rir: gates `research, implement` — or the preset `afk` (= attend none, run straight to done). |
+| `duet new --workflow <full\|rir> --framing <file>` | Pick the arc. **full** (default): frame → spec → plan → implementation → PR. **rir**: research → implement → one review round → Ship, with no spec, plan, or PR (docs reconcile into the build) — for small, well-understood work. Also settable as `workflow:` in the framing frontmatter; the flag wins. |
+| `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates; the rest are pre-authorized and auto-cross with their packets recorded. Phases and presets are **workflow-specific**. full: gates `frame, spec, plan, impl, finish` — **default `overnight` (= frame,spec)**; preset `skip-plan` (= walk away at spec approval, return at the Ship gate). The Open-PR gate (end of `finish`) sits *after* the open — the draft PR auto-opens and the gate auto-crosses to done; list `finish` to attend a post-open review stop. rir: gates `research, implement` — or the preset `afk` (= attend none, run straight to done). |
 | `duet new --spec <path>` | Start at the spec review loop from a draft spec (skips the FRAME phase). **full-only** — rir has no spec phase and rejects `--spec`. |
 | `duet new --framing <file> --retry-infra <n>` | Opt the headless run into bounded auto-retry of transient infra failures (network/server/rate-limit), default-off; or set `retry_infra:` in the framing frontmatter (the flag wins). `auth` retries once then escalates; login/quota/dns/unknown never retry; exhaustion flags. |
 | `duet new --framing <file> --consultant <provider[:model]>` | Bind the optional **consultant** for the run — a read-only second reviewer that questions the *bet* (assumptions, product fit), ideally on a different model family from the reviewer. Off by default; relay it only when the user asks for it. Also settable for every run via `[roles.consultant]` in config; `--no-consultant` disables a config-bound one for this run. |
@@ -28,6 +28,7 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | `duet status --brief` | A lean digest — position, a one-line headline, the next command, pending steers, auto-approvals, and the gate's `humanDecisions` — for fast polling. Composes with `--json` (lean JSON) and `--wait` (block, then print). |
 | `duet doctor [run-id]` | Per-role health: working / long-inference / retrying / silent-stuck / crashed, with last-activity age, retry count, recent classified errors, and a connectivity probe. Reads the workers' own transcripts (heavier than `status`) — the answer to "is this run healthy, or stuck?" |
 | `duet doctor [run-id] --json` | The full health model, including each role's resolved transcript path, for automation. |
+| `duet stats [run-id] [--json]` | Effort per phase, derived from the voice logs at view time: each phase's elapsed window and the worker-turn time inside it, plus a per-tag breakdown. Read-only and fail-soft (a missing or interactive-only log degrades to a note); distinct from `status`, which never reads logs. |
 | `duet runs` | List the project's runs, newest first. |
 | `duet snippets` | List the effective snippet library and where each snippet resolves from — the shipped default, or a user (`~/.config/duet/snippets.toml`) / project (`<repo>/.duet/snippets.toml`) override. Read-only; project-independent of any run. |
 | `duet snippets show <key>` | Print the full effective body of one snippet, with the layer it resolved from. |
@@ -130,14 +131,15 @@ A markdown file: an optional `---`-fenced frontmatter block holding only fixed m
 
 ```markdown
 ---
-# workflow: full           — full (default) or rir. full: spec → plan → impl →
-#                             docs → PR. rir: research → implement → review →
-#                             ship (no spec/plan/docs/PR), for small work.
-# gates_at: skip-plan       — phases whose gates the human attends; the rest
-#                             auto-cross. Presets are workflow-specific:
-#                             full → skip-plan (walk away at spec approval,
-#                             return at the Ship gate) / overnight (= frame,spec);
-#                             rir → afk (attend none). Or a list, e.g. "frame, spec".
+# workflow: full           — full (default) or rir. full: frame → spec → plan →
+#                             impl → PR. rir: research → implement → review →
+#                             ship (no spec/plan/PR), for small work.
+# gates_at: overnight       — phases whose gates the human attends; the rest
+#                             auto-cross. full's default is overnight. Presets
+#                             are workflow-specific: full → skip-plan (walk away
+#                             at spec approval, return at the Ship gate) /
+#                             overnight (= frame,spec); rir → afk (attend none).
+#                             Or a list, e.g. "frame, spec, finish".
 # spec: path/to/draft.md    — enter at the spec review loop (skips FRAME). full-only.
 ---
 
@@ -161,6 +163,7 @@ A markdown file: an optional `---`-fenced frontmatter block holding only fixed m
 - Environment-only actions (migrations, deploys): flag the human — never attempt.
 
 # Docs
-<for the docs phase, which runs after the implementation: a docs-update skill if
- one exists, else where docs live and what a change like this should update>
+<for reconciling docs after the implementation (full's `finish` phase; folded
+ into rir's build): a docs-update skill if one exists, else where docs live and
+ what a change like this should update>
 ```

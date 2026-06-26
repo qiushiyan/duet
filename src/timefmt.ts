@@ -10,6 +10,20 @@
 
 const pad = (n: number): string => String(n).padStart(2, '0');
 
+/** A duration in ms → a coarse `Hh Mm` / `Mm` / `<1m` label, for `duet stats`.
+ *  h/m granularity is the right altitude for phase-level effort (seconds are
+ *  noise across a multi-hour run). A negative or non-finite input renders `—`
+ *  rather than throwing, so a half-parsed log can't crash the view. */
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  const totalMin = Math.floor(ms / 60_000);
+  if (totalMin < 1) return '<1m';
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h === 0) return `${m}m`;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
 /** A stored UTC ISO timestamp → a local wall-clock `YYYY-MM-DD HH:MM` — the
  *  same shape the status lists used, now in the human's own zone. Date matters
  *  in those lists (a steer staged yesterday), so the date stays. */

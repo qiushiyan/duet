@@ -12,12 +12,12 @@ allowed-tools: Bash(duet status:*), Bash(duet logs:*), Bash(duet runs:*)
 duet is a command-line tool, installed on this machine, that runs a largely autonomous software-engineering workflow on one of the user's projects. Inside a **run** there are already three AI parties at work: a read-only LLM **orchestrator** that directs the process, an **implementer** agent that writes specs, plans, and code, and a **reviewer** agent that critiques each artifact. A run follows one of two arcs (the run picked which at creation):
 
 ```
-full:  frame → DIRECTION gate → spec → COMMIT-SPEC gate → plan → PLAN gate (human walks away)
-       → impl (autonomous, often hours) → SHIP gate → docs (one pass) → pr → OPEN-PR gate → done
-rir:   research → DIRECTION gate (human walks away) → implement (autonomous) → SHIP gate → done
+full:  frame → DIRECTION gate → spec → COMMIT-SPEC gate (default: walk away after here) → plan → PLAN gate (AFK handoff)
+       → impl (autonomous, often hours) → SHIP gate → finish (reconcile docs → draft PR) → OPEN-PR gate → done
+rir:   research → DIRECTION gate (walk away) → implement (autonomous) → SHIP gate → done
 ```
 
-The lighter **rir** arc (Research → Implement → Review) drops the spec, plan, docs, and PR — its research decisions are the design, and it ends at the Ship gate with no PR opened. The capitalized stops are **human gates**: the run cannot cross them by itself — the statechart only moves on the human's decision. You don't need to track which arc a run is on; `duet status` always names the current stop and the command that acts there. Between gates the orchestrator may also pause the run on a **queued question** (a product or environment call only the human can make). Phases execute in a detached background process, so every duet command returns immediately; a "running" phase commonly stays running for hours, and *nothing* runs once the run is at a stop. Run state lives under `.duet/runs/<id>/` in the project directory; commands default to the project's latest run.
+The lighter **rir** arc (Research → Implement → Review) drops the spec, plan, and PR — its docs reconcile into the build, its research decisions are the design, and it ends at the Ship gate with no PR opened. In **full**, the OPEN-PR gate sits *after* the open: the `finish` phase opens a draft PR, then the gate auto-crosses to done by default (or stops for a post-open review when `finish` is attended). The capitalized stops are **human gates**: the run cannot cross them by itself — the statechart only moves on the human's decision. You don't need to track which arc a run is on; `duet status` always names the current stop and the command that acts there. Between gates the orchestrator may also pause the run on a **queued question** (a product or environment call only the human can make). Phases execute in a detached background process, so every duet command returns immediately; a "running" phase commonly stays running for hours, and *nothing* runs once the run is at a stop. Run state lives under `.duet/runs/<id>/` in the project directory; commands default to the project's latest run.
 
 The human therefore interacts with a run through exactly three channels, one per condition:
 
@@ -89,9 +89,9 @@ duet new --workflow rir --framing .duet/<name>.md                # the lighter r
 duet new --workflow rir --framing .duet/<name>.md --gates-at afk  # rir, run straight through to done
 ```
 
-Pick the arc with `--workflow` (also settable as `workflow:` in the framing frontmatter; the flag wins). **full** is the default — research → spec → plan → implementation → docs → PR. **rir** is lighter — research → implement → one review round, ending at the Ship gate with no spec, plan, docs, or PR; use it for small, well-understood work. (`--spec <path>`, the draft-spec entry that skips FRAME, is full-only — rir has no spec phase.)
+Pick the arc with `--workflow` (also settable as `workflow:` in the framing frontmatter; the flag wins). **full** is the default — research → spec → plan → implementation → PR. **rir** is lighter — research → implement → one review round, ending at the Ship gate with no spec, plan, or PR (its docs reconcile into the build); use it for small, well-understood work. (`--spec <path>`, the draft-spec entry that skips FRAME, is full-only — rir has no spec phase.)
 
-`--gates-at` pre-authorizes the gates of unlisted phases (it takes a phase list or a workflow-specific preset). For **full**: `skip-plan` means "walk away once the spec is approved, return at the Ship gate" — suggest it when the human trusts the plan loop; `overnight` auto-crosses everything after the spec — suggest it when they're going to bed; the PR auto-opens by default (the Open-PR gate is pre-authorized) — list `pr` to attend a pre-open stop. For **rir**: `afk` pre-authorizes both gates (Direction and Ship) and runs straight to done — suggest it when the work is small and they want it hands-off.
+`--gates-at` pre-authorizes the gates of unlisted phases (a phase list or a workflow-specific preset). For **full**, the default is `overnight` — attend Direction and Commit-spec, auto-cross the rest (plan, Ship, and the post-open draft PR all cross unattended), so a default run is already hands-off after the spec. Suggest a *more*-attended posture when the human wants to stay in the loop: `skip-plan` returns them at the Ship gate (verify the build before it ships) — suggest it when they don't fully trust the implementation yet; or list `finish` to add a post-open review stop on the opened draft PR (reject there amends it). For **rir**: `afk` pre-authorizes both gates (Direction and Ship) and runs straight to done — suggest it when the work is small and they want it hands-off.
 
 ## Supervising
 

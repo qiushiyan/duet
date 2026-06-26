@@ -96,7 +96,7 @@ describe('control events survive the stdio MCP boundary', () => {
     'a pre-authorized gate auto-crosses only after parking over the boundary',
     async ({ run }) => {
       // frame's directionGate is pre-authorized (not in gatesAt); spec is attended.
-      run.gatesAt = ['spec', 'pr'];
+      run.gatesAt = ['spec', 'finish'];
       saveRunState(run);
 
       const advanceThenAsk: Orchestrate = async ({ client, phase }) => {

@@ -23,11 +23,11 @@ import type { PhaseName, WorkflowName, WorkflowSpecInput } from '../phases.ts';
  * The states are built from a workflow's phases (`machineFor(workflow)`, over
  * the registry in src/phases.ts) — the arc is a linear chain, so each phase
  * contributes `<name>Loop` + `<name>FlagWait` + its gate state; a gate's approve
- * targets the next phase's loop, its reject re-enters the loop it gates. A
- * gate-less phase advances straight to the next phase's loop (Full's `docs`
- * flows into `pr` with no human stop), or to done when it is the last (Full's
- * `open`). `machineFor('full')` is topology-identical to the original single-arc
- * machine. The full arc:
+ * targets the next phase's loop (or `done` when it gates the last phase, as
+ * Full's `finish` does), its reject re-enters the loop it gates. A gate-less
+ * phase would advance straight to the next phase's loop or to done; the full arc
+ * no longer has one (RIR's `research` gates into `implement`). `machineFor('full')`
+ * is the linear arc:
  *
  * ```
  * route ─(no spec)─▶ frameLoop ──▶ directionGate ─approve─▶ specLoop ──▶ commitSpecGate
@@ -36,9 +36,9 @@ import type { PhaseName, WorkflowName, WorkflowSpecInput } from '../phases.ts';
  *               shipGate ◀── implLoop ◀─approve── planApprovalGate ◀── planLoop
  *                  │ approve                                  ▲ (walk away)
  *                  ▼
- *               docsLoop ─advance─▶ prLoop ──▶ openPrGate
- *               (no gate)                          │ approve
- *                                   done ◀── openLoop ◀─────┘
+ *               finishLoop ──▶ openPrGate ─approve─▶ done
+ *               (opens draft PR)    │ reject (amend the open draft PR)
+ *                                   └──────────────▶ finishLoop
  * ```
  *
  * Persistence guardrail: snapshots are persisted only in `quiescent`-tagged states
@@ -134,9 +134,9 @@ function buildStates(spec: WorkflowSpecInput): Record<string, object> {
     const loop = `${name}Loop`;
     const flagWait = flagWaitStateOf(name);
     const next = phases[i + 1];
-    // A gated phase advances to its gate; a gate-less phase advances to the next
-    // phase's loop (Full's `docs` → `pr`, no human stop), or to done when it is
-    // the last phase (Full's `open`).
+    // A gated phase advances to its gate; a gate-less phase (none in either arc
+    // today — both gate every phase — but the registry allows one) would advance
+    // to the next phase's loop, or to done when it is the last phase.
     states[loop] = phaseState(name, {
       advanced: p.gate?.state ?? (next ? `${next.name}Loop` : 'done'),
       flagWait,
