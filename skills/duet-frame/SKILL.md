@@ -25,7 +25,7 @@ A duet framing is **substance the user owns** — the problem, the scope, what t
 2. **Explore lightly and with purpose.** Read just enough of the codebase to (a) replace vague references with the project's _real_ module, file, and concept names, (b) confirm anything the framing points at — a skill, a path, a file — actually exists, and (c) catch conflicts (below). Read to verify and name, not to design — working out _how_ to solve it is the implementer's job in the spec phase. If the project has a default framing template (`.duet/templates/default.md`), read it too: it carries standing conventions — above all the docs worth onboarding every run — that you fold in, with this run's problem replacing its placeholder.
 3. **Ask only when it changes what gets built** (see the rule below); otherwise proceed.
 4. **Draft the framing** under `.duet/` (e.g. `.duet/<slug>.md`), in the schema below: sharpen the wording, use the real names, and structure it for a clean read. Preserve the user's intent and scope exactly.
-5. **Show the framing verbatim and get the user's sign-off.** It steers a long, largely autonomous run, so they approve the exact text. Fold in their edits.
+5. **Get the user's sign-off on the drafted file.** It steers a long, largely autonomous run, so they approve the exact text — point them to the draft at `.duet/<slug>.md` to read and edit. Fold in their edits.
 6. **Emit the launch command** and remind them to run it in their own terminal.
 
 ## When to ask, when to proceed
@@ -139,7 +139,7 @@ User: "requests sometimes time out on a slow network." AVOID writing "add a boun
 
 ## Finishing
 
-Before showing the framing, check it against the user's original words: is every piece of their intent and scope present, with nothing you invented and no solution smuggled in? Then show it verbatim, fold in their edits, and emit:
+Before handing off, check the framing against the user's original words: is every piece of their intent and scope present, with nothing you invented and no solution smuggled in? Then get their sign-off on the drafted file, fold in their edits, and emit:
 
 ```
 duet new --interactive --workflow <full|rir> --framing .duet/<slug>.md
