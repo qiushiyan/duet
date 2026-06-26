@@ -540,6 +540,19 @@ export function workflowOfPhase(phase: PhaseName): WorkflowName {
   return owner;
 }
 
+/**
+ * The phase immediately before `phase` in its own arc — the predecessor whose
+ * gate approval enters `phase`. Registry-derived so a renamed or reordered arc
+ * stays correct (Full: finish ← impl; RIR: publish ← implement). Throws if
+ * `phase` is the first in its arc (it has no predecessor) — a caller bug.
+ */
+export function priorPhaseOf(phase: PhaseName): PhaseName {
+  const phases = phasesOf(workflowOfPhase(phase));
+  const prior = phases[phases.findIndex((p) => p.name === phase) - 1];
+  if (!prior) throw new Error(`phase "${phase}" is first in its arc — it has no predecessor`);
+  return prior.name;
+}
+
 /** Every phase across all workflows, widened to the consumer-facing view. */
 const ALL_PHASES: readonly PhaseSpec[] = Object.values(WORKFLOWS).flatMap(
   (w): readonly PhaseSpec[] => w.phases,

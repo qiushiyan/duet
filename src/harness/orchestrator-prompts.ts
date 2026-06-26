@@ -1,6 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PHASE, acceptanceContractPathForSpec, consultantSnippetFor, contractAuthorPhaseOf } from '../phases.ts';
+import {
+  PHASE,
+  acceptanceContractPathForSpec,
+  consultantSnippetFor,
+  contractAuthorPhaseOf,
+  priorPhaseOf,
+} from '../phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from '../phases.ts';
 import { workerRolesFor } from '../roles.ts';
 import { gateAttended, workflowOf } from '../run-store.ts';
@@ -503,19 +509,24 @@ ${IMPL_EXAMPLES}
  *
  * The PR is mergeable on open — that is what lets the bug-review bots fire on it
  * overnight — so the env-verification reminder rides the body as a "Verification
- * (pending)" checklist leading the description (the human still owes
- * migrations/smoke tests whenever the Ship gate auto-crossed unattended), the
- * standing reminder before they merge. The two phases share this builder verbatim;
- * only `phase` differs — which gate attendance to read, and which prior gate
- * approved into it.
+ * (pending)" checklist leading the description, the standing reminder to run the
+ * checks before merging (approvalClause above states whether the Ship gate was
+ * attended or auto-crossed, so the orchestrator already has that posture; the
+ * checklist itself is posture-agnostic).
+ *
+ * The two phases share this builder; `phase` is the dispatch key (passed by
+ * buildPhaseBrief, never a re-stated literal). It drives the Open-PR gate's
+ * attendance read and — via the registry — the prior (Ship-gate) phase whose
+ * approval enters this one, so a renamed or reordered arc can't silently
+ * mis-key it.
  */
 export function openPrPhaseEntryPrompt(
   state: RunState,
   roundCap: number,
-  phase: 'finish' | 'publish',
+  phase: PhaseName,
 ): string {
-  const attended = gateAttended(state, phase);
-  const priorPhase = phase === 'finish' ? 'impl' : 'implement';
+  const openPrAttended = gateAttended(state, phase);
+  const priorPhase = priorPhaseOf(phase);
   return `<task>
 ${approvalClause(
     state,
@@ -525,14 +536,10 @@ ${approvalClause(
   )} Run the ${phase.toUpperCase()} phase — reconcile the docs, write the PR description, and open the PR, in one continuous pass:
 
 1. Reconcile the docs with what shipped: send the implementer a reconcile-docs prompt. The framing names how this project updates its docs (often a docs or skill file given by PATH — send the implementer that path, never a slash command a headless worker can't expand; if the framing gives only a slash command with no path, treat it as incomplete and ask_human rather than inventing one; if it names nothing, have the implementer survey the repo's docs and derive the impact from what shipped). The implementer applies and commits the doc changes directly — there is no docs gate; the diff rides the branch into the PR where the human reviews it with the rest. A genuine doc-scope product call — deleting a documented concept, rewriting a design claim, pruning a superseded doc — stays the human's: flag it with ask_human (it pauses the run).
-2. Write the PR description: send the implementer the pr-description snippet. The body must LEAD with a "Verification (pending)" checklist of the environment checks the human still owes before merge — migrations, smoke tests, anything the Ship packet flagged — ${
-    attended
-      ? 'so the human verifies in their own environment before merging the PR they review here'
-      : "because the Ship gate auto-crossed unattended: this PR opens mergeable, before the human has run those checks, so an unchecked checklist at the top is their standing reminder to verify before they merge"
-  }. A review round on the description is available when it warrants one (backstop cap ${roundCap}); most are a single pass.
+2. Write the PR description: send the implementer the pr-description snippet. The body must LEAD with a "Verification (pending)" checklist of the environment checks owed before merge — migrations, smoke tests, anything the Ship packet flagged — the human's standing reminder to run them before merging (when the Ship gate auto-crossed unattended they have not run these yet, so the checklist rides the PR until they do). A review round on the description is available when it warrants one (backstop cap ${roundCap}); most are a single pass.
 3. Open the PR, idempotently. Have the implementer first check whether a PR already exists for this branch (gh pr view, or gh pr list --head <branch>): if none exists, push the branch and run gh pr create with the title and description; if one already exists (a re-entry, a resumed run, or a PR already on the branch), don't create a second one — amend it in place (gh pr edit for the body, push any new commits). Report the PR URL. If the push or PR creation fails for an environment reason (auth, remote, permissions), that's the human's to fix: ask_human with the error.
 4. Call advance_phase with the PR URL leading the summary — this is the Open-PR packet. ${
-    attended
+    openPrAttended
       ? 'The Open-PR gate is attended: the human reads the packet and the opened PR, then approves (the run completes) or rejects with feedback (you re-enter to amend the open PR).'
       : 'The Open-PR gate is pre-authorized: the PR is already open, so your packet is recorded and the gate auto-crosses straight to done — make the summary self-contained, leading with the PR URL.'
   }
@@ -608,21 +615,24 @@ ${IMPLEMENT_EXAMPLES}
  *
  * The dispatch is an exhaustive `satisfies Record<PhaseName, …>` — adding a
  * phase to the registry without a builder here is a compile error, the real
- * guard (the totality test is belt-and-braces).
+ * guard (the totality test is belt-and-braces). Every builder receives the
+ * phase name (buildPhaseBrief passes the dispatch key); single-phase builders
+ * ignore it, while the shared openPrPhaseEntryPrompt reads it — so `finish` and
+ * `publish` map to the same function with no re-stated phase literal to drift.
  */
 const phaseBriefBuilders = {
   frame: framePhaseEntryPrompt,
   spec: specPhaseEntryPrompt,
   plan: planPhaseEntryPrompt,
   impl: implPhaseEntryPrompt,
-  finish: (s, cap) => openPrPhaseEntryPrompt(s, cap, 'finish'),
+  finish: openPrPhaseEntryPrompt,
   research: researchPhaseEntryPrompt,
   implement: implementPhaseEntryPrompt,
-  publish: (s, cap) => openPrPhaseEntryPrompt(s, cap, 'publish'),
-} satisfies Record<PhaseName, (state: RunState, cap: number) => string>;
+  publish: openPrPhaseEntryPrompt,
+} satisfies Record<PhaseName, (state: RunState, cap: number, phase: PhaseName) => string>;
 
 export function buildPhaseBrief(state: RunState, phase: PhaseName): string {
-  return phaseBriefBuilders[phase](state, PHASE[phase].roundCap);
+  return phaseBriefBuilders[phase](state, PHASE[phase].roundCap, phase);
 }
 
 /**

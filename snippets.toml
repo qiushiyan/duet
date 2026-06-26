@@ -494,7 +494,7 @@ key = "reconcile-docs"
 expand = '''
 The docs ship with this change — they ride the branch (and the PR, where there is one) into the shippable record. Reconcile them with what actually shipped, in one pass.
 
-Prefer using the project's own doc method if there is one.** If a doc-update skill lives under `.claude/` or `.agents/` (e.g. an `update-docs` skill), follow it — it's the project's authoritative guide. In case such skill is absent,  follow this mindset: **consolidate, don't patch** — fold the change into the existing prose so a senior engineer still gets the mental model, not a changelog; stay at the docs' own altitude (the *what* and *why*, never an implementation play-by-play); derive the impact from the code, and leave what still reads true (no manufactured churn).
+**Use the project's own doc method first.** If a doc-update skill lives under `.claude/` or `.agents/` (e.g. an `update-docs` skill), follow it — it's the project's authoritative guide. Otherwise: **consolidate, don't patch** — fold the change into the existing prose so a senior engineer still gets the mental model, not a changelog; stay at the docs' own altitude (the *what* and *why*, never an implementation play-by-play); derive the impact from the code, and leave what still reads true (no manufactured churn).
 
 **Commit the docs directly**, on top of the implementation — no approval step.
 

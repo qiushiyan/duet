@@ -92,15 +92,33 @@ describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)
   test.for(Object.keys(PHASE) as PhaseName[])('%s builds a non-empty brief', (phase, { run }) => {
     expect(buildPhaseBrief(run, phase).trim().length).toBeGreaterThan(0);
   });
+
+  // The two load-bearing contracts of the shared openPr brief (full's finish,
+  // rir's publish), pinned by stable tokens rather than prose: an *idempotent*
+  // open — check for an existing PR before `gh pr create`, so a crash-resume or
+  // gate-reject re-entry amends in place rather than erroring on a second create
+  // — and the `Verification (pending)` checklist that carries the env-verify
+  // reminder onto a PR opened after an auto-crossed Ship gate. (The old literal
+  // tests pinned the surrounding prose and were brittle; these pin the contract.)
+  test.for(['finish', 'publish'] as const)(
+    '%s opens the PR idempotently and leads with the verification checklist',
+    (phase, { run }) => {
+      const brief = buildPhaseBrief(run, phase);
+      expect.soft(brief).toMatch(/gh pr (view|list)/); // existence check first
+      expect.soft(brief).toContain('gh pr create'); // then open
+      expect.soft(brief).toContain('Verification (pending)');
+    },
+  );
 });
 
 describe('feedbackResumePrompt — the human feedback reaches the worker', () => {
   // The load-bearing behavior of a gate rejection is that the human's exact words
-  // reach the re-entry prompt verbatim (the editor-in-chief is never paraphrased).
-  // The branching it layers on top — re-run review rounds vs apply directly, amend
-  // an already-open PR vs not — is driven by registry facts (reviewLoop, roundCap,
-  // gate state) asserted directly in phases.test.ts, not re-pinned to the prompt's
-  // prose, which only made these tests brittle to any rewording.
+  // reach the re-entry prompt verbatim (the editor-in-chief is never paraphrased) —
+  // that is what this test pins. The branching it layers on (re-run review rounds
+  // vs apply directly, amend an already-open PR vs not) is keyed off registry facts
+  // the prompt reads at runtime (reviewLoop, roundCap, gate.state), so a reword
+  // can't silently flip it; the prose itself is deliberately not re-pinned here —
+  // that re-pinning was the brittleness the old literal tests carried.
   test.for(['spec', 'plan', 'impl', 'finish', 'research', 'implement', 'publish'] as const)(
     '%s carries the human feedback verbatim',
     (phase) => {
