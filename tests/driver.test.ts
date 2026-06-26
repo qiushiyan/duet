@@ -18,8 +18,7 @@ import {
 } from '../src/harness/orchestrator-prompts.ts';
 import { PHASE } from '../src/phases.ts';
 import type { PhaseName } from '../src/phases.ts';
-import { DEFAULT_BINDINGS } from '../src/config.ts';
-import { createRun, listPendingSteers, loadRunState, saveRunState, stageSteer } from '../src/run-store.ts';
+import { listPendingSteers, loadRunState, saveRunState, stageSteer } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**
@@ -82,8 +81,10 @@ describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)
     expect.soft(buildPhaseBrief(run, 'frame')).toBe(framePhaseEntryPrompt(run, PHASE.frame.roundCap));
     expect.soft(buildPhaseBrief(run, 'spec')).toBe(specPhaseEntryPrompt(run, PHASE.spec.roundCap));
     expect.soft(buildPhaseBrief(run, 'plan')).toBe(planPhaseEntryPrompt(run, PHASE.plan.roundCap));
+    expect.soft(buildPhaseBrief(run, 'finish')).toBe(finishPhaseEntryPrompt(run, PHASE.finish.roundCap));
     expect.soft(buildPhaseBrief(run, 'research')).toBe(researchPhaseEntryPrompt(run, PHASE.research.roundCap));
     expect.soft(buildPhaseBrief(run, 'implement')).toBe(implementPhaseEntryPrompt(run, PHASE.implement.roundCap));
+    expect.soft(buildPhaseBrief(run, 'publish')).toBe(publishPhaseEntryPrompt(run, PHASE.publish.roundCap));
   });
 
   // Belt-and-braces for the exhaustive `satisfies Record<PhaseName, …>` — the
@@ -92,154 +93,22 @@ describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)
   test.for(Object.keys(PHASE) as PhaseName[])('%s builds a non-empty brief', (phase, { run }) => {
     expect(buildPhaseBrief(run, phase).trim().length).toBeGreaterThan(0);
   });
-
-  test('the finish-phase prompt is open-then-review: opens a draft PR, then attended reviews it / pre-authorized auto-crosses (A/B/D)', ({ run }) => {
-    // The PR opens (as a draft) regardless of attendance — attendance only gates
-    // the POST-open stop. Both postures carry the Verification (pending) checklist.
-    run.gatesAt = ['finish']; // attended: the human reviews the opened draft PR
-    const attended = finishPhaseEntryPrompt(run, PHASE.finish.roundCap);
-    expect.soft(attended).toContain('gh pr create --draft');
-    expect.soft(attended).toContain('Verification (pending)');
-    expect.soft(attended).toContain('the human reads the packet and the opened draft PR');
-
-    run.gatesAt = ['frame']; // finish not listed → pre-authorized: opens, then auto-crosses
-    const preAuth = finishPhaseEntryPrompt(run, PHASE.finish.roundCap);
-    expect.soft(preAuth).toContain('gh pr create --draft');
-    expect.soft(preAuth).toContain('auto-crosses straight to done');
-    expect.soft(preAuth).not.toContain('the human reads the packet and the opened draft PR');
-  });
-
-  test('the finish-phase prompt makes the open idempotent (gh pr view check, amend not re-create) (C)', ({ run }) => {
-    const finish = finishPhaseEntryPrompt(run, PHASE.finish.roundCap);
-    expect.soft(finish).toContain('gh pr view');
-    expect.soft(finish).toContain('amend it in place');
-  });
-
-  test('the finish-phase prompt guards the draft forcing function even when a non-draft PR already exists (enhancement 1)', ({ run }) => {
-    // A pre-existing non-draft PR on the branch must be converted back to draft
-    // before advancing, or the unattended Open-PR gate would auto-cross a
-    // mergeable, env-unverified PR.
-    const finish = finishPhaseEntryPrompt(run, PHASE.finish.roundCap);
-    expect.soft(finish).toContain('gh pr view --json isDraft');
-    expect.soft(finish).toContain('gh pr ready --undo');
-    // And the reject-to-amend re-entry keeps the same draft invariant.
-    expect.soft(feedbackResumePrompt('finish', 'tweak the body')).toContain('gh pr ready --undo');
-  });
 });
 
-describe('the RIR entry prompts', () => {
-  test('research names the Direction gate and the cross-framing pair, and drafts no spec', ({ projectDir }) => {
-    const rir = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'build a thing' });
-    const brief = researchPhaseEntryPrompt(rir, PHASE.research.roundCap);
-    expect.soft(brief).toContain('Direction gate');
-    expect.soft(brief).toContain('think-holistic');
-    expect.soft(brief).toContain('compare-notes');
-    // RIR has no spec phase — research must not instruct drafting one.
-    expect.soft(brief).not.toContain('write-spec');
-    expect.soft(brief.toLowerCase()).not.toContain('draft the spec');
-  });
-
-  test('implement sequences kickoff → handoff → review → apply, names the lean packet, drops Full ceremony, and defers docs to PUBLISH', ({
-    projectDir,
-  }) => {
-    const rir = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'build a thing' });
-    const brief = implementPhaseEntryPrompt(rir, PHASE.implement.roundCap);
-    const at = (s: string) => brief.indexOf(s);
-    // Spine order: implement-direct, then handoff-direct, then review-direct, then apply-review.
-    expect.soft(at('implement-direct')).toBeGreaterThanOrEqual(0);
-    expect.soft(at('implement-direct')).toBeLessThan(at('handoff-direct'));
-    expect.soft(at('handoff-direct')).toBeLessThan(at('review-direct')); // handoff orients the reviewer, before review
-    expect.soft(at('review-direct')).toBeLessThan(at('apply-review'));
-    // The lean Ship packet — handoff + review-and-fix, no CEO summary.
-    expect.soft(brief.toLowerCase()).toContain('ship');
-    // Docs are NOT reconciled here anymore — that moved to the PUBLISH phase, where
-    // they ride the PR. The implement brief sends no reconcile-docs and defers to it.
-    expect.soft(at('reconcile-docs')).toBe(-1);
-    expect.soft(brief).toContain('PUBLISH');
-    // Full-arc ceremony the RIR implement phase deliberately drops — checked
-    // against the instructional spine, not the anti-example (which names the
-    // Full ceremony precisely to warn against importing it).
-    const spine = brief.slice(0, brief.indexOf('## Implement phase examples'));
-    expect.soft(spine.length).toBeGreaterThan(0);
-    for (const absent of ['midpoint', 'ceo-summary', 'respond-review', 'compact-for-impl', '/compact']) {
-      expect.soft(spine, `implement spine should not mention "${absent}"`).not.toContain(absent);
-    }
-  });
-
-  test('the publish-phase prompt opens a REAL (non-draft) PR, idempotently, with the verification checklist', ({
-    projectDir,
-  }) => {
-    const rir = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'build a thing' });
-    rir.gatesAt = []; // afk: the Open-PR gate auto-crosses
-    const brief = publishPhaseEntryPrompt(rir, PHASE.publish.roundCap);
-    expect.soft(brief).toContain('gh pr create');
-    expect.soft(brief).not.toContain('gh pr create --draft'); // a real PR, not a draft
-    expect.soft(brief).not.toContain('gh pr ready --undo'); // no draft state to force
-    expect.soft(brief).toContain('Verification (pending)'); // standing env-verify reminder still rides the PR
-    expect.soft(brief).toContain('gh pr view'); // idempotent: check-then-create-or-amend
-    expect.soft(brief).toContain('amend it in place');
-    expect.soft(brief).toContain('auto-crosses straight to done'); // afk → the pre-authorized branch
-  });
-});
-
-describe('feedbackResumePrompt routes a gate rejection per the phase', () => {
-  // A gate rejection always routes to the implementer; whether the reviewer
-  // re-engages is a phase property. Multi-round review-loop phases (Full's
-  // spec/plan/impl) re-run a verifying round; a single-writable-round phase
-  // (RIR's implement, cap 1) and the non-loop phases route the human's feedback
-  // straight into the revision — instructing a fresh round there would be wrong
-  // for the arc and, at cap 1, blocked by send_prompt's cap check.
-  test('a multi-round review-loop phase (full spec) re-runs review rounds', () => {
-    const prompt = feedbackResumePrompt('spec', 'tighten the error path');
-    expect.soft(prompt).toContain('route the feedback to the implementer');
-    expect.soft(prompt).toContain('review rounds');
-    expect.soft(prompt).toContain('-again');
-  });
-
-  test('a single-writable-round phase (rir implement) applies directly, no fresh review round', () => {
-    const prompt = feedbackResumePrompt('implement', 'tighten the error path');
-    expect.soft(prompt).toContain('route the feedback to the implementer');
-    expect.soft(prompt).toContain("doesn't re-run a reviewer round");
-    // The Full multi-round language must not leak into the single-round arc.
-    expect.soft(prompt).not.toContain('review rounds');
-    expect.soft(prompt).not.toContain('-again');
-    // Implement no longer folds docs (they moved to PUBLISH), so a Ship-gate reject
-    // carries no docs-refresh clause — it just routes the feedback into the build.
-    expect.soft(prompt).not.toContain('refresh the docs');
-  });
-
-  test("a PR-opening phase's rejection amends the PR and refreshes its docs; a mid-arc phase's does not", () => {
-    // The amend + docs-refresh reminder is keyed on the openPrGate gate state (the
-    // PR is already open), not a phase name — so it fires for both Full's finish
-    // (draft) and RIR's publish (real), and not for a mid-arc phase like Full's impl.
-    const publish = feedbackResumePrompt('publish', 'x');
-    expect.soft(publish).toContain('amend it in place');
-    expect.soft(publish).toContain('refresh the docs');
-    expect.soft(feedbackResumePrompt('impl', 'x')).not.toContain('amend it in place');
-    expect.soft(feedbackResumePrompt('impl', 'x')).not.toContain('refresh the docs');
-  });
-
-  test('the open-PR gate phases route directly and AMEND the open PR, not a re-open — draft forcing only for Full (A/C)', () => {
-    const finish = feedbackResumePrompt('finish', 'tighten the PR description');
-    expect.soft(finish).toContain('route the feedback to the implementer');
-    expect.soft(finish).toContain("doesn't re-run a reviewer round"); // reviewLoop:false → direct
-    expect.soft(finish).toContain('gh pr edit'); // amend the open PR in place
-    expect.soft(finish).toContain('never run gh pr create again'); // a second create would error
-    expect.soft(finish).not.toContain('review rounds'); // not the multi-round path
-    expect.soft(finish).toContain('gh pr ready --undo'); // Full's draft → re-force draft on reject
-
-    // RIR's publish amends the same way but opens a REAL PR — no draft to force.
-    const publish = feedbackResumePrompt('publish', 'tweak the PR body');
-    expect.soft(publish).toContain('gh pr edit');
-    expect.soft(publish).toContain('never run gh pr create again');
-    expect.soft(publish).not.toContain('gh pr ready --undo');
-  });
-
-  test('a non-loop gate phase (rir research) also routes directly, no review round', () => {
-    const prompt = feedbackResumePrompt('research', 'pick the other direction');
-    expect.soft(prompt).toContain("doesn't re-run a reviewer round");
-    expect.soft(prompt).not.toContain('review rounds');
-  });
+describe('feedbackResumePrompt — the human feedback reaches the worker', () => {
+  // The load-bearing behavior of a gate rejection is that the human's exact words
+  // reach the re-entry prompt verbatim (the editor-in-chief is never paraphrased).
+  // The branching it layers on top — re-run review rounds vs apply directly, amend
+  // a draft PR vs a real one — is driven by registry facts (reviewLoop, roundCap,
+  // gate state, draftPr) asserted directly in phases.test.ts, not re-pinned to the
+  // prompt's prose, which only made these tests brittle to any rewording.
+  test.for(['spec', 'plan', 'impl', 'finish', 'research', 'implement', 'publish'] as const)(
+    '%s carries the human feedback verbatim',
+    (phase) => {
+      const feedback = 'the 404 path is swallowed — surface it instead';
+      expect(feedbackResumePrompt(phase, feedback)).toContain(feedback);
+    },
+  );
 });
 
 describe('the orchestrator system prompt is arc-neutral', () => {

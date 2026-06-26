@@ -193,6 +193,17 @@ describe('the RIR workflow', () => {
     expect.soft(publish.draftPr).toBe(false);
     expect.soft(PHASE['finish'].draftPr).toBe(true);
   });
+
+  test('the rir snippet assignments encode the build spine and the docs→publish move', () => {
+    const snippetsOf = (name: string) => phasesOf('rir').find((p) => p.name === name)!.snippets;
+    // research synthesizes the direction (this arc drafts no spec).
+    expect.soft(snippetsOf('research')).toEqual(['think-holistic', 'compare-notes']);
+    // the build spine, in order — handoff orients the reviewer before the review
+    // round; reconcile-docs is absent here, having moved to publish.
+    expect.soft(snippetsOf('implement')).toEqual(['implement-direct', 'handoff-direct', 'review-direct', 'apply-review']);
+    // publish reconciles docs (they ride the PR now) and writes the description.
+    expect.soft(snippetsOf('publish')).toEqual(['reconcile-docs', 'pr-description', 'compact-for-cleanup']);
+  });
 });
 
 describe('consultant checkpoints (registry data per arc)', () => {
