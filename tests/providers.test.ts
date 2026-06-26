@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 import { COMPACT_CONFIRMATION, ClaudeWorker, claudeArgs, claudeExecaOptions, parseClaudeTurn } from '../src/providers/claude.ts';
-import { codexThreadOptions, parseRolloutContext } from '../src/providers/codex.ts';
+import { codexThreadOptions, parseRolloutContext, reconstructCodexTurn } from '../src/providers/codex.ts';
+import type { ThreadEvent } from '@openai/codex-sdk';
 import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn } from '../src/providers/interactive-claude.ts';
 import { createWorkers, providerFor } from '../src/providers/index.ts';
 import { BudgetCutoffError } from '../src/providers/types.ts';
@@ -611,26 +612,85 @@ describe('ClaudeWorker.runTurn (failure recovery at the execa boundary)', () => 
     expect.soft(turn.text).not.toContain('API Error'); // the error-marker block is excluded
   });
 
+  const successStdout = (sessionId: string): string =>
+    JSON.stringify([{ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: sessionId }]);
+
+  test('a fresh turn mints an id, announces it before spawn, and predeclares it with --session-id', async () => {
+    let announced: string | undefined;
+    let argv: string[] = [];
+    // The CLI echoes back the id we predeclared, so minted == returned == settled.
+    mockExeca.mockImplementationOnce((_cmd: string, args: string[]) => {
+      argv = args;
+      // The id must be in hand at spawn time — onSessionId fired BEFORE this.
+      expect.soft(announced).toBe(args[args.indexOf('--session-id') + 1]);
+      return Promise.resolve({ stdout: successStdout(args[args.indexOf('--session-id') + 1]!) });
+    });
+    const turn = await new ClaudeWorker({ model: 'claude-opus-4-8' }).runTurn({
+      prompt: 'go',
+      cwd: '/x',
+      onSessionId: (id) => {
+        announced = id;
+      },
+    });
+    expect.soft(announced).toBeTruthy();
+    expect.soft(argv).not.toContain('--resume');
+    expect.soft(turn.sessionId).toBe(announced); // the round-trip: minted id == settled id
+  });
+
+  test('a resume turn announces the resume id immediately and uses --resume (no minting)', async () => {
+    let announced: string | undefined;
+    let argv: string[] = [];
+    mockExeca.mockImplementationOnce((_cmd: string, args: string[]) => {
+      argv = args;
+      return Promise.resolve({ stdout: successStdout('sess-resumed') });
+    });
+    await new ClaudeWorker({ model: 'claude-opus-4-8' }).runTurn({
+      prompt: 'go',
+      cwd: '/x',
+      sessionId: 'sess-resumed',
+      onSessionId: (id) => {
+        announced = id;
+      },
+    });
+    expect.soft(announced).toBe('sess-resumed');
+    expect.soft(argv[argv.indexOf('--resume') + 1]).toBe('sess-resumed');
+    expect.soft(argv).not.toContain('--session-id');
+  });
 });
 
-describe('claudeArgs (the budget-cap omission seam)', () => {
+describe('claudeArgs (the session-flag + budget-cap seams)', () => {
+  test('a fresh turn predeclares its id with --session-id (and no --resume)', () => {
+    // Predeclaring the id is what lets runTurn announce it BEFORE spawn — the
+    // live-activity poll can then find this turn's transcript from its start.
+    const args = claudeArgs({ sessionId: 'mint-1', resume: false }, { model: 'claude-opus-4-8' });
+    expect.soft(args[args.indexOf('--session-id') + 1]).toBe('mint-1');
+    expect.soft(args).not.toContain('--resume');
+  });
+
+  test('a resume turn uses --resume (and no --session-id)', () => {
+    const args = claudeArgs({ sessionId: 'sess-7', resume: true }, { model: 'claude-opus-4-8' });
+    expect.soft(args[args.indexOf('--resume') + 1]).toBe('sess-7');
+    expect.soft(args).not.toContain('--session-id');
+  });
+
   test('passes --max-budget-usd when the cap is a number', () => {
-    const args = claudeArgs({}, { model: 'claude-opus-4-8', maxBudgetUsd: 10 });
+    const args = claudeArgs({ sessionId: 's', resume: false }, { model: 'claude-opus-4-8', maxBudgetUsd: 10 });
     expect.soft(args).toContain('--max-budget-usd');
     expect.soft(args[args.indexOf('--max-budget-usd') + 1]).toBe('10');
   });
 
   test('omits --max-budget-usd entirely when the cap is undefined (budgets off)', () => {
-    const args = claudeArgs({}, { model: 'claude-opus-4-8', maxBudgetUsd: undefined });
+    const args = claudeArgs({ sessionId: 's', resume: false }, { model: 'claude-opus-4-8', maxBudgetUsd: undefined });
     expect(args).not.toContain('--max-budget-usd');
   });
 
   test('always launches bypassPermissions and never --disallowed-tools — both roles run full-permission', () => {
-    // readOnly (the reviewer hint) no longer restricts the headless argv: full
-    // permissions for both workers, review-only enforced by the prompt instead.
-    const impl = claudeArgs({}, { model: 'claude-opus-4-8' });
-    const reviewer = claudeArgs({ readOnly: true }, { model: 'claude-opus-4-8' });
-    for (const args of [impl, reviewer]) {
+    // The reviewer hint no longer restricts the headless argv: full permissions
+    // for every worker, review-only enforced by the prompt instead — claudeArgs
+    // takes no readOnly at all. Fresh and resume builds both bypassPermissions.
+    const fresh = claudeArgs({ sessionId: 's', resume: false }, { model: 'claude-opus-4-8' });
+    const resumed = claudeArgs({ sessionId: 's', resume: true }, { model: 'claude-opus-4-8' });
+    for (const args of [fresh, resumed]) {
       expect.soft(args[args.indexOf('--permission-mode') + 1]).toBe('bypassPermissions');
       expect.soft(args).not.toContain('--disallowed-tools');
     }
@@ -649,6 +709,36 @@ describe('codexThreadOptions (the sandbox-deferral seam)', () => {
 
   test('passes the working directory through', () => {
     expect(codexThreadOptions({ cwd: '/repo' }).workingDirectory).toBe('/repo');
+  });
+});
+
+describe('reconstructCodexTurn (the codex event-stream seam)', () => {
+  async function* stream(...events: ThreadEvent[]): AsyncGenerator<ThreadEvent> {
+    for (const e of events) yield e;
+  }
+  const usage = { input_tokens: 100, cached_input_tokens: 10, output_tokens: 20, reasoning_output_tokens: 5 };
+
+  test('announces the id on thread.started (first event) and reconstructs the final text + usage', async () => {
+    const seen: string[] = [];
+    const result = await reconstructCodexTurn(
+      stream(
+        { type: 'thread.started', thread_id: 'th-live' },
+        { type: 'item.completed', item: { id: 'i0', type: 'agent_message', text: 'first' } },
+        { type: 'item.completed', item: { id: 'i1', type: 'agent_message', text: 'the final answer' } },
+        { type: 'turn.completed', usage },
+      ),
+      (id) => seen.push(id),
+    );
+    // The id is announced as soon as the stream opens — not after it drains.
+    expect.soft(seen).toEqual(['th-live']);
+    expect.soft(result.finalResponse).toBe('the final answer'); // the LAST agent_message wins
+    expect.soft(result.usage).toEqual(usage);
+  });
+
+  test('a turn.failed throws the error message (matching the SDK run() contract)', async () => {
+    await expect(
+      reconstructCodexTurn(stream({ type: 'thread.started', thread_id: 'th-x' }, { type: 'turn.failed', error: { message: 'model exploded' } })),
+    ).rejects.toThrow('model exploded');
   });
 });
 

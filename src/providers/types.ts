@@ -89,6 +89,18 @@ export interface RunTurnOptions {
    */
   readOnly?: boolean;
   cwd?: string;
+  /**
+   * Fired with this turn's provider session id as EARLY as the provider knows
+   * it — before spawn (claude: a freshly minted id, or the resume id) or on the
+   * first stream event (codex: `thread.started`). The harness stages it onto the
+   * active-turn hint so the live-activity poll can locate this turn's transcript
+   * from at/near its start, rather than only after it settles (the symptom this
+   * callback removes: a worker's FIRST turn — and every ephemeral consultant turn
+   * — was blind, because the only locate key was the settled `workerSessions` id).
+   * Best-effort telemetry: an adapter that never fires it simply leaves the turn
+   * silent, exactly as before.
+   */
+  onSessionId?: (id: string) => void;
 }
 
 /** A provider serving a worker role (implementer, reviewer, or consultant). */
