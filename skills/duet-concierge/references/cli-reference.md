@@ -131,9 +131,9 @@ A markdown file: an optional `---`-fenced frontmatter block holding only fixed m
 
 ```markdown
 ---
-# workflow: full           — full (default) or rir. full: spec → plan → impl →
-#                             PR. rir: research → implement → review → ship
-#                             (no spec/plan/PR), for small work.
+# workflow: full           — full (default) or rir. full: frame → spec → plan →
+#                             impl → PR. rir: research → implement → review →
+#                             ship (no spec/plan/PR), for small work.
 # gates_at: overnight       — phases whose gates the human attends; the rest
 #                             auto-cross. full's default is overnight. Presets
 #                             are workflow-specific: full → skip-plan (walk away
@@ -163,6 +163,7 @@ A markdown file: an optional `---`-fenced frontmatter block holding only fixed m
 - Environment-only actions (migrations, deploys): flag the human — never attempt.
 
 # Docs
-<for the docs phase, which runs after the implementation: a docs-update skill if
- one exists, else where docs live and what a change like this should update>
+<for reconciling docs after the implementation (full's `finish` phase; folded
+ into rir's build): a docs-update skill if one exists, else where docs live and
+ what a change like this should update>
 ```
