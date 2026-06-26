@@ -22,11 +22,13 @@ import {
   markSteersDelivered,
   markTurnActive,
   recordContextUsage,
+  recordTurnSessionId,
   saveRunState,
   workflowOf,
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
-import { readRoleTranscriptTail, readTranscriptTailAtPath } from '../sessions.ts';
+import { bindingFor } from '../config.ts';
+import { readTranscriptTailAtPath, readTranscriptTailForSession } from '../sessions.ts';
 import type { TurnDispatcher } from './turn-dispatcher.ts';
 import { formatAge, probeRole } from '../worker-health.ts';
 import { activityLine, latestActivity, repoRelative } from '../worker-activity.ts';
@@ -135,14 +137,17 @@ export interface PhaseTools {
  * ago · <N> retries`, or ` · RETRYING (<N> retries)` when this turn has retried
  * (the COUNT, never a fabricated class — api_retry carries no usable status).
  * Reads the worker's own transcript tail and probes it scoped to THIS turn (the
- * turn start anchors both in-flight and retry attribution). Returns '' on the
- * first turn (no session id yet) or on ANY read/probe failure — telemetry never
- * throws into a worker turn.
+ * turn start anchors both in-flight and retry attribution). Locates by the
+ * in-flight session id (staged on the active-turn hint as soon as the provider
+ * announces it), so it works from at/near a turn's start — including a first
+ * turn. Returns '' before the id is announced or on ANY read/probe failure —
+ * telemetry never throws into a worker turn.
  */
 function heartbeatHealth(state: RunState, role: WorkerRole, startedAt: number, now: number, home?: string): string {
   try {
-    if (!state.workerSessions[role]) return ''; // first turn — session id learned only on return
-    const tail = readRoleTranscriptTail(state, role, home !== undefined ? { home } : {});
+    const sessionId = state.activeTurns?.[role]?.sessionId;
+    if (!sessionId) return ''; // the provider hasn't announced this turn's id yet
+    const tail = readTranscriptTailForSession(bindingFor(state.bindings, role).provider, sessionId, home !== undefined ? { home } : {});
     if (!tail) return '';
     const h = probeRole(tail.jsonl, { schema: tail.schema, now, inFlightSince: startedAt, retriesSince: startedAt });
     const activity = h.lastActivityAgeMs !== undefined ? ` · last activity ${formatAge(h.lastActivityAgeMs)} ago` : '';
@@ -181,8 +186,12 @@ const ACTIVITY_POLL_MS = 30_000;
  *     file it is reading, that an edit happened), read from the same transcript
  *     tail and emitted only when it changed since the last tick — so a healthy
  *     worker grinding for 30 minutes reads differently from a stalled one.
- * Both cadences degrade to silence on the first turn (no session id yet) or any
- * read/parse failure — telemetry never throws into a worker turn. Returns one
+ * Both cadences locate the transcript by THIS turn's session id off the
+ * active-turn hint (`state.activeTurns[role].sessionId`), staged as soon as the
+ * provider announces it — so they work from at/near a turn's start, on EVERY
+ * turn and for every role (the implementer's first turn, the codex reviewer, the
+ * ephemeral consultant). They degrade to silence before the id is announced or on
+ * any read/parse failure — telemetry never throws into a worker turn. Returns one
  * stop fn that clears both intervals.
  */
 export function startHeartbeat(
@@ -217,10 +226,11 @@ export function startHeartbeat(
   let located: { path: string; schema: 'claude' | 'codex' } | undefined;
   const activity = setInterval(() => {
     try {
-      if (!state.workerSessions[role]) return; // first turn — session id learned only on return
+      const sessionId = state.activeTurns?.[role]?.sessionId;
+      if (!sessionId) return; // the provider hasn't announced this turn's id yet
       let tail = located ? readTranscriptTailAtPath(located.path, located.schema) : undefined;
       if (!tail) {
-        tail = readRoleTranscriptTail(state, role, home !== undefined ? { home } : {});
+        tail = readTranscriptTailForSession(bindingFor(state.bindings, role).provider, sessionId, home !== undefined ? { home } : {});
         located = tail ? { path: tail.path, schema: tail.schema } : undefined;
       }
       if (!tail) return;
@@ -896,6 +906,10 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
               sessionId: sessionIdFor(state, role),
               readOnly: readOnlyFor(role),
               cwd: state.cwd,
+              // Stage this turn's id onto the active-turn hint the moment the
+              // provider announces it, so the heartbeat poll (closed over the
+              // same `state`) can locate the transcript from the turn's start.
+              onSessionId: (id) => recordTurnSessionId(state, role, id),
             });
             settleTurn({ state, phase, providers, log }, { role, tag, isReviewRound }, turn);
             return turn;

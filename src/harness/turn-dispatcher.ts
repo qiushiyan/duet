@@ -10,6 +10,7 @@ import {
   markPendingTurn,
   markTurnActive,
   markWorkerDispatched,
+  recordTurnSessionId,
   settlePendingTurn,
 } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
@@ -205,7 +206,17 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
         // plus a record stranded `running`. stopHeartbeat rides a finally so the
         // 5-minute interval can never leak, on any exit.
         Promise.resolve()
-          .then(() => providerFor(providers, role).runTurn({ prompt: body, sessionId: sessionIdFor(fresh, role), readOnly: readOnlyFor(role), cwd: fresh.cwd }))
+          .then(() =>
+            providerFor(providers, role).runTurn({
+              prompt: body,
+              sessionId: sessionIdFor(fresh, role),
+              readOnly: readOnlyFor(role),
+              cwd: fresh.cwd,
+              // Stage this turn's id onto `fresh` — the same copy startHeartbeat
+              // closed over above — so the poll locates the transcript mid-turn.
+              onSessionId: (id) => recordTurnSessionId(fresh, role, id),
+            }),
+          )
           .then(
             (turn) => finalize(turn),
             (err) => finalize(err instanceof Error ? err : new Error(String(err))),

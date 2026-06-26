@@ -16,7 +16,7 @@ import { createRun, listPendingSteers, loadRunState, markPendingTurn, runDirOf, 
 import type { RunState } from '../src/run-store.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
 import { DeferredWorker, FakeWorker, SyncThrowWorker, consultantBindings, test } from './helpers/fixtures.ts';
-import { claudeApiRetry, claudeToolUse, claudeUserToolResult, jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
+import { claudeApiRetry, claudeToolUse, claudeUserToolResult, codexExecCommand, jsonl, plantClaudeTranscript, plantCodexRollout } from './helpers/transcripts.ts';
 
 /**
  * The protocol rails, tested through the orchestrator's real interface: the
@@ -92,7 +92,7 @@ describe('send_prompt', () => {
     expect(result.isError).toBeUndefined();
     expect(text(result)).toBe('scripted response');
     expect(reviewer.calls).toEqual([
-      { prompt: 'review this', sessionId: undefined, readOnly: true, cwd: run.cwd },
+      { prompt: 'review this', sessionId: undefined, readOnly: true, cwd: run.cwd, onSessionId: expect.any(Function) },
     ]);
   });
 
@@ -494,7 +494,7 @@ describe('send_prompt activeTurns hint (the persisted in-flight signal, #2)', ()
 });
 
 describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
-  test('once a session exists, the heartbeat carries transcript recency + retry count', async ({ run, projectDir, onTestFinished }) => {
+  test('once the turn announces its id, the heartbeat carries transcript recency + retry count', async ({ run, projectDir, onTestFinished }) => {
     vi.useFakeTimers();
     onTestFinished(() => {
       vi.useRealTimers();
@@ -502,8 +502,6 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
     const base = Date.parse('2026-06-20T12:00:00.000Z');
     vi.setSystemTime(base);
     const home = join(projectDir, 'home');
-    run.workerSessions = { implementer: 'impl-1' }; // not the first turn
-    saveRunState(run);
     plantClaudeTranscript(
       home,
       'impl-1',
@@ -512,7 +510,12 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
 
     let finish!: (t: { text: string; sessionId: string }) => void;
     const slow = new FakeWorker('claude');
-    slow.runTurn = () => new Promise((r) => (finish = r));
+    // The worker announces its id at turn start (as the real adapters do) — the
+    // heartbeat then locates the transcript by it, no settled workerSessions id.
+    slow.runTurn = (opts) => {
+      opts.onSessionId?.('impl-1');
+      return new Promise((r) => (finish = r));
+    };
     const { call, lines } = harness(run, { implementer: slow, home });
     const pending = call('send_prompt', { role: 'implementer', tag: 'start-plan', body: 'plan' });
     await vi.advanceTimersByTimeAsync(5 * 60_000);
@@ -525,15 +528,15 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
     await pending;
   });
 
-  test('the first turn (no session id yet) stays elapsed-only', async ({ run, onTestFinished }) => {
+  test('before the provider announces the turn id, the heartbeat stays elapsed-only', async ({ run, onTestFinished }) => {
     vi.useFakeTimers();
     onTestFinished(() => {
       vi.useRealTimers();
     });
     let finish!: (t: { text: string; sessionId: string }) => void;
     const slow = new FakeWorker('claude');
-    slow.runTurn = () => new Promise((r) => (finish = r));
-    const { call, lines } = harness(run, { implementer: slow }); // fresh run: no workerSessions
+    slow.runTurn = () => new Promise((r) => (finish = r)); // never announces an id
+    const { call, lines } = harness(run, { implementer: slow });
     const pending = call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
     await vi.advanceTimersByTimeAsync(5 * 60_000);
 
@@ -546,18 +549,19 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
     await pending;
   });
 
-  test('a missing transcript degrades to elapsed-only and the turn still succeeds', async ({ run, projectDir, onTestFinished }) => {
+  test('an announced id with no transcript degrades to elapsed-only and the turn still succeeds', async ({ run, projectDir, onTestFinished }) => {
     vi.useFakeTimers();
     onTestFinished(() => {
       vi.useRealTimers();
     });
-    const home = join(projectDir, 'home'); // nothing planted
-    run.workerSessions = { implementer: 'missing-id' };
-    saveRunState(run);
+    const home = join(projectDir, 'home'); // nothing planted at the announced id
 
     let finish!: (t: { text: string; sessionId: string }) => void;
     const slow = new FakeWorker('claude');
-    slow.runTurn = () => new Promise((r) => (finish = r));
+    slow.runTurn = (opts) => {
+      opts.onSessionId?.('missing-id'); // id known, but no transcript on disk
+      return new Promise((r) => (finish = r));
+    };
     const { call, lines } = harness(run, { implementer: slow, home });
     const pending = call('send_prompt', { role: 'implementer', tag: 'start-plan', body: 'x' });
     await vi.advanceTimersByTimeAsync(5 * 60_000);
@@ -634,13 +638,16 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
     const base = Date.parse('2026-06-20T12:00:00.000Z');
     vi.setSystemTime(base);
     const home = join(projectDir, 'home');
-    run.workerSessions = { implementer: 'impl-1' }; // not the first turn
-    saveRunState(run);
+    // No workerSessions: this is a FIRST turn. The worker announces its id at
+    // turn start (onSessionId), which is what the poll now locates by.
     plant(home, base);
 
     let finish!: (t: { text: string; sessionId: string }) => void;
     const slow = new FakeWorker('claude');
-    slow.runTurn = () => new Promise((r) => (finish = r));
+    slow.runTurn = (opts) => {
+      opts.onSessionId?.('impl-1');
+      return new Promise((r) => (finish = r));
+    };
     const { call, lines } = harness(run, { implementer: slow, home });
     const pending = call('send_prompt', { role: 'implementer', tag: 'start-plan', body: 'build' });
     await vi.advanceTimersByTimeAsync(advanceMs);
@@ -701,15 +708,35 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
     await pending;
   });
 
-  test('the first turn (no session id) emits no activity line', async ({ run, onTestFinished }) => {
+  test('a FIRST turn surfaces activity once the provider announces its id (the regression)', async ({ run, projectDir, onTestFinished }) => {
+    // The headline: a fresh run with NO workerSessions for the implementer — the
+    // exact state that used to go dark for a whole turn. The worker announces its
+    // id at turn start and the poll finds the transcript planted at it.
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    expect.soft(run.workerSessions.implementer).toBeUndefined(); // genuinely a first turn
+    const { lines, finish, pending } = await activityLines(
+      run,
+      projectDir,
+      (home, base) => plantClaudeTranscript(home, 'impl-1', jsonl(claudeToolUse([{ name: 'Read', input: { file_path: '/repo/first.ts' }, id: 'toolu_first' }], { ts: new Date(base).toISOString() }))),
+      30_000,
+    );
+    expect(lines.some((l) => l.includes('⋯ reading /repo/first.ts'))).toBe(true);
+    finish();
+    await pending;
+  });
+
+  test('before the provider announces the turn id, no activity line is emitted', async ({ run, onTestFinished }) => {
     vi.useFakeTimers();
     onTestFinished(() => {
       vi.useRealTimers();
     });
     let finish!: (t: { text: string; sessionId: string }) => void;
     const slow = new FakeWorker('claude');
-    slow.runTurn = () => new Promise((r) => (finish = r));
-    const { call, lines } = harness(run, { implementer: slow }); // fresh run: no workerSessions
+    slow.runTurn = () => new Promise((r) => (finish = r)); // never announces an id
+    const { call, lines } = harness(run, { implementer: slow });
     const pending = call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
     await vi.advanceTimersByTimeAsync(60_000);
     expect(lines.some((l) => l.includes('⋯'))).toBe(false);
@@ -717,17 +744,18 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
     await pending;
   });
 
-  test('an unreadable transcript degrades to no line and the turn still succeeds', async ({ run, projectDir, onTestFinished }) => {
+  test('an announced id with no transcript degrades to no line and the turn still succeeds', async ({ run, projectDir, onTestFinished }) => {
     vi.useFakeTimers();
     onTestFinished(() => {
       vi.useRealTimers();
     });
-    const home = join(projectDir, 'home'); // nothing planted
-    run.workerSessions = { implementer: 'missing' };
-    saveRunState(run);
+    const home = join(projectDir, 'home'); // nothing planted at the announced id
     let finish!: (t: { text: string; sessionId: string }) => void;
     const slow = new FakeWorker('claude');
-    slow.runTurn = () => new Promise((r) => (finish = r));
+    slow.runTurn = (opts) => {
+      opts.onSessionId?.('missing');
+      return new Promise((r) => (finish = r));
+    };
     const { call, lines } = harness(run, { implementer: slow, home });
     const pending = call('send_prompt', { role: 'implementer', tag: 'start-plan', body: 'x' });
     await vi.advanceTimersByTimeAsync(60_000);
@@ -735,6 +763,86 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
     finish({ text: 'done', sessionId: 'impl-1' });
     const result = await pending;
     expect.soft(result.isError).toBeFalsy();
+  });
+
+  test('a codex worker surfaces activity too (the provider is derived from the binding, not a role check)', async ({ run, projectDir, onTestFinished }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const base = Date.parse('2026-06-20T12:00:00.000Z');
+    vi.setSystemTime(base);
+    const home = join(projectDir, 'home');
+    // The reviewer is codex by default — plant a codex rollout at the announced id.
+    plantCodexRollout(home, 'rev-1', jsonl(codexExecCommand('rg --files-with-matches needle src', { callId: 'call_x', ts: new Date(base).toISOString() })));
+    let finish!: (t: { text: string; sessionId: string }) => void;
+    const slow = new FakeWorker('codex');
+    slow.runTurn = (opts) => {
+      opts.onSessionId?.('rev-1');
+      return new Promise((r) => (finish = r));
+    };
+    const { call, lines } = harness(run, { reviewer: slow, home });
+    const pending = call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(lines.some((l) => l.includes('⋯ searching') && l.includes('reviewer'))).toBe(true);
+    finish({ text: 'done', sessionId: 'rev-1' });
+    await pending;
+  });
+
+  test('the async (interactive) host surfaces activity on a first turn too (same wiring, via the dispatcher)', async ({ run, projectDir, onTestFinished }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const base = Date.parse('2026-06-20T12:00:00.000Z');
+    vi.setSystemTime(base);
+    const home = join(projectDir, 'home');
+    plantClaudeTranscript(home, 'live-async', jsonl(claudeToolUse([{ name: 'Read', input: { file_path: '/repo/async.ts' }, id: 'toolu_async' }], { ts: new Date(base).toISOString() })));
+    let finish!: (t: { text: string; sessionId: string }) => void;
+    const worker = new FakeWorker('claude');
+    worker.runTurn = (opts) => {
+      opts.onSessionId?.('live-async');
+      return new Promise((r) => (finish = r));
+    };
+    const { call, lines, dispatcher } = harness(run, { implementer: worker, home, async: true });
+    await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' }); // dispatches and returns
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(lines.some((l) => l.includes('⋯ reading /repo/async.ts'))).toBe(true);
+    finish({ text: 'done', sessionId: 'live-async' });
+    await vi.advanceTimersByTimeAsync(0); // drain the settle so the heartbeat interval is cleared
+    dispatcher?.collectReady();
+  });
+
+  test('the ephemeral consultant locates THIS turn’s id, never its stale settled session', async ({ consultantRun, projectDir, onTestFinished }) => {
+    // The consultant reseeds every turn, so workerSessions.consultant holds the
+    // PRIOR session. The poll must follow the announced live id, not fall back to
+    // that stale id (which would surface the wrong — or no — transcript).
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const base = Date.parse('2026-06-20T12:00:00.000Z');
+    vi.setSystemTime(base);
+    const home = join(projectDir, 'home');
+    consultantRun.workerSessions = { consultant: 'stale-prior' };
+    saveRunState(consultantRun);
+    // The stale session has an OLD action; the live one has the current action.
+    plantClaudeTranscript(home, 'stale-prior', jsonl(claudeToolUse([{ name: 'Read', input: { file_path: '/repo/old.ts' }, id: 'toolu_old' }], { ts: new Date(base).toISOString() })));
+    plantClaudeTranscript(home, 'live-now', jsonl(claudeToolUse([{ name: 'Read', input: { file_path: '/repo/current.ts' }, id: 'toolu_now' }], { ts: new Date(base).toISOString() })));
+    let finish!: (t: { text: string; sessionId: string }) => void;
+    const slow = new FakeWorker('claude');
+    slow.runTurn = (opts) => {
+      opts.onSessionId?.('live-now');
+      return new Promise((r) => (finish = r));
+    };
+    const { call, lines } = harness(consultantRun, { consultant: slow, home, phase: 'plan' });
+    const pending = call('send_prompt', { role: 'consultant', tag: 'consultant-contract', body: 'audit' });
+    await vi.advanceTimersByTimeAsync(30_000);
+    const activity = lines.filter((l) => l.includes('⋯'));
+    expect.soft(activity.some((l) => l.includes('current.ts'))).toBe(true); // the live transcript
+    expect.soft(activity.some((l) => l.includes('old.ts'))).toBe(false); // never the stale one
+    finish({ text: 'done', sessionId: 'live-now' });
+    await pending;
   });
 });
 
