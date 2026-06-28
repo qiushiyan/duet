@@ -161,7 +161,7 @@ delegating error envelope alone (the spec scopes #1-floor to `tools.ts`).
 ## Slice 3 — #2: `resolveRun` + `continuePlanner`
 
 **One sentence:** lift `continue`'s ~10 tangled decisions into a pure planner the action merely
-executes, and kill the 10× run-resolution boilerplate — restoring `cli.ts` to wiring.
+executes, and kill the 11× run-resolution boilerplate — restoring `cli.ts` to wiring.
 
 ### Changes (anchors)
 - **`resolveRun(cwd, runId, notFoundMsg)`** replaces **all 11** sites of `runId ? loadRunState(cwd,
