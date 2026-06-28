@@ -12,11 +12,13 @@ import {
   gateAttended,
   highDecisionsAt,
   holdsMcpOwner,
+  clearTurnActive,
   listPendingSteers,
   listRuns,
   loadMachineSnapshot,
   loadRunState,
   markSteersDelivered,
+  markTurnActive,
   recordPhaseLabel,
   runDirOf,
   saveMachineSnapshot,
@@ -146,6 +148,30 @@ describe('persistence', () => {
     expect(loadMachineSnapshot(run)).toBeUndefined();
     saveMachineSnapshot(run, snapshot);
     expect(loadMachineSnapshot(run)).toEqual(snapshot);
+  });
+});
+
+describe('the mutate discipline (concurrency-safe crash-state)', () => {
+  test('a concurrent cross-role write does not clobber the sibling role', ({ projectDir, run }) => {
+    // Two in-memory copies of the same on-disk run, each unaware of the other.
+    const copyA = loadRunState(projectDir, run.runId);
+    const copyB = loadRunState(projectDir, run.runId);
+    markTurnActive(copyA, 'implementer', 'impl-tag');
+    // copyB was loaded before A's write, but markTurnActive reloads fresh and
+    // merges its own role surgically — so the implementer entry survives.
+    markTurnActive(copyB, 'reviewer', 'rev-tag');
+    const disk = loadRunState(projectDir, run.runId);
+    expect(disk.activeTurns?.implementer?.tag).toBe('impl-tag');
+    expect(disk.activeTurns?.reviewer?.tag).toBe('rev-tag');
+  });
+
+  test('a no-op clear does not save its stale copy over a concurrent sibling write', ({ projectDir, run }) => {
+    const stale = loadRunState(projectDir, run.runId); // captured before the sibling write
+    markTurnActive(run, 'reviewer', 'rev-tag'); // a sibling writes the reviewer entry to disk
+    // The implementer entry is absent for `stale`, so the clear is a no-op — and
+    // must NOT save `stale`'s (reviewer-less) snapshot over the live write.
+    clearTurnActive(stale, 'implementer');
+    expect(loadRunState(projectDir, run.runId).activeTurns?.reviewer?.tag).toBe('rev-tag');
   });
 });
 
