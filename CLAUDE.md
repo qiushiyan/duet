@@ -11,7 +11,7 @@ Product goals — the bar every change is measured against:
 - **Semi-AFK.** By default the human walks away after the spec (full's `overnight` posture auto-crosses plan, Ship, and the Open-PR gate; rir walks away after Direction); plan-approval is where an *interactively-orchestrated* run hands its session off to the headless driver (the structural handoff gate), and it is the walk-away point only under a posture that still attends plan. Return to an open PR or a well-formed queued question. Nothing runs between quiescent stops — no daemon.
 - **Personal tool first, publish-ready.** Project knowledge enters only via the framing turn; the only config is role→provider bindings; exactly two providers. Shipped artifacts (`skills/`, README) are written for any user.
 
-**Status** (detail in `README.md`): the whole workflow is live-verified end to end — both arcs, both orchestrator hosts, the consultant, run-supervision, and the interactive transport have run on real work. Still test-verified-only (not yet live): the acceptance contract, the `finish` / `publish` finishing tails, and `duet stats`. Codex-as-orchestrator is deliberately unbuilt.
+**Status** (detail in `README.md`): the whole workflow is live-verified end to end — both arcs, both orchestrator hosts, the consultant, the acceptance contract, run-supervision, the interactive transport, the `finish` / `publish` finishing tails, and `duet stats` have all run on real work. Codex-as-orchestrator is deliberately unbuilt.
 
 ## Map
 

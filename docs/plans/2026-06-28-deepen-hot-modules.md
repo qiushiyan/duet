@@ -13,7 +13,7 @@ shape are the spec's chosen designs; this plan implements them.
 ## Orientation
 
 - **One slice = one commit**, in the spec's landing order. Each slice is independently revertable.
-- **Master oracle:** the 727-test suite stays green at every commit. Commands: `pnpm test`
+- **Master oracle:** the full suite stays green at every commit, growing only by additive tests. Commands: `pnpm test`
   (`vitest run`), `pnpm typecheck` (`tsc --noEmit`). Several slices are guaranteed by the
   *typecheck*, not a runtime test (gate-non-nullable in #5, exhaustiveness in #4, the typed
   `refuse` in #1-floor) — run both.

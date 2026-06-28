@@ -62,9 +62,9 @@ the **designated descope** if the run runs long.
 
 ## The non-negotiable invariants (preserved by every change below)
 
-1. **Behavior-preserving.** No user-observable output differs. The 727-test Vitest
-   suite (corrected up from the brief's "663+") stays green at every commit, and
-   is the master oracle for "no regression."
+1. **Behavior-preserving.** No user-observable output differs. The full Vitest
+   suite stays green at every commit and grows only by additive tests — it is the
+   master oracle for "no regression."
 2. **The trust gradient holds.** `statechart (when) → tool handlers (what's
    allowed) → prompts (judgment)`. Judgment never moves down into code; a guarantee
    never moves up into a prompt. Rails **refuse with steering text + `isError`** —
@@ -421,7 +421,7 @@ after `#5`, `#1-floor`, `#3`, `#1-deep`, and final.
 - **Behavior preservation is the master oracle — and for `#1-deep` the *existing*
   tests are the preservation proof.** Every existing tool-result string and
   `isError`, every CLI message, every status line and `--json` field is unchanged;
-  the 727-test suite must stay green throughout. Be explicit about which tests prove
+  the full suite must stay green throughout. Be explicit about which tests prove
   what across the rail extraction: the rails being extracted are characterized today
   only through the **full-handler** tests (`send_prompt`/`ask_human`/`advance_phase`
   driven end-to-end), so *those* tests staying green across the extraction are what
