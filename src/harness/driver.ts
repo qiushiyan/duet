@@ -266,6 +266,15 @@ async function streamTurn(
       }
       saveRunState(state);
       if (message.subtype !== 'success') {
+        // First-terminal-wins: if the orchestrator already recorded a terminal
+        // decision THIS turn (advance_phase / ask_human persisted a marker), that
+        // decision owns the outcome — an abnormal SDK exit must not overwrite the
+        // real decision or its queued question. This mirrors the run loop's catch
+        // for the throw path (host-runner.ts); here it guards the in-band result
+        // path, where a coincident budget/abnormal exit would otherwise clobber a
+        // just-queued ask_human question or mask a recorded advance.
+        const decided = markerToEvent(state.terminalMarker, phase);
+        if (decided) return decided.type === 'phase.advance' ? 'advanced' : 'flagged';
         // Abnormal exits become flags, not crashes — the human decides how to
         // proceed. An orchestrator budget cap is its OWN cause: a real stop,
         // but resumable (raise the budget / resume), distinct from both an

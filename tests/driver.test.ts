@@ -471,6 +471,31 @@ describe('a terminal decision survives a post-call stream throw (#1 — first-te
     expect.soft(prompts).toHaveLength(1); // no retry turn ran
   });
 
+  // The same guarantee on the in-band path: an abnormal SDK *result* subtype (not
+  // a throw) that coincides with a just-recorded decision. streamTurn's
+  // abnormal-subtype self-flag must honor the marker rather than overwrite it.
+  test('ask_human then an abnormal result subtype → phase.flag, the human’s question wins (not the budget stop)', async ({ projectDir, run }) => {
+    const { runTurn } = scriptedSession(async (ctx) => {
+      await callTool(ctx, 'ask_human', { question: 'the real question' });
+      return [success({ subtype: 'error_max_budget_usd' })]; // turn exits over budget AFTER the decision
+    });
+    const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    expect(result).toEqual({ type: 'phase.flag' });
+    const q = loadRunState(projectDir, run.runId).pendingQuestion;
+    expect.soft(q?.question).toBe('the real question'); // not clobbered by the budget-cap question
+    expect.soft(q?.cause).toBe('human'); // not reclassified to budget
+  });
+
+  test('advance_phase then an abnormal result subtype → phase.advance, not masked by a budget flag', async ({ projectDir, run }) => {
+    const { runTurn } = scriptedSession(async (ctx) => {
+      await callTool(ctx, 'advance_phase', { summary: 'done', artifacts: [] });
+      return [success({ subtype: 'error_max_budget_usd' })];
+    });
+    const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    expect(result).toEqual({ type: 'phase.advance' });
+    expect.soft(loadRunState(projectDir, run.runId).pendingQuestion).toBeUndefined(); // no spurious budget stop
+  });
+
   test('the entry replay concludes the retry episode — a stale retryState is cleared', async ({ projectDir, run }) => {
     const staged = loadRunState(projectDir, run.runId);
     staged.terminalMarker = { phase: 'frame', kind: 'advance' };
