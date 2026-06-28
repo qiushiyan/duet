@@ -635,6 +635,10 @@ export interface RailCtx {
   phase: PhaseName;
   /** The phase's review-round backstop cap. */
   cap: number;
+  /** A dispatcher owns this run's turns (the interactive/async host). The blocking
+   *  (headless) host has none — and its phase-exit gate is structurally off (see
+   *  pendingTurnGateRail), so its in-memory `turnsInFlight` never gates a terminal call. */
+  asyncHost: boolean;
   /** A turn to this role is live (blocking: in-memory set; async: the dispatcher's status). */
   inFlight: (role: WorkerRole) => boolean;
   /** A pending-turn record exists on disk for this role (async host only). A LIVE turn
@@ -693,8 +697,14 @@ export const terminalAlreadySetRail: Rail<TerminalInput> = (_input, ctx) =>
     : null;
 
 /** The phase-exit gate (async host): refuse while ANY dispatched turn is uncollected —
- *  live (collect it) or a reconnect orphan (recover by the role's policy). */
+ *  live (collect it) or a reconnect orphan (recover by the role's policy). Async-host
+ *  ONLY: on the blocking host the orchestrator's send_prompt runs to completion before
+ *  it can call a terminal tool, so there is never an uncollected turn to strand — and
+ *  the in-memory `turnsInFlight` set (which `inFlight` reads there) must NOT gate a
+ *  phase exit. This short-circuit is the unconditional guarantee, decoupled from
+ *  whatever the scheduler does with concurrent tool calls. */
 export const pendingTurnGateRail: Rail<TerminalInput> = ({ verb }, ctx) => {
+  if (!ctx.asyncHost) return null;
   const outstanding = workerRolesFor(ctx.state).filter((r) => ctx.inFlight(r) || ctx.orphanedOnDisk(r));
   if (outstanding.length === 0) return null;
   const recovery = (role: WorkerRole): string => {
@@ -869,6 +879,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     state,
     phase,
     cap: PHASE[phase].roundCap,
+    asyncHost: dispatcher !== undefined,
     inFlight: (role) => (dispatcher ? dispatcher.statusOf(role) !== undefined : turnsInFlight.has(role)),
     orphanedOnDisk: (role) => dispatcher !== undefined && Boolean(state.pendingTurns?.[role]),
     sentThisPhase,

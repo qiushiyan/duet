@@ -28,6 +28,7 @@ import { LESSONS_DIR } from '../src/snippets.ts';
 import { createTurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import type { TurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import { BudgetCutoffError } from '../src/providers/types.ts';
+import type { WorkerRole } from '../src/providers/types.ts';
 import { PHASE } from '../src/phases.ts';
 import type { PhaseName } from '../src/phases.ts';
 import { createRun, loadRunState, markPendingTurn, runDirOf, saveRunState, stageHumanInput } from '../src/run-store.ts';
@@ -57,6 +58,9 @@ interface HarnessOpts {
   async?: boolean;
   /** The dispatcher's lease check (the background-settle fence); defaults to always-held. */
   holdsLease?: () => boolean;
+  /** Seed the in-memory same-role-in-flight set (the `rails` injection seam). Test-only:
+   *  absent → the factory gets no `rails` and owns a fresh pair, exactly as production. */
+  turnsInFlight?: Set<WorkerRole>;
 }
 
 function harness(run: RunState, opts: HarnessOpts = {}) {
@@ -87,6 +91,7 @@ function harness(run: RunState, opts: HarnessOpts = {}) {
     ...(opts.stagedAnswer !== undefined ? { stagedAnswer: opts.stagedAnswer } : {}),
     ...(opts.home !== undefined ? { home: opts.home } : {}),
     ...(dispatcher ? { async: { dispatcher } } : {}),
+    ...(opts.turnsInFlight ? { rails: { turnsInFlight: opts.turnsInFlight, resendWarned: new Set<string>() } } : {}),
   });
   const call = (name: string, args: Record<string, unknown> = {}): Promise<ToolResult> => {
     const tool = tools.find((t) => t.name === name);
@@ -149,6 +154,9 @@ describe('rails (the #1-deep internal-seam surface)', () => {
     state,
     phase: 'spec',
     cap: 3,
+    // Default to the async host (a dispatcher present) — the common case for these
+    // rails. The blocking host (asyncHost:false) is exercised explicitly below.
+    asyncHost: true,
     inFlight: () => false,
     orphanedOnDisk: () => false,
     sentThisPhase: () => [],
@@ -201,9 +209,14 @@ describe('rails (the #1-deep internal-seam surface)', () => {
     expect(terminalAlreadySetRail({ verb: 'advance the phase' }, railCtx(run, { phase: 'spec' }))?.isError).toBe(true);
     delete run.terminalMarker;
     expect(terminalAlreadySetRail({ verb: 'advance the phase' }, railCtx(run, { phase: 'spec' }))).toBeNull();
-    const stranded = pendingTurnGateRail({ verb: 'advance the phase' }, railCtx(run, { inFlight: () => true }));
+    // Async host (a dispatcher owns turns): an uncollected turn strands the phase exit.
+    const stranded = pendingTurnGateRail({ verb: 'advance the phase' }, railCtx(run, { asyncHost: true, inFlight: () => true }));
     expect(stranded?.isError).toBe(true);
     expect(text(stranded!)).toContain("can't advance the phase");
+    // Blocking host (no dispatcher): the gate is structurally OFF. `inFlight` reads the
+    // in-memory turnsInFlight set there, but a blocking send_prompt runs to completion
+    // before a terminal call, so it must NOT gate a phase exit — even with inFlight true.
+    expect(pendingTurnGateRail({ verb: 'advance the phase' }, railCtx(run, { asyncHost: false, inFlight: () => true }))).toBeNull();
   });
 
   test('the contract/verify checkpoints refuse a silent skip (a high is the escape hatch)', ({ consultantRun }) => {
@@ -2409,6 +2422,27 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     const adv = await call('advance_phase', { summary: 's', artifacts: [] });
     expect.soft(adv.isError).toBeUndefined();
     expect.soft(run.terminalMarker).toEqual({ phase: 'frame', kind: 'advance' });
+  });
+
+  test('phase-exit on the BLOCKING host is never gated by the in-memory in-flight set (structurally async-only)', async ({
+    run,
+  }) => {
+    // The blocking host has no dispatcher: a send_prompt runs to completion before the
+    // orchestrator can call a terminal tool, so there is never an uncollected turn to
+    // strand. The phase-exit gate must therefore be OFF here regardless of the in-memory
+    // turnsInFlight set (which the same-role send guard, not this gate, owns). Seed that
+    // set live and confirm neither terminal tool is refused — the preservation oracle for
+    // the base's unconditional `if (!dispatcher) return null`.
+    const turnsInFlight = new Set<WorkerRole>(['implementer']);
+    const { call } = harness(run, { phase: 'frame', turnsInFlight }); // async omitted → blocking host
+
+    const adv = await call('advance_phase', { summary: 's', artifacts: [] });
+    expect.soft(adv.isError).toBeUndefined();
+    expect.soft(run.terminalMarker).toEqual({ phase: 'frame', kind: 'advance' });
+
+    delete run.terminalMarker;
+    const ask = await call('ask_human', { question: 'q?' });
+    expect.soft(ask.isError).toBeUndefined();
   });
 
   test('the settle is lease-fenced: a superseded server (holdsLease false) writes nothing', async ({ projectDir, run }) => {
