@@ -18,10 +18,12 @@ import {
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
 import { readRoleTranscriptTail } from '../sessions.ts';
-import { classifyError, currentTerminalError, retryDecision } from '../worker-health.ts';
+import { classifyError, currentTerminalError } from '../worker-health.ts';
 import type { ErrorClass } from '../worker-health.ts';
 import { markerToEvent } from './phase-events.ts';
 import type { PhaseEvent } from './phase-events.ts';
+import { runHostedPhase } from './host-runner.ts';
+import type { HostedSession, PhaseHost, TurnOutcome } from './host-runner.ts';
 import { createPhaseTools } from './tools.ts';
 import type { KernelTool } from './tools.ts';
 import {
@@ -47,6 +49,13 @@ import {
  * The tool surface itself — and every protocol rail it enforces — lives in
  * ./tools.ts; this module hosts it inside an SDK session and resolves the
  * session's end into the machine's phase.* event vocabulary (./phase-events.ts).
+ *
+ * The phase RUN LOOP — entry marker-replay, nudge-once, the twice-ended flag,
+ * crash → flag + opt-in retry — is shared with the stdio host in
+ * ./host-runner.ts; this module is now the in-process `PhaseHost` adapter
+ * (`makeInProcessHost`): it drives one SDK turn, classifies a failure with the
+ * staleness-aware `classifyInfraError`, and opts into retry (the one headless
+ * place auto-retry runs).
  */
 
 export interface DriverInput {
@@ -100,88 +109,89 @@ const sdkTurn: RunOrchestratorTurn = ({ prompt, options, tools }) =>
     },
   }) as AsyncIterable<SDKMessage>;
 
-export async function runPhase(
-  { runId, cwd, phase }: DriverInput,
-  runTurn: RunOrchestratorTurn = sdkTurn,
-): Promise<PhaseEvent> {
-  const state = loadRunState(cwd, runId);
-
-  // Crash re-entry into the SAME phase: a terminal marker for this phase
-  // survived from a session that decided before the machine could transition
-  // (the snapshot was never saved). Re-emit that decision without re-running
-  // the session — the packet it carries was persisted atomically with it. A
-  // terminal outcome ends the retry episode, so conclude it (reset retryState).
-  const persisted = markerToEvent(state.terminalMarker, phase);
-  if (persisted) return concludeEpisode(state, persisted);
-
-  // The first attempt consumes any staged human input; a retry re-enters as a
-  // pure session resume (the input was already consumed), so it must not replay.
-  let pendingMessage = consumeHumanInput(state);
-
-  for (;;) {
-    try {
-      return concludeEpisode(state, await drivePhase(state, phase, pendingMessage, runTurn));
-    } catch (err) {
-      // A terminal decision the orchestrator persisted before the stream threw
-      // IS the phase outcome — first-terminal-wins means a throw cannot override
-      // it into a false infra flag or a spurious retry. Honor it BEFORE the crash
-      // log/classification: within this invocation a this-phase marker can only
-      // have been written by this turn's terminal tool call (a pre-existing one
-      // was consumed at entry above), so it is the live decision, returned once.
-      const decided = markerToEvent(state.terminalMarker, phase);
-      if (decided) return concludeEpisode(state, decided);
-
-      // A genuine infrastructure failure (SDK crash, spawn failure, driver bug)
-      // is classified BEFORE any flag is persisted, so opt-in auto-retry can
-      // resume a transient class in-process (the existing session-resume path)
-      // rather than parking the human. The retry policy is the single
-      // retryDecision mechanism: default-off, auth-once, login/quota/unknown
-      // never retried, exhaustion → flag.
-      const detail = err instanceof Error ? err.message : String(err);
-      console.log(`[driver] ✗ ${phase} phase crashed: ${detail}`);
-      const errorClass = classifyInfraError(state, detail);
-      const decision = retryDecision(errorClass, state.retryState, state.retryInfra ?? 0);
-      if (decision.action === 'retry') {
-        state.retryState = decision.nextRetryState;
-        saveRunState(state);
-        console.log(
-          `[driver] infra ${errorClass} — auto-retry ${decision.nextRetryState.attempts}/${state.retryInfra} after ${Math.round(decision.delayMs / 1000)}s`,
-        );
-        await new Promise((resolve) => setTimeout(resolve, decision.delayMs));
-        pendingMessage = undefined; // retry = resume; never replay consumed input
-        continue;
-      }
-      // Escalate: a question the orchestrator already queued this invocation
-      // wins (it is the more meaningful one, and stays cause:'human'); otherwise
-      // queue the infra question with its classified cause/class.
-      if (!state.pendingQuestion) {
-        state.pendingQuestion = {
-          question: `The ${phase} phase failed at the infrastructure layer (${detail}). Run duet doctor for per-role health, or check driver.log; answer with how to proceed — the orchestrator session resumes from its last completed turn.`,
-          cause: 'infra',
-          errorClass: decision.errorClass,
-        };
-        saveRunState(state);
-      }
-      return { type: 'phase.flag' };
-    }
-  }
+export async function runPhase(input: DriverInput, runTurn: RunOrchestratorTurn = sdkTurn): Promise<PhaseEvent> {
+  return runHostedPhase(input, makeInProcessHost(runTurn));
 }
 
+/** Driver narration → plain stdout (the detached driver's log file). The [tag]
+ *  palette is view-time only: picocolors auto-disables off-TTY, so the file stays
+ *  plain; `duet logs` and the tmux panes re-apply color where a human watches. */
+const driverLog = (line: string): void => console.log(colorizeDriverLine(line));
+
 /**
- * Conclude a phase's retry episode: a terminal/clean outcome ends it, so reset
- * the per-episode retry budget (persisted across re-spawns only while an episode
- * is live) before returning the event. The single concluding path behind all
- * three terminal exits — entry replay, a marker honored in the catch, and a
- * clean drivePhase outcome — so the cleanup can't drift between them. Touches
- * only retryState, never the terminal marker (its deliver-before-clear lifecycle
- * is the machine's, unchanged).
+ * The in-process `PhaseHost`: an Agent SDK orchestrator session driven in this
+ * process. `openSession` builds the tool surface and SDK options once — consuming
+ * any staged human input — and each `driveTurn` streams one SDK turn (the phase
+ * prompt, then the nudge). `classifyFailure` is the staleness-aware
+ * `classifyInfraError`; `retryable` is true (the headless driver is the one place
+ * opt-in infra auto-retry runs). The run-loop rails around it live in
+ * ./host-runner.ts.
  */
-function concludeEpisode(state: RunState, event: PhaseEvent): PhaseEvent {
-  if (state.retryState) {
-    delete state.retryState;
-    saveRunState(state);
-  }
-  return event;
+function makeInProcessHost(runTurn: RunOrchestratorTurn): PhaseHost {
+  return {
+    retryable: true,
+    classifyFailure: classifyInfraError,
+    async openSession({ runId, cwd, phase }): Promise<HostedSession> {
+      const state = loadRunState(cwd, runId);
+      // The first attempt consumes any staged human input; a retry re-opens and
+      // finds it already consumed (consumeHumanInput persists), so the resumed
+      // turn falls to the nudge prompt and never replays.
+      const pendingMessage = consumeHumanInput(state);
+      const budget = budgetFor(state, phase);
+      const { tools } = createPhaseTools({
+        state,
+        phase,
+        providers: createWorkers(state.bindings, {
+          workerBudgetUsd: budget.worker,
+          timeoutMs: PHASE[phase].workerTurnTimeoutMs,
+        }),
+        log: driverLog,
+        ...(pendingMessage?.kind === 'answer' ? { stagedAnswer: pendingMessage.text } : {}),
+      });
+      const options = buildOrchestratorOptions(state, budget);
+      return {
+        async driveTurn(kind): Promise<TurnOutcome> {
+          if (kind === 'phase') {
+            const prompt = buildPrompt(state, phase, pendingMessage);
+            // Refresh the view-only phase sidecar the tmux orchestrator border reads.
+            recordPhaseLabel(state, phase);
+            appendVoiceLog(state, 'orchestrator', `◀ harness prompt (phase=${phase})`, prompt);
+            return streamTurn(state, phase, prompt, options, tools, runTurn);
+          }
+          // The nudge continues the SAME session, so re-attach resume (the phase
+          // turn set orchestratorSessionId).
+          appendVoiceLog(state, 'orchestrator', '◀ harness nudge (turn ended without advance/flag)');
+          const nudgeOptions: Options = {
+            ...options,
+            ...(state.orchestratorSessionId ? { resume: state.orchestratorSessionId } : {}),
+          };
+          return streamTurn(state, phase, nudgeContinuePrompt(), nudgeOptions, tools, runTurn);
+        },
+        async close(): Promise<void> {
+          // No persistent resources — the SDK query is per turn.
+        },
+      };
+    },
+  };
+}
+
+/** The orchestrator session's SDK options: read-only by construction (no
+ *  built-in tools, only the harness MCP server attached by sdkTurn; no
+ *  user-config MCP servers via strictMcpConfig — the spike showed claude.ai
+ *  connectors leaking in). The budget cap and resume id are set only when
+ *  present. */
+function buildOrchestratorOptions(state: RunState, budget: ReturnType<typeof budgetFor>): Options {
+  return {
+    model: state.bindings.orchestrator.model ?? DEFAULT_CLAUDE_MODEL.orchestrator,
+    cwd: state.cwd,
+    tools: [],
+    strictMcpConfig: true,
+    ...(budget.orchestrator !== undefined ? { maxBudgetUsd: budget.orchestrator } : {}),
+    systemPrompt: orchestratorSystemPrompt(state),
+    // send_prompt calls outlive the default 60s SDK MCP stream window.
+    env: { ...process.env, CLAUDE_CODE_STREAM_CLOSE_TIMEOUT: String(2 * 60 * 60_000) },
+    ...(state.orchestratorSessionId ? { resume: state.orchestratorSessionId } : {}),
+  };
 }
 
 /**
@@ -208,139 +218,85 @@ function classifyInfraError(state: RunState, detail: string): ErrorClass {
   return 'unknown';
 }
 
-async function drivePhase(
+/**
+ * Stream ONE orchestrator turn over the SDK seam and report its TurnOutcome —
+ * the in-process host's per-turn mechanics, called by `makeInProcessHost`'s
+ * `driveTurn` for both the phase prompt and the nudge. It logs the assistant
+ * text, captures the orchestrator's own cost/context, and turns an abnormal
+ * result subtype into a self-flag (a budget cap is its own resumable cause; any
+ * other abnormal exit is an infra flag, never auto-retried), then reads the
+ * persisted terminal marker (set by advance_phase/ask_human on the shared
+ * in-memory state) to map the turn to advanced / flagged / continue.
+ */
+async function streamTurn(
   state: RunState,
   phase: PhaseName,
-  pendingMessage: HumanMessage | undefined,
+  turnPrompt: string,
+  turnOptions: Options,
+  tools: Array<KernelTool<any>>,
   runTurn: RunOrchestratorTurn,
-): Promise<PhaseEvent> {
-  // Narration goes to plain stdout — the detached driver's log file. The
-  // [tag] palette is applied through the one view-time colorizer (picocolors
-  // auto-disables off-TTY, so the file stays plain; `duet logs` and the tmux
-  // panes re-apply it where a human is watching).
-  const log = (line: string) => console.log(colorizeDriverLine(line));
-
-  const budget = budgetFor(state, phase);
-  const { tools } = createPhaseTools({
-    state,
-    phase,
-    providers: createWorkers(state.bindings, {
-      workerBudgetUsd: budget.worker,
-      timeoutMs: PHASE[phase].workerTurnTimeoutMs,
-    }),
-    log,
-    ...(pendingMessage?.kind === 'answer' ? { stagedAnswer: pendingMessage.text } : {}),
-  });
-
-  const options: Options = {
-    model: state.bindings.orchestrator.model ?? DEFAULT_CLAUDE_MODEL.orchestrator,
-    cwd: state.cwd,
-    // Read-only by construction: no built-in tools, only the harness MCP
-    // server (attached by sdkTurn), and no user-config MCP servers
-    // (strictMcpConfig — the substrate spike showed claude.ai connectors and
-    // plugins leaking into the surface).
-    tools: [],
-    strictMcpConfig: true,
-    // Set only when defined — an undefined cap (budgets off) omits the SDK option.
-    ...(budget.orchestrator !== undefined ? { maxBudgetUsd: budget.orchestrator } : {}),
-    systemPrompt: orchestratorSystemPrompt(state),
-    // send_prompt calls outlive the default 60s SDK MCP stream window.
-    env: { ...process.env, CLAUDE_CODE_STREAM_CLOSE_TIMEOUT: String(2 * 60 * 60_000) },
-    ...(state.orchestratorSessionId ? { resume: state.orchestratorSessionId } : {}),
-  };
-
-  const prompt = buildPrompt(state, phase, pendingMessage);
-
-  // Refresh the view-only phase sidecar the tmux orchestrator border reads.
-  recordPhaseLabel(state, phase);
-  appendVoiceLog(state, 'orchestrator', `◀ harness prompt (phase=${phase})`, prompt);
-  let result = await driveTurn(prompt, options);
-
-  if (result === 'continue') {
-    // The orchestrator ended its turn without advancing or flagging — nudge
-    // once, then treat persistent silence as a flag so the human sees it.
-    appendVoiceLog(state, 'orchestrator', '◀ harness nudge (turn ended without advance/flag)');
-    result = await driveTurn(nudgeContinuePrompt(), {
-      ...options,
-      ...(state.orchestratorSessionId ? { resume: state.orchestratorSessionId } : {}),
-    });
-    if (result === 'continue') {
-      state.pendingQuestion = {
-        question:
-          'The orchestrator twice ended its turn without advancing the phase or asking a question — the run is stuck. Run duet doctor for per-role health, or check the orchestrator log; answer with how to proceed.',
-        cause: 'infra',
-        errorClass: 'unknown',
-      };
-      saveRunState(state);
-      result = 'flagged';
-    }
-  }
-
-  return result === 'advanced' ? { type: 'phase.advance' } : { type: 'phase.flag' };
-
-  async function driveTurn(turnPrompt: string, turnOptions: Options): Promise<'advanced' | 'flagged' | 'continue'> {
-    // The last request's usage IS the current context fill (fresh input +
-    // cache reads + cache writes + output — the claude statusline formula);
-    // the result message's modelUsage supplies the window.
-    let lastUsage: { input_tokens?: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null; output_tokens?: number } | undefined;
-    for await (const message of runTurn({ prompt: turnPrompt, options: turnOptions, tools })) {
-      if (message.type === 'assistant') {
-        if (message.message.usage) lastUsage = message.message.usage;
-        for (const block of message.message.content) {
-          if (typeof block === 'object' && block !== null && 'type' in block && block.type === 'text') {
-            const text = (block as { text: string }).text;
-            log(`[orchestrator] ${text}`);
-            appendVoiceLog(state, 'orchestrator', '▶ orchestrator', text);
-          }
-        }
-      } else if (message.type === 'result') {
-        state.orchestratorSessionId = message.session_id;
-        state.costs.orchestratorUsd += message.total_cost_usd;
-        const windowTokens = Math.max(0, ...Object.values(message.modelUsage ?? {}).map((m) => m.contextWindow ?? 0));
-        if (lastUsage && windowTokens > 0) {
-          recordContextUsage(state, 'orchestrator', {
-            usedTokens:
-              (lastUsage.input_tokens ?? 0) +
-              (lastUsage.cache_read_input_tokens ?? 0) +
-              (lastUsage.cache_creation_input_tokens ?? 0) +
-              (lastUsage.output_tokens ?? 0),
-            windowTokens,
-          });
-        }
-        saveRunState(state);
-        if (message.subtype !== 'success') {
-          // Abnormal exits become flags, not crashes — the human decides how to
-          // proceed. An orchestrator budget cap is its OWN cause: a real stop,
-          // but resumable (raise the budget / resume), distinct from both an
-          // infra-retry and a human-product question — so it carries cause:
-          // 'budget' and no errorClass (budget is not an infra taxonomy class).
-          // Every other abnormal subtype stays infra-caused but not a taxonomy
-          // class (a turn/execution error is not network/auth), so it is never
-          // auto-retried — errorClass:'unknown'.
-          state.pendingQuestion =
-            message.subtype === 'error_max_budget_usd'
-              ? {
-                  question: `The orchestrator reached its budget cap (${message.subtype}). This is a budget-control stop, not an infrastructure failure: raise the budget or resume, and the session continues from where it stopped.`,
-                  cause: 'budget',
-                }
-              : {
-                  question: `The orchestrator run ended abnormally (${message.subtype}). Run duet doctor for per-role health, or check the orchestrator log; answer with how to proceed (the session resumes from where it stopped).`,
-                  cause: 'infra',
-                  errorClass: 'unknown',
-                };
-          saveRunState(state);
-          return 'flagged';
+): Promise<TurnOutcome> {
+  // The last request's usage IS the current context fill (fresh input + cache
+  // reads + cache writes + output — the claude statusline formula); the result
+  // message's modelUsage supplies the window.
+  let lastUsage: { input_tokens?: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null; output_tokens?: number } | undefined;
+  for await (const message of runTurn({ prompt: turnPrompt, options: turnOptions, tools })) {
+    if (message.type === 'assistant') {
+      if (message.message.usage) lastUsage = message.message.usage;
+      for (const block of message.message.content) {
+        if (typeof block === 'object' && block !== null && 'type' in block && block.type === 'text') {
+          const text = (block as { text: string }).text;
+          driverLog(`[orchestrator] ${text}`);
+          appendVoiceLog(state, 'orchestrator', '▶ orchestrator', text);
         }
       }
+    } else if (message.type === 'result') {
+      state.orchestratorSessionId = message.session_id;
+      state.costs.orchestratorUsd += message.total_cost_usd;
+      const windowTokens = Math.max(0, ...Object.values(message.modelUsage ?? {}).map((m) => m.contextWindow ?? 0));
+      if (lastUsage && windowTokens > 0) {
+        recordContextUsage(state, 'orchestrator', {
+          usedTokens:
+            (lastUsage.input_tokens ?? 0) +
+            (lastUsage.cache_read_input_tokens ?? 0) +
+            (lastUsage.cache_creation_input_tokens ?? 0) +
+            (lastUsage.output_tokens ?? 0),
+          windowTokens,
+        });
+      }
+      saveRunState(state);
+      if (message.subtype !== 'success') {
+        // Abnormal exits become flags, not crashes — the human decides how to
+        // proceed. An orchestrator budget cap is its OWN cause: a real stop,
+        // but resumable (raise the budget / resume), distinct from both an
+        // infra-retry and a human-product question — so it carries cause:
+        // 'budget' and no errorClass (budget is not an infra taxonomy class).
+        // Every other abnormal subtype stays infra-caused but not a taxonomy
+        // class (a turn/execution error is not network/auth), so it is never
+        // auto-retried — errorClass:'unknown'.
+        state.pendingQuestion =
+          message.subtype === 'error_max_budget_usd'
+            ? {
+                question: `The orchestrator reached its budget cap (${message.subtype}). This is a budget-control stop, not an infrastructure failure: raise the budget or resume, and the session continues from where it stopped.`,
+                cause: 'budget',
+              }
+            : {
+                question: `The orchestrator run ended abnormally (${message.subtype}). Run duet doctor for per-role health, or check the orchestrator log; answer with how to proceed (the session resumes from where it stopped).`,
+                cause: 'infra',
+                errorClass: 'unknown',
+              };
+        saveRunState(state);
+        return 'flagged';
+      }
     }
-    // The terminal decision is read from the persisted marker (set by
-    // advance_phase/ask_human on the live state this loop shares), not a polled
-    // flag — the one channel every host reads, in or across a process boundary.
-    // Phase-scoped: a stale marker from a prior phase reads as continue.
-    const event = markerToEvent(state.terminalMarker, phase);
-    if (event) return event.type === 'phase.advance' ? 'advanced' : 'flagged';
-    return 'continue';
   }
+  // The terminal decision is read from the persisted marker (set by
+  // advance_phase/ask_human on the live state this turn shares), not a polled
+  // flag — the one channel every host reads. Phase-scoped: a stale marker from a
+  // prior phase reads as continue, leaving the run-loop's nudge/flag to resolve it.
+  const event = markerToEvent(state.terminalMarker, phase);
+  if (event) return event.type === 'phase.advance' ? 'advanced' : 'flagged';
+  return 'continue';
 }
 
 /**

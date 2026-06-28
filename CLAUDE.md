@@ -29,9 +29,10 @@ Each cluster pairs the doc that explains a subsystem with the code that implemen
 - `src/harness/phase-events.ts` — the disjoint `phase.*` (internal) / `human.*` (authority) vocabularies + the persisted marker→event read.
 
 **The run loop & its hosts**
-- `src/harness/driver.ts` — the in-process host: one Agent SDK orchestrator session per phase; infra classify + opt-in retry; honors the terminal marker.
+- `src/harness/host-runner.ts` — the host-neutral phase run loop (`runHostedPhase`) + the `PhaseHost` seam: the four rails every phase host shares — entry marker-replay, nudge-once, the twice-ended flag, crash → flag + opt-in retry. driver.ts and stdio-host.ts are its two adapters.
+- `src/harness/driver.ts` — the in-process `PhaseHost`: one Agent SDK orchestrator session per phase (`streamTurn`); `classifyInfraError` + `retryable: true` (the one headless place auto-retry runs).
 - `src/harness/lifecycle.ts` — the detached `_drive` process: pid guard, `gates_at` auto-cross, the spent-marker guard, `probeRunPosition` (where a run is), `crossInteractive`, `enterAfk`, `freezeContractAt`.
-- `src/harness/stdio-host.ts` + `src/harness/mcp-server.ts` — the out-of-process and interactive hosts: the same kernel over stdio MCP; the run-scoped server holds the single-writer lease (`mcp-owner.json`).
+- `src/harness/stdio-host.ts` + `src/harness/mcp-server.ts` — the out-of-process and interactive hosts: the same kernel over stdio MCP; stdio-host is the stdio `PhaseHost` adapter; the run-scoped server holds the single-writer lease (`mcp-owner.json`).
 - `src/harness/turn-dispatcher.ts` — the interactive host's pending-turn engine (dispatch → settle → collect), non-throwing/total, lease-fenced.
 
 **Tools, prompts & snippets**
