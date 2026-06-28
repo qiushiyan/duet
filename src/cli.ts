@@ -6,6 +6,8 @@ import { Command } from 'commander';
 import { execa } from 'execa';
 import { createActor } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
+import { continuePlanner } from './continue-planner.ts';
+import type { ContinueEventType, RestoredFacts } from './continue-planner.ts';
 import { bindingFor, loadRunConfig } from './config.ts';
 import type { BindableRole } from './config.ts';
 import { sessionPolicyFor, voicesFor } from './roles.ts';
@@ -16,11 +18,9 @@ import {
   driveToQuiescence,
   enterAfk,
   freezeContractAt,
-  interactiveContinueAction,
   killDriver,
   probeRunPosition,
   spawnDrive,
-  validateInteractiveCrossing,
   waitForTurnOrStop,
 } from './harness/lifecycle.ts';
 import type { HumanEvent } from './harness/lifecycle.ts';
@@ -29,7 +29,7 @@ import { serveKernelStdio, serveRunScopedKernelStdio } from './harness/mcp-serve
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
 import { buildStatsModel, renderStats } from './stats.ts';
 import { runOrchestrate } from './orchestrate.ts';
-import { entryOf, handoffWatchLabel, phaseOfGateState } from './phases.ts';
+import { entryOf, handoffWatchLabel } from './phases.ts';
 import { getEffectiveSnippet, loadEffectiveSnippets, runtimeLibraryContext } from './snippets.ts';
 import type { EffectiveSnippet } from './snippets.ts';
 import { buildBrief, buildStatusModel, renderBrief, renderStatus, steerRefusal } from './status.ts';
@@ -37,7 +37,6 @@ import { openTmuxView } from './tmux-view.ts';
 import {
   clearPendingTurn,
   createRun,
-  gateAttended,
   latestRun,
   listPendingSteers,
   listRuns,
@@ -112,6 +111,42 @@ export const program = new Command();
 // A function declaration so TS narrows after calls (never-returning arrows don't).
 function fail(message: string): never {
   return program.error(message);
+}
+
+/**
+ * Resolve the run a command targets: the named `runId`, or the latest run in
+ * `cwd`. Fails with the caller-supplied not-found message — it varies per
+ * command (some point at `duet new`, some at the bare "no runs found"), so it is
+ * passed in to keep every byte identical. A function declaration so `fail`'s
+ * `never` narrows the result to non-null at the call site.
+ */
+function resolveRun(cwd: string, runId: string | undefined, notFoundMsg: string): RunState {
+  const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
+  if (!state) fail(notFoundMsg);
+  return state;
+}
+
+/**
+ * Restore the `continue` planner's headless facts from the run's persisted
+ * machine snapshot — `null` when none exists yet. Building the actor and reading
+ * its snapshot has no side effects (it is never started), so the planner stays
+ * pure over the plain facts this returns.
+ */
+function restoreFacts(state: RunState): RestoredFacts | null {
+  const snapshot = loadMachineSnapshot(state);
+  if (!snapshot) return null;
+  const restored = createActor(machineFor(workflowOf(state)), {
+    input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
+    snapshot,
+  }).getSnapshot();
+  return {
+    value: restored.value,
+    status: restored.status,
+    hasGateTag: restored.hasTag('gate'),
+    canApprove: restored.can({ type: 'human.approve' }),
+    canReject: restored.can({ type: 'human.reject' }),
+    canAnswer: restored.can({ type: 'human.answer' }),
+  };
 }
 
 /**
@@ -323,8 +358,7 @@ program
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
   .action((runId: string | undefined) => {
     const cwd = process.cwd();
-    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
-    if (!state) fail('no runs found in this project — start one with duet new --interactive');
+    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with duet new --interactive');
     console.log(`bringing up the interactive orchestrator for run ${state.runId} …`);
     const launched = runOrchestrate(state);
     if (launched.error) fail(launched.error.message);
@@ -498,8 +532,7 @@ program
     // `duet afk <runId>` (bare posture, specific run) and `duet afk <preset>`
     // (posture, latest run) share the first positional — resolveAfkArgs sorts it.
     const { preset: presetArg, runId: runIdArg } = resolveAfkArgs(cwd, preset, runId);
-    const state = runIdArg ? loadRunState(cwd, runIdArg) : latestRun(cwd);
-    if (!state) fail('no runs found in this project — start one with duet new');
+    const state = resolveRun(cwd, runIdArg, 'no runs found in this project — start one with duet new');
     let split;
     try {
       // Bare afk → the empty "attend none" posture; a named arg → an existing
@@ -554,8 +587,7 @@ program
   .option('--tmux', 'open (or reuse) the tmux viewer for this run')
   .action(async (runId: string | undefined, opts: ContinueTextOpts & { headless?: boolean; tmux?: boolean }) => {
     const cwd = process.cwd();
-    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
-    if (!state) fail('no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
+    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
     if (opts.tmux) await openTmuxView(state);
 
     // Reviving an abandoned run — abandonment is reversible by design
@@ -592,137 +624,84 @@ program
       return;
     }
 
-    const eventType = approveIntent
-      ? ('approve' as const)
+    const eventType: ContinueEventType | undefined = approveIntent
+      ? 'approve'
       : rejectIntent
-        ? ('reject' as const)
+        ? 'reject'
         : answerIntent
-          ? ('answer' as const)
+          ? 'answer'
           : undefined;
 
-    // Stage 1: the human's interactive session is the orchestrator.
-    // `duet continue` advances the machine inline (crossInteractive, no _drive)
-    // until the workflow's handoff gate. Runs BEFORE the snapshot-based
-    // validation below, because the run's first gate has no machine snapshot
-    // until crossInteractive persists one — the headless path's "no snapshot ⇒
-    // crash" would misfire on it.
-    if (state.orchestrationHost === 'interactive') {
-      const position = probeRunPosition(state);
+    // Gather the facts the planner decides from: the marker/snapshot-derived
+    // position, and — on the headless host — the restored machine's facts (the
+    // interactive host has no snapshot until its first crossing, so it restores
+    // none). continuePlanner is pure over these; the action below is the thin
+    // executor that does every side effect it names.
+    const position = probeRunPosition(state);
+    const restored = state.orchestrationHost === 'interactive' ? null : restoreFacts(state);
+    const action = continuePlanner(state, { position, eventType, headless: Boolean(opts.headless), restored });
 
-      if (!eventType) {
-        if (opts.headless) {
-          // --headless with no decision is a mid-phase drop to the headless
-          // driver. At a gate/flag the human owes a decision first, not a drop.
-          if (position.kind === 'gate' || position.kind === 'flag') {
-            fail(
-              `the run is parked at its ${position.kind} — cross it with --headless --approve/--reject (a gate) or --answer (a flag); bare --headless is only for a mid-phase drop.`,
-            );
-          }
-          delete state.orchestrationHost;
-          saveRunState(state);
-          const pid = spawnDrive(state);
-          printWatchHints(state, pid, 'dropped to headless (mid-phase)');
+    switch (action.kind) {
+      case 'fail':
+        return fail(action.message);
+      case 'show-status':
+      case 'interactive-show-status':
+        showStatus(state);
+        return;
+      case 'interactive-drop-headless': {
+        delete state.orchestrationHost;
+        saveRunState(state);
+        const pid = spawnDrive(state);
+        printWatchHints(state, pid, 'dropped to headless (mid-phase)');
+        return;
+      }
+      case 'crash-recover': {
+        if (position.kind === 'crashed') {
+          console.log(`run ${state.runId}: the ${position.phase} phase stopped mid-flight — re-entering from the transcripts`);
+        }
+        const pid = spawnDrive(state, action.resumeEvent);
+        printWatchHints(state, pid, 'recovered phase');
+        return;
+      }
+      case 'preauth-recover': {
+        console.log(`run ${state.runId}: stopped at the pre-authorized ${String(restored?.value)} — re-entering (it auto-crosses)`);
+        const pid = spawnDrive(state);
+        printWatchHints(state, pid, 'recovered phase');
+        return;
+      }
+      case 'interactive-cross': {
+        guardRunIdAsText(cwd, opts);
+        await stageContinueText(state, opts);
+        if (action.freezeContractPhase) await freezeContractAt(state, action.freezeContractPhase);
+        crossInteractive(state, action.event);
+        if (action.after === 'handoff') {
+          const handed = loadRunState(cwd, state.runId);
+          delete handed.orchestrationHost;
+          saveRunState(handed);
+          const pid = spawnDrive(handed);
+          printWatchHints(handed, pid, opts.headless ? 'handed off to headless' : handoffWatchLabel(workflowOf(handed)));
           return;
         }
-        showStatus(state); // bare continue on an interactive run: show the gate/rest
+        const rest = probeRunPosition(loadRunState(cwd, state.runId));
+        const restPhase = rest.kind === 'interactive' ? rest.phase : undefined;
+        console.log(
+          `run ${state.runId}: crossed inline${restPhase ? ` — the interactive orchestrator session drives the ${restPhase} phase next (re-anchor with get_task)` : ''}.`,
+        );
         return;
       }
-
-      const invalid = validateInteractiveCrossing(position, eventType);
-      if (invalid) fail(`run ${state.runId} ${invalid}.`);
-
-      guardRunIdAsText(cwd, opts);
-      await stageContinueText(state, opts);
-
-      // Validation passed, so the position is a gate or flag — both carry a phase.
-      if (position.kind !== 'gate' && position.kind !== 'flag') return;
-      // Freeze the acceptance contract before an approve crosses the contract gate
-      // (the human ratifies it by approving) — no-op at every other gate/event.
-      if (eventType === 'approve') await freezeContractAt(state, position.phase);
-      const action = interactiveContinueAction(workflowOf(state), position.phase, eventType, Boolean(opts.headless));
-      crossInteractive(state, { type: `human.${eventType}` });
-
-      if (action === 'handoff') {
-        const handed = loadRunState(cwd, state.runId);
-        delete handed.orchestrationHost;
-        saveRunState(handed);
-        const pid = spawnDrive(handed);
-        printWatchHints(handed, pid, opts.headless ? 'handed off to headless' : handoffWatchLabel(workflowOf(handed)));
+      case 'gate-decision': {
+        guardRunIdAsText(cwd, opts);
+        await stageContinueText(state, opts);
+        const pid = spawnDrive(state, action.eventType);
+        printWatchHints(state, pid, `phase (after --${action.eventType})`);
         return;
       }
-      const rest = probeRunPosition(loadRunState(cwd, state.runId));
-      const restPhase = rest.kind === 'interactive' ? rest.phase : undefined;
-      console.log(
-        `run ${state.runId}: crossed inline${restPhase ? ` — the interactive orchestrator session drives the ${restPhase} phase next (re-anchor with get_task)` : ''}.`,
-      );
-      return;
+      default: {
+        const _exhaustive: never = action;
+        void _exhaustive;
+        return;
+      }
     }
-
-    // A crashed-mid-phase run (no live driver, the snapshot — if any — parked
-    // at the stop whose crossing died): bare continue re-enters from the
-    // transcripts, re-uttering the crossing the run state already evidences
-    // (probe docs: harness/lifecycle.ts). This is the command `duet status`
-    // names at a crashed stop, so it must actually recover.
-    const position = probeRunPosition(state);
-    if (position.kind === 'crashed' && chosen.length === 0) {
-      console.log(
-        `run ${state.runId}: the ${position.phase} phase stopped mid-flight — re-entering from the transcripts`,
-      );
-      const pid = spawnDrive(state, position.resumeEvent);
-      printWatchHints(state, pid, 'recovered phase');
-      return;
-    }
-
-    const snapshot = loadMachineSnapshot(state);
-    if (!snapshot) {
-      // Crashed before the first quiescent stop AND a decision flag was
-      // passed — there is nothing restored to validate a gate decision against.
-      fail(
-        'this run has no gate to act on (it stopped mid-phase) — rerun without flags to let it pick up from the transcripts',
-      );
-    }
-
-    const probe = createActor(machineFor(workflowOf(state)), {
-      input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
-      snapshot,
-    });
-    const restored = probe.getSnapshot();
-
-    // A snapshot parked at a pre-authorized gate means the driver died after
-    // reaching it but before the next attended stop — re-enter; the driver
-    // crosses it again on the standing authorization.
-    const restoredGatePhase = typeof restored.value === 'string' ? phaseOfGateState(workflowOf(state), restored.value) : undefined;
-    if (chosen.length === 0 && restoredGatePhase && !gateAttended(state, restoredGatePhase) && restored.status !== 'done') {
-      console.log(
-        `run ${state.runId}: stopped at the pre-authorized ${String(restored.value)} — re-entering (it auto-crosses)`,
-      );
-      const pid = spawnDrive(state);
-      printWatchHints(state, pid, 'recovered phase');
-      return;
-    }
-
-    if (!eventType) {
-      showStatus(state);
-      return;
-    }
-    const event: HumanEvent = { type: `human.${eventType}` };
-
-    // Validate the event against the restored state before committing side
-    // effects (or opening an editor), so a wrong flag gets a friendly error
-    // instead of a no-op.
-    if (restored.status === 'done') fail(`run ${state.runId} is complete — nothing to continue`);
-    if (!restored.can(event)) {
-      fail(
-        `--${event.type.split('.')[1]} is not valid at ${JSON.stringify(restored.value)} — ` +
-          (restored.hasTag('gate') ? 'this is a gate: use --approve or --reject "<feedback>"' : 'a question is queued: use --answer "<text>"'),
-      );
-    }
-
-    guardRunIdAsText(cwd, opts);
-    await stageContinueText(state, opts);
-
-    const pid = spawnDrive(state, eventType);
-    printWatchHints(state, pid, `phase (after --${eventType})`);
   });
 
 // Internal: the detached phase driver `new`/`continue` spawn. Drives the
@@ -775,8 +754,7 @@ program
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
   .action(async (text: string | undefined, runId: string | undefined) => {
     const cwd = process.cwd();
-    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
-    if (!state) fail('no runs found in this project');
+    const state = resolveRun(cwd, runId, 'no runs found in this project');
     const position = probeRunPosition(state);
     if (position.kind !== 'running' && position.kind !== 'crashed') {
       fail(steerRefusal(position, state.runId) ?? `nothing to steer at ${position.kind}`);
@@ -814,8 +792,7 @@ program
   )
   .action(async (runId: string | undefined, opts: { purge?: boolean }) => {
     const cwd = process.cwd();
-    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
-    if (!state) fail('no runs found in this project');
+    const state = resolveRun(cwd, runId, 'no runs found in this project');
 
     // abandon is the one command that acts ON a live driver (continue/takeover
     // refuse while it runs) — kill it first, then mark or purge with the driver
@@ -850,8 +827,7 @@ program
   .option('--here', 'replace the current tmux pane with the viewer instead of opening a window (ephemeral; needs tmux)')
   .action(async (runId: string | undefined, opts: { here?: boolean }) => {
     const cwd = process.cwd();
-    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
-    if (!state) fail('no runs found in this project');
+    const state = resolveRun(cwd, runId, 'no runs found in this project');
     await openTmuxView(state, { here: opts.here });
     // The voice set is the run's bound voices (consultant included when bound),
     // not a static list — the slice-3 enumeration rule reaches this hint too.
@@ -869,8 +845,7 @@ program
       fail(`unknown role "${role}" — use orchestrator, implementer, reviewer, or consultant`);
     }
     const cwd = process.cwd();
-    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
-    if (!state) fail('no runs found in this project');
+    const state = resolveRun(cwd, runId, 'no runs found in this project');
 
     const runningPid = aliveDriverPid(state);
     if (runningPid !== undefined) {
@@ -926,8 +901,7 @@ program
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
   .action(async (runId: string | undefined) => {
     const cwd = process.cwd();
-    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
-    if (!state) fail('no runs found in this project');
+    const state = resolveRun(cwd, runId, 'no runs found in this project');
     const path = join(runDirOf(state.cwd, state.runId), 'driver.log');
     console.log(`following ${path} — Ctrl-C detaches (the run keeps going)\n`);
     // tail -F waits for the file if the driver hasn't written yet; SIGINT
@@ -964,8 +938,7 @@ program
   .option('--wait', 'block until the run reaches its next stop — gate, question, crash, or done — then print; read-only and safe to interrupt. With --json this is the supervision primitive: run it in the background and report when it exits')
   .action(async (runId: string | undefined, opts: { json?: boolean; wait?: boolean; brief?: boolean }) => {
     const cwd = process.cwd();
-    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
-    if (!state) fail('no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
+    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
     if (opts.wait) {
       // Turn-aware: wakes on a worker turn settling (interactive host) as well as
       // a run stop. When a turn woke it, foreground WHY before the status block.
@@ -988,8 +961,7 @@ program
   .option('--json', 'emit the full health model (including resolved session paths) for automation')
   .action(async (runId: string | undefined, opts: { json?: boolean }) => {
     const cwd = process.cwd();
-    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
-    if (!state) fail('no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
+    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
     const model = await buildDoctorModel(state, { now: Date.now() });
     console.log(opts.json ? JSON.stringify(model, null, 2) : renderDoctor(model));
   });
@@ -1003,8 +975,7 @@ program
   .option('--json', 'emit the StatsModel for automation')
   .action((runId: string | undefined, opts: { json?: boolean }) => {
     const cwd = process.cwd();
-    const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
-    if (!state) fail('no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
+    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
     const model = buildStatsModel(state);
     console.log(opts.json ? JSON.stringify(model, null, 2) : renderStats(model));
   });
