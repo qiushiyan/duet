@@ -22,6 +22,7 @@
     "dist",
     "snippets.toml",
     "skills",
+    "lessons",
     "prompts"
   ],
   "scripts": {
@@ -30,7 +31,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "sync-skills": "node scripts/sync-skills.mjs",
-    "vendor-skills": "node scripts/vendor-skills.mjs",
+    "vendor-lessons": "node scripts/vendor-lessons.mjs",
     "build": "tsdown",
     "prepack": "pnpm typecheck && pnpm test && pnpm build"
   },

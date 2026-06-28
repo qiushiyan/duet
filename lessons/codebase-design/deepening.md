@@ -1,6 +1,14 @@
 # Deepening
 
-How to deepen a cluster of shallow modules safely, given its dependencies. Assumes the vocabulary in [LANGUAGE.md](LANGUAGE.md) — **module**, **interface**, **seam**, **adapter**.
+How to deepen a cluster of shallow modules safely, given its dependencies. Assumes the vocabulary in [deep-modules.md](deep-modules.md) — **module**, **interface**, **seam**, **adapter**.
+
+> _Lesson · codebase-design. Consolidates `improve-codebase-architecture/DEEPENING.md`. Upstream baseline: `.upstream/codebase-design/DEEPENING.md`._
+
+## The bar
+
+- **Classify the candidate's dependencies first** — the category dictates how the deepened module is tested across its seam.
+- **One adapter means a hypothetical seam. Two adapters means a real one.** Don't introduce a port unless at least two adapters are justified (typically production + test). A single-adapter seam is just indirection.
+- **Replace, don't layer.** New tests at the deepened interface *replace* the old shallow-module unit tests — delete those.
 
 ## Dependency categories
 
@@ -35,3 +43,5 @@ Third-party services (Stripe, Twilio, etc.) you don't control. The deepened modu
 - Write new tests at the deepened module's interface. The **interface is the test surface**.
 - Tests assert on observable outcomes through the interface, not internal state.
 - Tests should survive internal refactors — they describe behaviour, not implementation. If a test has to change when the implementation changes, it's testing past the interface.
+
+Where the seam is a mock or injected adapter, the mechanics live in [../testing/mocking-and-fixtures.md](../testing/mocking-and-fixtures.md).

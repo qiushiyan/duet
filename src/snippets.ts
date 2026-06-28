@@ -95,25 +95,27 @@ const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SNIPPETS_PATH = join(PACKAGE_ROOT, 'snippets.toml');
 
 /**
- * The vendored methodology skills (`skills/internal/`) — duet's PLAN-phase
- * quality opinion, shipped in the package (`files` includes `skills`). Snippet
- * bodies cite these with a `{{skills_dir}}/…` token that `snippetBlock` resolves
- * to this absolute dir at serve time, so a worker on any install reads the real
+ * The vendored methodology lessons (`lessons/`) — duet's PLAN-phase quality
+ * opinion, shipped in the package (`files` includes `lessons`). Snippet bodies
+ * cite these with a `{{lessons_dir}}/…` token that `snippetBlock` resolves to
+ * this absolute dir at serve time, so a worker on any install reads the real
  * files. Same package-relative resolution as `SNIPPETS_PATH` — `src/` and
  * `dist/` both sit one level below the root, so it survives the published build.
- * Exported for the snippet guard (`tests/snippets.test.ts`).
+ * A frozen snapshot of the author's `~/.config/lessons`, refreshed by hand via
+ * `pnpm vendor-lessons` — which writes to this same path, so keep the two in sync
+ * if the vendored dir ever moves. Exported for the snippet guard (`tests/snippets.test.ts`).
  */
-export const SKILLS_DIR = join(PACKAGE_ROOT, 'skills', 'internal');
+export const LESSONS_DIR = join(PACKAGE_ROOT, 'lessons');
 
 /**
- * Resolve the `{{skills_dir}}` placeholder in a snippet body to the vendored
+ * Resolve the `{{lessons_dir}}` placeholder in a snippet body to the vendored
  * absolute path. Applied only on the serve path (the rendered XML), never
  * stored: `loadSnippets`/`getSnippet` keep the portable token, so the library on
  * disk and in memory never carries a machine-specific path — the invariant this
  * substitution exists to hold.
  */
-function withSkillsDir(body: string): string {
-  return body.replaceAll('{{skills_dir}}', SKILLS_DIR);
+function withLessonsDir(body: string): string {
+  return body.replaceAll('{{lessons_dir}}', LESSONS_DIR);
 }
 
 // The file is hand-edited (snippet proposals apply here) — validate so a
@@ -144,7 +146,7 @@ function index(): Map<string, Snippet> {
 }
 
 /**
- * Look up a snippet by key. Returns the STORED form — a `{{skills_dir}}`
+ * Look up a snippet by key. Returns the STORED form — a `{{lessons_dir}}`
  * placeholder is left unresolved; only the render path (`snippetBlock`, via
  * `renderSnippetLibrary`) resolves it. Worker-facing delivery must go through
  * the render path, never a raw `getSnippet(...).expand`.
@@ -223,7 +225,7 @@ export function runtimeLibraryContext(cwd: string, home: string = homedir()): Sn
 
 /**
  * One snippet's effective (merged) form plus its provenance — for
- * `duet snippets show <key>`. STORED form: the `{{skills_dir}}` token is left
+ * `duet snippets show <key>`. STORED form: the `{{lessons_dir}}` token is left
  * unresolved, matching `getSnippet`.
  */
 export function getEffectiveSnippet(key: string, ctx: SnippetLibraryContext = {}): EffectiveSnippet | undefined {
@@ -289,7 +291,7 @@ export function renderSnippetLibrary(opts: SnippetRenderOpts = {}): string {
 function snippetBlock(s: Snippet, sentTo?: Record<string, string[]>): string {
   const sent = sentTo?.[s.key];
   const attr = sent && sent.length > 0 ? ` already_sent_this_phase_to="${sent.join(', ')}"` : '';
-  return `<snippet key="${s.key}"${attr}>\n${withSkillsDir(s.expand)}\n</snippet>`;
+  return `<snippet key="${s.key}"${attr}>\n${withLessonsDir(s.expand)}\n</snippet>`;
 }
 
 function renderFlat(library: Snippet[], sentTo?: Record<string, string[]>, all?: boolean, consultantBound = false, workflow?: WorkflowName): string {

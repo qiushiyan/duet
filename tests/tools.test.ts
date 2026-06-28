@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { CONSULTANT_IDENTITY_CLAUSE, ORCHESTRATOR_SYSTEM_PROMPT, buildPhaseBrief, orchestratorSystemPrompt } from '../src/harness/orchestrator-prompts.ts';
 import { createPhaseTools, projectDetail, stageSessionId } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
-import { SKILLS_DIR } from '../src/snippets.ts';
+import { LESSONS_DIR } from '../src/snippets.ts';
 import { createTurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import type { TurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import { BudgetCutoffError } from '../src/providers/types.ts';
@@ -1993,16 +1993,16 @@ describe('the library and the journal', () => {
   });
 
   test('list_snippets resolves the vendored methodology path at the tool surface (no token, no ~/.claude)', async ({ run }) => {
-    // The run-surface altitude for {{skills_dir}} resolution: snippets.test.ts
+    // The run-surface altitude for {{lessons_dir}} resolution: snippets.test.ts
     // layer 3 guards renderSnippetLibrary (the faster library-local check); this
     // guards what list_snippets actually hands a worker on the plan phase, where
-    // start-plan/review-plan cite the vendored skills in full.
+    // start-plan/review-plan cite the vendored lessons in full.
     const { call } = harness(run, { phase: 'plan' });
     const library = text(await call('list_snippets'));
 
-    expect.soft(library, 'an unresolved {{skills_dir}} token reached the tool result').not.toContain('{{skills_dir}}');
+    expect.soft(library, 'an unresolved {{lessons_dir}} token reached the tool result').not.toContain('{{lessons_dir}}');
     expect.soft(library, 'a ~/.claude path reached the tool result').not.toContain('~/.claude');
-    expect.soft(library, 'the resolved vendored path a worker receives').toContain(join(SKILLS_DIR, 'tdd/SKILL.md'));
+    expect.soft(library, 'the resolved vendored path a worker receives').toContain(join(LESSONS_DIR, 'codebase-design/deep-modules.md'));
   });
 
   test('list_snippets serves a project .duet/snippets.toml override (the contextual wire is connected)', async ({ run }) => {

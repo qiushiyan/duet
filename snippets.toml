@@ -191,13 +191,12 @@ Plan the implementation as vertical slices against the latest spec — reread th
 
 ## Read these first, then plan
 Read each one and adapt it to this change — they're the bar for a good plan, not optional background. If a path is missing, ask me rather than guessing.
-- `{{skills_dir}}/tdd/SKILL.md` — vertical slices, what to test, the anti-patterns
-- `{{skills_dir}}/tdd/tests.md` — behavior-focused tests; `test.for`, `expect.soft`, custom matchers
-- `{{skills_dir}}/tdd/mocking.md` — mock only at boundaries, never your own modules
-- `{{skills_dir}}/tdd/interface-design.md` — testability via `test.extend` fixtures
-- `{{skills_dir}}/tdd/deep-modules.md` — small interface over hidden implementation
-- `{{skills_dir}}/improve-codebase-architecture/SKILL.md` — deep modules, seams, the deletion test
-- `{{skills_dir}}/tdd/vitest-patterns.md` — Vitest APIs *(TS-Vitest projects only)*
+- `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
+- `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, red-green-refactor, the anti-patterns
+- `{{lessons_dir}}/testing/mocking-and-fixtures.md` — mock only at boundaries; `test.extend` fixtures
+- `{{lessons_dir}}/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
+
+When the plan restructures an existing cluster or the interface is uncertain, also read `{{lessons_dir}}/codebase-design/deepening.md` and `{{lessons_dir}}/codebase-design/design-it-twice.md`.
 
 ## What you're producing
 A plan written **complementary to the spec**, not overlapping it. Don't re-summarize its goals or re-argue its approach — point to it, and spend the tokens on the tactics it deferred (answer its open questions here). The relay that earns its tokens is a load-bearing gotcha, invariant, or constraint **bolded in the exact slice that must honor it** — surfaced at the point of action, where rereading the spec wouldn't put it in front of you.
@@ -239,8 +238,8 @@ expand = '''
 I've drafted an implementation plan. Review with the same rigor as the spec.
 
 Background (skim as a lens, don't recite):
-- `{{skills_dir}}/tdd/SKILL.md` — vertical slices, behavior-focused tests, when to mock
-- `{{skills_dir}}/improve-codebase-architecture/SKILL.md` — deep modules, seams, the deletion test
+- `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test
+- `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, when to mock
 
 **Adapt; drop what doesn't fit our use case.**
 
@@ -596,8 +595,8 @@ Build the change directly from the research decisions we settled — those decis
 
 ## Read these first, then build
 Read each one and adapt it to this change — they're the bar, not optional background; don't go hunting them mid-build, and ask me for a path if one's missing.
-- `{{skills_dir}}/tdd/SKILL.md` — vertical slices, behavior-focused tests, mock only at boundaries, anti-patterns
-- `{{skills_dir}}/improve-codebase-architecture/SKILL.md` — deep modules, seams, the deletion test
+- `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
+- `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, mock only at boundaries, anti-patterns
 
 ## Before you write code
 - **Re-read the research decisions and the cross-review notes** — they settled the direction and the target shape; execute it, don't re-decide it.
