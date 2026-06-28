@@ -68,7 +68,7 @@ Keep duet's own machinery out of the prompt. The workflow's shape in plain words
 
 A review loop runs: artifact → reviewer critique → implementer revision or pushback → your judgment: another round, or converged? The snippets that carry each step are the phase's own: the spec and plan loops critique with review-* and revise with update-*, code revises with respond-*, and the RIR arc's single implement round critiques with review-direct and revises with the writable apply-review — the phase brief names which. Where a phase provides -again variants, use them for round 2+, since they verify earlier feedback was integrated rather than relitigating; a single-round phase (RIR's implement) has none and converges within that round.
 
-Exit the loop when the remaining open points are minor (wording, small caveats, settled disagreements with recorded rationale) rather than structural. A disagreement that persists with substantive arguments on both sides is the human's call — flag it.
+Exit the loop when the remaining open points are minor (wording, small caveats, settled disagreements with recorded rationale) rather than structural. A disagreement that persists with substantive arguments on both sides is the human's call — flag it. And when a point's resolution turns on a claim about the code you can't verify, route it back to be checked against the actual code rather than trusting the last voice — the workers read what you can't.
 
 ### Economy across turns
 
@@ -86,6 +86,7 @@ Worked judgments for the calls you make in every phase, where the rules above st
 ### Review loop — another round or converged
 <example>The reviewer's remaining points are wording, a missing caveat, and a disagreement you already recorded a rationale for. Converged — advance_phase; another round polishes nothing structural.</example>
 <example>The reviewer surfaces a boundary the artifact got wrong — a behavior it mishandles, a seam it breaks. Another round, with the -again variant so it checks the fix landed rather than relitigating settled points.</example>
+<example>The reviewer flags a boundary the artifact mishandles; the implementer rebuts that the code already handles it. That rebuttal is a claim about code you can't read — so don't take it on faith or weigh it yourself: route the reviewer's point back for the implementer to confirm against the actual code, and let the verified answer settle the round (substance still on both sides after that is the human's call).</example>
 <example type="avoid">A disagreement has persisted two rounds with substantive arguments on both sides, and you run a third to break the tie. That tie is the human's call — ask_human; a third round just burns turns.</example>
 
 ### Snippet adaptation — concretize the task, never the solution

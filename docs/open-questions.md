@@ -62,13 +62,15 @@ Numbering note: Q1–Q10 predate the 2026-06-11 pivot to an intelligent orchestr
 
 ## Q13. Will the triage rules over-flag or under-flag?
 
-**Why it matters.** The orchestrator's value during AFK depends on flag precision: under-flagging silently absorbs product decisions the human owns (the worst failure); over-flagging turns AFK into a pager. The rules (product/direction → always flag; environment → always flag; tactical → bounce to worker with process-not-substance) are instructions, not mechanisms.
+**Why it matters.** The orchestrator's value during AFK depends on flag precision: under-flagging silently absorbs product decisions the human owns (the worst failure); over-flagging turns AFK into a pager. The rules (product/direction → always flag; environment → always flag; tactical → bounce to worker with process-not-substance) are instructions, not mechanisms. The same under-flag risk extends past explicit questions to review-loop *convergence* — deferring to a worker's claim the orchestrator can't verify absorbs a call it should have routed, with no question ever asked.
 
 **Current belief.** Modern models follow concrete triage instructions with examples well, and the failure mode is asymmetric by design — when in doubt the instructions say flag, because a spurious flag costs minutes while an absorbed product decision costs trust. Expect over-flagging first; tighten wording from observed false positives.
 
 **What would change the answer.** More runs. Every flag and every bounce gets reviewed afterward via the notes file: should this have been flagged? Should that have been? Recurring misses become instruction edits or, if instructions can't fix it, a harness-level rule.
 
 > **First real evidence (2026-06-11, planlab `20260611-1542-aeca`):** triage held through a full framing-to-ship arc — product calls were held for gates (group labels, tab placement surfaced in the ship packet, not as mid-loop interrupts), environment limits were reported honestly (eslint-can't-run, no-browser-smoke), and no spurious flags interrupted the AFK phase. The run's misbehavior was elsewhere (template re-sending — fixed as the template-economy rails). Verdict still open pending more runs; review each run's `notes.md` before tuning.
+
+> **First under-side miss (observed; run not retained):** counter to the "over-flagging first" expectation, the orchestrator — unable to read files — took an implementer's "already handled" rebuttal of a reviewer point at face value instead of routing it for verification, absorbing a convergence call it should have routed or flagged. Addressed as an instruction edit (the anticipated path): a positive route-to-verify example plus a review-loop clause in the orchestrator prompt (`src/harness/orchestrator-prompts.ts`). Whether it holds is for a later run's `notes.md`.
 
 ## ~~Q14. What is the new Slice 1?~~
 
