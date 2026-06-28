@@ -1,7 +1,5 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## What
 
 `duet` — personal semi-AFK orchestrator for one developer's two-agent workflow: a read-only LLM **orchestrator** routes a snippet protocol between an **implementer** and a **reviewer**, inside a code-enforced statechart whose human gates agents cannot cross. Workflow-aware: a run picks one arc — the thorough `full` (spec → plan → … → PR) or the lighter `rir` (research → implement → … → PR). Repo = design docs (authoritative for _what_ to build) + implementation at root (pnpm + TS, no build step in dev).
@@ -13,62 +11,28 @@ Product goals — the bar every change is measured against:
 - **Semi-AFK.** By default the human walks away after the spec (full's `overnight` posture auto-crosses plan, Ship, and the Open-PR gate; rir walks away after Direction); plan-approval is where an *interactively-orchestrated* run hands its session off to the headless driver (the structural handoff gate), and it is the walk-away point only under a posture that still attends plan. Return to an open PR or a well-formed queued question. Nothing runs between quiescent stops — no daemon.
 - **Personal tool first, publish-ready.** Project knowledge enters only via the framing turn; the only config is role→provider bindings; exactly two providers. Shipped artifacts (`skills/`, README) are written for any user.
 
-**Status** (detail in `README.md`). Both arcs, both orchestrator hosts (headless + interactive), the concierge package, the optional consultant + its acceptance contract, run-supervision (`duet doctor`, opt-in infra retry), and the interactive-Claude transport are built and test-verified (~800 tests). What's *not* done is live verification: only FRAME→Ship has run end-to-end against real workers; the interactive orchestrator, RIR, the consultant, and the `duet afk` handoff await their first live (auth-gated) runs, and the human's environment smoke tests are pending. Codex-as-orchestrator is deliberately unbuilt (Q17).
+**Status** (detail in `README.md`): the whole workflow is live-verified end to end — both arcs, both orchestrator hosts, the consultant, run-supervision, and the interactive transport have run on real work. Still test-verified-only (not yet live): the acceptance contract, the `finish` / `publish` finishing tails, and `duet stats`. Codex-as-orchestrator is deliberately unbuilt.
 
-## Map — docs and code by topic
+## Map
 
-Each cluster pairs the doc that explains a subsystem with the code that implements it. Read the doc before redesigning; the code lines are locators, not descriptions — the deep per-module detail lives in `docs/engineering.md`, not here.
+**Read first**, in order:
+- `docs/automation-design.md` — THE design: roles, layers, phases/gates, triage, branch policy, lifecycle, what-not-to-build.
+- `docs/engineering.md` — the codebase mental model: the module map, the seams, the patterns. **Read before moving code**; it holds the per-module detail this file deliberately omits.
 
-**The design, top to bottom** (read these first)
-- `docs/automation-design.md` — THE design: the three roles, the three layers, phases/gates, question triage, branch policy, lifecycle, what-not-to-build.
-- `docs/engineering.md` — the codebase's mental model: module map, the seven seams, the patterns, XState usage, testing strategy. **Read before moving code.**
+For code, start there or run `/onboarding [topic]` (`statechart` · `providers` · `prompts` · `surface` · `design`) — it routes to the right doc + code anchors. This file indexes the docs; it does not duplicate the module map.
 
-**Workflow, phases & the statechart**
-- `src/phases.ts` — the workflow registry (`WORKFLOWS`): the arcs as data (ordered phases, gates + copy, round caps, budgets, snippet sets, consultant checkpoints, the acceptance-contract pair); `validateRegistry` guards the flat-vs-scoped derivation at load.
-- `src/harness/machine.ts` — the per-arc statechart (`machineFor`); `interactiveMachineFor` is the inert-driver variant the interactive host rests on.
-- `src/harness/phase-events.ts` — the disjoint `phase.*` (internal) / `human.*` (authority) vocabularies + the persisted marker→event read.
+**Other docs, by what they answer:**
+- prompts / tools / errors → `docs/prompting-and-tool-design.md` (the binding conventions; consult for any prompt or tool surface).
+- the snippet library → `snippets.toml` (source of truth) + `docs/snippets.md` (catalog); the PLAN snippets cite the vendored `lessons/` methodology (`pnpm vendor-lessons` re-syncs it).
+- the interactive-Claude transport → `docs/interactive-transport.md` (opt-in, flat-quota billing).
+- the protocol & its evidence → `docs/workflow-model.md` / `docs/observed-pattern.md`.
+- the open design questions (the roadmap) → `docs/open-questions.md`: triage precision, the worker output schema, a run-level budget, the consultant's value, codex-as-orchestrator.
+- product direction → `docs/future-directions.md` (check before proposing one).
+- how docs are kept → `docs/documentation-standards.md`; status → `README.md`.
 
-**The run loop & its hosts**
-- `src/harness/host-runner.ts` — the host-neutral phase run loop (`runHostedPhase`) + the `PhaseHost` seam: the four rails every phase host shares — entry marker-replay, nudge-once, the twice-ended flag, crash → flag + opt-in retry. driver.ts and stdio-host.ts are its two adapters.
-- `src/harness/driver.ts` — the in-process `PhaseHost`: one Agent SDK orchestrator session per phase (`streamTurn`); `classifyInfraError` + `retryable: true` (the one headless place auto-retry runs).
-- `src/harness/lifecycle.ts` — the detached `_drive` process: pid guard, `gates_at` auto-cross, the spent-marker guard, `probeRunPosition` (where a run is), `crossInteractive`, `enterAfk`, `freezeContractAt`.
-- `src/harness/stdio-host.ts` + `src/harness/mcp-server.ts` — the out-of-process and interactive hosts: the same kernel over stdio MCP; stdio-host is the stdio `PhaseHost` adapter; the run-scoped server holds the single-writer lease (`mcp-owner.json`).
-- `src/harness/turn-dispatcher.ts` — the interactive host's pending-turn engine (dispatch → settle → collect), non-throwing/total, lease-fenced.
+**Shipped skills** (prompts, pinned to the CLI by `tests/skill.test.ts`): `skills/duet-concierge/` (a Claude Code session as duet's remote layer), `skills/duet-frame/` (the framing author → `duet new --interactive`), `prompts/orchestrator-identity.md` (the interactive orchestrator's identity).
 
-**Tools, prompts & snippets**
-- `docs/prompting-and-tool-design.md` — the 5 binding conventions + house patterns. **Consult for any agent prompt, tool description, tool result, or error message.**
-- `src/harness/tools.ts` — the 8 host-neutral orchestrator tools + every protocol rail (the deepest module); `send_prompt` is host-switched (blocking headless / dispatch interactive).
-- `src/harness/orchestrator-prompts.ts` — the system prompt + per-phase entry/resume briefs + the steer block.
-- `snippets.toml` — the orchestrator's *default* snippet library (tabtype schema; guarded by `tests/snippets.test.ts`; porting edits back to tabtype is a manual human step). Users may layer per-key overrides over it — a user `~/.config/duet/snippets.toml` and a project `.duet/snippets.toml`, merged into the *effective* library `list_snippets` serves (pure `mergeSnippetLayers`, fail-closed on an unknown key, byte-identical when absent; `runtimeLibraryContext` is the one OS-home read; `duet snippets` shows each key's resolved layer). The two PLAN snippets and rir's `implement-direct` cite duet's vendored methodology in `lessons/`, resolved from a `{{lessons_dir}}` token to `LESSONS_DIR` at serve time; `scripts/vendor-lessons.mjs` (`pnpm vendor-lessons`) is the manual re-vendor seam from the author's `~/.config/lessons` (provenance in `lessons/README.md`).
-- `docs/snippets.md` — the user-facing snippet reference: the generative drafts and key review snippets cataloged with full bodies, plus a worked `start-plan` override example. The README links into it; `snippets.toml` stays the source of truth.
-
-**Workers, providers & transports**
-- `docs/interactive-transport.md` — the opt-in interactive-Claude transport (flat-quota billing): direction, spike status, the `PaneController` seam, path to production.
-- `src/providers/` — the worker seam: claude + codex adapters + factory; the claude provider's two transports (headless `claude -p`, interactive TUI via `interactive-claude.ts` + `pane.ts`).
-- `src/roles.ts` — the role-policy table: the consultant's asymmetries as data (ephemeral / read-only / discard-and-reseed); a pure runtime leaf. `workerRolesFor` vs `voicesFor` is the worker-vs-voice split.
-
-**CLI surface & supervision**
-- `src/cli.ts` — command wiring only (parses under `import.meta.main`, so the table is importable); the hidden `_drive` / `_mcp` harnesses.
-- `src/orchestrate.ts` — the `duet orchestrate` launcher: the `claude` argv (run-scoped `_mcp`, the identity system prompt, the gate-safety `ask` rule, a seeded kickoff).
-- `src/framing.ts` — framing seed/editor flow + the frontmatter↔prose boundary rule.
-- `src/run-store.ts` — `.duet/runs/<id>/` persistence (atomic): the state hint, the input-staging handshake, the steer store, interactive markers + lease, the `gateAttended`/`budgetFor` resolvers.
-- `src/status.ts` — the status model + two renderers (text, `--json` verbatim, additive-only) + `--brief`.
-- `src/sessions.ts` — locating provider transcripts by id (the one module reaching outside `.duet/`, what `--purge` deletes).
-- `src/worker-health.ts` / `src/doctor.ts` — the pure health substrate (taxonomy, `probeRole`, `retryDecision`) and `duet doctor`'s composer + connectivity probe.
-- `src/stats.ts` — `duet stats`'s view-time effort model (per-phase windows + per-tag worker time) parsed from the voice logs; doctor's log-reading sibling, fail-soft.
-- view glue: `src/colorize.ts`, `src/timefmt.ts`, `src/tmux-view.ts`, `src/notify.ts` — best-effort, never allowed to affect a run.
-
-**Shipped skills** (prompts, not code; all pinned to the CLI by `tests/skill.test.ts`)
-- `skills/duet-concierge/` — a Claude Code session as duet's remote layer. `skills/duet-frame/` — the framing-author skill (sharpen a problem into a framing, then emit `duet new --interactive`). `prompts/orchestrator-identity.md` — the interactive orchestrator's identity, fed as the launcher's system prompt.
-
-**Rationale, direction & process**
-- `docs/open-questions.md` — why each decision is what it is (strike-through = resolved; Q numbers stable, never renumber). Open: Q13 (triage precision), Q16 (worker schema), Q19 (run-level budget), Q20 (pre-auth precision).
-- `docs/future-directions.md` — the product-direction ledger (active direction, shelved + revisit triggers, declined candidates). Check before proposing a new direction.
-- `docs/workflow-model.md` / `docs/observed-pattern.md` — the abstracted protocol / the evidence sessions it's drawn from.
-- `docs/documentation-standards.md` — how docs are kept; the `/onboarding` ↔ `/update-docs` skill cadence.
-- `README.md` — orientation + the verified-vs-not status line.
-
-**Run state** — `.duet/runs/<id>/`: `state.json` is a hint, the 3 provider JSONL transcripts are truth; `steers/` holds staged mid-phase notes (`delivered/` = consumed); `notes.md` = the dogfooding journal (Q13/Q19/Q20 evidence).
+**Run state** — `.duet/runs/<id>/`: `state.json` is a hint, the provider JSONL transcripts are truth; `steers/` holds staged mid-phase notes (`delivered/` = consumed); `notes.md` = the dogfooding journal.
 
 ## Invariants that bite if forgotten
 
@@ -79,7 +43,7 @@ Cross-cutting rules; full reasoning in `docs/engineering.md` and `docs/open-ques
 - **The terminal marker** is the cross-process phase decision — cleared deliver-before-clear, guarded by the spent-marker check (keyed off the *restored snapshot*), so a crash can't replay a stale decision over a human's answer/reject.
 - **Compaction:** claude workers compact via a literal `/compact` prompt; codex auto-compacts and must never be sent a command.
 - **One branch per run,** fixed before the first worker prompt.
-- **Worker budget is per-turn, opt-in, off by default** (off ≡ absent, never `0`); it must never shape scope (Q19); a hit cap is a resumable checkpoint, not an infra crash.
+- **Worker budget is per-turn, opt-in, off by default** (off ≡ absent, never `0`); it must never shape scope; a hit cap is a resumable checkpoint, not an infra crash.
 - **`gates_at` is the complete attend set, not a delta** (so `--gates-at finish` attends only the Open-PR gate). full's default posture is `overnight` (attend frame,spec); its Open-PR gate sits *after* the open and auto-crosses the auto-opened PR by default; an attended gate still takes a human tap, as does the interactive orchestrator's one `ask` rule on `duet continue`.
 - **A `high` `human_decisions` entry** holds a non-explicit crossing (`gates_at` auto-cross, `duet afk`) but never an explicit `--approve`.
 - **Steers live in `steers/`, never `state.json`** (a CLI write there would race the live driver's saves); deliver-then-consume, so a crash redelivers a steer rather than loses one.
@@ -93,5 +57,5 @@ Cross-cutting rules; full reasoning in `docs/engineering.md` and `docs/open-ques
 
 - **Docs lead, code follows.** A code/docs disagreement is a doc bug or a design regression; resolve it explicitly, never silently. How docs are kept: `docs/documentation-standards.md`.
 - **Evidence-backed claims.** Workflow claims cite `examples/*.jsonl` turns or run logs; tag **(observed)** vs **(general)**.
-- **Tests are behavior-through-interface.** Fake only at the seven seams (`docs/engineering.md` §Seams); never mock our own modules.
+- **Tests are behavior-through-interface.** Fake only at the seams (`docs/engineering.md` §Seams); never mock our own modules.
 - **Personal tool / augmentation** — the product goals above are conventions too.

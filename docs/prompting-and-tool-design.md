@@ -71,7 +71,7 @@ Applied in `src/harness/orchestrator-prompts.ts` as **two tiers, each labeled by
 - **Cross-cutting reasoning** lives in the system prompt's *Judgment calls* section, co-located with the rules it illustrates (*Division of labor*, *Protocol*) and grouped under a `### <kind>` heading per judgment, the `<example>` cases kept in tags: triage (who answers — flag vs bounce), review-loop convergence (another round vs converged vs flag the tie), snippet adaptation (concretize the task, never the solution), and the first worker prompt (orient before you assign). These are the calls made in every phase.
 - **Phase-level judgment** lives in each phase's entry prompt under a `## <phase> phase examples` markdown heading led by a line naming that phase's call (markdown reads more naturally inline than a nested `<examples>` wrapper; the individual cases keep their `<example name=…>` / `type="avoid"` tags): frame synthesis (synthesize, don't capitulate), the spec→plan altitude shift (deferred detail vs a real gap; the plan owes what the spec could defer), and the impl size/risk call (single pass vs one midpoint, with the chunking anti-pattern).
 
-Each group carries an anti-example, and the mechanical phases (docs, pr, open) carry none — an example there would only restate the steps. The bar: an example earns its tokens only if the orchestrator could *not* derive its lesson from the adjacent rule, and each is framed by the signal to apply (not the surface to match). The cross-cutting examples sit in the system prompt rather than on the `ask_human`/`send_prompt` surfaces so the teaching is grouped and discoverable; the moment-precise nudges those surfaces already carry (e.g. the one-round-from-cap reminder) stay as the complement that fires at the exact moment. Triage flag-precision remains the Q13 evidence loop. Reasoning models need few examples, so each group is two or three short cases.
+Each group carries an anti-example, and the mechanical phases (docs, pr, open) carry none — an example there would only restate the steps. The bar: an example earns its tokens only if the orchestrator could *not* derive its lesson from the adjacent rule, and each is framed by the signal to apply (not the surface to match). The cross-cutting examples sit in the system prompt rather than on the `ask_human`/`send_prompt` surfaces so the teaching is grouped and discoverable; the moment-precise nudges those surfaces already carry (e.g. the one-round-from-cap reminder) stay as the complement that fires at the exact moment. Triage flag-precision remains an open evidence loop (open-questions.md §"Triage precision"). Reasoning models need few examples, so each group is two or three short cases.
 
 ### Roles and altitude
 
@@ -147,11 +147,11 @@ Duet's `send_prompt` therefore carries `readOnlyHint: true` as a deliberate **co
 
 ### Namespacing and evaluation
 
-Prefix-group related tools for clear boundaries (`asana_projects_search`-style); the prefix-vs-suffix choice measurably affects tool-use behavior, so don't bikeshed it without an eval. More broadly: tool design is iterative and evaluation-driven — prototype, run realistic scenarios, analyze failures, refine. Duet's analogue of an eval is the spike/Slice-1 runs plus the notes file (Q13's flag-precision review is exactly this loop).
+Prefix-group related tools for clear boundaries (`asana_projects_search`-style); the prefix-vs-suffix choice measurably affects tool-use behavior, so don't bikeshed it without an eval. More broadly: tool design is iterative and evaluation-driven — prototype, run realistic scenarios, analyze failures, refine. Duet's analogue of an eval is the spike/Slice-1 runs plus the notes file (the triage-precision review is exactly this loop).
 
 ## Binding conventions for duet
 
-The five rules every duet prompt and tool must follow (the condensed form lives in `docs/automation-design.md` §"Prompting and tool-surface conventions"):
+The binding rules every duet prompt and tool must follow (the condensed form lives in `docs/automation-design.md` §"Prompting and tool-surface conventions"):
 
 1. Artifacts first, task last, XML-tagged.
 2. Thinking framework with motivation over bare prohibition; no aggressive emphasis.

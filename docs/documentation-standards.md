@@ -18,7 +18,7 @@ docs/
   prompting-and-tool-design.md  the binding prompt/tool conventions
   workflow-model.md             the abstracted snippet protocol
   observed-pattern.md           the evidence sessions the protocol is drawn from
-  open-questions.md             why each decision is what it is (strike-through = resolved)
+  open-questions.md             the design questions still open, and what would settle them
   future-directions.md          the product-direction ledger
   interactive-transport.md      the opt-in transport's direction + status
   specs/  plans/                per-feature, forward-looking, dated
@@ -27,7 +27,7 @@ docs/
 Three kinds, three jobs:
 
 - **Design docs** (`automation-design.md`, `engineering.md`, `prompting-and-tool-design.md`, `workflow-model.md`) describe **what is true today**. Durable — updated in place, never appended to. Present tense; future tense ("we will…") is a smell.
-- **Rationale & evidence** (`open-questions.md`, `observed-pattern.md`) record **why**, and the runs that proved it. Resolved questions are struck through and compressed to a verdict + pointer; Q numbers are stable — never renumber.
+- **Rationale & evidence** (`open-questions.md`, `observed-pattern.md`) record **why**, and the runs that proved it. `open-questions.md` keeps only the questions still genuinely open, in topical (unnumbered) sections cited by name; when one settles, its answer moves into the design doc it shaped and the entry goes — the deliberations stay in git.
 - **Direction & specs** (`future-directions.md`, `interactive-transport.md`, `docs/specs/`, `docs/plans/`) are **proposals** — what we might build and why. When one ships, distill its surviving content into the design doc it touches, in present tense, then prune the proposal.
 
 This is a conceptual map. `ls docs/` is the source of truth for what exists right now; don't mirror that listing here, and adding a doc doesn't require editing this file.
@@ -53,7 +53,7 @@ These already govern the repo (`CLAUDE.md` §Conventions); they bind doc work to
 
 - A new module, tool, phase, gate, provider, or snippet was introduced and isn't reflected anywhere.
 - A doc section describes behavior a change altered or removed.
-- The module map in `engineering.md` or the Map in `CLAUDE.md` no longer matches the system shape.
+- The module map in `engineering.md` no longer matches the system shape, or a new top-level doc is missing from the `CLAUDE.md` Map.
 - A cross-reference went stale, or a proposal in `specs/` / `future-directions.md` shipped and should distill into a design doc.
 
 **No update needed when** the change is implementation-level (internal refactor, bug fix, test) and doesn't change how a developer thinks about the system.
@@ -82,7 +82,25 @@ These already govern the repo (`CLAUDE.md` §Conventions); they bind doc work to
 - Module relationships and boundaries; behavioral flows in prose or pseudo-code.
 - The load-bearing invariants a new contributor would otherwise violate.
 - One-line file pointers ("the statechart: `src/harness/machine.ts`") — never the contents.
-- Directory structures as an indented tree (as above) — indentation under a directory name, not a repeated full path per file.
+- Directory structures as an indented tree — indentation under a directory name, not a repeated full path per file:
+
+  ```
+  src/
+    test.ts
+    another.ts
+    folder/
+      hello.ts
+  ```
+
+## Spotlight the load-bearing; let the code hold the inventory
+
+The reader is a senior engineer who *will* read the code. A doc that re-lists what the code already enumerates spends their attention without growing their mental model — and rots the moment the code changes. Name what is load-bearing; leave the complete list to the source. Three anti-patterns this rules out — the `/update-docs` skill should actively cut them, not just avoid adding them:
+
+- **Exhaustive listing.** Don't enumerate every seam, tool, field, or module a subsystem has. List the ones a reader *must* grasp to hold the model; let the rest live in the code or get a single grouped mention. A complete catalogue is the code's job.
+- **A table row is earned, not automatic.** A new interface is not a reason for a new row. Add one only when the reader needs that item to navigate the system; fold a secondary change into an existing entry instead of growing the table. The reflex "new thing → new row" is what bloats a module map.
+- **No live counts.** Don't write "there are seven seams" or "the five rules." A cardinal number is a maintenance tax that silently rots — one already had ("seven seams" in one doc, "five" in another) — and a senior engineer never navigates by it. Name the few that matter; the count is the code's to know.
+
+When cutting leaves a flow or relationship that prose traces clumsily, **draw it** instead — an indented tree, an arrow chain (`marker → markerToEvent → phase.*`), a short sequence sketch. A diagram scanned in two seconds beats a 60-word sentence threading the same path (`engineering.md`'s trust-gradient sketch and the `phases.ts` header arc are the models in-repo).
 
 ## Consolidation principles
 
@@ -101,13 +119,21 @@ A doc that gains 10 lines of new content should usually shed 5–10 of redundanc
 `/onboarding [topic]` (`.claude/skills/onboarding/SKILL.md`) bootstraps a session with topic-scoped context in two phases:
 
 - **Phase 1 — always-on core reads:** `CLAUDE.md`, `docs/automation-design.md`, `docs/engineering.md`. The mental model no duet task can safely skip.
-- **Phase 2 — topic deep dive:** the design doc(s) and code for the topic. The doc + code map in `CLAUDE.md` §Map is the source of truth; the skill's topic table only turns a phrase into a focus.
+- **Phase 2 — topic deep dive:** the design doc(s) and code for the topic. CLAUDE.md indexes the docs, and the `engineering.md` module map is the source of truth for code; the skill's topic table only turns a phrase into a focus.
 
 Keep it lean. Phase 1 is for what an agent *cannot* skip, not what's merely interesting. Litmus: *"Would an agent on a typical duet task produce wrong code without reading this?"* If not, it's Phase 2.
 
-**Update the skill when** a new top-level doc appears that the topic table doesn't route to, a Phase 1 doc is renamed or split, or a deep-dive path drifts. Routine edits inside an existing doc don't touch the skill — it already points at the doc.
+**Update the skill when** a new top-level doc appears that the topic table doesn't route to, a Phase 1 doc is renamed or split, or a deep-dive anchor drifts. Routine edits inside an existing doc don't touch the skill — it already points at the doc.
 
-**Update `CLAUDE.md` when** a new cross-cutting invariant earns its way in (the bar is high) or an existing one's framing rots. Implementation-level changes never warrant a `CLAUDE.md` edit.
+## Authoring CLAUDE.md
+
+`CLAUDE.md` is unique: Claude Code appends it to *every* request in the repo, and it rides the cached prompt prefix. Every other doc is read on demand — its cost is paid only when relevant; CLAUDE.md's is paid on every operation and dilutes attention on every task. Its bar is the strictest here:
+
+- **Load-bearing facts + roadmap only.** A line earns its place only if an agent on a *typical, arbitrary* task would do worse without it — the cross-cutting invariants that bite across subsystems, the product goals every change is measured against, the conventions, and a map of *where to read the rest*. "Useful when working on X" is not enough; that belongs in X's doc, loaded when the agent goes there.
+- **Point, don't re-explain.** It is the index layer. An invariant states its *conclusion* in one line and points to the doc carrying the mechanism; the Map names which doc answers what and defers code detail to `engineering.md` — it never re-lists modules.
+- **No enumerations, counts, or status dumps** (§"Spotlight the load-bearing" — sharper here, since it is paid every call). A module map, a tool list, a build-status paragraph all rot and read better in `engineering.md` / the README.
+
+**Edit it only when** a new cross-cutting invariant earns its way in (the bar is high), an existing one's framing rots, or a new top-level doc joins the Map. Implementation-level changes never warrant a CLAUDE.md edit.
 
 ## Shipped skill maintenance
 

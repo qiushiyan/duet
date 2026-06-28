@@ -1,6 +1,6 @@
 ---
 name: onboarding
-description: Use to bootstrap a coding session on duet with a topic-scoped mental model. Trigger when the user types /onboarding, asks to "get up to speed", or opens a session with "let's work on X". Invoke before substantive work on an unfamiliar area of the orchestrator.
+description: Bootstrap a duet coding session with a topic-scoped mental model — Phase 1 core reads, then a deep dive on the topic — before substantive work on the orchestrator.
 user-invocable: true
 disable-model-invocation: true
 argument-hint: [topic, e.g. "statechart", "providers", "prompts"]
@@ -17,7 +17,7 @@ duet's mental model and conventions live in `CLAUDE.md` (always loaded). Re-inte
 
 ### 1. Interpret the topic
 
-Map `$ARGUMENTS` to a focus. The doc + code map in `CLAUDE.md` §Map is the source of truth for what exists; this table only turns a phrase into a focus:
+Map `$ARGUMENTS` to a focus. The `engineering.md` module map is the source of truth for what exists in code (CLAUDE.md indexes the docs); this table only turns a phrase into a focus:
 
 | If the topic mentions…                                                | Focus       |
 | --------------------------------------------------------------------- | ----------- |
@@ -35,73 +35,25 @@ Regardless of topic, read these three in order. They're the mental model no duet
 
 1. `CLAUDE.md` — the what / how summary, the Map, and the invariants. (Re-read if not fresh.)
 2. `docs/automation-design.md` — THE design: roles, layers, the phase/gate arc, triage rules, branch policy, what-not-to-build.
-3. `docs/engineering.md` — the codebase mental model: the trust gradient, module map, the five seams, the patterns that carry the design.
+3. `docs/engineering.md` — the codebase mental model: the trust gradient, module map, the seams, the patterns that carry the design.
 
 Read them yourself — don't delegate Phase 1 to subagents. They have to be in your working context for the rest of the session.
 
 ### 3. Phase 2 — topic deep dive
 
-Open the focus's docs and code; don't re-read Phase 1.
+Open your focus's design doc(s), then its code through the `engineering.md` module map — it holds the full file list with one-line pointers, so this skill names only the way in, not every file. Don't re-read Phase 1. Where each focus starts:
 
-**`harness`** — the statechart and run loop:
+- **`harness`** (statechart & run loop) — `automation-design.md` §"Phases and gates" + §"Lifecycle"; anchor on `src/phases.ts` (the registry, the single source) and `src/harness/machine.ts`.
+- **`providers`** (worker seam & transports) — `docs/interactive-transport.md`; anchor on `src/providers/types.ts` (the `WorkerProvider` contract).
+- **`prompts`** (agent prompts, tools, snippets) — `docs/prompting-and-tool-design.md` (read first); anchor on `src/harness/tools.ts` and `snippets.toml`.
+- **`surface`** (CLI, framing, status, persistence) — anchor on `src/run-store.ts` and `src/status.ts`; `src/cli.ts` wires the commands.
+- **`design`** (direction & rationale) — `automation-design.md`, then `future-directions.md` (check before proposing a direction) and `open-questions.md` (what's still open).
 
-```
-docs/automation-design.md   §Phases and gates, §Lifecycle (re-skim)
-src/phases.ts               the phase table — every per-phase fact
-src/harness/
-  machine.ts                a phase emits phase.*; gates cross only on human.*; interactiveMachine is the inert-driver variant
-  phase-events.ts           the phase.*/human.* vocabulary + the marker→event read
-  driver.ts                 the in-process host: one phase = one orchestrator SDK session
-  stdio-host.ts             the out-of-process host (Orchestrate seam) + mcp-server.ts's `_mcp` (single-phase + run-scoped)
-  lifecycle.ts              detached driver, gates_at auto-cross, spent-marker guard, probeRunPosition, crossInteractive
-src/orchestrate.ts          the `duet orchestrate` launcher: the interactive /duet host + the single gate-safety ask rule
-```
-
-**`providers`** — the worker seam and transports:
-
-```
-docs/interactive-transport.md   the opt-in interactive-claude transport
-src/providers/
-  types.ts                  the WorkerProvider contract
-  claude.ts  codex.ts       the two adapters; index.ts is the factory
-  interactive-claude.ts     the interactive TUI transport
-  pane.ts                   the PaneController injection seam
-```
-
-**`prompts`** — agent prompts, tools, snippets:
-
-```
-docs/prompting-and-tool-design.md   the 5 binding conventions + house patterns (read first)
-snippets.toml               the snippet library (guarded by tests/snippets.test.ts)
-src/harness/
-  orchestrator-prompts.ts   system + phase entry / resume prompts
-  tools.ts                  the 8 tools (incl. get_task), rails, results, errors
-```
-
-**`surface`** — CLI, framing, status, persistence:
-
-```
-src/framing.ts              framing seed / parse, the machine/prose boundary
-src/run-store.ts            run-dir persistence, input staging, the steer store
-src/status.ts               the status model + its two renderers, --brief, the new signal fields
-src/worker-health.ts        the pure health substrate: taxonomy, probeRole, the currentTerminalError rule, retryDecision
-src/doctor.ts               duet doctor's composer/renderer + connectivity (only cli.ts imports lifecycle via it)
-src/cli.ts                  command wiring (parses under import.meta.main)
-```
-
-**`design`** — product direction and rationale:
-
-```
-docs/automation-design.md   the design + the what-not-to-build list
-docs/future-directions.md   the product-direction ledger (check before proposing a direction)
-docs/open-questions.md      why each decision is what it is (open: Q13, Q16, Q19, Q20)
-```
-
-For a tight cross-cutting question, dispatch one `Explore` subagent with a single extraction question (e.g. "how does a pending steer reach a live driver?") — file refs only, no source pasting. Use subagents for breadth; read the files yourself for a careful audit.
+For a tight cross-cutting question, dispatch one `Explore` subagent with a single extraction question (e.g. "how does a pending steer reach a live driver?") — file refs only, no source pasting. Read the files yourself for a careful audit.
 
 ### 4. General onboarding (no topic)
 
-Empty `$ARGUMENTS`: complete Phase 1 only, then ask the user which focus they want before reading further. duet's five focuses are different enough that picking one matters; reading all upfront burns context for no gain.
+Empty `$ARGUMENTS`: complete Phase 1 only, then ask the user which focus they want before reading further. The focuses are different enough that picking one matters; reading all upfront burns context for no gain.
 
 ### 5. Calibration check
 

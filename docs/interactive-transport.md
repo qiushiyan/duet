@@ -9,7 +9,7 @@ An **opt-in transport that drives the implementer through the interactive `claud
 
 ## Why
 
-Since **2026-06-15**, headless `claude -p` and the Agent SDK draw from a **separate, capped "Agent-SDK credit" pool** priced at standard API rates — not the flat interactive quota (automation-design §"Layer 3 — Workers"; the economics finding under open-questions Q11). The only way to spend the flat quota is to drive the **interactive** TUI. The implementer is where this bites: it is the cost driver (~$85 of the ~$93 first real planlab run was claude workers). Codex is unaffected — `codex exec` already bills the ChatGPT subscription — so this is **claude-implementer-only** and codex is out of scope.
+Since **2026-06-15**, headless `claude -p` and the Agent SDK draw from a **separate, capped "Agent-SDK credit" pool** priced at standard API rates — not the flat interactive quota (automation-design §"Layer 3 — Workers"). The only way to spend the flat quota is to drive the **interactive** TUI. The implementer is where this bites: it is the cost driver (~$85 of the ~$93 first real planlab run was claude workers). Codex is unaffected — `codex exec` already bills the ChatGPT subscription — so this is **claude-implementer-only** and codex is out of scope.
 
 Set `transport = "interactive"` on the claude implementer binding and the worker drives an interactive `claude` session per turn, reading each result from the standard transcript. Everything else — the `WorkerProvider` contract, the phase table, the statechart, the driver, the cooperative pause, the lifecycle, the tmux **viewer** — is untouched.
 
@@ -86,6 +86,6 @@ What this spike consciously does *not* harden, and the design for later — the 
 
 ## Out of scope (named so it isn't re-proposed)
 
-- **Orchestrator over interactive Claude** — needs the SDK's custom MCP tools and the cooperative pause; a separate horizon (future-directions §Active "A", open-questions Q17), a lifecycle redesign, not this feature.
+- **Orchestrator over interactive Claude** — needs the SDK's custom MCP tools and the cooperative pause; a separate horizon (future-directions §Active "A", open-questions.md §"Codex as the orchestrator"), a lifecycle redesign, not this feature.
 - **Codex over interactive** — no billing payoff (`codex exec` already bills the subscription).
 - **Folding the driver into the tmux viewer** — separate failure domains by design.

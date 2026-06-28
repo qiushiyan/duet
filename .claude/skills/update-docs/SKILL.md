@@ -69,7 +69,7 @@ Use the significance tiers from `documentation-standards.md`. If the changes are
 [One sentence: what the work does at a high level]
 
 ### Changes
-- `docs/engineering.md` — add the new seam to the Seams table; update the Module map row for `src/harness/tools.ts`
+- `docs/engineering.md` — add the new seam to the Seams table *only if a reader must grasp it to navigate*; fold the `src/harness/tools.ts` change into its existing Module-map entry, not a new row
 - `docs/automation-design.md` — document the new gate in §Phases and gates
 - `README.md` — no change (status line still accurate)
 
@@ -80,8 +80,8 @@ Use the significance tiers from `documentation-standards.md`. If the changes are
 [Only when a doc / section is fully superseded. Be deliberate.]
 
 ### Onboarding skill (.claude/skills/onboarding/SKILL.md)
-- No change — Phase 1 paths still resolve and the topic table still routes.
-[Or: "Add a `providers` deep-dive path: `interactive-claude.ts` was split."]
+- No change — Phase 1 reads still resolve and the topic table still routes.
+[Or: "Route a new top-level doc in the topic table," or "repoint a moved focus anchor."]
 
 ### Shipped skills (skills/duet-frame, skills/duet-concierge)
 - No change — the change added no user-facing flag/verb/setup-choice these surface.
@@ -99,11 +99,12 @@ Wait for confirmation. The user may adjust scope, skip docs, or add areas you mi
 
 ## Step 5 — Update docs
 
-Follow the writing and consolidation standards from `documentation-standards.md`. The key rule: **adding content is an opportunity to simplify** — for every doc you touch, actively remove redundancy, consolidate sections, and tighten the flow.
+Write to the standards in `documentation-standards.md` rather than restating them here. The four that bind at write-time:
 
-**Deletion is also maintenance.** If a doc or a part of one is made irrelevant by the change, remove it entirely. No changelog-style entries — describe the latest state in present tense.
-
-When a `docs/specs/` or `docs/plans/` proposal ships, fold its surviving decisions into the design doc it touches (present tense), then prune the proposal. When the change alters the system's shape — a new phase/gate, provider, seam, or policy — update the module map in `engineering.md`, the Map in `CLAUDE.md`, and the verified-vs-not line in the README.
+- **Every edit nets tighter.** Adding content is the moment to cut redundancy — a doc that gains 10 lines should shed 5–10 (§"Consolidation principles").
+- **Spotlight the load-bearing; don't inventory** (§"Spotlight the load-bearing"). The reader reads the code, so don't enumerate every interface, add a row per new thing, or hardcode a count ("seven seams"); draw a flow as a tree or arrow chain instead of threading it through a long sentence.
+- **Deletion is maintenance.** Remove what the change made irrelevant; describe the latest state in present tense, never a changelog entry.
+- **Distill, then thread.** When a `docs/specs/` or `docs/plans/` proposal ships, fold its surviving decisions into the design doc and prune it. When the system's shape changes, thread it into the `engineering.md` module map (grow an existing entry; add a row only when load-bearing) and the README status line. Touch the `CLAUDE.md` Map only for a new top-level doc or a new cross-cutting invariant (standards §"Authoring CLAUDE.md").
 
 ## Step 6 — Verify
 
@@ -113,15 +114,16 @@ When a `docs/specs/` or `docs/plans/` proposal ships, fold its surviving decisio
 4. Confirm no source code was pasted (prose / pseudo-code call chains are fine).
 5. Confirm evidence claims stay tagged **(observed)** vs **(general)** and nothing unverified slipped into the present tense.
 6. Grep across `docs/`, `CLAUDE.md`, and `README.md` for the basenames of any file you moved, renamed, or deleted — every hit should resolve.
-7. Check: *"If a teammate reads this cold, do the docs give them the mental model without reading every file?"*
+7. Spotlight check: no new live count ("N seams"), and any new table row or list item is load-bearing — a secondary change folded into an existing entry instead of growing the table.
+8. Check: *"If a teammate reads this cold, do the docs give them the mental model without reading every file?"*
 
-## Step 7 — Assess the skill and the invariants
+## Step 7 — Assess the skills and the invariants
 
-Apply the maintenance rules from `documentation-standards.md` to these surfaces, above per-doc edits:
+Beyond per-doc edits, run the maintenance checks from `documentation-standards.md` — each fires only on a real trigger, and most branches trip none:
 
-1. **`.claude/skills/onboarding/SKILL.md`** — does the change warrant it? A new top-level doc the topic table doesn't route to, a renamed / split Phase 1 doc, or a drifted deep-dive path. Routine edits inside an existing doc don't touch the skill.
-2. **`skills/duet-frame` / `skills/duet-concierge`** (the shipped, user-facing skills) — did the change add or alter a user-facing capability (a `duet new` flag, a setup / gate-posture choice, a run-management verb) that one of them should surface? These are prompts: edit to `prompting-and-tool-design.md` and the skill's own voice. Coherence is pinned by `tests/skill.test.ts`; completeness is your call (`documentation-standards.md` §"Shipped skill maintenance").
-3. **`CLAUDE.md`** — only when a new cross-cutting, load-bearing invariant emerged or an existing one's framing rotted. The bar is high; most branches need neither update.
+- **Onboarding skill** (`.claude/skills/onboarding/SKILL.md`) — only if a new top-level doc isn't routed by the topic table, or a Phase 1 doc / deep-dive anchor moved (§"Onboarding skill maintenance").
+- **Shipped skills** (`skills/duet-frame`, `skills/duet-concierge`) — only if the change added a user-facing capability (a flag, gate-posture choice, or run verb) one should surface. They're prompts: edit in their own voice per `prompting-and-tool-design.md`. `tests/skill.test.ts` guards coherence, not completeness, so this is your call (§"Shipped skill maintenance").
+- **CLAUDE.md** — only when a new cross-cutting invariant emerged or one's framing rotted; the bar is high.
 
 ## Output
 

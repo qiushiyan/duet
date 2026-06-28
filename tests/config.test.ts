@@ -43,7 +43,7 @@ describe('role bindings', () => {
     expect.soft(bindings.reviewer).toEqual({ provider: 'codex' });
   });
 
-  test('orchestrator-on-codex is refused in v1 (Q17 is designed but unbuilt)', ({ projectDir }) => {
+  test('orchestrator-on-codex is refused in v1 (codex-as-orchestrator is designed but unbuilt)', ({ projectDir }) => {
     expect(() => loadRoleBindings({ orchestrator: 'codex' }, join(projectDir, 'missing.toml'))).toThrow(
       /orchestrator role requires the claude provider in v1/,
     );
