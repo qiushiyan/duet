@@ -10,7 +10,8 @@ import {
 import type { GatePhase, PhaseName, WorkflowName } from '../phases.ts';
 import { workerRolesFor } from '../roles.ts';
 import { gateAttended, workflowOf } from '../run-store.ts';
-import type { RunState, Steer } from '../run-store.ts';
+import type { RunState } from '../run-store.ts';
+import type { Steer } from '../steer-store.ts';
 
 /**
  * Orchestrator prompts, written to the conventions in

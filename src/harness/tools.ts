@@ -17,9 +17,7 @@ import {
   contextPercent,
   fmtTokens,
   gateAttended,
-  listPendingSteers,
   loadRunState,
-  markSteersDelivered,
   markTurnActive,
   recordContextUsage,
   recordTurnSessionId,
@@ -27,6 +25,7 @@ import {
   workflowOf,
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
+import { listPendingSteers, markSteersDelivered } from '../steer-store.ts';
 import { bindingFor } from '../config.ts';
 import { readTranscriptTailAtPath, readTranscriptTailForSession } from '../sessions.ts';
 import type { TurnDispatcher } from './turn-dispatcher.ts';

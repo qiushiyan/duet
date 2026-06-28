@@ -38,7 +38,6 @@ import {
   clearPendingTurn,
   createRun,
   latestRun,
-  listPendingSteers,
   listRuns,
   loadMachineSnapshot,
   loadRunState,
@@ -47,10 +46,10 @@ import {
   runDirOf,
   saveRunState,
   stageHumanInput,
-  stageSteer,
   workflowOf,
 } from './run-store.ts';
 import type { RunState, Voice } from './run-store.ts';
+import { listPendingSteers, stageSteer } from './steer-store.ts';
 
 /**
  * duet — the command surface. Parsing and validation live here; everything
