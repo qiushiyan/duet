@@ -3,27 +3,34 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { fromCallback } from 'xstate';
 import type { EventObject } from 'xstate';
-import { loadRunState, saveRunState } from '../run-store.ts';
+import { loadRunState } from '../run-store.ts';
 import { classifyError } from '../worker-health.ts';
 import type { DriverInput } from './driver.ts';
+import { runHostedPhase } from './host-runner.ts';
+import type { HostedSession, PhaseHost, TurnOutcome } from './host-runner.ts';
 import { duetMachine } from './machine.ts';
 import { markerToEvent } from './phase-events.ts';
 import type { PhaseEvent } from './phase-events.ts';
 
 /**
- * The stdio host runner — the boundary owner, and the SDK-over-stdio sibling of
- * the in-process runPhase. It connects an orchestrator client to a real
- * `duet _mcp <runId> <phase>` subprocess (the kernel tool server), runs the
- * orchestrator to quiescence, then reads the persisted terminal marker the
- * subprocess wrote and resolves the phase.* event — the same channel the
- * in-process driver uses (src/harness/phase-events.ts), never tool-result-text
- * scraping. Behavioral parity with the in-process driver is the point, so it
- * mirrors both of that driver's pre-/post-session rails: the crash-before-
- * transition marker replay on entry, and nudge-once before flagging a silent
- * turn. It owns boundary failure: a dead peer (or any transport error) is
- * converted to a persisted question, so crash = flag survives the new process
- * boundary. This is the seam Stage 1's interactive host slots into; production
- * _drive stays in-process and is unchanged.
+ * The stdio host — the SDK-over-stdio sibling of the in-process driver, and the
+ * stdio `PhaseHost` adapter over the shared run loop (`runHostedPhase`,
+ * src/harness/host-runner.ts). `openSession` connects an orchestrator client to a
+ * real `duet _mcp <runId> <phase>` subprocess (the kernel tool server); each
+ * `driveTurn` runs the external orchestrator over that boundary, then reads the
+ * terminal marker the subprocess wrote and maps it to a TurnOutcome — the same
+ * channel the in-process driver uses (src/harness/phase-events.ts), never
+ * tool-result-text scraping.
+ *
+ * Behavioral parity with the in-process driver is the point, and the four run-loop
+ * rails it shares (entry marker-replay, nudge-once, the twice-ended flag, crash →
+ * flag) now live ONCE in host-runner.ts; this module supplies only what differs:
+ * how a turn is driven (over the stdio boundary), how a failure is classified
+ * (the bare `classifyError` taxonomy — it does not auto-retry, so it needs no
+ * transcript refinement), and `retryable: false` (a human is present on the
+ * interactive host, so it classifies and hands back rather than retrying). This is
+ * the seam Stage 1's interactive host slots into; production `_drive` stays
+ * in-process and is unchanged.
  */
 
 const CLI_ENTRY = fileURLToPath(new URL('../cli.ts', import.meta.url));
@@ -35,11 +42,11 @@ export interface OrchestrateContext {
   phase: DriverInput['phase'];
   /**
    * Which orchestrator turn this is for the phase: 0 is the phase turn, 1 is
-   * the single nudge the host issues when turn 0 ended without a terminal call
-   * (advance_phase / ask_human) — the cross-boundary analog of the in-process
-   * driver's nudge-once (src/harness/driver.ts). A live Stage-1 host sends the
-   * phase prompt on attempt 0 and the nudge prompt to the same session on
-   * attempt 1; how it delivers that nudge is the host's concern, not the seam's.
+   * the single nudge the run loop issues when turn 0 ended without a terminal
+   * call (advance_phase / ask_human) — the cross-boundary analog of the
+   * in-process driver's nudge-once. A live Stage-1 host sends the phase prompt on
+   * attempt 0 and the nudge prompt to the same session on attempt 1; how it
+   * delivers that nudge is the host's concern, not the seam's.
    */
   attempt: number;
   /** Kill the kernel subprocess — for exercising boundary failure. */
@@ -54,90 +61,74 @@ export interface OrchestrateContext {
  */
 export type Orchestrate = (ctx: OrchestrateContext) => Promise<void>;
 
-export async function runPhaseOverStdio(
-  { runId, cwd, phase }: DriverInput,
-  orchestrate: Orchestrate,
-): Promise<PhaseEvent> {
-  // Crash-before-transition replay — the mirror of the in-process driver
-  // (src/harness/driver.ts): a terminal marker for THIS phase survived from a
-  // session that decided before the machine could transition, so re-emit that
-  // decision without re-running the external orchestrator turn (the packet it
-  // carries was persisted atomically with it). A SPENT marker from the
-  // crash-after-snapshot window was already cleared by the lifecycle's
-  // spent-marker guard before any re-entry, so a marker still present here is
-  // live — no supersede exception is needed (the in-process entry is identical).
-  const replay = markerToEvent(loadRunState(cwd, runId).terminalMarker, phase);
-  if (replay) return replay;
+export async function runPhaseOverStdio(input: DriverInput, orchestrate: Orchestrate): Promise<PhaseEvent> {
+  return runHostedPhase(input, makeStdioHost(orchestrate));
+}
 
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [CLI_ENTRY, '_mcp', runId, phase],
-    cwd,
-    stderr: 'inherit', // the subprocess narrates to its stderr; stdout is the JSON-RPC channel
-  });
-  const client = new Client({ name: 'duet-stdio-host', version: '0.1.0' });
-  const killPeer = () => {
-    if (transport.pid) {
+/**
+ * The stdio `PhaseHost`. The run loop (host-runner.ts) owns the rails; this
+ * supplies the per-turn mechanics over the MCP boundary plus the two facts that
+ * make it the interactive-side host: `retryable: false` (a human resumes) and a
+ * bare-taxonomy `classifyFailure` (docs/engineering.md §"Infra classification &
+ * opt-in retry"). Boundary failure becomes the run loop's crash = flag: a dead
+ * peer or transport error thrown out of `connect`/`orchestrate` is caught there
+ * and persisted as an actionable question, so crash = flag survives the boundary.
+ */
+function makeStdioHost(orchestrate: Orchestrate): PhaseHost {
+  return {
+    retryable: false,
+    classifyFailure: (_state, detail) => classifyError(detail),
+    async openSession({ runId, cwd, phase }): Promise<HostedSession> {
+      const transport = new StdioClientTransport({
+        command: process.execPath,
+        args: [CLI_ENTRY, '_mcp', runId, phase],
+        cwd,
+        stderr: 'inherit', // the subprocess narrates to its stderr; stdout is the JSON-RPC channel
+      });
+      const client = new Client({ name: 'duet-stdio-host', version: '0.1.0' });
+      const killPeer = () => {
+        if (transport.pid) {
+          try {
+            process.kill(transport.pid, 'SIGKILL');
+          } catch {
+            // already gone
+          }
+        }
+      };
       try {
-        process.kill(transport.pid, 'SIGKILL');
-      } catch {
-        // already gone
+        await client.connect(transport);
+      } catch (err) {
+        // openSession contract (host-runner.ts): release the transport before
+        // propagating, since the run loop only closes a session it received. The
+        // throw becomes the run loop's crash = flag.
+        try {
+          await transport.close();
+        } catch {
+          // best-effort; the child may already be gone
+        }
+        throw err;
       }
-    }
+      return {
+        async driveTurn(kind): Promise<TurnOutcome> {
+          // The client stays connected across both turns, so attempt 1's nudge
+          // continues the same session — the boundary analog of re-prompting in
+          // place. A transport error here throws to the run loop's crash = flag.
+          await orchestrate({ client, phase, attempt: kind === 'phase' ? 0 : 1, killPeer });
+          // The subprocess persisted any terminal decision before its tool result
+          // returned, so read it off disk (the in-process host reads shared memory).
+          const event = markerToEvent(loadRunState(cwd, runId).terminalMarker, phase);
+          return event ? (event.type === 'phase.advance' ? 'advanced' : 'flagged') : 'continue';
+        },
+        async close(): Promise<void> {
+          try {
+            await transport.close();
+          } catch {
+            // best-effort teardown; the child may already be gone
+          }
+        },
+      };
+    },
   };
-  try {
-    await client.connect(transport);
-
-    // Nudge-once parity with the in-process driver (src/harness/driver.ts): an
-    // orchestrator turn that ends without a terminal call is not yet a flag —
-    // give it exactly one nudge, and only treat persistent silence as a flag.
-    // attempt 0 is the phase turn; attempt 1 is the single nudge. The client
-    // stays connected across both, so the nudge continues the same session
-    // (the boundary analog of re-prompting in place). The terminal decision is
-    // read off disk after each turn — the subprocess persisted it before its
-    // tool result came back.
-    for (let attempt = 0; attempt < 2; attempt++) {
-      await orchestrate({ client, phase, attempt, killPeer });
-      const event = markerToEvent(loadRunState(cwd, runId).terminalMarker, phase);
-      if (event) return event;
-    }
-
-    // Twice ended over the boundary without a terminal call — stuck. Mirror the
-    // in-process "twice ended" flag, persisting the same actionable question.
-    const state = loadRunState(cwd, runId);
-    if (!state.pendingQuestion) {
-      state.pendingQuestion = {
-        question: `The ${phase} phase's orchestrator twice ended its turn over the MCP boundary without advancing the phase or asking a question — the run is stuck. Run duet doctor for per-role health, or check the orchestrator log; answer with how to proceed.`,
-        cause: 'infra',
-        errorClass: 'unknown',
-      };
-      saveRunState(state);
-    }
-    return { type: 'phase.flag' };
-  } catch (err) {
-    // Boundary failure (dead peer, transport error) is this runner's crash=flag:
-    // convert it to an actionable persisted question, never a silent state.
-    // CLASSIFY ONLY — this is the interactive host (a human is present), so it
-    // gets cause:'infra' + errorClass for the supervisor's read, but NEVER the
-    // headless driver's auto-retry; the human resumes.
-    const detail = err instanceof Error ? err.message : String(err);
-    const state = loadRunState(cwd, runId);
-    if (!state.pendingQuestion) {
-      state.pendingQuestion = {
-        question: `The ${phase} phase's orchestrator boundary failed (${detail}). The kernel or the orchestrator client died mid-turn; run duet doctor for per-role health, or check driver.log, then answer with how to proceed — the session resumes from its last completed turn.`,
-        cause: 'infra',
-        errorClass: classifyError(detail),
-      };
-      saveRunState(state);
-    }
-    return { type: 'phase.flag' };
-  } finally {
-    try {
-      await transport.close();
-    } catch {
-      // best-effort teardown; the child may already be gone
-    }
-  }
 }
 
 /**

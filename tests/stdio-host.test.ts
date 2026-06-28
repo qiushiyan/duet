@@ -87,7 +87,14 @@ describe('control events survive the stdio MCP boundary', () => {
       });
 
       expect.soft(event).toEqual({ type: 'phase.flag' });
-      expect.soft(loadRunState(projectDir, run.runId).pendingQuestion?.question).toContain('boundary failed');
+      // crash = flag over the boundary. The question text is the shared
+      // host-runner's `flagInfra` (the in-process driver and the stdio host now
+      // converge on one wording — the run loop is extracted), with the transport
+      // detail carried inline and cause:'infra'.
+      const q = loadRunState(projectDir, run.runId).pendingQuestion;
+      expect.soft(q?.question).toContain('failed at the infrastructure layer');
+      expect.soft(q?.question).toContain('Connection closed');
+      expect.soft(q?.cause).toBe('infra');
     },
     TIMEOUT,
   );
