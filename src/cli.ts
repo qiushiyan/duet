@@ -32,7 +32,7 @@ import { runOrchestrate } from './orchestrate.ts';
 import { entryOf, handoffWatchLabel } from './phases.ts';
 import { getEffectiveSnippet, loadEffectiveSnippets, runtimeLibraryContext } from './snippets.ts';
 import type { EffectiveSnippet } from './snippets.ts';
-import { buildBrief, buildStatusModel, renderBrief, renderStatus, steerRefusal } from './status.ts';
+import { buildBrief, buildStatusModel, formatGatePosture, renderBrief, renderStatus, steerRefusal } from './status.ts';
 import { openTmuxView } from './tmux-view.ts';
 import {
   clearPendingTurn,
@@ -330,9 +330,11 @@ program
     // gatesAt: [] is the afk "attend none" posture — explicit copy, not an empty join.
     if (state.gatesAt)
       console.log(
-        state.gatesAt.length > 0
-          ? `gates: attending ${state.gatesAt.join(', ')} — other gates pre-authorized (auto-cross, packets recorded)`
-          : `gates: attending none — all gates pre-authorized (auto-cross, packets recorded)`,
+        formatGatePosture(state.gatesAt, {
+          label: 'gates: ',
+          attendedSuffix: 'other gates pre-authorized (auto-cross, packets recorded)',
+          noneSuffix: 'all gates pre-authorized (auto-cross, packets recorded)',
+        }),
       );
     console.log('');
     if (opts.interactive) {
@@ -544,9 +546,11 @@ program
     }
     // Print the resulting split so the single tap is informed consent.
     console.log(
-      split.attended.length > 0
-        ? `gates: attending ${split.attended.join(', ')} — ${split.preAuthorized.join(', ') || 'nothing else'} pre-authorized (auto-cross, packets recorded)`
-        : `gates: attending none — all downstream gates pre-authorized (auto-cross, packets recorded)`,
+      formatGatePosture(split.attended, {
+        label: 'gates: ',
+        attendedSuffix: `${split.preAuthorized.join(', ') || 'nothing else'} pre-authorized (auto-cross, packets recorded)`,
+        noneSuffix: 'all downstream gates pre-authorized (auto-cross, packets recorded)',
+      }),
     );
     const pid = spawnDrive(state);
     printWatchHints(state, pid, 'handed off to headless (duet afk)');

@@ -1,5 +1,5 @@
 import { describe, expect } from 'vitest';
-import { buildBrief, buildStatusModel, describeStop, displayState, renderBrief, renderStatus, steerRefusal } from '../src/status.ts';
+import { buildBrief, buildStatusModel, describeStop, displayState, formatGatePosture, renderBrief, renderStatus, steerRefusal } from '../src/status.ts';
 import type { StopModel } from '../src/status.ts';
 import { createRun } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
@@ -10,6 +10,39 @@ import { test } from './helpers/fixtures.ts';
 
 const render = (run: RunState, position: RunPosition): string =>
   renderStatus(buildStatusModel(run, position, []));
+
+describe('formatGatePosture (the single source for the three posture surfaces)', () => {
+  test('the status style: padded label, "other gates", no parenthetical', () => {
+    const copy = { label: 'gates:    ', attendedSuffix: 'other gates pre-authorized', noneSuffix: 'all gates pre-authorized' };
+    expect(formatGatePosture(['frame', 'spec'], copy)).toBe('gates:    attending frame, spec — other gates pre-authorized');
+    expect(formatGatePosture([], copy)).toBe('gates:    attending none — all gates pre-authorized');
+  });
+
+  test('the duet-new style: tight label, "other gates", with the parenthetical', () => {
+    const copy = {
+      label: 'gates: ',
+      attendedSuffix: 'other gates pre-authorized (auto-cross, packets recorded)',
+      noneSuffix: 'all gates pre-authorized (auto-cross, packets recorded)',
+    };
+    expect(formatGatePosture(['frame', 'spec'], copy)).toBe(
+      'gates: attending frame, spec — other gates pre-authorized (auto-cross, packets recorded)',
+    );
+    expect(formatGatePosture([], copy)).toBe('gates: attending none — all gates pre-authorized (auto-cross, packets recorded)');
+  });
+
+  test('the duet-afk style threads its explicit pre-authorized list, with the downstream none-copy', () => {
+    const preAuthorized = ['plan', 'impl', 'finish'];
+    const copy = {
+      label: 'gates: ',
+      attendedSuffix: `${preAuthorized.join(', ') || 'nothing else'} pre-authorized (auto-cross, packets recorded)`,
+      noneSuffix: 'all downstream gates pre-authorized (auto-cross, packets recorded)',
+    };
+    expect(formatGatePosture(['frame', 'spec'], copy)).toBe(
+      'gates: attending frame, spec — plan, impl, finish pre-authorized (auto-cross, packets recorded)',
+    );
+    expect(formatGatePosture([], copy)).toBe('gates: attending none — all downstream gates pre-authorized (auto-cross, packets recorded)');
+  });
+});
 
 describe('workflow-neutral status surfaces (RIR)', () => {
   const rirRun = (projectDir: string): RunState =>
