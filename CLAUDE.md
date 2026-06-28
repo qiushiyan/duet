@@ -21,7 +21,7 @@ Each cluster pairs the doc that explains a subsystem with the code that implemen
 
 **The design, top to bottom** (read these first)
 - `docs/automation-design.md` — THE design: the three roles, the three layers, phases/gates, question triage, branch policy, lifecycle, what-not-to-build.
-- `docs/engineering.md` — the codebase's mental model: module map, the six seams, the patterns, XState usage, testing strategy. **Read before moving code.**
+- `docs/engineering.md` — the codebase's mental model: module map, the seven seams, the patterns, XState usage, testing strategy. **Read before moving code.**
 
 **Workflow, phases & the statechart**
 - `src/phases.ts` — the workflow registry (`WORKFLOWS`): the arcs as data (ordered phases, gates + copy, round caps, budgets, snippet sets, consultant checkpoints, the acceptance-contract pair); `validateRegistry` guards the flat-vs-scoped derivation at load.
@@ -93,5 +93,5 @@ Cross-cutting rules; full reasoning in `docs/engineering.md` and `docs/open-ques
 
 - **Docs lead, code follows.** A code/docs disagreement is a doc bug or a design regression; resolve it explicitly, never silently. How docs are kept: `docs/documentation-standards.md`.
 - **Evidence-backed claims.** Workflow claims cite `examples/*.jsonl` turns or run logs; tag **(observed)** vs **(general)**.
-- **Tests are behavior-through-interface.** Fake only at the six seams (`docs/engineering.md` §Seams); never mock our own modules.
+- **Tests are behavior-through-interface.** Fake only at the seven seams (`docs/engineering.md` §Seams); never mock our own modules.
 - **Personal tool / augmentation** — the product goals above are conventions too.

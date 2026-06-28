@@ -5,7 +5,17 @@ import type { ErrorClass } from '../worker-health.ts';
 import { markerToEvent } from './phase-events.ts';
 import type { PhaseEvent } from './phase-events.ts';
 import type { PhaseName } from '../phases.ts';
-import type { DriverInput } from './driver.ts';
+
+/**
+ * What the machine's `phaseDriver` actor hands each host to drive one phase:
+ * which run, where, which phase. Owned here (the seam), not by either adapter —
+ * both `driver.ts` and `stdio-host.ts` import it from this module.
+ */
+export interface PhaseInput {
+  runId: string;
+  cwd: string;
+  phase: PhaseName;
+}
 
 /**
  * The host-neutral phase run loop. `runPhase` (the in-process Agent SDK driver,
@@ -69,7 +79,7 @@ export interface PhaseHost {
    * iteration. Contract: on failure it MUST release any resource it acquired
    * before throwing, since the runner can only `close()` a session it received.
    */
-  openSession(input: DriverInput): Promise<HostedSession>;
+  openSession(input: PhaseInput): Promise<HostedSession>;
   /**
    * Classify a caught infra failure for the flag's errorClass. The deliberate
    * asymmetry lives here (docs/engineering.md §"Infra classification & opt-in
@@ -93,7 +103,7 @@ export interface PhaseHost {
  * across hosts is the point: the in-process and stdio hosts differ only behind
  * the seam.
  */
-export async function runHostedPhase(input: DriverInput, host: PhaseHost): Promise<PhaseEvent> {
+export async function runHostedPhase(input: PhaseInput, host: PhaseHost): Promise<PhaseEvent> {
   const { runId, cwd, phase } = input;
 
   // A — crash-before-transition replay. The marker is read off disk, so this is
@@ -176,38 +186,45 @@ function concludeEpisode(cwd: string, runId: string, event: PhaseEvent): PhaseEv
 }
 
 /**
- * Rail C — the orchestrator twice ended its turn (the phase turn and the one
- * nudge) without advancing or asking, so the run is stuck. Persist the actionable
- * question unless one is already queued, and report `flagged`. Reload-mutate-save
- * so it never clobbers a question another path wrote.
+ * Queue an infra-caused question iff none is already queued — the crash = flag /
+ * first-question-wins guard shared by the twice-ended and crash paths. An
+ * already-queued question (the orchestrator's own ask_human, a budget stop, an
+ * abnormal-subtype self-flag) is never overwritten. Reload-mutate-save so it can't
+ * clobber a question another path wrote; the two callers below own only their text.
  */
-function flagTwiceEnded(cwd: string, runId: string, phase: PhaseName): TurnOutcome {
+function queueInfraQuestion(cwd: string, runId: string, question: string, errorClass: ErrorClass): void {
   const state = loadRunState(cwd, runId);
   if (!state.pendingQuestion) {
-    state.pendingQuestion = {
-      question: `The ${phase} phase's orchestrator twice ended its turn without advancing the phase or asking a question — the run is stuck. Run duet doctor for per-role health, or check the orchestrator log; answer with how to proceed.`,
-      cause: 'infra',
-      errorClass: 'unknown',
-    };
+    state.pendingQuestion = { question, cause: 'infra', errorClass };
     saveRunState(state);
   }
+}
+
+/**
+ * Rail C — the orchestrator twice ended its turn (the phase turn and the one
+ * nudge) without advancing or asking, so the run is stuck.
+ */
+function flagTwiceEnded(cwd: string, runId: string, phase: PhaseName): TurnOutcome {
+  queueInfraQuestion(
+    cwd,
+    runId,
+    `The ${phase} phase's orchestrator twice ended its turn without advancing the phase or asking a question — the run is stuck. Run duet doctor for per-role health, or check the orchestrator log; answer with how to proceed.`,
+    'unknown',
+  );
   return 'flagged';
 }
 
 /**
  * Rail D's escalation — a caught infra failure lands the run on an actionable
- * queued question, never a silent state. An already-queued question (the
- * orchestrator's own ask_human, a budget stop, an abnormal-subtype self-flag) is
- * never overwritten (crash = flag, first-question-wins). Reload-mutate-save.
+ * queued question, never a silent state (crash = flag). The log pointer stays
+ * host-neutral ("the run's logs"): this loop is shared, so it can't name one
+ * host's log file.
  */
 function flagInfra(cwd: string, runId: string, phase: PhaseName, detail: string, errorClass: ErrorClass): void {
-  const state = loadRunState(cwd, runId);
-  if (!state.pendingQuestion) {
-    state.pendingQuestion = {
-      question: `The ${phase} phase failed at the infrastructure layer (${detail}). Run duet doctor for per-role health, or check driver.log; answer with how to proceed — the orchestrator session resumes from its last completed turn.`,
-      cause: 'infra',
-      errorClass,
-    };
-    saveRunState(state);
-  }
+  queueInfraQuestion(
+    cwd,
+    runId,
+    `The ${phase} phase failed at the infrastructure layer (${detail}). Run duet doctor for per-role health, or check the run's logs; answer with how to proceed — the orchestrator session resumes from its last completed turn.`,
+    errorClass,
+  );
 }

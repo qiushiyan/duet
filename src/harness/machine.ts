@@ -1,7 +1,7 @@
 import { fromCallback, setup } from 'xstate';
 import type { EventObject } from 'xstate';
 import { runPhase } from './driver.ts';
-import type { DriverInput } from './driver.ts';
+import type { PhaseInput } from './host-runner.ts';
 import type { PhaseEvent } from './phase-events.ts';
 import { WORKFLOWS } from '../phases.ts';
 import type { PhaseName, WorkflowName, WorkflowSpecInput } from '../phases.ts';
@@ -170,7 +170,7 @@ const duetSetup = setup({
     // an output the parent guards on. The catch is the crash backstop — runPhase
     // already converts infra failure to phase.flag and persists the question, so
     // an exception reaching here is an unexpected escape, still surfaced as a flag.
-    phaseDriver: fromCallback<EventObject, DriverInput>(({ input, sendBack }) => {
+    phaseDriver: fromCallback<EventObject, PhaseInput>(({ input, sendBack }) => {
       runPhase(input)
         .then((event) => sendBack(event))
         .catch(() => sendBack({ type: 'phase.flag' }));
@@ -220,7 +220,7 @@ export const duetMachine = machineFor('full');
 export function interactiveMachineFor(workflow: WorkflowName): typeof duetMachine {
   return machineFor(workflow).provide({
     actors: {
-      phaseDriver: fromCallback<EventObject, DriverInput>(() => {
+      phaseDriver: fromCallback<EventObject, PhaseInput>(() => {
         // Inert by design: the interactive session is the driver. No runPhase, no
         // sendBack — the machine waits for the events crossInteractive applies.
       }),

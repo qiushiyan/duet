@@ -8,7 +8,8 @@ import { createActor, fromCallback } from 'xstate';
 import type { EventObject } from 'xstate';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
 import { runPhase } from '../src/harness/driver.ts';
-import type { DriverInput, RunOrchestratorTurn } from '../src/harness/driver.ts';
+import type { RunOrchestratorTurn } from '../src/harness/driver.ts';
+import type { PhaseInput } from '../src/harness/host-runner.ts';
 import { duetMachine, interactiveMachine } from '../src/harness/machine.ts';
 import type { PhaseEvent } from '../src/harness/phase-events.ts';
 import {
@@ -66,7 +67,7 @@ function realDriverMachine(
   };
   const machine = duetMachine.provide({
     actors: {
-      phaseDriver: fromCallback<EventObject, DriverInput>(({ input, sendBack }) => {
+      phaseDriver: fromCallback<EventObject, PhaseInput>(({ input, sendBack }) => {
         runPhase(input, runTurn)
           .then((event) => sendBack(event))
           .catch(() => sendBack({ type: 'phase.flag' }));

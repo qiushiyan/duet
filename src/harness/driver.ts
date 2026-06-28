@@ -23,7 +23,7 @@ import type { ErrorClass } from '../worker-health.ts';
 import { markerToEvent } from './phase-events.ts';
 import type { PhaseEvent } from './phase-events.ts';
 import { runHostedPhase } from './host-runner.ts';
-import type { HostedSession, PhaseHost, TurnOutcome } from './host-runner.ts';
+import type { HostedSession, PhaseHost, PhaseInput, TurnOutcome } from './host-runner.ts';
 import { createPhaseTools } from './tools.ts';
 import type { KernelTool } from './tools.ts';
 import {
@@ -57,12 +57,6 @@ import {
  * staleness-aware `classifyInfraError`, and opts into retry (the one headless
  * place auto-retry runs).
  */
-
-export interface DriverInput {
-  runId: string;
-  cwd: string;
-  phase: PhaseName;
-}
 
 /**
  * One orchestrator turn — the SDK boundary, injectable for tests. Given the
@@ -109,7 +103,7 @@ const sdkTurn: RunOrchestratorTurn = ({ prompt, options, tools }) =>
     },
   }) as AsyncIterable<SDKMessage>;
 
-export async function runPhase(input: DriverInput, runTurn: RunOrchestratorTurn = sdkTurn): Promise<PhaseEvent> {
+export async function runPhase(input: PhaseInput, runTurn: RunOrchestratorTurn = sdkTurn): Promise<PhaseEvent> {
   return runHostedPhase(input, makeInProcessHost(runTurn));
 }
 

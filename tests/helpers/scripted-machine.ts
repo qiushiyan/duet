@@ -1,6 +1,6 @@
 import { fromCallback } from 'xstate';
 import type { EventObject } from 'xstate';
-import type { DriverInput } from '../../src/harness/driver.ts';
+import type { PhaseInput } from '../../src/harness/host-runner.ts';
 import type { PhaseEvent } from '../../src/harness/phase-events.ts';
 import { duetMachine, machineFor } from '../../src/harness/machine.ts';
 import type { WorkflowName } from '../../src/phases.ts';
@@ -19,7 +19,7 @@ export function scriptedMachine(
   const calls: string[] = [];
   const machine = machineFor(workflow).provide({
     actors: {
-      phaseDriver: fromCallback<EventObject, DriverInput>(({ input, sendBack }) => {
+      phaseDriver: fromCallback<EventObject, PhaseInput>(({ input, sendBack }) => {
         calls.push(input.phase);
         const next = script.shift();
         if (!next) throw new Error('phase driver called more times than scripted');

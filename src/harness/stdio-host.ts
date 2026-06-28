@@ -5,9 +5,8 @@ import { fromCallback } from 'xstate';
 import type { EventObject } from 'xstate';
 import { loadRunState } from '../run-store.ts';
 import { classifyError } from '../worker-health.ts';
-import type { DriverInput } from './driver.ts';
 import { runHostedPhase } from './host-runner.ts';
-import type { HostedSession, PhaseHost, TurnOutcome } from './host-runner.ts';
+import type { HostedSession, PhaseHost, PhaseInput, TurnOutcome } from './host-runner.ts';
 import { duetMachine } from './machine.ts';
 import { markerToEvent } from './phase-events.ts';
 import type { PhaseEvent } from './phase-events.ts';
@@ -39,7 +38,7 @@ export interface OrchestrateContext {
   /** The MCP client wired to the kernel subprocess — call the orchestrator tools through it. */
   client: Client;
   /** The phase being driven (the orchestrator-client seam is phase-aware). */
-  phase: DriverInput['phase'];
+  phase: PhaseInput['phase'];
   /**
    * Which orchestrator turn this is for the phase: 0 is the phase turn, 1 is
    * the single nudge the run loop issues when turn 0 ended without a terminal
@@ -61,7 +60,7 @@ export interface OrchestrateContext {
  */
 export type Orchestrate = (ctx: OrchestrateContext) => Promise<void>;
 
-export async function runPhaseOverStdio(input: DriverInput, orchestrate: Orchestrate): Promise<PhaseEvent> {
+export async function runPhaseOverStdio(input: PhaseInput, orchestrate: Orchestrate): Promise<PhaseEvent> {
   return runHostedPhase(input, makeStdioHost(orchestrate));
 }
 
@@ -140,7 +139,7 @@ function makeStdioHost(orchestrate: Orchestrate): PhaseHost {
 export function stdioPhaseMachine(orchestrate: Orchestrate): typeof duetMachine {
   return duetMachine.provide({
     actors: {
-      phaseDriver: fromCallback<EventObject, DriverInput>(({ input, sendBack }) => {
+      phaseDriver: fromCallback<EventObject, PhaseInput>(({ input, sendBack }) => {
         runPhaseOverStdio(input, orchestrate)
           .then((event) => sendBack(event))
           .catch(() => sendBack({ type: 'phase.flag' }));

@@ -1,7 +1,6 @@
 import { describe, expect, onTestFinished, vi } from 'vitest';
 import { runHostedPhase } from '../src/harness/host-runner.ts';
-import type { HostedSession, PhaseHost, TurnOutcome } from '../src/harness/host-runner.ts';
-import type { DriverInput } from '../src/harness/driver.ts';
+import type { HostedSession, PhaseHost, PhaseInput, TurnOutcome } from '../src/harness/host-runner.ts';
 import { loadRunState, saveRunState } from '../src/run-store.ts';
 import type { ErrorClass } from '../src/worker-health.ts';
 import { test } from './helpers/fixtures.ts';
@@ -16,7 +15,7 @@ import { test } from './helpers/fixtures.ts';
  * end-to-end by those suites; this one owns the host-agnostic logic directly.
  */
 
-type Step = TurnOutcome | ((input: DriverInput) => Promise<TurnOutcome> | TurnOutcome);
+type Step = TurnOutcome | ((input: PhaseInput) => Promise<TurnOutcome> | TurnOutcome);
 
 /**
  * A scripted PhaseHost. Each `driveTurn` shifts the next step: a TurnOutcome
@@ -54,7 +53,7 @@ function scriptedHost(
   return { host, calls };
 }
 
-const frameInput = (runId: string, cwd: string): DriverInput => ({ runId, cwd, phase: 'frame' });
+const frameInput = (runId: string, cwd: string): PhaseInput => ({ runId, cwd, phase: 'frame' });
 
 const network = () => {
   throw new Error('fetch failed: ECONNRESET');
