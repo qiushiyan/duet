@@ -3,7 +3,6 @@ import {
   PHASE,
   WORKFLOWS,
   acceptanceContractPathForSpec,
-  consultantCheckpointOf,
   consultantSnippetFor,
   contractAuthorPhaseOf,
   defaultPosture,
@@ -23,12 +22,12 @@ import type { WorkflowSpecInput } from '../src/phases.ts';
  * also derive from it.
  */
 
-// A minimal phase in the registry input shape. `gateState` null ⇒ open-ended.
-function phase(name: string, gateState: string | null) {
+// A minimal phase in the registry input shape — always gated (every phase gates).
+function phase(name: string, gateState: string = `${name}Gate`) {
   return {
     name,
     snippets: [] as readonly string[],
-    gate: gateState ? { state: gateState, heading: 'h', ready: 'r', hint: null } : null,
+    gate: { state: gateState, heading: 'h', ready: 'r', hint: null },
     artifactLabel: name,
     reviewLoop: false,
     roundCap: 1,
@@ -38,12 +37,12 @@ function phase(name: string, gateState: string | null) {
   };
 }
 
-// A minimal valid workflow: a gate phase `a` then an open-ended `b`.
+// A minimal valid workflow: two gate phases `a` and `b`.
 function workflow(overrides: Record<string, unknown> = {}) {
   return {
     name: 'w',
     displayName: 'W',
-    phases: [phase('a', 'aGate'), phase('b', null)],
+    phases: [phase('a', 'aGate'), phase('b', 'bGate')],
     entry: { firstPhase: 'a' },
     handoffGate: 'a',
     presets: {},
@@ -68,18 +67,18 @@ describe('validateRegistry', () => {
     },
     {
       name: 'a handoffGate that is not a gate phase throws',
-      registry: { w: workflow({ handoffGate: 'b' }) },
-      throws: /handoffGate "b" is not a gate phase/,
+      registry: { w: workflow({ handoffGate: 'ghost' }) },
+      throws: /handoffGate "ghost" is not a gate phase/,
     },
     {
       name: 'a forceAttend entry that is not a gate phase throws',
-      registry: { w: workflow({ forceAttend: ['b'] }) },
-      throws: /forceAttend entry "b" is not a gate phase/,
+      registry: { w: workflow({ forceAttend: ['ghost'] }) },
+      throws: /forceAttend entry "ghost" is not a gate phase/,
     },
     {
       name: 'a defaultPreAuthorized entry that is not a gate phase throws',
-      registry: { w: workflow({ defaultPreAuthorized: ['b'] }) },
-      throws: /defaultPreAuthorized entry "b" is not a gate phase/,
+      registry: { w: workflow({ defaultPreAuthorized: ['ghost'] }) },
+      throws: /defaultPreAuthorized entry "ghost" is not a gate phase/,
     },
     {
       name: 'a gate in both forceAttend and defaultPreAuthorized throws (disjointness)',
@@ -88,8 +87,8 @@ describe('validateRegistry', () => {
     },
     {
       name: 'a preset value that is not a gate phase throws',
-      registry: { w: workflow({ presets: { p: ['b'] } }) },
-      throws: /preset "p" value "b" is not a gate phase/,
+      registry: { w: workflow({ presets: { p: ['ghost'] } }) },
+      throws: /preset "p" value "ghost" is not a gate phase/,
     },
     {
       name: 'an entry.firstPhase not in the workflow throws',
@@ -214,20 +213,20 @@ describe('the RIR workflow', () => {
 
 describe('consultant checkpoints (registry data per arc)', () => {
   test('Full maps frame/specGate onto frame/spec, and the acceptance-contract pair onto plan/impl', () => {
-    expect.soft(consultantCheckpointOf('frame')).toBe('frame');
-    expect.soft(consultantCheckpointOf('spec')).toBe('specGate');
+    expect.soft(PHASE['frame'].consultantCheckpoint).toBe('frame');
+    expect.soft(PHASE['spec'].consultantCheckpoint).toBe('specGate');
     // The acceptance contract: plan AUTHORS it, impl VERIFIES it (the latter
     // supplants the open-ended implGate audit Full's impl used to carry).
-    expect.soft(consultantCheckpointOf('plan')).toBe('contract');
-    expect.soft(consultantCheckpointOf('impl')).toBe('verify');
+    expect.soft(PHASE['plan'].consultantCheckpoint).toBe('contract');
+    expect.soft(PHASE['impl'].consultantCheckpoint).toBe('verify');
     // Phases without a checkpoint carry none.
-    expect.soft(consultantCheckpointOf('finish')).toBeUndefined();
+    expect.soft(PHASE['finish'].consultantCheckpoint).toBeUndefined();
   });
 
   test('RIR consultant modes: frame@research, implGate@implement, publish carries none; NO contract/verify/specGate', () => {
-    expect.soft(consultantCheckpointOf('research')).toBe('frame');
-    expect.soft(consultantCheckpointOf('implement')).toBe('implGate');
-    expect.soft(consultantCheckpointOf('publish')).toBeUndefined();
+    expect.soft(PHASE['research'].consultantCheckpoint).toBe('frame');
+    expect.soft(PHASE['implement'].consultantCheckpoint).toBe('implGate');
+    expect.soft(PHASE['publish'].consultantCheckpoint).toBeUndefined();
     const rirModes = phasesOf('rir').map((p) => p.consultantCheckpoint);
     // RIR authors no contract (no plan phase), so it never verifies one — implGate
     // stays the open-ended bet audit; it is not globally re-pointed to verify.

@@ -57,7 +57,7 @@ export type ConsultantCheckpoint = 'frame' | 'specGate' | 'implGate' | 'contract
 
 /**
  * The gate a phase exits through (registry input shape). String-typed at input
- * time; the derived `GatePhase` discriminates on `gate` being non-null.
+ * time, then narrowed by `as const`. Every phase gates, so this is non-optional.
  */
 interface GateInput {
   /** Machine state name — a domain name, not derived from the phase. */
@@ -79,7 +79,7 @@ interface GateInput {
 interface PhaseSpecInput<Name extends string = string> {
   readonly name: Name;
   readonly snippets: readonly string[];
-  readonly gate: GateInput | null;
+  readonly gate: GateInput;
   readonly artifactLabel: string;
   readonly reviewLoop: boolean;
   readonly roundCap: number;
@@ -381,12 +381,11 @@ type AnyPhase = (typeof WORKFLOWS)[WorkflowName]['phases'][number];
 export type PhaseName = AnyPhase['name'];
 
 /**
- * Phases that end at a human gate, derived from the registry — a phase whose
- * `gate` is a (non-null) object. The lone open-ended phase (`gate: null`,
- * Full's `open`) is excluded; it runs after the last gate and advances straight
- * to done.
+ * Phases that end at a human gate. Every phase in every arc gates (the registry
+ * makes `gate` non-nullable), so this is exactly `PhaseName` — kept as a named
+ * alias because it reads as intent at the call sites (`gatesAt: GatePhase[]`).
  */
-export type GatePhase = Extract<AnyPhase, { gate: object }>['name'];
+export type GatePhase = PhaseName;
 
 /** The consumer-facing phase view — the registry input narrowed to `PhaseName`. */
 export interface PhaseSpec {
@@ -402,15 +401,15 @@ export interface PhaseSpec {
   snippets: readonly string[];
   /**
    * The gate this phase exits through: its machine state name and the
-   * human-facing copy `duet status` renders. `null` for an open-ended phase
-   * (Full's `open`) that runs after the last gate and advances straight to done.
+   * human-facing copy `duet status` renders. Non-null — every phase in both
+   * arcs gates.
    */
   gate: {
     state: string;
     heading: string;
     ready: string;
     hint: string | null;
-  } | null;
+  };
   /** What the human sends back on reject — names the artifact in feedback prompts. */
   artifactLabel: string;
   /**
@@ -452,16 +451,14 @@ export function validateRegistry(workflows: Record<string, WorkflowSpecInput>): 
       }
       phaseOwner.set(p.name, wfName);
       phaseNames.add(p.name);
-      if (p.gate) {
-        if (gateStates.has(p.gate.state)) {
-          throw new Error(
-            `registry: workflow "${wfName}" has two gates with state "${p.gate.state}" — gate-state names must be unique within a workflow so phaseOfGateState is total`,
-          );
-        }
-        gateStates.add(p.gate.state);
+      if (gateStates.has(p.gate.state)) {
+        throw new Error(
+          `registry: workflow "${wfName}" has two gates with state "${p.gate.state}" — gate-state names must be unique within a workflow so phaseOfGateState is total`,
+        );
       }
+      gateStates.add(p.gate.state);
     }
-    const gatePhases = new Set(wf.phases.filter((p) => p.gate !== null).map((p) => p.name));
+    const gatePhases = new Set(wf.phases.map((p) => p.name));
     const requireGatePhase = (value: string, what: string): void => {
       if (!gatePhases.has(value)) {
         throw new Error(
@@ -565,7 +562,7 @@ export const PHASE: Record<PhaseName, PhaseSpec> = Object.fromEntries(
 
 /** A workflow's gate-bearing phase names, in arc order — its `gates_at` vocabulary. */
 export function gatePhasesOf(workflow: WorkflowName): readonly GatePhase[] {
-  return WORKFLOWS[workflow].phases.filter((p) => p.gate !== null).map((p) => p.name as GatePhase);
+  return WORKFLOWS[workflow].phases.map((p) => p.name);
 }
 
 /** A workflow's default-pre-authorized gates (the inverse of `forceAttend`). */
@@ -595,19 +592,12 @@ export function defaultPosture(
  * name without the resolver becoming ambiguous.
  */
 export function phaseOfGateState(workflow: WorkflowName, stateName: string): GatePhase | undefined {
-  return WORKFLOWS[workflow].phases.find((p) => p.gate?.state === stateName)?.name as GatePhase | undefined;
+  return WORKFLOWS[workflow].phases.find((p) => p.gate.state === stateName)?.name as GatePhase | undefined;
 }
 
-/** Whether a phase ends at a human gate (vs running straight to done). */
-export function isGatePhase(phase: PhaseName): phase is GatePhase {
-  return PHASE[phase].gate !== null;
-}
-
-/** A gate phase's gate spec — non-null by construction (every GatePhase row has one). */
-export function gateOf(phase: GatePhase): NonNullable<PhaseSpec['gate']> {
-  const gate = PHASE[phase].gate;
-  if (!gate) throw new Error(`phase ${phase} has no gate — the phase table and GatePhase type disagree`);
-  return gate;
+/** A gate phase's gate spec — non-null by construction (every phase gates). */
+export function gateOf(phase: GatePhase): PhaseSpec['gate'] {
+  return PHASE[phase].gate;
 }
 
 /**
@@ -665,11 +655,6 @@ export const CONSULTANT_SNIPPETS: ReadonlySet<string> = new Set(Object.values(CO
  */
 export function consultantSnippetsForWorkflow(workflow: WorkflowName): ReadonlySet<string> {
   return new Set(phasesOf(workflow).map((p) => consultantSnippetFor(p.name)).filter((s): s is string => s !== undefined));
-}
-
-/** A phase's consultant checkpoint mode, or undefined when it carries none. */
-export function consultantCheckpointOf(phase: PhaseName): ConsultantCheckpoint | undefined {
-  return PHASE[phase].consultantCheckpoint;
 }
 
 /**

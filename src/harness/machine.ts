@@ -24,10 +24,9 @@ import type { PhaseName, WorkflowName, WorkflowSpecInput } from '../phases.ts';
  * the registry in src/phases.ts) — the arc is a linear chain, so each phase
  * contributes `<name>Loop` + `<name>FlagWait` + its gate state; a gate's approve
  * targets the next phase's loop (or `done` when it gates the last phase, as
- * Full's `finish` does), its reject re-enters the loop it gates. A gate-less
- * phase would advance straight to the next phase's loop or to done; the full arc
- * no longer has one (RIR's `research` gates into `implement`). `machineFor('full')`
- * is the linear arc:
+ * Full's `finish` does), its reject re-enters the loop it gates. Every phase
+ * gates (the registry makes `gate` non-nullable), so each loop advances to its
+ * own gate. `machineFor('full')` is the linear arc:
  *
  * ```
  * route ─(no spec)─▶ frameLoop ──▶ directionGate ─approve─▶ specLoop ──▶ commitSpecGate
@@ -134,17 +133,12 @@ function buildStates(spec: WorkflowSpecInput): Record<string, object> {
     const loop = `${name}Loop`;
     const flagWait = flagWaitStateOf(name);
     const next = phases[i + 1];
-    // A gated phase advances to its gate; a gate-less phase (none in either arc
-    // today — both gate every phase — but the registry allows one) would advance
-    // to the next phase's loop, or to done when it is the last phase.
-    states[loop] = phaseState(name, {
-      advanced: p.gate?.state ?? (next ? `${next.name}Loop` : 'done'),
-      flagWait,
-    });
+    // Every phase gates (the registry makes `gate` non-nullable): the loop
+    // advances to its own gate, and the gate's approve targets the next phase's
+    // loop (or `done` when it gates the last phase).
+    states[loop] = phaseState(name, { advanced: p.gate.state, flagWait });
     states[flagWait] = flagWaitState(loop);
-    if (p.gate) {
-      states[p.gate.state] = gateState({ approve: next ? `${next.name}Loop` : 'done', reject: loop });
-    }
+    states[p.gate.state] = gateState({ approve: next ? `${next.name}Loop` : 'done', reject: loop });
   });
   states['done'] = { type: 'final', tags: ['quiescent'] };
   return states;

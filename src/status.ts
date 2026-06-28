@@ -170,10 +170,8 @@ export function buildStatusModel(state: RunState, position: RunPosition, pending
     sessions: resolveSessions(state),
     ...(state.gatesAt ? { gatesAt: state.gatesAt } : {}),
     autoApprovals: (state.autoApprovals ?? []).map((a) => ({ ...a, headline: packetHeadline(state, a.gate) })),
-    // A gate-less phase (none today; the filter is total over the registry) is
-    // excluded — it runs no review rounds.
     rounds: phasesOf(workflow)
-      .filter((p) => p.gate !== null && ((state.rounds[p.name] ?? 0) > 0 || p.reviewLoop))
+      .filter((p) => (state.rounds[p.name] ?? 0) > 0 || p.reviewLoop)
       .map((p) => ({ phase: p.name, used: state.rounds[p.name] ?? 0, cap: p.roundCap })),
     costs: state.costs,
     context: voicesFor(state).flatMap((role) => {
