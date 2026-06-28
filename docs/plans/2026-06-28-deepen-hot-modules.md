@@ -17,8 +17,10 @@ shape are the spec's chosen designs; this plan implements them.
   (`vitest run`), `pnpm typecheck` (`tsc --noEmit`). Several slices are guaranteed by the
   *typecheck*, not a runtime test (gate-non-nullable in #5, exhaustiveness in #4, the typed
   `refuse` in #1-floor) — run both.
-- **Full suite runs after** slices 1 (#5), 2 (#1-floor), 5 (#3), 6 (#1-deep), and final; targeted
-  files during a slice.
+- **Green at every commit is literal:** run `pnpm typecheck && pnpm test` (the full suite) before
+  **every** slice commit — including #2 and #4 — since one slice = one commit. Targeted test files
+  are fine *during* a slice; the full run gates the commit. (The spec's emphasis on #5/#1-floor/#3/
+  #1-deep marks where the surface change is largest, not an exemption for the rest.)
 - **Lessons applied:** the *deletion test* (every slice that extracts a helper must justify it by
   imagining its deletion — the discipline re-growing at N sites is the pass); *replace, don't
   layer* (a deepened interface's tests replace the old shallow tests) — **with one deliberate
@@ -76,9 +78,14 @@ gate-less phase) — the preferred kind of slicing.
   (non-null by construction). Keep the function — callers use it.
 - `src/phases.ts:671` `consultantCheckpointOf` → **delete** (production-unused). Repoint its only
   callers, `tests/phases.test.ts:217–230`, to read `PHASE[x].consultantCheckpoint` directly.
-- `src/phases.ts` gate-derivations — the `p.gate !== null` filters in `validateRegistry` (~464),
-  `gatePhasesOf` (~568, drop the now-identity `as GatePhase`), `phaseOfGateState` (~597) — drop the
-  vacuous predicate; every phase is a gate phase.
+- `src/phases.ts` gate-derivations, now that `gate` is non-null (verified line-by-line):
+  - `validateRegistry`: the **`if (p.gate)` guard at `:455`** (the gate-state-uniqueness check)
+    becomes **unconditional**, and the `.filter((p) => p.gate !== null)` at `:464` drops the vacuous
+    predicate.
+  - `gatePhasesOf` (`:568`): drop the predicate and the now-identity `as GatePhase`.
+  - `phaseOfGateState` (`:597`): `p.gate?.state` → `p.gate.state` — here the deadness is the
+    **optional chaining**, not a `!== null` filter (correcting my first pass, which called it a
+    predicate).
 - `src/phases.ts:27–31, 383–389, 405–413` — the stale comments naming a nonexistent open-ended
   `open` phase → correct them (the cleanup that makes invariant 6 true).
 - `src/harness/tools.ts:1154–1156` — `advance_phase`'s `next` message: drop the `!isGatePhase(phase)
@@ -157,19 +164,23 @@ delegating error envelope alone (the spec scopes #1-floor to `tools.ts`).
 executes, and kill the 10× run-resolution boilerplate — restoring `cli.ts` to wiring.
 
 ### Changes (anchors)
-- **`resolveRun(cwd, runId, notFoundMsg)`** replaces the 10 sites of `runId ? loadRunState(cwd,
-  runId) : latestRun(cwd)` + `if (!state) fail(...)` (`cli.ts:326, 501, 557, 778, 817, 853, 872,
-  929, 967, 991`). **Gotcha: the not-found message varies per command** ("…start one with duet new
-  (bare opens your editor…)" for status/continue/doctor/stats; "…duet new --interactive" for
-  orchestrate; bare "no runs found in this project" for afk/steer/abandon/view/takeover) — pass the
-  message in so every byte stays identical. (afk uses `runIdArg`, line 501 — same shape.)
+- **`resolveRun(cwd, runId, notFoundMsg)`** replaces **all 11** sites of `runId ? loadRunState(cwd,
+  runId) : latestRun(cwd)` + `if (!state) fail(<msg>)`. **Gotcha: there are FOUR distinct not-found
+  strings — pass the message in so every byte stays identical** (full inventory, verified):
+  - `cli.ts:326` orchestrate → `…start one with duet new --interactive`
+  - `cli.ts:501` afk (uses `runIdArg`) → `…start one with duet new`
+  - `cli.ts:557` continue, `:967` status, `:991` doctor, `:1006` **stats** → `…start one with duet
+    new (bare opens your editor on a framing draft)`
+  - `cli.ts:778` steer, `:817` abandon, `:853` view, `:872` takeover, `:929` logs → bare
+    `no runs found in this project`
+  (Correction to my first pass: it said 10 sites and mis-grouped afk — `stats` at `:1006` was the
+  omitted 11th, and afk carries the `duet new` suffix, not the bare string.)
 - **`continuePlanner(facts) → ContinueAction`** — a pure function in `cli.ts` (or a new
   `src/continue-planner.ts` if it reads cleaner), generalizing the in-file `takeoverPlan`
   (`cli.ts:178–186`) precedent. It lifts the decision logic out of the `continue` action
   (`cli.ts:555–726`). `ContinueAction` is a discriminated union covering the action's ~10 exits:
   ```
-  | { kind: 'interactive-cross'; event; freezeContractPhase?: PhaseName }
-  | { kind: 'interactive-handoff' }            // after a crossInteractive that reaches the handoff gate
+  | { kind: 'interactive-cross'; event; after: 'inline' | 'handoff'; freezeContractPhase?: PhaseName }
   | { kind: 'interactive-drop-headless' }      // bare --headless mid-phase on an interactive run
   | { kind: 'interactive-show-status' }
   | { kind: 'crash-recover'; resumeEvent? }
@@ -178,6 +189,13 @@ executes, and kill the 10× run-resolution boilerplate — restoring `cli.ts` to
   | { kind: 'show-status' }
   | { kind: 'fail'; message }                  // every current fail(...) path
   ```
+  **Gotcha: the interactive crossing is ONE action, not two.** `cli.ts:631–650` always runs the same
+  sequence (stage text → freeze-if-approve → `crossInteractive`) and *then* branches on
+  `interactiveContinueAction(...) === 'handoff'`. So handoff is the crossing's *continuation*, not a
+  separate decision: the planner computes `after` by calling the (pure) `interactiveContinueAction`,
+  and sets `freezeContractPhase` only when `event` is approve at the contract phase. The executor:
+  stage → freeze (if `freezeContractPhase`) → `crossInteractive` → if `after === 'handoff'`
+  spawn-handoff, else print the inline-rest message.
 - **Split of responsibility — the load-bearing design point.** The planner is **pure**: it receives
   already-probed facts (`state`, `position: RunPosition`, the restored-machine facts `{ value,
   status, canApprove/canReject/canAnswer (from `snapshot.can`), hasTag('gate') }`, `eventType`,
@@ -194,9 +212,10 @@ executes, and kill the 10× run-resolution boilerplate — restoring `cli.ts` to
 ### Tests (the win: decisions tested **without spawning a process**)
 - **New `tests/continue-planner.test.ts`** — one case per `ContinueAction`, building `RunPosition`
   literals and restored-machine fact objects directly (no `_drive`, no editor, no git). Cases:
-  - interactive + gate + `approve` → `interactive-cross` (with `freezeContractPhase` set at the
-    contract phase, unset elsewhere); + `reject` → `interactive-cross`; flag + `answer` →
-    `interactive-cross`.
+  - interactive + gate + `approve` → `interactive-cross` with `after: 'handoff'` at the handoff gate
+    vs `after: 'inline'` at an earlier attended gate, and `freezeContractPhase` set **only** at the
+    contract phase; + `reject` → `interactive-cross` (`after` per `interactiveContinueAction`); flag
+    + `answer` → `interactive-cross`.
   - interactive + no event + `--headless` mid-phase → `interactive-drop-headless`; + at a gate/flag
     → `fail` (owes a decision first).
   - interactive + bare (no event) → `interactive-show-status`.
@@ -263,6 +282,14 @@ in 4 doc-comments across 8 mutators) in one helper, signature-preserving.
   saveRunState(fresh)`; then `fn(state)` to mirror the same mutation into the passed copy. The
   role-keying lives **in the callback** (e.g. `clearTurnActive` → `mutate(state, s => { if
   (s.activeTurns?.[role]) { delete s.activeTurns[role]; return true } return false })`).
+- **Gotcha — the callback must be replayable (no internal nondeterminism).** Because `mutate` runs
+  `fn` against *both* the fresh copy and the passed copy, any **generated** value (a timestamp) must
+  be computed ONCE by the caller and closed over — never `new Date()` *inside* `fn`, or disk and the
+  in-memory copy would get different `startedAt`s. `markTurnActive` (`run-store.ts:478`) and
+  `markPendingTurn` (`:525`) build their `entry` (with `new Date().toISOString()`) **outside** and
+  the callback only assigns that one `entry` to both copies — byte-identical to today's single-
+  `entry` write. With generated values lifted out, `fn` is otherwise pure: idempotent, surgical,
+  deletion-safe.
 - **Gotcha — deletion-safe surgical sync:** applying `fn` to *both* fresh and the passed copy makes
   a delete reflect in both and touches only the field `fn` changed. Do **NOT** `Object.assign(state,
   fresh)` (leaves deleted keys behind; clobbers unrelated in-memory fields). The clears
@@ -298,9 +325,15 @@ into its own module — recommended, but the first thing cut if trimming.
 ### Changes (anchors)
 - Move `Steer` type, `steersDir`, `stageSteer`, `listPendingSteers`, `markSteersDelivered`
   (`src/run-store.ts:680–747`) → `src/steer-store.ts`; it imports `runDirOf`/`appendVoiceLog` from
-  `run-store.ts`. Update the ~4 import sites (`tools.ts`, `cli.ts`, `driver.ts`, and any other
-  caller of `listPendingSteers`/`markSteersDelivered`/`stageSteer`) — a clean move, not a re-export
-  (re-exports are the pass-through the deletion test frowns on).
+  `run-store.ts`. A clean move, not a re-export (re-exports are the pass-through the deletion test
+  frowns on). **Full importer inventory** (so it's a move, not a half-extraction — verified):
+  - *value imports:* `cli.ts:42,51` (`listPendingSteers`, `stageSteer`), `driver.ts:12,14`
+    (`listPendingSteers`, `markSteersDelivered`), `tools.ts:20,22` (`listPendingSteers`,
+    `markSteersDelivered`).
+  - *type-only `Steer` imports:* `status.ts:7`, and `orchestrator-prompts.ts:13` (used by
+    `renderSteerBlock`, `:646`).
+  - *tests:* `run-store.test.ts` (the moving `describe('the steer store')`), plus `tools.test.ts`,
+    `driver.test.ts`, `stdio-host.test.ts`.
 - **Gotcha: byte-for-byte file format + deliver-by-rename** — the hrtime-suffixed name, the `wx`
   atomic create, the rename into `steers/delivered/` are unchanged. **Steers must never live in
   `state.json`** (the reason the store is separate — a CLI write there races the live driver).
@@ -326,15 +359,22 @@ depends on it. If the run is trimming, stop after slice 5 — floor banked, run 
   shape `refuse()` already produces), and `firstRefusal(input, ctx, ...rails: Rail[]): Refusal |
   null` returning the first non-null (else null → proceed).
 - **`RailCtx`, built once in `createPhaseTools` (572):** `{ state, phase, cap, inFlight(role),
-  orphanedOnDisk(role), sentThisPhase(role), resendWarned }`. **Gotcha: the boolean oracles are the
-  ONE place host divergence lives** — `inFlight`/`orphanedOnDisk` are constructed from `dispatcher
-  ?? turnsInFlight` (today's split at `tools.ts:829` and `pendingTurnGate` at `670–692`). The rails
-  read the oracles and **never re-branch on host**. **The `send_prompt` host-switch (blocking vs.
-  dispatch-and-collect) stays ONE registry** — only the oracle differs.
+  orphanedOnDisk(role), sentThisPhase(role), resendWarned, clearOrphan(role), log }`. **Gotcha: the
+  boolean oracles are the ONE place host divergence lives** — `inFlight`/`orphanedOnDisk` are
+  constructed from `dispatcher ?? turnsInFlight` (today's split at `tools.ts:829` and `pendingTurnGate`
+  at `670–692`). The rails read the oracles and **never re-branch on host**. **The `send_prompt`
+  host-switch (blocking vs. dispatch-and-collect) stays ONE registry** — only the oracle differs.
+- **Gotcha: `orphanRail` is NOT a pure predicate — it needs `clearOrphan`/`log`.** The current
+  discard-and-reseed branch (`tools.ts:848–850`) does `clearPendingTurn(state, role)` + `log(...)`
+  and *then* proceeds, so the rail must clear the stale record (a side effect) and return null. That
+  is why `RailCtx` carries `clearOrphan(role)` and `log`. Only `orphanRail` carries side effects;
+  every other rail stays a pure `Refusal | null`.
 - **Named rails:**
-  - send_prompt per-role: `sameRoleInFlightRail`, `orphanRail` (refuse-vs-reseed by
-    `orphanRecoveryFor(role)` from `roles.ts`), `reviewCapRail`, `warnOnceTemplateRail` — extracted
-    from `validateRole` (`826–887`).
+  - send_prompt per-role: `sameRoleInFlightRail`, `orphanRail` (a `takeover`-policy orphan →
+    refuse; a `discard-and-reseed` orphan → `ctx.clearOrphan(role)` + `ctx.log(...)` then return
+    null, by `orphanRecoveryFor(role)`), `reviewCapRail`, `warnOnceTemplateRail` — extracted from
+    `validateRole` (`826–887`). The reseed/dispatch itself happens **later in the handler**, not in
+    the rail.
   - **Shared terminal rail group** — `terminalAlreadySetRail` (from `terminalAlreadySet`/
     `alreadyEnding`, 581–590) and `pendingTurnGateRail` (from `pendingTurnGate`, 670–692) —
     **defined once and composed by BOTH terminal tools** (never two implementations).
@@ -375,8 +415,11 @@ depends on it. If the run is trimming, stop after slice 5 — floor banked, run 
   with a minimal `RailCtx` built by a small helper `railCtx(overrides)` whose oracles are boolean
   stubs (`inFlight: () => true/false`, `orphanedOnDisk: () => …`) over a real `run` fixture state:
   - `sameRoleInFlightRail` refuses when `inFlight(role)`; passes otherwise.
-  - `orphanRail` refuses a `takeover` role's orphan, **reseeds** a `discard-and-reseed` role's
-    (consultant) — driven by `orphanRecoveryFor`, not a role-literal.
+  - `orphanRail`: a `takeover`-policy orphan → refusal (and `clearOrphan` **not** called); a
+    `discard-and-reseed` (consultant) orphan → **clears the stale record (`clearOrphan` called) and
+    returns null** — driven by `orphanRecoveryFor`, not a role-literal. (The fresh body actually
+    *dispatching* after the clear is the **full-handler** test, downstream of the rail — not the
+    rail's to prove.)
   - `reviewCapRail` refuses at the cap (`rounds[phase] === cap`).
   - `warnOnceTemplateRail` refuses once then allows the identical retry (the `resendWarned` set).
   - `terminalAlreadySetRail` refuses a second terminal call; `pendingTurnGateRail` refuses a pending
