@@ -4,7 +4,7 @@ import { execa } from 'execa';
 import { describe, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { CONSULTANT_IDENTITY_CLAUSE, ORCHESTRATOR_SYSTEM_PROMPT, buildPhaseBrief, orchestratorSystemPrompt } from '../src/harness/orchestrator-prompts.ts';
-import { createPhaseTools, projectDetail, stageSessionId } from '../src/harness/tools.ts';
+import { block, createPhaseTools, error, ok, projectDetail, refuse, result, stageSessionId } from '../src/harness/tools.ts';
 import type { KernelTool } from '../src/harness/tools.ts';
 import { LESSONS_DIR } from '../src/snippets.ts';
 import { createTurnDispatcher } from '../src/harness/turn-dispatcher.ts';
@@ -83,6 +83,41 @@ function harness(run: RunState, opts: HarnessOpts = {}) {
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 const text = (result: ToolResult): string => (result.content[0] as { text: string }).text;
+
+// The result-builder contract (#1-floor): the 58 hand-built envelopes collapsed
+// onto these. The compile-time guarantee — `refuse()` with no text is a type
+// error — is pinned by `pnpm typecheck`, not here; these characterize the
+// runtime shapes (multi-block success, the two kinds of isError, the
+// conditional flag).
+describe('result builders', () => {
+  test('ok is a multi-block success with no isError flag', () => {
+    const r = ok(block('a'), block('b'));
+    expect(r).toEqual({ content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] });
+    expect('isError' in r).toBe(false);
+  });
+
+  test('refuse carries the steering text as a rail refusal (isError set)', () => {
+    expect(refuse('next move here')).toEqual({
+      content: [{ type: 'text', text: 'next move here' }],
+      isError: true,
+    });
+  });
+
+  test('error marks a worker/tool failure without the non-empty-text constraint', () => {
+    expect(error(block('the turn failed'))).toEqual({
+      content: [{ type: 'text', text: 'the turn failed' }],
+      isError: true,
+    });
+  });
+
+  test('result sets the flag only when isError is truthy, else omits it', () => {
+    const errored = result([block('x')], { isError: true });
+    expect(errored).toEqual({ content: [{ type: 'text', text: 'x' }], isError: true });
+    const clean = result([block('x')], { isError: false });
+    expect(clean).toEqual({ content: [{ type: 'text', text: 'x' }] });
+    expect('isError' in clean).toBe(false);
+  });
+});
 
 describe('send_prompt', () => {
   test('routes to the addressed worker and returns its response', async ({ run }) => {
