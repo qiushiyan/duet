@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test } from 'vitest';
 import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, UNLISTED_SNIPPETS, WORKFLOWS, consultantSnippetFor } from '../src/phases.ts';
 import type { WorkflowName } from '../src/phases.ts';
 import {
-  SKILLS_DIR,
+  LESSONS_DIR,
   getEffectiveSnippet,
   getSnippet,
   loadEffectiveSnippets,
@@ -35,13 +35,13 @@ describe('the snippet library', () => {
   });
 
   // The PLAN snippets and the RIR build snippet (implement-direct) cite duet's
-  // methodology by a {{skills_dir}}/… token that resolves to the vendored
-  // skills/internal copy at serve time — so the discipline ships with the package
+  // methodology by a {{lessons_dir}}/… token that resolves to the vendored
+  // lessons/ copy at serve time — so the discipline ships with the package
   // instead of pointing at the author's machine. These five layers guard that the
   // the resolution is invisible at the run surface (a worker never sees a token,
   // a personal path never re-enters the library). The earlier F7 guard asserted
   // the *opposite* state (~/.claude paths present); this supersedes it.
-  describe('the PLAN methodology ships with the package (vendored skills resolve)', () => {
+  describe('the PLAN methodology ships with the package (vendored lessons resolve)', () => {
     const rawBodies = (): string => loadSnippets().map((s) => s.expand).join('\n');
 
     test('layer 1 — no personal or foreign path remains in any stored snippet body', () => {
@@ -51,15 +51,16 @@ describe('the snippet library', () => {
       expect.soft(bodies, "the tabtype-port's foreign spec path").not.toContain('docs/superpowers/');
     });
 
-    test('layer 2 — every {{skills_dir}} reference resolves to a vendored file', () => {
+    test('layer 2 — every {{lessons_dir}} reference resolves to a vendored file', () => {
       const refs: string[] = [];
-      for (const m of rawBodies().matchAll(/\{\{skills_dir\}\}\/([\w./-]+)/g)) if (m[1]) refs.push(m[1]);
-      expect(refs.length, 'no {{skills_dir}} references found — the snippets stopped citing the methodology').toBeGreaterThan(0);
-      // the two SKILL.md roots the snippets name explicitly
-      expect.soft(refs).toContain('tdd/SKILL.md');
-      expect.soft(refs).toContain('improve-codebase-architecture/SKILL.md');
+      for (const m of rawBodies().matchAll(/\{\{lessons_dir\}\}\/([\w./-]+)/g)) if (m[1]) refs.push(m[1]);
+      expect(refs.length, 'no {{lessons_dir}} references found — the snippets stopped citing the methodology').toBeGreaterThan(0);
+      // the two always-read lesson roots the lighter snippets (review-plan,
+      // implement-direct) name explicitly — one per topic.
+      expect.soft(refs).toContain('codebase-design/deep-modules.md');
+      expect.soft(refs).toContain('testing/tdd-loop.md');
       for (const rel of refs) {
-        expect.soft(existsSync(join(SKILLS_DIR, rel)), `{{skills_dir}}/${rel} is cited but not vendored — re-run \`pnpm vendor-skills\``).toBe(true);
+        expect.soft(existsSync(join(LESSONS_DIR, rel)), `{{lessons_dir}}/${rel} is cited but not vendored — re-run \`pnpm vendor-lessons\``).toBe(true);
       }
     });
 
@@ -67,29 +68,37 @@ describe('the snippet library', () => {
       // every path a body reaches a worker funnels through renderSnippetLibrary;
       // the token must be gone and an absolute path present, with no ~/.claude.
       for (const rendered of [renderSnippetLibrary({ all: true }), renderSnippetLibrary({ phase: 'plan', workflow: 'full' })]) {
-        expect.soft(rendered, 'an unresolved {{skills_dir}} token reached the served library').not.toContain('{{skills_dir}}');
+        expect.soft(rendered, 'an unresolved {{lessons_dir}} token reached the served library').not.toContain('{{lessons_dir}}');
         expect.soft(rendered, 'a ~/.claude path reached the served library').not.toContain('~/.claude');
       }
-      expect(renderSnippetLibrary({ all: true }), 'the resolved absolute path a worker actually receives').toContain(join(SKILLS_DIR, 'tdd/SKILL.md'));
+      expect(renderSnippetLibrary({ all: true }), 'the resolved absolute path a worker actually receives').toContain(join(LESSONS_DIR, 'codebase-design/deep-modules.md'));
     });
 
-    test('layer 4 — no vendored skill file hardcodes a personal path (the bug must not move one level down)', () => {
-      // Scoped to the vendored snapshot content, not skills/internal/README.md —
-      // that file is duet-authored provenance and legitimately names the source.
-      for (const skill of ['tdd', 'improve-codebase-architecture']) {
-        const dir = join(SKILLS_DIR, skill);
+    test('layer 4 — no vendored lesson file hardcodes a personal path (the bug must not move one level down)', () => {
+      // Derive the topic dirs from the vendored tree, never a hardcoded list, so
+      // a newly-vendored topic is scanned automatically — the whole point of this
+      // guard is that the leak must not move one level down, and a fixed list goes
+      // blind exactly when a new topic ships. The dir filter also excludes the
+      // top-level lessons/README.md (a file), duet-authored provenance that
+      // legitimately names the source.
+      const topics = readdirSync(LESSONS_DIR, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name);
+      expect(topics.length, 'no vendored topic dirs under LESSONS_DIR — vendoring is broken').toBeGreaterThan(0);
+      for (const topic of topics) {
+        const dir = join(LESSONS_DIR, topic);
         for (const rel of readdirSync(dir, { recursive: true }) as string[]) {
           const full = join(dir, rel);
           if (!statSync(full).isFile()) continue;
           const text = readFileSync(full, 'utf8');
-          expect.soft(text, `${skill}/${rel} hardcodes a ~/.claude path`).not.toContain('~/.claude');
-          expect.soft(text, `${skill}/${rel} hardcodes a ~/.agents path`).not.toContain('~/.agents');
+          expect.soft(text, `${topic}/${rel} hardcodes a ~/.claude path`).not.toContain('~/.claude');
+          expect.soft(text, `${topic}/${rel} hardcodes a ~/.agents path`).not.toContain('~/.agents');
         }
       }
     });
 
-    test('layer 5 — skills/internal has no SKILL.md of its own (sync-skills never symlinks it as an invokable skill)', () => {
-      expect(existsSync(join(SKILLS_DIR, 'SKILL.md'))).toBe(false);
+    test('layer 5 — lessons/ has no SKILL.md of its own (sync-skills never symlinks it as an invokable skill)', () => {
+      expect(existsSync(join(LESSONS_DIR, 'SKILL.md'))).toBe(false);
     });
   });
 
@@ -235,14 +244,12 @@ describe('the snippet library', () => {
     expect('review-direct'.startsWith('review')).toBe(true);
 
     // implement-direct carries the PLAN-stage methodology into the no-plan arc by
-    // citing the two SKILL.md roots (layer 2 above guards they resolve). Pin it
-    // here so a future edit can't silently strip the citations while start-plan
-    // keeps the all-bodies scan green.
+    // citing the two always-read lesson roots (layer 2 above guards they resolve).
+    // Pin it here so a future edit can't silently strip the citations while
+    // start-plan keeps the all-bodies scan green.
     const implDirect = getSnippet('implement-direct')?.expand ?? '';
-    expect.soft(implDirect, 'implement-direct stopped citing the TDD methodology').toContain('{{skills_dir}}/tdd/SKILL.md');
-    expect.soft(implDirect, 'implement-direct stopped citing the architecture methodology').toContain(
-      '{{skills_dir}}/improve-codebase-architecture/SKILL.md',
-    );
+    expect.soft(implDirect, 'implement-direct stopped citing the architecture methodology').toContain('{{lessons_dir}}/codebase-design/deep-modules.md');
+    expect.soft(implDirect, 'implement-direct stopped citing the TDD methodology').toContain('{{lessons_dir}}/testing/tdd-loop.md');
   });
 
   test('a phase given without a workflow infers its owning arc (no Full default crash)', () => {
@@ -561,11 +568,11 @@ describe('overrides serve through the render path (provenance never leaks to wor
     );
   });
 
-  test('{{skills_dir}} resolves in an OVERRIDDEN body too (uniform across layers)', () => {
-    const cwd = withProjectSnippets(overrideToml([['start-plan', 'see {{skills_dir}}/tdd/SKILL.md for the method']]));
+  test('{{lessons_dir}} resolves in an OVERRIDDEN body too (uniform across layers)', () => {
+    const cwd = withProjectSnippets(overrideToml([['start-plan', 'see {{lessons_dir}}/testing/tdd-loop.md for the method']]));
     const rendered = renderSnippetLibrary({ all: true, libraryContext: { cwd, configDir: tmpEmpty() } });
-    expect.soft(rendered).toContain(join(SKILLS_DIR, 'tdd/SKILL.md'));
-    expect.soft(rendered).not.toContain('{{skills_dir}}');
+    expect.soft(rendered).toContain(join(LESSONS_DIR, 'testing/tdd-loop.md'));
+    expect.soft(rendered).not.toContain('{{lessons_dir}}');
   });
 });
 
@@ -587,7 +594,7 @@ describe('getEffectiveSnippet — the `duet snippets show` data path', () => {
     expect(getEffectiveSnippet('no-such-key', { cwd: tmpEmpty(), configDir: tmpEmpty() })).toBeUndefined();
   });
 
-  test('the {{skills_dir}} token is left UNRESOLVED in the stored show form (readable, machine-independent)', () => {
-    expect(getEffectiveSnippet('start-plan', { cwd: tmpEmpty(), configDir: tmpEmpty() })?.expand).toContain('{{skills_dir}}');
+  test('the {{lessons_dir}} token is left UNRESOLVED in the stored show form (readable, machine-independent)', () => {
+    expect(getEffectiveSnippet('start-plan', { cwd: tmpEmpty(), configDir: tmpEmpty() })?.expand).toContain('{{lessons_dir}}');
   });
 });

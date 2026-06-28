@@ -1056,7 +1056,7 @@ snippetsCmd
       fail(err instanceof Error ? err.message : String(err));
     }
     if (!snippet) fail(`unknown snippet key "${key}" — run "duet snippets" to list valid keys.`);
-    // The stored form: the {{skills_dir}} token is left unresolved (readable and
+    // The stored form: the {{lessons_dir}} token is left unresolved (readable and
     // machine-independent — the serve-time resolution is the orchestrator's concern).
     console.log(`# key: ${snippet.key}`);
     console.log(`# source: ${snippet.source}`);

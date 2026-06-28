@@ -2,7 +2,7 @@
 
 Snippets are the prompt templates the orchestrator sends the workers — they *are* the workflow. This doc catalogs the ones you're most likely to override, **with their full bodies**, so you can see exactly what you're changing before you change it. For *how* overriding works — the two override files, precedence, fail-closed, the `duet snippets` inspector — see the README's [Customizing the snippets](../README.md#customizing-the-snippets).
 
-`snippets.toml` at the repo root is the source of truth; the bodies below are reproduced for reading. For the **live** body on your install — with any user/project overrides already applied — run `duet snippets show <key>`. A `{{skills_dir}}` token in a body is resolved to duet's vendored methodology skills at serve time (the worker sees a real path, not the token). The trailing `---` / `$0` in the review snippets is the paste-point convention from the source schema: `$0` is where the human's reviewer feedback lands.
+`snippets.toml` at the repo root is the source of truth; the bodies below are reproduced for reading. For the **live** body on your install — with any user/project overrides already applied — run `duet snippets show <key>`. A `{{lessons_dir}}` token in a body is resolved to duet's vendored methodology lessons at serve time (the worker sees a real path, not the token). The trailing `---` / `$0` in the review snippets is the paste-point convention from the source schema: `$0` is where the human's reviewer feedback lands.
 
 ## How snippets map to the arc
 
@@ -80,13 +80,12 @@ Plan the implementation as vertical slices against the latest spec — reread th
 
 ## Read these first, then plan
 Read each one and adapt it to this change — they're the bar for a good plan, not optional background. If a path is missing, ask me rather than guessing.
-- `{{skills_dir}}/tdd/SKILL.md` — vertical slices, what to test, the anti-patterns
-- `{{skills_dir}}/tdd/tests.md` — behavior-focused tests; `test.for`, `expect.soft`, custom matchers
-- `{{skills_dir}}/tdd/mocking.md` — mock only at boundaries, never your own modules
-- `{{skills_dir}}/tdd/interface-design.md` — testability via `test.extend` fixtures
-- `{{skills_dir}}/tdd/deep-modules.md` — small interface over hidden implementation
-- `{{skills_dir}}/improve-codebase-architecture/SKILL.md` — deep modules, seams, the deletion test
-- `{{skills_dir}}/tdd/vitest-patterns.md` — Vitest APIs *(TS-Vitest projects only)*
+- `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
+- `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, red-green-refactor, the anti-patterns
+- `{{lessons_dir}}/testing/mocking-and-fixtures.md` — mock only at boundaries; `test.extend` fixtures
+- `{{lessons_dir}}/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
+
+When the plan restructures an existing cluster or the interface is uncertain, also read `{{lessons_dir}}/codebase-design/deepening.md` and `{{lessons_dir}}/codebase-design/design-it-twice.md`.
 
 ## What you're producing
 A plan written **complementary to the spec**, not overlapping it. Don't re-summarize its goals or re-argue its approach — point to it, and spend the tokens on the tactics it deferred (answer its open questions here). The relay that earns its tokens is a load-bearing gotcha, invariant, or constraint **bolded in the exact slice that must honor it** — surfaced at the point of action, where rereading the spec wouldn't put it in front of you.
@@ -125,15 +124,15 @@ A dependency weighty enough to be an architecture decision in its own right is m
 
 ### `implement-direct`
 
-The rir arc's only draft — it builds straight from the settled research decisions, since rir has no spec or plan. Because there's no plan stage to apply it, this snippet carries the plan stage's high-value engineering signal inline — vertical slices, deep modules and the deletion test, preparatory refactoring, what-to-test calibration, and the build-on-the-right-layer (library-vs-platform) call — and cites the same two `{{skills_dir}}` methodology roots as `start-plan` for depth. It leaves behind the plan-*document* mechanics (naming slices, listing test cases, line citations) that have no artifact here.
+The rir arc's only draft — it builds straight from the settled research decisions, since rir has no spec or plan. Because there's no plan stage to apply it, this snippet carries the plan stage's high-value engineering signal inline — vertical slices, deep modules and the deletion test, preparatory refactoring, what-to-test calibration, and the build-on-the-right-layer (library-vs-platform) call — and cites the same two `{{lessons_dir}}` methodology roots as `start-plan` for depth. It leaves behind the plan-*document* mechanics (naming slices, listing test cases, line citations) that have no artifact here.
 
 ```text
 Build the change directly from the research decisions we settled — those decisions are the spec here; there is no separate spec or plan document. This is small, well-understood work, so treat what follows as a lens scaled to the change, not ceremony — adapt it, drop what doesn't fit.
 
 ## Read these first, then build
 Read each one and adapt it to this change — they're the bar, not optional background; don't go hunting them mid-build, and ask me for a path if one's missing.
-- `{{skills_dir}}/tdd/SKILL.md` — vertical slices, behavior-focused tests, mock only at boundaries, anti-patterns
-- `{{skills_dir}}/improve-codebase-architecture/SKILL.md` — deep modules, seams, the deletion test
+- `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
+- `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, mock only at boundaries, anti-patterns
 
 ## Before you write code
 - **Re-read the research decisions and the cross-review notes** — they settled the direction and the target shape; execute it, don't re-decide it.
@@ -223,8 +222,8 @@ $0
 I've drafted an implementation plan. Review with the same rigor as the spec.
 
 Background (skim as a lens, don't recite):
-- `{{skills_dir}}/tdd/SKILL.md` — vertical slices, behavior-focused tests, when to mock
-- `{{skills_dir}}/improve-codebase-architecture/SKILL.md` — deep modules, seams, the deletion test
+- `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test
+- `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, when to mock
 
 **Adapt; drop what doesn't fit our use case.**
 
@@ -316,7 +315,7 @@ $0
 
 ## Worked example: overriding `start-plan` to a non-TDD methodology
 
-duet's shipped `start-plan` ([above](#start-plan)) plans the work as **test-first vertical slices** and cites duet's vendored TDD skills. Suppose you don't work that way — you'd rather build a **walking skeleton** first (a thin end-to-end path through every layer, stubs allowed), then flesh it out slice by slice, verifying by *running the system* rather than test-first. That's a whole-snippet override.
+duet's shipped `start-plan` ([above](#start-plan)) plans the work as **test-first vertical slices** and cites duet's vendored design and testing lessons. Suppose you don't work that way — you'd rather build a **walking skeleton** first (a thin end-to-end path through every layer, stubs allowed), then flesh it out slice by slice, verifying by *running the system* rather than test-first. That's a whole-snippet override.
 
 Drop this into your **user** override file, `~/.config/duet/snippets.toml` — a personal methodology preference applies across every project. (Put the identical block in a repo's `.duet/snippets.toml` instead to scope it to that one project — e.g. a repo that genuinely isn't test-first.)
 

@@ -150,7 +150,7 @@ That's the only config duet has — role-to-provider bindings plus billing postu
 
 **How — two grains.**
 
-- **Coarse: swap the methodology.** The two planning snippets cite duet's vendored TDD and architecture skills through a `{{skills_dir}}` token. Point it at your own methodology skill and one swap shifts how the whole plan phase reasons — without editing individual prompts.
+- **Coarse: swap the methodology.** The planning snippets cite duet's vendored design and testing lessons through a `{{lessons_dir}}` token. Point it at your own methodology and one swap shifts how the whole plan phase reasons — without editing individual prompts.
 - **Fine: override a snippet.** Replace any single snippet's body, by key, from two optional files layered over the shipped defaults:
 
   | Layer | File | Scope |
