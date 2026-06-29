@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import {
   PHASE,
   acceptanceContractPathForSpec,
+  consultantCheckpointLive,
   consultantSnippetFor,
   contractAuthorPhaseOf,
   priorPhaseOf,
@@ -282,28 +283,29 @@ Branch: the run works on exactly one branch, fixed before your first worker prom
  * not a rewrite of an existing one.
  */
 /**
- * Whether the consultant's BET-LEVEL checkpoints fire — the framing analysis and
- * the pre-gate bet audits (its "is this the right bet?" challenge). They run when
- * a consultant is bound and the run is NOT gateless: a gateless owner walks away
- * having pre-decided the bet, so the consultant runs only its correctness backstop
- * (the contract author + verify, which gate on the binding alone and are
- * unaffected here). Default-off is preserved — no consultant ⇒ false, the exact
- * pre-feature routing.
+ * Whether phase P's consultant checkpoint fires for this run — the run-state
+ * adapter over the registry predicate (phases.ts `consultantCheckpointLive`), the
+ * SINGLE source the snippet surface also reads, so a brief and the snippet library
+ * can never disagree about which checkpoints a run runs. A bet-level checkpoint
+ * (frame/specGate/implGate) fires only when bound AND not gateless; a backstop
+ * checkpoint (contract/verify) fires whenever bound — the gateless owner walks away
+ * from the bet but keeps the correctness backstop. Default-off preserved: no
+ * consultant ⇒ false, the exact pre-feature routing.
  */
-function consultantChallengeActive(state: RunState): boolean {
-  return Boolean(state.bindings.consultant) && !state.gateless;
+function checkpointLive(state: RunState, phase: PhaseName): boolean {
+  return consultantCheckpointLive(phase, { consultant: Boolean(state.bindings.consultant), gateless: state.gateless });
 }
 
 function analysisSendStep(state: RunState, phase: PhaseName): string {
   const snippet = consultantSnippetFor(phase);
-  if (!consultantChallengeActive(state) || !snippet) {
+  if (!checkpointLive(state, phase) || !snippet) {
     return `Send think-holistic to both workers in one fan-out call — send_prompt with role ["implementer", "reviewer"] — so one role-neutral problem read reaches each, and they analyze it independently and in parallel. Keep that body role-neutral: the two reads differ by model and session, not by a label you write in, so don't add "you are the implementer/reviewer" framing — just the shared problem and the analysis ask.`;
   }
   return `Send think-holistic to both workers in one fan-out call — send_prompt with role ["implementer", "reviewer"], one role-neutral problem read they each analyze independently — and, separately, ${snippet} to the consultant (its own cross-family, bet-level body, deliberately different, so a separate send rather than part of the fan-out). Keep the workers' body role-neutral: they differ by model and session, not by a label, so no "you are the implementer/reviewer" framing.`;
 }
 
-function synthesisStep(state: RunState): string {
-  if (!consultantChallengeActive(state)) {
+function synthesisStep(state: RunState, phase: PhaseName): string {
+  if (!checkpointLive(state, phase)) {
     return "Send the reviewer's analysis to the implementer with compare-notes: critique, synthesize, don't capitulate.";
   }
   return "Send the reviewer's AND the consultant's analyses to the implementer with compare-notes, presented as two anonymized peers (do not label either by role, so the implementer stays blind to reviewer identity): critique and synthesize across all three voices, don't capitulate or average. The consultant's analysis is a synthesis input to the direction, like the reviewer's — not a gate-holding finding.";
@@ -315,7 +317,7 @@ function synthesisStep(state: RunState): string {
  */
 function consultantAuditStep(state: RunState, phase: PhaseName, seedNote: string): string {
   const snippet = consultantSnippetFor(phase);
-  if (!consultantChallengeActive(state) || !snippet) return '';
+  if (!checkpointLive(state, phase) || !snippet) return '';
   return `
 
 Consultant checkpoint (the consultant is bound for this run): before you advance, run its bet audit. Send the consultant a ${snippet} prompt — a fresh, ephemeral, read-only session, so curate what it sees rather than pointing it at the run's history: ${seedNote} Fold its raw findings into your advance_phase summary, and echo each finding's consultant-assigned severity into advance_phase's human_decisions — record them, never re-grade (you do triage, not opinion). "The bet is sound — ship" is a first-class outcome; a documented tradeoff is by-design, not a finding.`;
@@ -332,7 +334,7 @@ Consultant checkpoint (the consultant is bound for this run): before you advance
  */
 function consultantContractStep(state: RunState): string {
   const snippet = consultantSnippetFor('plan');
-  if (!state.bindings.consultant || !snippet || !state.specPath) return '';
+  if (!checkpointLive(state, 'plan') || !snippet || !state.specPath) return '';
   const path = acceptanceContractPathForSpec(state.specPath);
   return `
 
@@ -352,7 +354,7 @@ Consultant checkpoint — author the acceptance contract (the consultant is boun
  */
 function consultantVerifyStep(state: RunState): string {
   const snippet = consultantSnippetFor('impl');
-  if (!state.bindings.consultant || !snippet) return '';
+  if (!checkpointLive(state, 'impl') || !snippet) return '';
   if (!state.acceptanceContract) {
     return `
 
@@ -390,7 +392,7 @@ The shape of the phase:
 1. Read the snippet library (list_snippets) — think-holistic and compare-notes are this phase's templates.
 2. Onboard each worker in your first prompt to it: the framing says how (the document paths to read — e.g. an onboarding or skill file named by path). Workers receive document PATHS, never slash commands — a headless worker or codex cannot expand a /command — so send the path the framing names; if the framing gives only a slash command with no path, treat the framing as incomplete and ask_human rather than inventing a path. Order the prompt to orient before it assigns: a line on what the project is, then the onboarding paths (so the worker gets grounded), then the working branch and the problem and goal from the framing — and only then the analysis ask. The worker reads it cold, so lead with the work in plain terms, not duet's machinery (the arc, gate, or checkpoint names).
 3. ${analysisSendStep(state, 'frame')}
-4. ${synthesisStep(state)}
+4. ${synthesisStep(state, 'frame')}
 5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
@@ -587,7 +589,7 @@ The shape of the phase:
 1. Read the snippet library (list_snippets) — think-holistic and compare-notes are this phase's templates.
 2. Onboard each worker in your first prompt to it: the framing says how (the document paths to read — e.g. an onboarding or skill file named by path). Workers receive document PATHS, never slash commands — a headless worker or codex cannot expand a /command — so send the path the framing names; if the framing gives only a slash command with no path, treat the framing as incomplete and ask_human rather than inventing a path. Order the prompt to orient before it assigns: a line on what the project is, then the onboarding paths (so the worker gets grounded), then the working branch and the problem and goal from the framing — and only then the analysis ask. The worker reads it cold, so lead with the work in plain terms, not duet's machinery (the arc, gate, or checkpoint names).
 3. ${analysisSendStep(state, 'research')}
-4. ${synthesisStep(state)}
+4. ${synthesisStep(state, 'research')}
 5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The implementer builds directly from these decisions, so the summary must carry enough that the build can proceed without a spec. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.

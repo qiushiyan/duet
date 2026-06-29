@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'vitest';
 import {
+  BACKSTOP_CONSULTANT_SNIPPETS,
   PHASE,
   WORKFLOWS,
   acceptanceContractPathForSpec,
+  consultantCheckpointLive,
   consultantSnippetFor,
   consultantSnippetsForWorkflow,
   contractAuthorPhaseOf,
@@ -15,6 +17,7 @@ import {
   phaseSnippetsFor,
   phasesOf,
   validateRegistry,
+  workflowHasConsultantBackstop,
 } from '../src/phases.ts';
 import type { WorkflowSpecInput } from '../src/phases.ts';
 
@@ -299,6 +302,29 @@ describe('gateless narrows the consultant to its backstop (registry helpers)', (
     );
     // RIR has no backstop checkpoint, so a gateless RIR run exposes none.
     expect.soft([...consultantSnippetsForWorkflow('rir', { gateless: true })]).toEqual([]);
+  });
+
+  test('consultantCheckpointLive: the single bet-vs-backstop predicate both surfaces derive from', () => {
+    // Unbound is always false — the default-off floor.
+    expect.soft(consultantCheckpointLive('spec', { consultant: false })).toBe(false);
+    expect.soft(consultantCheckpointLive('impl', { consultant: false, gateless: true })).toBe(false);
+    // A bet-level checkpoint: bound and not gateless.
+    expect.soft(consultantCheckpointLive('spec', { consultant: true })).toBe(true);
+    expect.soft(consultantCheckpointLive('spec', { consultant: true, gateless: true })).toBe(false);
+    // A backstop checkpoint: bound, gateless-independent.
+    expect.soft(consultantCheckpointLive('plan', { consultant: true, gateless: true })).toBe(true); // contract
+    expect.soft(consultantCheckpointLive('impl', { consultant: true, gateless: true })).toBe(true); // verify
+    // A phase with no checkpoint is never live.
+    expect.soft(consultantCheckpointLive('finish', { consultant: true })).toBe(false);
+  });
+
+  test('workflowHasConsultantBackstop: full has the contract+verify backstop, rir has none', () => {
+    expect.soft(workflowHasConsultantBackstop('full')).toBe(true);
+    expect.soft(workflowHasConsultantBackstop('rir')).toBe(false);
+  });
+
+  test('BACKSTOP_CONSULTANT_SNIPPETS: exactly the contract + verify snippet keys', () => {
+    expect([...BACKSTOP_CONSULTANT_SNIPPETS].sort()).toEqual(['consultant-contract', 'consultant-verify'].sort());
   });
 });
 

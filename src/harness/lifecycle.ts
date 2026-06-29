@@ -598,8 +598,9 @@ export async function enterAfk(
   // blanket walk-away that must not silently turn a `high` into an unattended
   // approval — refuse it over a `high`, directing the human to the explicit
   // substitute. `duet afk --gateless` IS that explicit substitute: a deliberate
-  // full-send the human chose having pre-decided the direction the high concerns,
-  // so it crosses the high exactly as an explicit `--approve` does.
+  // full-send the human chose having pre-decided the direction the bet/product
+  // highs concern, so it crosses them exactly as an explicit `--approve` does —
+  // except for the correctness backstop, preserved just below.
   if (!opts.gateless) {
     const held = highDecisionsAt(state, position.phase);
     if (held.length > 0) {
@@ -614,6 +615,24 @@ export async function enterAfk(
   // plan gate is an approve-crossing of the contract gate (no-op elsewhere). The
   // backstop is preserved even under gateless, so this freezes regardless.
   await freezeContractAt(state, position.phase);
+  // The one high a gateless walk-away must NOT cross: the correctness backstop.
+  // A gateless full-send crosses the human's bet/product calls, but if this is the
+  // contract-author gate where a consultant was bound yet no contract got frozen
+  // (authoring failed), there is nothing for the impl verify to hold the run
+  // against — handing off would ship past an unset target, the very protection
+  // gateless promises to keep. Refuse it, pointing at the explicit override. (The
+  // headless `duet new --gateless` path holds here on the same missing-contract
+  // high via the untouched severity hold; this is its afk-path equivalent.)
+  if (
+    opts.gateless &&
+    state.bindings.consultant &&
+    position.phase === contractAuthorPhaseOf(workflowOf(state)) &&
+    !state.acceptanceContract
+  ) {
+    throw new Error(
+      `run ${state.runId}: gateless preserves the acceptance-contract backstop, but no contract was authored at this gate, so the impl verify would have nothing to hold the run against. Re-run the consultant's contract author first, or — if you accept shipping with no frozen target — approve explicitly: duet continue --approve --headless.`,
+    );
+  }
   setGatesAt(state, posture);
   crossInteractive(state, { type: 'human.approve' });
   const fresh = loadRunState(state.cwd, state.runId);

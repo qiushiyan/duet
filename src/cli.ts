@@ -29,7 +29,7 @@ import { serveKernelStdio, serveRunScopedKernelStdio } from './harness/mcp-serve
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
 import { buildStatsModel, renderStats } from './stats.ts';
 import { runOrchestrate } from './orchestrate.ts';
-import { entryOf, handoffWatchLabel } from './phases.ts';
+import { entryOf, handoffWatchLabel, workflowHasConsultantBackstop } from './phases.ts';
 import { getEffectiveSnippet, loadEffectiveSnippets, runtimeLibraryContext } from './snippets.ts';
 import type { EffectiveSnippet } from './snippets.ts';
 import { buildBrief, buildStatusModel, formatGatePosture, renderBrief, renderStatus, steerRefusal } from './status.ts';
@@ -123,6 +123,23 @@ function resolveRun(cwd: string, runId: string | undefined, notFoundMsg: string)
   const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
   if (!state) fail(notFoundMsg);
   return state;
+}
+
+/**
+ * The one-line consent note a gateless run prints — what the human is walking away
+ * into. Three honest cases, keyed off what the consultant actually does on THIS
+ * arc: no consultant (plain attend-none); a consultant the arc has no backstop for
+ * (rir — it would only do bet audits, which gateless turns off, so it runs nothing
+ * and the note says so rather than promising a verify backstop the arc lacks); and
+ * the full case where the backstop genuinely runs. `where` distinguishes `new`
+ * ("from the start") from `afk` ("the rest").
+ */
+function gatelessNote(state: RunState, where: 'start' | 'rest'): string {
+  const walk = where === 'start' ? 'walk away from the start' : 'full-send the rest';
+  if (!state.bindings.consultant) return `gateless: ${walk} — ask_human and the merge stay yours`;
+  if (!workflowHasConsultantBackstop(workflowOf(state)))
+    return `gateless: ${walk} — note: the consultant has no acceptance-contract backstop on this arc, so it does not run under gateless. ask_human and the merge stay yours`;
+  return `gateless: ${walk}; the consultant is a backstop only — bet audits off, but the acceptance-contract verify still self-heals and holds a contract that stays broken. ask_human and the merge stay yours`;
 }
 
 /**
@@ -280,10 +297,11 @@ program
   .option('--no-consultant', 'disable the consultant for this run even when the config binds one')
   .option(
     '--gateless',
-    "walk away from the START: attend no gates (every gate auto-crosses) AND run the consultant as a BACKSTOP ONLY — its bet audits don't fire, but the acceptance-contract verify still self-heals and holds a contract that stays broken. ask_human and the merge stay yours. Conflicts with --gates-at; also settable via a gateless: framing key (flag wins)",
+    "walk away from the START: pre-authorize every gate so the run flows to an open PR, AND run the consultant as a BACKSTOP ONLY — its bet audits don't fire, but the acceptance-contract verify still self-heals and holds a contract that stays broken. A genuine product/direction high (or a missing contract) can still stop the run; ask_human and the merge stay yours. Conflicts with --gates-at; also settable via a gateless: framing key (flag wins)",
   )
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
   .option('--interactive', "orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over the attended arc up to the workflow's handoff gate (full: through the plan gate; rir: through the Direction gate); implementation onward runs headless after that handoff")
+  .option('--no-interactive', 'force headless orchestration even when the framing carries interactive: true (the flag wins over the frontmatter)')
   .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; budget?: string; orchestrator?: string; impl?: string; reviewer?: string; consultant?: string | boolean; gateless?: boolean; tmux?: boolean; interactive?: boolean }) => {
     const cwd = process.cwd();
 
@@ -300,10 +318,21 @@ program
     // Pull the frontmatter launch/binding hints out of the run inputs — they
     // pick the host and the consultant binding, not createRun. Flags win over them.
     const { framingFile, interactive: framingInteractive, consultantToggle, ...runInputs } = inputs;
+    // Flags win over the frontmatter: an explicit --interactive/--no-interactive
+    // (true/false) overrides; only an absent flag (undefined) defers to the framing.
     const interactive = opts.interactive ?? framingInteractive ?? false;
     if (interactive && runInputs.gateless) {
       fail(
         'gateless means walk away from the START, which is incoherent with --interactive (you drive the planning gates in-session). Use `duet new --gateless` for a headless full-send, or `duet new --interactive` then `duet afk --gateless` to walk away mid-run.',
+      );
+    }
+    // Interactive orchestration drives a live terminal session (it spawns claude
+    // with inherited stdio). A non-TTY context — CI, a pipe — can't host one, so a
+    // framing's interactive: true (or a stray --interactive there) would strand the
+    // run as interactively-owned with no session to drive it. Fail loudly instead.
+    if (interactive && !process.stdin.isTTY) {
+      fail(
+        'this run is interactive (--interactive or a framing interactive: true), but the orchestrator needs a live terminal session and this is not one. Launch it from an interactive shell, or pass --no-interactive (or set gateless:/--gateless) to run headless.',
       );
     }
 
@@ -352,12 +381,7 @@ program
           noneSuffix: 'all gates pre-authorized (auto-cross, packets recorded)',
         }),
       );
-    if (state.gateless)
-      console.log(
-        bindings.consultant
-          ? 'gateless: consultant is a backstop only — bet audits off; the acceptance-contract verify still self-heals and holds a contract that stays broken. ask_human and the merge stay yours'
-          : 'gateless: walk away from the start — ask_human and the merge stay yours',
-      );
+    if (state.gateless) console.log(gatelessNote(state, 'start'));
     console.log('');
     if (interactive) {
       // Stage 1: orchestrate from the human's interactive orchestrator session instead
@@ -553,7 +577,7 @@ program
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
   .option(
     '--gateless',
-    "full-send the rest: hand off attending nothing AND run the consultant as a backstop only (bet audits off; the acceptance-contract verify still self-heals and holds a contract that stays broken). Crosses a held high decision — your explicit walk-away authorizes it, like an explicit approve. Conflicts with a posture argument",
+    "full-send the rest: hand off attending nothing AND run the consultant as a backstop only (bet audits off; the acceptance-contract verify still self-heals and holds a contract that stays broken). Crosses the bet/product highs at this gate — your explicit walk-away authorizes them, like an explicit approve — but still preserves the acceptance-contract backstop. Conflicts with a posture argument",
   )
   .action(async (preset: string | undefined, runId: string | undefined, options: { gateless?: boolean }) => {
     const cwd = process.cwd();
@@ -583,12 +607,7 @@ program
         noneSuffix: 'all downstream gates pre-authorized (auto-cross, packets recorded)',
       }),
     );
-    if (state.gateless)
-      console.log(
-        state.bindings.consultant
-          ? 'gateless: consultant is a backstop only downstream — bet audits off; the verify self-heals and still holds a contract that stays broken. ask_human and the merge stay yours'
-          : 'gateless: full-send — ask_human and the merge stay yours',
-      );
+    if (state.gateless) console.log(gatelessNote(state, 'rest'));
     const pid = spawnDrive(state);
     printWatchHints(state, pid, 'handed off to headless (duet afk)');
   });

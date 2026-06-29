@@ -270,14 +270,21 @@ export function loadRunConfig(
   // to carry, and the override grammar can't express `interactive` (rejected
   // anyway — the consultant is read-only by policy), so a claude consultant is
   // always headless.
+  // A consultant binding from a spec: a claude consultant is always headless (it's
+  // read-only by policy and the override grammar can't express interactive); a
+  // non-claude spec carries its own. Shared by the explicit --consultant binding
+  // and the frontmatter toggle-on default, so the two can't materialize divergently.
+  const consultantBinding = (spec: string): RoleBinding => {
+    const override = parseRoleOverride('consultant', spec);
+    return override.provider === 'claude' ? { ...override, transport: 'headless' } : override;
+  };
   if (opts.noConsultant) {
     delete bindings.consultant;
   } else {
     const consultantSpec = opts.roleOverrides?.consultant;
     if (consultantSpec) {
       // An explicit --consultant binding wins over the frontmatter toggle.
-      const override = parseRoleOverride('consultant', consultantSpec);
-      bindings.consultant = override.provider === 'claude' ? { ...override, transport: 'headless' } : override;
+      bindings.consultant = consultantBinding(consultantSpec);
     } else if (opts.consultantToggle === 'off') {
       // The framing toggled it off — disable a config-bound consultant for this run.
       delete bindings.consultant;
@@ -285,8 +292,7 @@ export function loadRunConfig(
       // The framing toggled it on with none config-bound — enable the default
       // claude consultant (a different family from the codex reviewer is the point;
       // pick a specific model with --consultant / [roles.consultant] instead).
-      const override = parseRoleOverride('consultant', 'claude');
-      bindings.consultant = { ...override, transport: 'headless' };
+      bindings.consultant = consultantBinding('claude');
     }
   }
 

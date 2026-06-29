@@ -379,6 +379,16 @@ describe('the snippet library', () => {
       expect.soft(atFrame).not.toContain('consultant-spec'); // bet-level — gone
       expect.soft(atFrame).toContain('consultant-verify'); // backstop still indexed by key
     });
+
+    test('gateless: the no-workflow flat fallback also narrows to the backstop (no bet-level leak)', () => {
+      // The defensive no-workflow flat render must honor gateless too, or it leaks
+      // the bet-level bodies the backstop-only rule hides (review finding #8).
+      const flat = renderSnippetLibrary({ all: true, consultantBound: true, gateless: true });
+      expect.soft(flat).not.toContain('<snippet key="consultant-frame">');
+      expect.soft(flat).not.toContain('<snippet key="consultant-spec">');
+      expect.soft(flat).toContain('<snippet key="consultant-contract">'); // backstop kept
+      expect.soft(flat).toContain('<snippet key="consultant-verify">');
+    });
   });
 });
 

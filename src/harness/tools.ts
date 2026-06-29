@@ -798,7 +798,7 @@ export const verifyCheckpointRail: Rail<TerminalInput> = ({ humanDecisions }, ct
   const hasHigh = (humanDecisions ?? []).some((d) => d.severity === 'high');
   if (!ctx.state.acceptanceContract || ctx.state.acceptanceContract.verifiedAt || hasHigh) return null;
   return refuse(
-    'A frozen acceptance contract exists for this run but has not been verified: send the consultant a consultant-verify turn (it runs the built system and returns a per-assertion pass/fail), then advance. Record each failed assertion as a high human_decision; if verification genuinely could not run, record a high so the gate stops for the human rather than shipping unverified.',
+    'A frozen acceptance contract exists for this run but has not been verified: send the consultant a consultant-verify turn (a fresh session runs the built system and returns a per-assertion pass/fail), then advance. Route any failed assertion to the implementer to fix and re-verify with a fresh consultant session; record a high human_decision only for an assertion that still fails after that bounded loop, or if verification could not run at all — so the gate stops for the human rather than shipping past a broken target.',
   );
 };
 

@@ -661,6 +661,39 @@ export function isBackstopCheckpoint(phase: PhaseName): boolean {
 }
 
 /**
+ * The consultant snippet keys for the BACKSTOP checkpoints only — the gateless
+ * narrowing of CONSULTANT_SNIPPETS for the one render path that has no arc to map
+ * phases through (the defensive no-workflow flat render). Derived from the same
+ * BACKSTOP_CHECKPOINTS data, so it tracks the registry automatically.
+ */
+export const BACKSTOP_CONSULTANT_SNIPPETS: ReadonlySet<string> = new Set(
+  [...BACKSTOP_CHECKPOINTS].map((m) => CONSULTANT_CHECKPOINT_SNIPPET[m]),
+);
+
+/**
+ * Whether phase P's consultant checkpoint is LIVE for a run with these knobs — the
+ * single bet-vs-backstop gate BOTH the snippet surface (phaseSnippetsFor,
+ * consultantSnippetsForWorkflow) and the orchestrator phase briefs derive from, so
+ * the two can never disagree about which checkpoints a run fires. Live when a
+ * consultant is bound, the phase carries a checkpoint, and EITHER the run is not
+ * gateless OR the checkpoint is a backstop one. The asymmetry falls out of
+ * isBackstopCheckpoint — a bet-level phase yields `bound && !gateless`, a backstop
+ * phase yields `bound` — so no caller re-implements the split (the divergence the
+ * scattered `bindings.consultant && !gateless` checks risked). Default-off
+ * preserved: no consultant ⇒ false.
+ */
+export function consultantCheckpointLive(phase: PhaseName, opts: { consultant: boolean; gateless?: boolean }): boolean {
+  if (!opts.consultant) return false;
+  if (consultantSnippetFor(phase) === undefined) return false;
+  return !opts.gateless || isBackstopCheckpoint(phase);
+}
+
+/** Whether a workflow has any backstop checkpoint — full does (contract+verify), rir does not. */
+export function workflowHasConsultantBackstop(workflow: WorkflowName): boolean {
+  return phasesOf(workflow).some((p) => isBackstopCheckpoint(p.name));
+}
+
+/**
  * The consultant snippets a WORKFLOW's checkpoints actually reach — full's
  * {frame, spec, contract, verify} snippets; rir's {frame, impl}. The flat
  * `all=true` renderer filters the consultant bucket against this so a bound run's
@@ -668,31 +701,31 @@ export function isBackstopCheckpoint(phase: PhaseName): boolean {
  * `consultant-contract`/`consultant-verify` (nor the Full-only `consultant-spec`)
  * — the contract feature does not leak into the arc that deferred it, and the
  * surface stays per-arc honest, not merely "any consultant snippet". A GATELESS
- * run narrows it further to the backstop, so its bet-level snippets never show.
+ * run narrows it further to the backstop, so its bet-level snippets never show —
+ * derived, like the briefs, through consultantCheckpointLive.
  */
 export function consultantSnippetsForWorkflow(workflow: WorkflowName, opts: { gateless?: boolean } = {}): ReadonlySet<string> {
   return new Set(
     phasesOf(workflow)
-      .filter((p) => !opts.gateless || isBackstopCheckpoint(p.name))
-      .map((p) => consultantSnippetFor(p.name))
-      .filter((s): s is string => s !== undefined),
+      .filter((p) => consultantCheckpointLive(p.name, { consultant: true, gateless: opts.gateless }))
+      .map((p) => consultantSnippetFor(p.name)!),
   );
 }
 
 /**
  * A phase's snippets ENABLED for this run — the always-on base list, plus the
  * phase's consultant checkpoint snippet appended (last, preserving today's bound
- * order) only when a consultant is bound. The single source list_snippets reads,
- * so "what the orchestrator may reach for" is base ∪ (checkpoint iff bound) on
- * every render path: an unbound run sees byte-for-byte the base list, a bound run
- * sees the checkpoint snippet in its owning phase.
+ * order) only when its checkpoint is live for this run. The single source
+ * list_snippets reads, so "what the orchestrator may reach for" is base ∪
+ * (checkpoint iff live) on every render path: an unbound run sees byte-for-byte
+ * the base list, a bound run sees the checkpoint snippet in its owning phase, and
+ * a gateless run sees only its backstop checkpoints (consultantCheckpointLive).
  */
 export function phaseSnippetsFor(phase: PhaseName, opts: { consultant: boolean; gateless?: boolean }): readonly string[] {
   const checkpoint = consultantSnippetFor(phase);
-  // A gateless run enables only the backstop checkpoints, so a bet-level
-  // checkpoint snippet (frame/specGate/implGate) is not surfaced there.
-  const enabled = opts.consultant && checkpoint && (!opts.gateless || isBackstopCheckpoint(phase));
-  return enabled ? [...PHASE[phase].snippets, checkpoint] : PHASE[phase].snippets;
+  return consultantCheckpointLive(phase, opts) && checkpoint
+    ? [...PHASE[phase].snippets, checkpoint]
+    : PHASE[phase].snippets;
 }
 
 /**

@@ -90,6 +90,20 @@ const callTool = async (
   await tool.handler(args as never, {});
 };
 
+/** Persist an interactive phase-loop rest by driving the inert variant through `sends`. */
+function restInteractiveAt(
+  state: RunState,
+  sends: Array<{ type: 'phase.advance' } | { type: 'phase.flag' } | { type: 'human.approve' } | { type: 'human.reject' } | { type: 'human.answer' }>,
+): void {
+  const actor = createActor(interactiveMachine, {
+    input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
+  });
+  actor.start();
+  for (const e of sends) actor.send(e);
+  saveMachineSnapshot(state, actor.getPersistedSnapshot());
+  actor.stop();
+}
+
 describe('the spent-marker guard (human authority must not be lost to a stale terminal marker)', () => {
   const quiet = async () => {};
 
@@ -341,20 +355,6 @@ describe('probeRunPosition', () => {
 
 describe('probeRunPosition — the interactive resting model (Stage 1)', () => {
   const quiet = async () => {};
-
-  /** Persist an interactive phase-loop rest by driving the inert variant through `sends`. */
-  function restInteractiveAt(
-    state: RunState,
-    sends: Array<{ type: 'phase.advance' } | { type: 'phase.flag' } | { type: 'human.approve' } | { type: 'human.reject' } | { type: 'human.answer' }>,
-  ): void {
-    const actor = createActor(interactiveMachine, {
-      input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
-    });
-    actor.start();
-    for (const e of sends) actor.send(e);
-    saveMachineSnapshot(state, actor.getPersistedSnapshot());
-    actor.stop();
-  }
 
   test('no snapshot, no marker → resting at the entry phase (frame, and spec for a spec-entry run)', ({
     projectDir,
@@ -921,6 +921,45 @@ describe('the severity hold — a high human decision withholds a NON-EXPLICIT c
     expect.soft(after.gatesAt).toEqual([]); // attend nothing downstream
     expect.soft(after.orchestrationHost).toBeUndefined(); // handed off to headless
     expect.soft(probeRunPosition(after)).not.toEqual({ kind: 'gate', phase: 'frame' }); // frame crossed
+  });
+
+  test('enterAfk --gateless REFUSES at the contract gate when no contract was authored — the one high it preserves', async ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    // Park at the plan gate (the contract-author gate) with a consultant bound but
+    // no contract frozen — the authoring-failed case. Gateless full-sends bets, but
+    // crossing here would ship past an unset target with nothing for verify to hold,
+    // so the walk-away must refuse.
+    restInteractiveAt(interactiveRun, [{ type: 'phase.advance' }, { type: 'human.approve' }, { type: 'phase.advance' }, { type: 'human.approve' }]);
+    const parked = loadRunState(projectDir, interactiveRun.runId);
+    parked.terminalMarker = { phase: 'plan', kind: 'advance' };
+    parked.specPath = 'docs/specs/x.md'; // a real plan gate has a spec; no contract was authored from it
+    parked.bindings = { ...parked.bindings, consultant: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' } };
+    saveRunState(parked);
+    expect.soft(probeRunPosition(parked)).toEqual({ kind: 'gate', phase: 'plan' }); // setup sanity
+
+    await expect.soft(enterAfk(parked, [], { gateless: true })).rejects.toThrow(/backstop/);
+    expect.soft(loadRunState(projectDir, interactiveRun.runId).orchestrationHost).toBe('interactive'); // not handed off
+  });
+
+  test('enterAfk --gateless CROSSES the contract gate when a contract is frozen — backstop in place', async ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    restInteractiveAt(interactiveRun, [{ type: 'phase.advance' }, { type: 'human.approve' }, { type: 'phase.advance' }, { type: 'human.approve' }]);
+    const parked = loadRunState(projectDir, interactiveRun.runId);
+    parked.terminalMarker = { phase: 'plan', kind: 'advance' };
+    parked.specPath = 'docs/specs/x.md';
+    parked.bindings = { ...parked.bindings, consultant: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' } };
+    parked.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc123' }; // authored + frozen
+    saveRunState(parked);
+
+    await enterAfk(parked, [], { gateless: true }); // backstop in place → the full-send crosses
+    const after = loadRunState(projectDir, interactiveRun.runId);
+    expect.soft(after.gateless).toBe(true);
+    expect.soft(after.orchestrationHost).toBeUndefined(); // handed off
+    expect.soft(probeRunPosition(after)).not.toEqual({ kind: 'gate', phase: 'plan' }); // plan crossed
   });
 
   test('an EXPLICIT crossInteractive crosses a high-carrying gate — explicit approval always crosses', ({

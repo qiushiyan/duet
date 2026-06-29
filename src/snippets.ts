@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'smol-toml';
 import { z } from 'zod';
-import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, consultantSnippetsForWorkflow, phaseSnippetsFor, phasesOf, workflowOfPhase } from './phases.ts';
+import { ANYTIME_SNIPPETS, BACKSTOP_CONSULTANT_SNIPPETS, CONSULTANT_SNIPPETS, consultantSnippetsForWorkflow, phaseSnippetsFor, phasesOf, workflowOfPhase } from './phases.ts';
 import type { PhaseName, WorkflowName } from './phases.ts';
 
 /**
@@ -308,12 +308,15 @@ function renderFlat(library: Snippet[], sentTo?: Record<string, string[]>, all?:
   // checkpoints reach (per-arc honesty — a bound rir run never sees full's contract
   // snippets, the leak the workflow filter closes), narrowed to the backstop on a
   // gateless run. With no workflow (defensive, outside the tool path), a bound run
-  // falls back to every consultant snippet.
+  // falls back to every consultant snippet — still backstop-narrowed under gateless,
+  // so the no-workflow path doesn't leak the bet-level snippets the gateless rule hides.
   const allowedConsultant = !consultantBound
     ? new Set<string>()
     : workflow
       ? consultantSnippetsForWorkflow(workflow, { gateless })
-      : CONSULTANT_SNIPPETS;
+      : gateless
+        ? BACKSTOP_CONSULTANT_SNIPPETS
+        : CONSULTANT_SNIPPETS;
   const snippets = library.filter((s) => !CONSULTANT_SNIPPETS.has(s.key) || allowedConsultant.has(s.key));
   return [
     all ? '<snippet_library all="true">' : '<snippet_library>',
