@@ -9,14 +9,13 @@ import {
   appendVoiceLog,
   budgetFor,
   consumeHumanInput,
-  listPendingSteers,
   loadRunState,
-  markSteersDelivered,
   recordContextUsage,
   recordPhaseLabel,
   saveRunState,
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
+import { listPendingSteers, markSteersDelivered } from '../steer-store.ts';
 import { readRoleTranscriptTail } from '../sessions.ts';
 import { classifyError, currentTerminalError } from '../worker-health.ts';
 import type { ErrorClass } from '../worker-health.ts';

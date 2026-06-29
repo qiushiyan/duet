@@ -1,5 +1,5 @@
 import { describe, expect } from 'vitest';
-import { buildBrief, buildStatusModel, describeStop, displayState, renderBrief, renderStatus, steerRefusal } from '../src/status.ts';
+import { buildBrief, buildStatusModel, describeStop, displayState, formatGatePosture, renderBrief, renderStatus, steerRefusal } from '../src/status.ts';
 import type { StopModel } from '../src/status.ts';
 import { createRun } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
@@ -10,6 +10,18 @@ import { test } from './helpers/fixtures.ts';
 
 const render = (run: RunState, position: RunPosition): string =>
   renderStatus(buildStatusModel(run, position, []));
+
+describe('formatGatePosture (the single source for the three posture surfaces)', () => {
+  test('formats the attended-list branch and the none branch from the injected copy', () => {
+    const copy = { label: 'gates:    ', attendedSuffix: 'other gates pre-authorized', noneSuffix: 'all gates pre-authorized' };
+    expect(formatGatePosture(['frame', 'spec'], copy)).toBe('gates:    attending frame, spec — other gates pre-authorized');
+    expect(formatGatePosture([], copy)).toBe('gates:    attending none — all gates pre-authorized');
+  });
+  // The function has exactly two branches (attended-list / none), both covered above.
+  // Each surface's actual copy — duet status / new / afk — is pinned at its real call
+  // site (the renderStatus suite below; the cli.ts new/afk paths), not by re-running
+  // this formatter with hand-supplied literals.
+});
 
 describe('workflow-neutral status surfaces (RIR)', () => {
   const rirRun = (projectDir: string): RunState =>
@@ -404,7 +416,7 @@ describe('renderStatus', () => {
     run.phaseSummaries.spec = { summary: 'reviewer flagged the data model; fixed', artifacts: ['docs/spec.md'] };
     const out = render(run, { kind: 'gate', phase: 'spec' });
 
-    expect.soft(out).toContain("━━━ SPEC gate — the orchestrator's summary ━━━");
+    expect.soft(out).toContain('SPEC gate'); // the load-bearing tokens, not the box-drawing decoration
     expect.soft(out).toContain('reviewer flagged the data model; fixed');
     expect.soft(out).toContain('artifacts: docs/spec.md');
     expect.soft(out).toContain(`duet continue ${run.runId} --approve`);

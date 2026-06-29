@@ -17,7 +17,8 @@ import {
 } from '../src/harness/orchestrator-prompts.ts';
 import { PHASE } from '../src/phases.ts';
 import type { PhaseName } from '../src/phases.ts';
-import { listPendingSteers, loadRunState, saveRunState, stageSteer } from '../src/run-store.ts';
+import { loadRunState, saveRunState } from '../src/run-store.ts';
+import { listPendingSteers, stageSteer } from '../src/steer-store.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**

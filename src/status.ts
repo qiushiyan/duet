@@ -4,7 +4,8 @@ import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
 import type { WorkerRole } from './providers/types.ts';
 import { voicesFor, workerRolesFor } from './roles.ts';
 import { contextPercent, fmtTokens, workflowOf } from './run-store.ts';
-import type { HumanDecision, RunState, Steer, Voice } from './run-store.ts';
+import type { HumanDecision, RunState, Voice } from './run-store.ts';
+import type { Steer } from './steer-store.ts';
 import { resolveSessions } from './sessions.ts';
 import type { SessionRef } from './sessions.ts';
 import { localStamp } from './timefmt.ts';
@@ -170,10 +171,8 @@ export function buildStatusModel(state: RunState, position: RunPosition, pending
     sessions: resolveSessions(state),
     ...(state.gatesAt ? { gatesAt: state.gatesAt } : {}),
     autoApprovals: (state.autoApprovals ?? []).map((a) => ({ ...a, headline: packetHeadline(state, a.gate) })),
-    // A gate-less phase (none today; the filter is total over the registry) is
-    // excluded — it runs no review rounds.
     rounds: phasesOf(workflow)
-      .filter((p) => p.gate !== null && ((state.rounds[p.name] ?? 0) > 0 || p.reviewLoop))
+      .filter((p) => (state.rounds[p.name] ?? 0) > 0 || p.reviewLoop)
       .map((p) => ({ phase: p.name, used: state.rounds[p.name] ?? 0, cap: p.roundCap })),
     costs: state.costs,
     context: voicesFor(state).flatMap((role) => {
@@ -290,6 +289,24 @@ export function displayState(stop: StopModel, machineState?: string): string {
   }
 }
 
+/**
+ * The gate-posture sentence ("attending X — … pre-authorized"), the single
+ * source for the three surfaces that build it — `duet status`, `duet new`,
+ * `duet afk`. They share the attending-vs-none SHAPE but not the copy: the
+ * label/padding, the attended suffix (afk threads its explicit pre-authorized
+ * list; the others say "other gates"), and the trailing parenthetical differ
+ * per surface. The shape lives here; each caller supplies its own copy, so the
+ * helper never merges a byte away.
+ */
+export function formatGatePosture(
+  attended: readonly string[],
+  copy: { label: string; attendedSuffix: string; noneSuffix: string },
+): string {
+  return attended.length > 0
+    ? `${copy.label}attending ${attended.join(', ')} — ${copy.attendedSuffix}`
+    : `${copy.label}attending none — ${copy.noneSuffix}`;
+}
+
 export function renderStatus(model: StatusModel): string {
   const lines: string[] = [];
   lines.push(`\n━━━ duet run ${model.runId} ━━━`);
@@ -306,9 +323,11 @@ export function renderStatus(model: StatusModel): string {
   // renders as explicit copy rather than an empty `attending  — …` join.
   if (model.gatesAt) {
     lines.push(
-      model.gatesAt.length > 0
-        ? `gates:    attending ${model.gatesAt.join(', ')} — other gates pre-authorized`
-        : `gates:    attending none — all gates pre-authorized`,
+      formatGatePosture(model.gatesAt, {
+        label: 'gates:    ',
+        attendedSuffix: 'other gates pre-authorized',
+        noneSuffix: 'all gates pre-authorized',
+      }),
     );
   }
   if (model.lastActivity) lines.push(`last:     ${model.lastActivity}`);
@@ -364,80 +383,84 @@ export function renderStatus(model: StatusModel): string {
     lines.push(`  full packets: duet logs ${model.runId}`);
   }
 
+  // The per-stop tail — an exhaustive switch (matching the sibling renderers
+  // displayState/briefHeadline/briefNextCommand/steerRefusal), so a future
+  // stop.kind is a compile error here instead of a silent blank render.
+  // `running` emits no tail (its pid line rode the header); every other case
+  // pushes its lines, and the single `return` below joins them.
   const stop = model.stop;
-  if (stop.kind === 'interactive') {
-    lines.push(`\nthe interactive orchestrator is driving the ${stop.phase} phase — steer it in your interactive orchestrator session.`);
-    return lines.join('\n');
-  }
-
-  if (stop.kind === 'flag') {
-    lines.push(`\nQUEUED QUESTION for you:`);
-    lines.push(`  ${stop.question}`);
-    if (stop.context) lines.push(`  context: ${stop.context}`);
-    // A budget stop is resumable, not an infra failure — name that so the human
-    // reaches for "raise the budget / resume" rather than triaging an outage.
-    if (stop.cause === 'budget') lines.push(`  (budget-control stop — resumable: raise the budget or resume, not an infra failure)`);
-    lines.push(`\nanswer with:  ${stop.command}`);
-    return lines.join('\n');
-  }
-
-  if (stop.kind === 'gate') {
-    lines.push(`\n━━━ ${stop.heading} ━━━`);
-    if (stop.packet) {
-      lines.push(stop.packet.summary);
-      if (stop.packet.artifacts.length > 0) lines.push(`\nartifacts: ${stop.packet.artifacts.join(', ')}`);
-    }
-    // The structured human decisions, rendered in the PRIMARY view (not only
-    // --brief): a hold the human can't see explained is half a feature. When a
-    // `high` is present the gate holds for it — and when the gate was
-    // pre-authorized, the high is precisely why the run stopped here.
-    const decisions = stop.packet?.humanDecisions ?? [];
-    if (decisions.length > 0) {
-      lines.push(`\ndecisions for you:`);
-      for (const d of decisions) lines.push(`  ${d.severity === 'high' ? '●' : '○'} ${d.title}`);
-      if (decisions.some((d) => d.severity === 'high')) {
-        const preAuthorized = model.gatesAt !== undefined && !model.gatesAt.includes(stop.phase);
-        lines.push(
-          preAuthorized
-            ? `  (this gate was pre-authorized, but a high decision held it for you — approve explicitly to cross, or reject)`
-            : `  (a high decision is yours to make; this gate holds for it — an explicit approve still crosses)`,
-        );
+  switch (stop.kind) {
+    case 'running':
+      break;
+    case 'interactive':
+      lines.push(`\nthe interactive orchestrator is driving the ${stop.phase} phase — steer it in your interactive orchestrator session.`);
+      break;
+    case 'flag':
+      lines.push(`\nQUEUED QUESTION for you:`);
+      lines.push(`  ${stop.question}`);
+      if (stop.context) lines.push(`  context: ${stop.context}`);
+      // A budget stop is resumable, not an infra failure — name that so the human
+      // reaches for "raise the budget / resume" rather than triaging an outage.
+      if (stop.cause === 'budget') lines.push(`  (budget-control stop — resumable: raise the budget or resume, not an infra failure)`);
+      lines.push(`\nanswer with:  ${stop.command}`);
+      break;
+    case 'gate': {
+      lines.push(`\n━━━ ${stop.heading} ━━━`);
+      if (stop.packet) {
+        lines.push(stop.packet.summary);
+        if (stop.packet.artifacts.length > 0) lines.push(`\nartifacts: ${stop.packet.artifacts.join(', ')}`);
       }
-    }
-    lines.push(`\ndecide with:`);
-    lines.push(`  ${stop.commands.approve}   (add "<rider>" to approve with adjustments)`);
-    lines.push(`  ${stop.commands.reject}`);
-    lines.push(`  (a bare flag opens your editor — feedback and riders compose better there)`);
-    if (stop.hint) lines.push(`\n${stop.hint}`);
-    return lines.join('\n');
-  }
-
-  if (stop.kind === 'crashed') {
-    lines.push(`\nthe ${stop.phase} phase stopped mid-flight — no driver is running.`);
-    lines.push(`resume with:  ${stop.command}   (the run re-enters from the transcripts)`);
-    return lines.join('\n');
-  }
-
-  if (stop.kind === 'abandoned') {
-    lines.push(`\nthis run was abandoned${stop.at ? ` ${fmtStamp(stop.at)}` : ''} — no driver is running.`);
-    lines.push(`the session transcripts are intact, so it's revivable:`);
-    lines.push(`  revive with:  ${stop.revive}   (re-enters from where it last stopped)`);
-    lines.push(`  wipe with:    ${stop.purge}   (deletes the run dir and the session transcripts)`);
-    return lines.join('\n');
-  }
-
-  if (stop.kind === 'done') {
-    lines.push(`\n${completionLine(model.workflow)}.`);
-    if (stop.summary) lines.push(stop.summary);
-    if (model.snippetProposals.length > 0) {
-      lines.push(`\n━━━ queued snippet proposals (your end-of-run editorial review) ━━━`);
-      for (const p of model.snippetProposals) {
-        lines.push(`\n• ${p.snippetKey} — ${p.rationale}`);
+      // The structured human decisions, rendered in the PRIMARY view (not only
+      // --brief): a hold the human can't see explained is half a feature. When a
+      // `high` is present the gate holds for it — and when the gate was
+      // pre-authorized, the high is precisely why the run stopped here.
+      const decisions = stop.packet?.humanDecisions ?? [];
+      if (decisions.length > 0) {
+        lines.push(`\ndecisions for you:`);
+        for (const d of decisions) lines.push(`  ${d.severity === 'high' ? '●' : '○'} ${d.title}`);
+        if (decisions.some((d) => d.severity === 'high')) {
+          const preAuthorized = model.gatesAt !== undefined && !model.gatesAt.includes(stop.phase);
+          lines.push(
+            preAuthorized
+              ? `  (this gate was pre-authorized, but a high decision held it for you — approve explicitly to cross, or reject)`
+              : `  (a high decision is yours to make; this gate holds for it — an explicit approve still crosses)`,
+          );
+        }
       }
-      lines.push(`\nfull bodies in .duet/runs/${model.runId}/state.json; apply the ones you accept to snippets.toml.`);
+      lines.push(`\ndecide with:`);
+      lines.push(`  ${stop.commands.approve}   (add "<rider>" to approve with adjustments)`);
+      lines.push(`  ${stop.commands.reject}`);
+      lines.push(`  (a bare flag opens your editor — feedback and riders compose better there)`);
+      if (stop.hint) lines.push(`\n${stop.hint}`);
+      break;
     }
-    lines.push(`\ntranscripts: .duet/runs/${model.runId}/*.log (and the providers' standard session locations)`);
-    lines.push(`nothing is running${opensPr(model.workflow) ? ' — merge the PR on GitHub' : ''}. To remove this run's local artifacts and session transcripts: duet abandon ${model.runId} --purge`);
+    case 'crashed':
+      lines.push(`\nthe ${stop.phase} phase stopped mid-flight — no driver is running.`);
+      lines.push(`resume with:  ${stop.command}   (the run re-enters from the transcripts)`);
+      break;
+    case 'abandoned':
+      lines.push(`\nthis run was abandoned${stop.at ? ` ${fmtStamp(stop.at)}` : ''} — no driver is running.`);
+      lines.push(`the session transcripts are intact, so it's revivable:`);
+      lines.push(`  revive with:  ${stop.revive}   (re-enters from where it last stopped)`);
+      lines.push(`  wipe with:    ${stop.purge}   (deletes the run dir and the session transcripts)`);
+      break;
+    case 'done':
+      lines.push(`\n${completionLine(model.workflow)}.`);
+      if (stop.summary) lines.push(stop.summary);
+      if (model.snippetProposals.length > 0) {
+        lines.push(`\n━━━ queued snippet proposals (your end-of-run editorial review) ━━━`);
+        for (const p of model.snippetProposals) {
+          lines.push(`\n• ${p.snippetKey} — ${p.rationale}`);
+        }
+        lines.push(`\nfull bodies in .duet/runs/${model.runId}/state.json; apply the ones you accept to snippets.toml.`);
+      }
+      lines.push(`\ntranscripts: .duet/runs/${model.runId}/*.log (and the providers' standard session locations)`);
+      lines.push(`nothing is running${opensPr(model.workflow) ? ' — merge the PR on GitHub' : ''}. To remove this run's local artifacts and session transcripts: duet abandon ${model.runId} --purge`);
+      break;
+    default: {
+      const _exhaustive: never = stop;
+      void _exhaustive;
+    }
   }
   return lines.join('\n');
 }

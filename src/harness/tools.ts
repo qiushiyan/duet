@@ -1,7 +1,7 @@
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { execa } from 'execa';
 import { z } from 'zod';
-import { PHASE, acceptanceContractPathForSpec, isGatePhase } from '../phases.ts';
+import { PHASE, acceptanceContractPathForSpec } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
 import { providerFor } from '../providers/index.ts';
 import { BudgetCutoffError } from '../providers/types.ts';
@@ -17,9 +17,7 @@ import {
   contextPercent,
   fmtTokens,
   gateAttended,
-  listPendingSteers,
   loadRunState,
-  markSteersDelivered,
   markTurnActive,
   recordContextUsage,
   recordTurnSessionId,
@@ -27,6 +25,7 @@ import {
   workflowOf,
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
+import { listPendingSteers, markSteersDelivered } from '../steer-store.ts';
 import { bindingFor } from '../config.ts';
 import { readTranscriptTailAtPath, readTranscriptTailForSession } from '../sessions.ts';
 import type { TurnDispatcher } from './turn-dispatcher.ts';
@@ -77,6 +76,62 @@ function kernelTool<Schema extends z.ZodRawShape>(
     handler,
     ...(extras?.annotations ? { annotations: extras.annotations } : {}),
   };
+}
+
+// ── Tool-result builders ──
+// One block constructor + four wrappers, so the 58 hand-built result envelopes
+// land in one place. Two kinds of `isError` are kept deliberately apart: a rail
+// REFUSAL (`refuse` — the protocol declining an orchestrator action) vs. a
+// tool/worker ERROR (`error`/`result` — a turn or operation that failed). Both
+// set the flag; conflating them would read a failed turn as a refused action.
+
+/** A single text content block — the unit every tool result is built from. */
+export type TextBlock = { type: 'text'; text: string };
+
+/**
+ * A rail refusal: an error result whose blocks carry the steering text — the
+ * shape `refuse()` produces, and (from #1-deep) the non-null half of a rail's
+ * `Refusal | null` return.
+ */
+export type Refusal = { content: TextBlock[]; isError: true };
+
+/** The one text-block constructor — replaces the `{ type: 'text' as const, text }` literal. */
+export function block(text: string): TextBlock {
+  return { type: 'text', text };
+}
+
+/**
+ * The low-level result builder: a block list plus an optional error flag. Used
+ * directly only where `isError` is CONDITIONAL (the fan-out aggregate sets it
+ * iff a role errored); most callers reach for `ok`/`error`/`refuse`.
+ */
+export function result(blocks: TextBlock[], opts?: { isError?: boolean }): CallToolResult {
+  return opts?.isError ? { content: blocks, isError: true } : { content: blocks };
+}
+
+/** A success result over one or more blocks (the success path is multi-block in places). */
+export function ok(...blocks: TextBlock[]): CallToolResult {
+  return { content: blocks };
+}
+
+/**
+ * A non-rail error result — a worker turn or tool operation that FAILED (a budget
+ * cutoff, an infra failure, a git/library error), distinct from a protocol
+ * refusal. Sets `isError` like `refuse`, but kept apart so "the work failed"
+ * never reads as "a rail declined your action".
+ */
+export function error(...blocks: TextBlock[]): CallToolResult {
+  return { content: blocks, isError: true };
+}
+
+/**
+ * A rail refusal: an `isError` result whose text names the legal next move. The
+ * non-empty tuple parameter makes a text-less `refuse()` a COMPILE error — the
+ * trust-gradient half "steering in text" becomes structural, not a convention
+ * each rail re-honors. Reserved for rails (incl. create_branch's branch-fixed guard).
+ */
+export function refuse(...text: [string, ...string[]]): Refusal {
+  return { content: text.map(block), isError: true };
 }
 
 /**
@@ -380,55 +435,50 @@ export function renderTurnResult(
   // be on disk), but nothing settled, so resume manually / raise the budget /
   // surface to the human. Checked before the generic Error arm (it is an Error).
   if (outcome instanceof BudgetCutoffError) {
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: `The ${role} worker reached its budget cap — a budget-control stop, not an infrastructure failure. The worker ran and committed work may be on disk (check git), but no resumable session id was recovered. Do NOT retry this send_prompt as infra: resume the work manually once you have a session id, raise the budget, or surface it to the human via ask_human.`,
-        },
-      ],
-      isError: true,
-    };
+    return error(
+      block(
+        `The ${role} worker reached its budget cap — a budget-control stop, not an infrastructure failure. The worker ran and committed work may be on disk (check git), but no resumable session id was recovered. Do NOT retry this send_prompt as infra: resume the work manually once you have a session id, raise the budget, or surface it to the human via ask_human.`,
+      ),
+    );
   }
   if (outcome instanceof Error) {
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: `The ${role} worker's turn failed at the infrastructure layer (${outcome.message}). The worker never saw your prompt, so this is not a content problem. Retry this same send_prompt call once; if the retry also fails, stop routing and report the failure to the human via ask_human instead of continuing the round.`,
-        },
-      ],
-      isError: true,
-    };
+    return error(
+      block(
+        `The ${role} worker's turn failed at the infrastructure layer (${outcome.message}). The worker never saw your prompt, so this is not a content problem. Retry this same send_prompt call once; if the retry also fails, stop routing and report the failure to the human via ask_human instead of continuing the round.`,
+      ),
+    );
   }
-  const content: Array<{ type: 'text'; text: string }> = [{ type: 'text' as const, text: outcome.text }];
+  const content: TextBlock[] = [block(outcome.text)];
   // A budget-truncated turn DID settle (session/cost committed) — surface it as a
   // resumable checkpoint, never the infra "retry this same call" envelope.
   if (outcome.budgetTruncated) {
-    content.push({
-      type: 'text' as const,
-      text: `(budget reached — the worker saw your prompt and committed work is on disk; its session is resumable. Resume that session for the remainder, or raise the budget. This is a checkpoint, not a failure — do not re-send the original prompt.)`,
-    });
+    content.push(
+      block(
+        `(budget reached — the worker saw your prompt and committed work is on disk; its session is resumable. Resume that session for the remainder, or raise the budget. This is a checkpoint, not a failure — do not re-send the original prompt.)`,
+      ),
+    );
   }
   // A mid-response interruption (a connection drop after real generation) also
   // settled — the partial work above is committed to a resumable session. The
   // recovery is a short continuation, NOT a re-send: re-sending the original
   // prompt would restart work the worker already partly did.
   if (outcome.interrupted) {
-    content.push({
-      type: 'text' as const,
-      text: `(the connection dropped mid-response — the worker's partial work above is committed to its session, which is resumable. Send it a short continuation to finish from where it stopped; do not re-send the original prompt. This is a checkpoint, not a failure.)`,
-    });
+    content.push(
+      block(
+        `(the connection dropped mid-response — the worker's partial work above is committed to its session, which is resumable. Send it a short continuation to finish from where it stopped; do not re-send the original prompt. This is a checkpoint, not a failure.)`,
+      ),
+    );
   }
   // Reactive state-triggered nudge (docs/prompting-and-tool-design.md
   // §"Results nudge the next step"): when this review round leaves exactly one
   // before the backstop cap, say so once — the cap is runaway protection, not a
   // target, so the reminder steers toward converging or flagging.
   if (isReviewRound && (state.rounds[phase] ?? 0) === cap - 1) {
-    content.push({
-      type: 'text' as const,
-      text: `(${state.rounds[phase]} of ${cap} review rounds used — one remains before this phase’s backstop cap. The cap is runaway protection, not a target: if the loop has converged, advance_phase now; if a substantive disagreement is still open, that is the human’s call via ask_human. Spend the last round only on a genuinely open structural point.)`,
-    });
+    content.push(
+      block(
+        `(${state.rounds[phase]} of ${cap} review rounds used — one remains before this phase’s backstop cap. The cap is runaway protection, not a target: if the loop has converged, advance_phase now; if a substantive disagreement is still open, that is the human’s call via ask_human. Spend the last round only on a genuinely open structural point.)`,
+      ),
+    );
   }
   // F5: a compact per-turn footer — this role's context fill, the cumulative
   // worker cost, and the round vs cap. Both hosts flow through here (blocking
@@ -440,8 +490,8 @@ export function renderTurnResult(
     footerWorkerCost(state.costs),
     `round ${state.rounds[phase] ?? 0}/${cap}`,
   ].join(' · ');
-  content.push({ type: 'text' as const, text: `[${footer}]` });
-  return { content };
+  content.push(block(`[${footer}]`));
+  return ok(...content);
 }
 
 /**
@@ -504,14 +554,14 @@ function dispatchedMessage(roles: WorkerRole[]): string {
  * own result unwrapped.
  */
 function combineFanoutResults(parts: Array<{ role: WorkerRole; result: CallToolResult }>): CallToolResult {
-  const content: Array<{ type: 'text'; text: string }> = [];
+  const content: TextBlock[] = [];
   for (const { role, result } of parts) {
-    content.push({ type: 'text' as const, text: `── ${role} ──` });
+    content.push(block(`── ${role} ──`));
     for (const c of result.content) {
-      if (c.type === 'text') content.push({ type: 'text' as const, text: c.text });
+      if (c.type === 'text') content.push(block(c.text));
     }
   }
-  return parts.some((p) => p.result.isError) ? { content, isError: true } : { content };
+  return result(content, { isError: parts.some((p) => p.result.isError) });
 }
 
 /**
@@ -569,25 +619,198 @@ export function projectDetail(text: string): string {
   return `${head}\n\n…[${text.length - 12_000} chars elided — call check_turns with raw=true for the full text]…\n\n${tail}`;
 }
 
+// ── Protocol rails: named, ordered, host-clean ──
+// Each rail is a pure `(input, ctx) => Refusal | null` (one exception: orphanRail
+// carries the discard-and-reseed side effect). `firstRefusal` composes them in an
+// EXPLICIT, ordered list at each handler — the order is load-bearing and pinned
+// by a characterization test, not a load-time validator (spec OQ1). The two host
+// behaviors (blocking vs dispatch-and-collect) collapse into the two boolean
+// oracles on RailCtx (`inFlight`/`orphanedOnDisk`), built once per phase; the
+// rails read the oracles and never re-branch on host.
+
+/** Everything a rail reads, built once in createPhaseTools. The boolean oracles
+ *  are the ONE place host divergence lives. */
+export interface RailCtx {
+  state: RunState;
+  phase: PhaseName;
+  /** The phase's review-round backstop cap. */
+  cap: number;
+  /** A dispatcher owns this run's turns (the interactive/async host). The blocking
+   *  (headless) host has none — and its phase-exit gate is structurally off (see
+   *  pendingTurnGateRail), so its in-memory `turnsInFlight` never gates a terminal call. */
+  asyncHost: boolean;
+  /** A turn to this role is live (blocking: in-memory set; async: the dispatcher's status). */
+  inFlight: (role: WorkerRole) => boolean;
+  /** A pending-turn record exists on disk for this role (async host only). A LIVE turn
+   *  also has one, so same-role-in-flight must be checked FIRST (see firstRefusal order). */
+  orphanedOnDisk: (role: WorkerRole) => boolean;
+  /** The base templates already sent to this role this phase (the warn-once economy). */
+  sentThisPhase: (role: WorkerRole) => string[];
+  /** The warn-once set: a `${role}:${tag}` here means the resend was already steered. */
+  resendWarned: Set<string>;
+  /** Clear a reconnect orphan's stale pending record (orphanRail's lone side effect). */
+  clearOrphan: (role: WorkerRole) => void;
+  log: (line: string) => void;
+}
+
+export type Rail<I> = (input: I, ctx: RailCtx) => Refusal | null;
+
+/** The first rail to refuse wins; null means every rail passed (proceed). */
+export function firstRefusal<I>(input: I, ctx: RailCtx, ...rails: Rail<I>[]): Refusal | null {
+  for (const rail of rails) {
+    const refusal = rail(input, ctx);
+    if (refusal) return refusal;
+  }
+  return null;
+}
+
+/** A send_prompt rail's per-role input. */
+export interface SendInput {
+  role: WorkerRole;
+  tag: string;
+  isReviewRound: boolean;
+}
+
+/** A terminal-tool rail's input — the verb names the caller (for the recovery copy),
+ *  and advance_phase's checkpoint rails read its human_decisions echo. */
+export interface TerminalInput {
+  verb: 'advance the phase' | 'queue a question';
+  humanDecisions?: { title: string; severity: 'low' | 'high' }[];
+}
+
+/** The reconnect-orphan refusal copy — branch on whether a resumable session exists. */
+function orphanRefusalText(role: WorkerRole, state: RunState): string {
+  return state.workerSessions[role]
+    ? `The prior turn to the ${role} was orphaned when its session ended — its pending record is still on disk, and that session may still be resumable. Inspect or finish it with \`duet takeover ${role}\`, then re-send. Do not re-send into this role until the orphan is resolved: an immediate re-send would resume and race the orphaned worker on that same session.`
+    : `The prior turn to the ${role} was orphaned before a session id was captured — there is no session to resume, and the old worker process may still be running and editing the repo. Dropping the orphan ABANDONS that in-flight turn: confirm it is done (or accept the risk), then run \`duet takeover ${role}\` to drop the orphan and re-send. Do not re-send until then.`;
+}
+
+// ── The shared terminal rail group — composed by BOTH terminal tools, so the
+// single phase-exit invariant has exactly one implementation. ──
+
+/** A second terminal call this phase (the marker is already set) is refused. */
+export const terminalAlreadySetRail: Rail<TerminalInput> = (_input, ctx) =>
+  ctx.state.terminalMarker?.phase === ctx.phase
+    ? refuse(
+        'This phase is already ending — you have already called advance_phase or ask_human this turn, and that decision is recorded. A second terminal call is ignored. End your turn with a one-line status; the run proceeds from the decision already made.',
+      )
+    : null;
+
+/** The phase-exit gate (async host): refuse while ANY dispatched turn is uncollected —
+ *  live (collect it) or a reconnect orphan (recover by the role's policy). Async-host
+ *  ONLY: on the blocking host the orchestrator's send_prompt runs to completion before
+ *  it can call a terminal tool, so there is never an uncollected turn to strand — and
+ *  the in-memory `turnsInFlight` set (which `inFlight` reads there) must NOT gate a
+ *  phase exit. This short-circuit is the unconditional guarantee, decoupled from
+ *  whatever the scheduler does with concurrent tool calls. */
+export const pendingTurnGateRail: Rail<TerminalInput> = ({ verb }, ctx) => {
+  if (!ctx.asyncHost) return null;
+  const outstanding = workerRolesFor(ctx.state).filter((r) => ctx.inFlight(r) || ctx.orphanedOnDisk(r));
+  if (outstanding.length === 0) return null;
+  const recovery = (role: WorkerRole): string => {
+    // Live: the dispatcher owns the turn (running, or settled-but-uncollected) — collect it.
+    if (ctx.inFlight(role)) return `Collect the ${role}'s turn with check_turns.`;
+    // On-disk orphan with no live owner — recover by the role's policy.
+    return orphanRecoveryFor(role) === 'discard-and-reseed'
+      ? `The ${role} turn was orphaned, but the ${role} is ephemeral and read-only — resend to it (your next send_prompt clears the stale record and reseeds), or run \`duet takeover ${role}\` to clear it; no human action is needed.`
+      : `The ${role} turn was orphaned when its session ended — recover it with \`duet takeover ${role}\` (its session may still be resumable), then re-send.`;
+  };
+  const action = verb === 'advance the phase' ? 'advance' : 'ask';
+  return refuse(
+    `A worker turn dispatched in this phase has not been collected yet, so you can't ${verb} — doing so would strand the turn and its bookkeeping. ${outstanding.map(recovery).join(' ')} Then ${action} once nothing is outstanding.`,
+  );
+};
+
+// ── send_prompt's per-role rails (the composition order is load-bearing). ──
+
+/** Two turns into one session would race its resume — refuse a same-role send while one is live. */
+export const sameRoleInFlightRail: Rail<SendInput> = ({ role }, ctx) =>
+  ctx.inFlight(role)
+    ? refuse(
+        `A turn to the ${role} is already in flight — each role is one persistent session, a single conversation that cannot take two turns at once (a parallel send to the same worker would race its session). Wait for that turn's result; if this prompt is a follow-up, fold it into your next message to the ${role} after the response arrives. A turn to another role can run concurrently — that is what an array role (or parallel send_prompt calls) is for.`,
+      )
+    : null;
+
+/** The ONLY rail with a side effect: a reconnect orphan recovers by the role's policy.
+ *  A discard-and-reseed role clears the stale record (clearOrphan + log) and returns null
+ *  so the handler re-dispatches the fresh body; a takeover-policy role refuses. */
+export const orphanRail: Rail<SendInput> = ({ role }, ctx) => {
+  if (!ctx.orphanedOnDisk(role)) return null;
+  if (orphanRecoveryFor(role) === 'discard-and-reseed') {
+    ctx.clearOrphan(role);
+    ctx.log(`[send_prompt] discarded an orphaned ${role} turn — reseeding with the newly supplied body`);
+    return null;
+  }
+  return refuse(orphanRefusalText(role, ctx.state));
+};
+
+/** The review-round backstop cap — runaway protection, refused at the cap. */
+export const reviewCapRail: Rail<SendInput> = ({ isReviewRound }, ctx) =>
+  isReviewRound && (ctx.state.rounds[ctx.phase] ?? 0) >= ctx.cap
+    ? refuse(
+        `The ${ctx.phase} phase has hit its backstop cap of ${ctx.cap} review rounds — this cap exists as runaway protection, and reaching it means the loop has not converged by judgment alone. Stop starting new rounds: either call advance_phase if the loop has actually converged and you were re-checking out of caution, or call ask_human so the human can decide how to proceed.`,
+      )
+    : null;
+
+/** Once-per-phase template economy: a base template re-sent to the same role is
+ *  refused ONCE; repeating the identical call passes (judgment overrides). */
+export const warnOnceTemplateRail: Rail<SendInput> = ({ role, tag }, ctx) => {
+  if (!isBaseTemplate(tag) || !ctx.sentThisPhase(role).includes(tag)) return null;
+  const warnKey = `${role}:${tag}`;
+  if (ctx.resendWarned.has(warnKey)) {
+    ctx.log(`[send_prompt] resend of ${tag} → ${role} allowed after steering (deliberate)`);
+    return null;
+  }
+  ctx.resendWarned.add(warnKey);
+  const again = `${tag}-again`;
+  const hasAgain = getSnippet(again) !== undefined;
+  return refuse(
+    `You already sent ${tag} to the ${role} this phase, and that session still holds its instructions — a full re-send makes the worker restart the exercise instead of continuing it, and spends a minutes-long turn re-covering ground. Send the delta instead: ${
+      hasAgain ? `the ${again} variant, or ` : ''
+    }a short follow-up that references the established frame and states only what changed. If the full template is genuinely warranted (the human re-scoped the problem, or the prior turn was lost), repeat this exact call and it will go through.`,
+  );
+};
+
+// ── advance_phase's own rails (after the shared terminal group). ──
+
+/** A review-loop phase can't advance with zero rounds — there is nothing to gate on. */
+export const reviewLoopRail: Rail<TerminalInput> = (_input, ctx) =>
+  PHASE[ctx.phase].reviewLoop && (ctx.state.rounds[ctx.phase] ?? 0) === 0
+    ? refuse(
+        'No review round has run in this phase yet, so there is nothing for the human to gate on. Run the review loop first (send the reviewer a review-* prompt); advance_phase is for after the loop converges.',
+      )
+    : null;
+
+/** The acceptance contract can't be SILENTLY skipped (guarantee 2, mechanically).
+ *  The escape hatch is a `high` human_decision, which itself holds the AFK crossing. */
+export const contractCheckpointRail: Rail<TerminalInput> = ({ humanDecisions }, ctx) => {
+  if (!ctx.state.bindings.consultant || PHASE[ctx.phase].consultantCheckpoint !== 'contract') return null;
+  const hasHigh = (humanDecisions ?? []).some((d) => d.severity === 'high');
+  if (ctx.state.acceptanceContractDraft || hasHigh) return null;
+  return refuse(
+    'A consultant is bound, so this phase owes its acceptance contract before it advances: send the consultant a consultant-contract turn (it authors the contract, blind to the plan), then advance. If it genuinely could not author one, record a high human_decision ("acceptance contract not authored — proceeding freezes no target") so the gate stops for the human rather than shipping with no frozen target.',
+  );
+};
+
+/** A frozen contract must be verified before advancing — same `high` escape hatch. */
+export const verifyCheckpointRail: Rail<TerminalInput> = ({ humanDecisions }, ctx) => {
+  if (!ctx.state.bindings.consultant || PHASE[ctx.phase].consultantCheckpoint !== 'verify') return null;
+  const hasHigh = (humanDecisions ?? []).some((d) => d.severity === 'high');
+  if (!ctx.state.acceptanceContract || ctx.state.acceptanceContract.verifiedAt || hasHigh) return null;
+  return refuse(
+    'A frozen acceptance contract exists for this run but has not been verified: send the consultant a consultant-verify turn (it runs the built system and returns a per-assertion pass/fail), then advance. Record each failed assertion as a high human_decision; if verification genuinely could not run, record a high so the gate stops for the human rather than shipping unverified.',
+  );
+};
+
 export function createPhaseTools({ state, phase, providers, log, stagedAnswer: initialAnswer, rails, home, async: asyncDeps }: PhaseToolsDeps): PhaseTools {
   let stagedAnswer = initialAnswer ?? null;
 
   // First-terminal-wins: advance_phase and ask_human each end the phase, so the
   // first to run this phase records the terminal marker; a second terminal call
-  // afterward is refused (the phase is already ending) so exactly one phase.*
-  // event is emitted at quiescence. Scoped to this phase: a stale marker from a
-  // prior phase (a crash re-delivered it across the snapshot boundary) does not
-  // block this phase's first terminal call — it is overwritten.
-  const terminalAlreadySet = (): boolean => state.terminalMarker?.phase === phase;
-  const alreadyEnding = (): { content: Array<{ type: 'text'; text: string }>; isError: true } => ({
-    content: [
-      {
-        type: 'text' as const,
-        text: 'This phase is already ending — you have already called advance_phase or ask_human this turn, and that decision is recorded. A second terminal call is ignored. End your turn with a one-line status; the run proceeds from the decision already made.',
-      },
-    ],
-    isError: true,
-  });
+  // afterward is refused by terminalAlreadySetRail (the shared terminal group),
+  // so exactly one phase.* event is emitted at quiescence. Scoped to this phase:
+  // a stale marker from a prior phase (a crash re-delivered it across the
+  // snapshot boundary) does not block this phase's first terminal call.
 
   // Roles with a worker turn currently in flight. Parallel send_prompt calls
   // to DIFFERENT roles are legal and wanted (the scheduler runs them
@@ -639,56 +862,30 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   // the live dispatcher has no record for it — a prior server dispatched the
   // turn and died, and this (fresh) server does not own it. Detection is purely
   // the durable record's existence-without-a-live-owner; no transcript claim.
-  // Branch-aware orphan recovery: the prescribed recovery differs by the role's
-  // orphan POLICY (orphanRecoveryFor), not a role check. A `takeover` role's
-  // orphan can be resumed (and a re-send would race that session — or, with no
-  // session, the old worker may still be editing the repo), so it refuses until
-  // `duet takeover <role>`. A `discard-and-reseed` role (the ephemeral,
-  // read-only consultant) has nothing to resume and no repo to race, so its
-  // orphan is dropped and the fresh body re-dispatched — no human action needed.
-  const orphanRefusalText = (role: WorkerRole): string =>
-    state.workerSessions[role]
-      ? `The prior turn to the ${role} was orphaned when its session ended — its pending record is still on disk, and that session may still be resumable. Inspect or finish it with \`duet takeover ${role}\`, then re-send. Do not re-send into this role until the orphan is resolved: an immediate re-send would resume and race the orphaned worker on that same session.`
-      : `The prior turn to the ${role} was orphaned before a session id was captured — there is no session to resume, and the old worker process may still be running and editing the repo. Dropping the orphan ABANDONS that in-flight turn: confirm it is done (or accept the risk), then run \`duet takeover ${role}\` to drop the orphan and re-send. Do not re-send until then.`;
+  // The discard-and-reseed orphan recovery copy for check_turns (pure — no state
+  // read). The refusal copy lives in the module-level orphanRefusalText, shared
+  // with orphanRail; the orphan POLICY (orphanRecoveryFor) decides which is used.
   const orphanDiscardText = (role: WorkerRole): string =>
     `The prior turn to the ${role} was orphaned when its session ended, but the ${role} is ephemeral and read-only — there is nothing to resume and no repo it could have edited, so just resend: your next send_prompt to the ${role} clears the stale record and dispatches the fresh body in one call. (Or run \`duet takeover ${role}\` to clear it by hand — it opens no resume target, since the next turn seeds a new session.)`;
-  // The phase-exit gate (async only): advance_phase and ask_human are both
-  // refused while ANY pending-turn record is non-collected — live (the
-  // dispatcher owns it) OR on disk (a reconnect orphan the fresh dispatcher
-  // doesn't). A turn dispatched-but-uncollected means the phase isn't done;
-  // advancing would strand the turn and its bookkeeping, and the disk half also
-  // keeps the per-phase ctx registry safe to rebuild at a boundary.
-  //
-  // The recovery is per-role and policy-aware, not one generic line: a live turn
-  // collects with check_turns; an orphan recovers by its role's orphan POLICY
-  // (orphanRecoveryFor) — a `takeover` role refuses until `duet takeover`, but a
-  // `discard-and-reseed` role (the ephemeral consultant) just resends (or clears
-  // by hand), needing no human escalation. The generic "duet takeover <role>"
-  // copy steered a consultant orphan to a takeover it doesn't need — this is the
-  // third orphan-recovery surface, aligned with send_prompt's branch and
-  // check_turns. Returns the refusal, or null when nothing is outstanding.
-  const pendingTurnGate = (verb: 'advance the phase' | 'queue a question'): CallToolResult | null => {
-    if (!dispatcher) return null;
-    const outstanding = ROLES.filter((r) => dispatcher.statusOf(r) !== undefined || state.pendingTurns?.[r]);
-    if (outstanding.length === 0) return null;
-    const recovery = (role: WorkerRole): string => {
-      // Live: the dispatcher owns the turn (running, or settled-but-uncollected) — collect it.
-      if (dispatcher.statusOf(role) !== undefined) return `Collect the ${role}'s turn with check_turns.`;
-      // On-disk orphan with no live owner — recover by the role's policy.
-      return orphanRecoveryFor(role) === 'discard-and-reseed'
-        ? `The ${role} turn was orphaned, but the ${role} is ephemeral and read-only — resend to it (your next send_prompt clears the stale record and reseeds), or run \`duet takeover ${role}\` to clear it; no human action is needed.`
-        : `The ${role} turn was orphaned when its session ended — recover it with \`duet takeover ${role}\` (its session may still be resumable), then re-send.`;
-    };
-    const action = verb === 'advance the phase' ? 'advance' : 'ask';
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: `A worker turn dispatched in this phase has not been collected yet, so you can't ${verb} — doing so would strand the turn and its bookkeeping. ${outstanding.map(recovery).join(' ')} Then ${action} once nothing is outstanding.`,
-        },
-      ],
-      isError: true,
-    };
+
+  // The rail context, built ONCE: the two boolean oracles are the single place
+  // the blocking-vs-async host divergence lives. Blocking host: inFlight reads
+  // the in-memory turnsInFlight set, and there is no on-disk orphan (no
+  // dispatcher). Async host: inFlight reads the dispatcher's live status, and a
+  // pending-turn record with no live owner is a reconnect orphan. The rails read
+  // these and never re-branch on host; the send_prompt host-switch stays one
+  // registry, with only the oracle varying.
+  const ctx: RailCtx = {
+    state,
+    phase,
+    cap: PHASE[phase].roundCap,
+    asyncHost: dispatcher !== undefined,
+    inFlight: (role) => (dispatcher ? dispatcher.statusOf(role) !== undefined : turnsInFlight.has(role)),
+    orphanedOnDisk: (role) => dispatcher !== undefined && Boolean(state.pendingTurns?.[role]),
+    sentThisPhase,
+    resendWarned,
+    clearOrphan: (role) => clearPendingTurn(state, role),
+    log,
   };
 
   // send_prompt's role surface is the run's BOUND worker roles: the consultant
@@ -723,7 +920,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         // already advanced/flagged. Report the park; touch nothing.
         const marker = state.terminalMarker;
         if (marker?.phase === phase) {
-          return { content: [{ type: 'text' as const, text: parkedBrief(marker.kind) }] };
+          return ok(block(parkedBrief(marker.kind)));
         }
         // Side effect 1 — mark the phase started once per phase (the first call
         // that finds it unset), exactly as the headless basePrompt does.
@@ -737,9 +934,9 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         // so a later call finds nothing and returns the base brief alone.
         const pending = consumeHumanInput(state);
         const brief = buildPhaseBrief(state, phase);
-        if (!pending) return { content: [{ type: 'text' as const, text: brief }] };
+        if (!pending) return ok(block(brief));
         log(`[get_task] folded staged ${pending.kind} into the ${phase} brief`);
-        return { content: [{ type: 'text' as const, text: `${brief}\n\n${stagedInputBlock(pending)}` }] };
+        return ok(block(`${brief}\n\n${stagedInputBlock(pending)}`));
       },
     ),
 
@@ -771,12 +968,13 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         try {
           library = renderSnippetLibrary({ phase, workflow: workflowOf(state), sentTo: sent, all: args.all, consultantBound: Boolean(state.bindings.consultant), libraryContext });
         } catch (err) {
-          return {
-            content: [{ type: 'text' as const, text: `The snippet library could not be loaded — ${err instanceof Error ? err.message : String(err)} Fix or remove the override file before composing worker prompts; ask_human if you need the human to resolve it.` }],
-            isError: true,
-          };
+          return error(
+            block(
+              `The snippet library could not be loaded — ${err instanceof Error ? err.message : String(err)} Fix or remove the override file before composing worker prompts; ask_human if you need the human to resolve it.`,
+            ),
+          );
         }
-        return { content: [{ type: 'text' as const, text: library }] };
+        return ok(block(library));
       },
       { annotations: { readOnlyHint: true } }, // genuinely read-only; also batches with parallel sends
     ),
@@ -810,83 +1008,27 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         // Dedupe so ["implementer","implementer"] can't self-race.
         const roles = [...new Set(Array.isArray(args.role) ? args.role : [args.role])];
         if (roles.length === 0) {
-          return {
-            content: [{ type: 'text' as const, text: 'role was an empty array — name at least one worker to send to (a single role, or several to fan the same body to each).' }],
-            isError: true,
-          };
+          return refuse(
+            'role was an empty array — name at least one worker to send to (a single role, or several to fan the same body to each).',
+          );
         }
         const cap = PHASE[phase].roundCap;
         const isReviewRoundFor = (role: WorkerRole): boolean => countsReviewRound(role, tag);
 
-        // Validate EVERY target before dispatching ANY: the rails (same-role
-        // guard, reconnect orphan, review-round backstop, warn-once template
-        // economy) run per role, and the first refusal returns before a single
-        // turn launches — a half-dispatched fan-out would strand turns. Returns a
-        // refusal CallToolResult, or null when the role is clear to send.
-        const validateRole = (role: WorkerRole): CallToolResult | null => {
-          // Same-role guard (host-divergent). Blocking: the in-memory turnsInFlight
-          // set. Async: a live running/settled-uncollected record IS the guard.
-          const inFlight = dispatcher ? dispatcher.statusOf(role) !== undefined : turnsInFlight.has(role);
-          if (inFlight) {
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: `A turn to the ${role} is already in flight — each role is one persistent session, a single conversation that cannot take two turns at once (a parallel send to the same worker would race its session). Wait for that turn's result; if this prompt is a follow-up, fold it into your next message to the ${role} after the response arrives. A turn to another role can run concurrently — that is what an array role (or parallel send_prompt calls) is for.`,
-                },
-              ],
-              isError: true,
-            };
-          }
-          if (dispatcher && state.pendingTurns?.[role]) {
-            // A non-collected record with no live owner is a reconnect orphan, not
-            // a live turn. A `takeover` role refuses the re-send (it would race the
-            // orphaned worker); a `discard-and-reseed` role (the ephemeral,
-            // read-only consultant) clears the stale record and re-dispatches the
-            // newly supplied body — the durable record holds no body (run-store.ts),
-            // so recovery is a fresh send, not a replay.
-            if (orphanRecoveryFor(role) === 'discard-and-reseed') {
-              clearPendingTurn(state, role);
-              log(`[send_prompt] discarded an orphaned ${role} turn — reseeding with the newly supplied body`);
-            } else {
-              return { content: [{ type: 'text' as const, text: orphanRefusalText(role) }], isError: true };
-            }
-          }
-          if (isReviewRoundFor(role) && (state.rounds[phase] ?? 0) >= cap) {
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: `The ${phase} phase has hit its backstop cap of ${cap} review rounds — this cap exists as runaway protection, and reaching it means the loop has not converged by judgment alone. Stop starting new rounds: either call advance_phase if the loop has actually converged and you were re-checking out of caution, or call ask_human so the human can decide how to proceed.`,
-                },
-              ],
-              isError: true,
-            };
-          }
-          if (isBaseTemplate(tag) && sentThisPhase(role).includes(tag)) {
-            const warnKey = `${role}:${tag}`;
-            if (!resendWarned.has(warnKey)) {
-              resendWarned.add(warnKey);
-              const again = `${tag}-again`;
-              const hasAgain = getSnippet(again) !== undefined;
-              return {
-                content: [
-                  {
-                    type: 'text' as const,
-                    text: `You already sent ${tag} to the ${role} this phase, and that session still holds its instructions — a full re-send makes the worker restart the exercise instead of continuing it, and spends a minutes-long turn re-covering ground. Send the delta instead: ${
-                      hasAgain ? `the ${again} variant, or ` : ''
-                    }a short follow-up that references the established frame and states only what changed. If the full template is genuinely warranted (the human re-scoped the problem, or the prior turn was lost), repeat this exact call and it will go through.`,
-                  },
-                ],
-                isError: true,
-              };
-            }
-            log(`[send_prompt] resend of ${tag} → ${role} allowed after steering (deliberate)`);
-          }
-          return null;
-        };
+        // Validate EVERY target before dispatching ANY — the first refusal returns
+        // before a single turn launches (a half-dispatched fan-out would strand
+        // turns). The order is LOAD-BEARING: sameRoleInFlightRail MUST precede
+        // orphanRail, because a live running turn also has a disk pending record,
+        // so checking orphan first would misclassify it as an orphan.
         for (const role of roles) {
-          const refusal = validateRole(role);
+          const refusal = firstRefusal(
+            { role, tag, isReviewRound: isReviewRoundFor(role) },
+            ctx,
+            sameRoleInFlightRail,
+            orphanRail,
+            reviewCapRail,
+            warnOnceTemplateRail,
+          );
           if (refusal) return refusal;
         }
 
@@ -906,7 +1048,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           for (const role of roles) {
             dispatcher.dispatch({ role, tag, body, isReviewRound: isReviewRoundFor(role) });
           }
-          return { content: [{ type: 'text' as const, text: dispatchedMessage(roles) }] };
+          return ok(block(dispatchedMessage(roles)));
         }
 
         // Blocking (headless host): run dispatch → settle → collect per role. A
@@ -983,11 +1125,10 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         if (stagedAnswer !== null) {
           const answer = stagedAnswer;
           stagedAnswer = null;
-          return { content: [{ type: 'text' as const, text: `The human answered: ${answer}` }] };
+          return ok(block(`The human answered: ${answer}`));
         }
-        if (terminalAlreadySet()) return alreadyEnding();
-        const stranded = pendingTurnGate('queue a question');
-        if (stranded) return stranded;
+        const refusal = firstRefusal({ verb: 'queue a question' }, ctx, terminalAlreadySetRail, pendingTurnGateRail);
+        if (refusal) return refusal;
         state.pendingQuestion = { question: args.question, ...(args.context ? { context: args.context } : {}), cause: 'human' };
         state.lastActivity = 'ask_human (queued)';
         // The marker rides the SAME atomic write as the question it carries, so
@@ -997,14 +1138,11 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         saveRunState(state);
         log(`[ask_human] queued: ${args.question}`);
         appendVoiceLog(state, 'orchestrator', `ask_human queued`, args.question);
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: 'Your question is queued and the run is pausing until the human answers. End your turn with a one-line status — anything you do past this point happens without the answer you just asked for. The run resumes with the human’s answer.',
-            },
-          ],
-        };
+        return ok(
+          block(
+            'Your question is queued and the run is pausing until the human answers. End your turn with a one-line status — anything you do past this point happens without the answer you just asked for. The run resumes with the human’s answer.',
+          ),
+        );
       },
     ),
 
@@ -1020,43 +1158,30 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         // dispatched but its session id isn't yet persisted; workerSessions
         // covers the headless host (and a settled interactive turn).
         if (state.workerDispatched || workerRolesFor(state).some((r) => state.workerSessions[r])) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: 'A worker has already been prompted, so the run’s branch is fixed — creating one now would strand the work done so far. Continue on the current branch; if it is genuinely wrong, that is the human’s call: ask_human.',
-              },
-            ],
-            isError: true,
-          };
+          return refuse(
+            'A worker has already been prompted, so the run’s branch is fixed — creating one now would strand the work done so far. Continue on the current branch; if it is genuinely wrong, that is the human’s call: ask_human.',
+          );
         }
         try {
           await execa('git', ['switch', '-c', args.name], { cwd: state.cwd, timeout: 30_000 });
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: `Branch creation failed at the git layer (${detail}). If the name already exists, choose another; if the failure looks environmental (locks, permissions), ask_human with the error.`,
-              },
-            ],
-            isError: true,
-          };
+          return error(
+            block(
+              `Branch creation failed at the git layer (${detail}). If the name already exists, choose another; if the failure looks environmental (locks, permissions), ask_human with the error.`,
+            ),
+          );
         }
         state.branch = args.name;
         state.lastActivity = `create_branch (${args.name})`;
         saveRunState(state);
         log(`[create_branch] switched to ${args.name}`);
         appendVoiceLog(state, 'orchestrator', `create_branch (${args.name})`);
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: `Created and switched to "${args.name}" — the run’s working branch. Name it in your first prompt to each worker, with the note that branch management is settled outside their sessions.`,
-            },
-          ],
-        };
+        return ok(
+          block(
+            `Created and switched to "${args.name}" — the run’s working branch. Name it in your first prompt to each worker, with the note that branch management is settled outside their sessions.`,
+          ),
+        );
       },
     ),
 
@@ -1086,53 +1211,22 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           ),
       },
       async (args) => {
-        if (terminalAlreadySet()) return alreadyEnding();
-        const stranded = pendingTurnGate('advance the phase');
-        if (stranded) return stranded;
+        // The shared terminal group, then advance_phase's own rails: the
+        // review-loop backstop, and the acceptance-contract author/verify
+        // checkpoints (the contract can't be SILENTLY skipped — guarantee 2 holds
+        // mechanically; the escape hatch is a `high` human_decision, which itself
+        // holds the AFK crossing).
+        const refusal = firstRefusal(
+          { verb: 'advance the phase', humanDecisions: args.human_decisions },
+          ctx,
+          terminalAlreadySetRail,
+          pendingTurnGateRail,
+          reviewLoopRail,
+          contractCheckpointRail,
+          verifyCheckpointRail,
+        );
+        if (refusal) return refusal;
         const roundsRun = state.rounds[phase] ?? 0;
-        if (PHASE[phase].reviewLoop && roundsRun === 0) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: 'No review round has run in this phase yet, so there is nothing for the human to gate on. Run the review loop first (send the reviewer a review-* prompt); advance_phase is for after the loop converges.',
-              },
-            ],
-            isError: true,
-          };
-        }
-        // Acceptance-contract checkpoint rail (full + consultant): the contract
-        // can't be SILENTLY skipped — guarantee 2 holds mechanically, not by prompt
-        // compliance. Mirrors the review-round rail above. The escape hatch is a
-        // `high` (the orchestrator flagging the checkpoint's absence/failure as a
-        // human decision), which itself holds the AFK crossing — so the run can
-        // never auto-cross past a missing contract or an unrun verification.
-        if (state.bindings.consultant) {
-          const mode = PHASE[phase].consultantCheckpoint;
-          const hasHigh = (args.human_decisions ?? []).some((d) => d.severity === 'high');
-          if (mode === 'contract' && !state.acceptanceContractDraft && !hasHigh) {
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: 'A consultant is bound, so this phase owes its acceptance contract before it advances: send the consultant a consultant-contract turn (it authors the contract, blind to the plan), then advance. If it genuinely could not author one, record a high human_decision ("acceptance contract not authored — proceeding freezes no target") so the gate stops for the human rather than shipping with no frozen target.',
-                },
-              ],
-              isError: true,
-            };
-          }
-          if (mode === 'verify' && state.acceptanceContract && !state.acceptanceContract.verifiedAt && !hasHigh) {
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: 'A frozen acceptance contract exists for this run but has not been verified: send the consultant a consultant-verify turn (it runs the built system and returns a per-assertion pass/fail), then advance. Record each failed assertion as a high human_decision; if verification genuinely could not run, record a high so the gate stops for the human rather than shipping unverified.',
-                },
-              ],
-              isError: true,
-            };
-          }
-        }
         if (args.spec_path) state.specPath = args.spec_path;
         state.phaseSummaries[phase] = {
           summary: args.summary,
@@ -1147,25 +1241,20 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         log(`[advance_phase] ${phase} phase complete (${roundsRun} review rounds)`);
         appendVoiceLog(state, 'orchestrator', `advance_phase (${phase})`, args.summary);
         // Convention 5 (docs/prompting-and-tool-design.md): the result must
-        // say what actually happens next — a live gate decision, an
-        // auto-crossed pre-authorized gate, or (a gate-less phase) run
-        // completion. Both arcs now gate every phase, so the gate-less arm is a
-        // total-function guard, not a live path (PhaseSpec.gate stays nullable).
+        // say what actually happens next — a live gate decision, or an
+        // auto-crossed pre-authorized gate. Every phase gates, so there is no
+        // run-completion arm here.
         const next =
-          !isGatePhase(phase)
-            ? 'the run is complete. End your turn with a one-line status.'
-            : gateAttended(state, phase)
-              ? 'the run moves to the human gate. End your turn with a one-line status; the gate decision arrives as your next message.'
-              : dispatcher
-                ? // The interactive host (a dispatcher is present): a pre-authorized
-                  // gate does NOT auto-continue here — only the headless driver
-                  // auto-crosses — so the message must not promise the next phase
-                  // arrives automatically. It says to hand off instead.
-                  'this phase’s gate was pre-authorized, so your packet is saved for the human’s later review. On this interactive host the run does NOT auto-continue here — hand off with `duet afk` (or `duet continue --approve --headless`) to run the pre-authorized rest unattended. End your turn with a one-line status.'
-                : 'this phase’s gate was pre-authorized by the human at run start, so your packet is saved for their later review and the run continues immediately. End your turn with a one-line status; the next phase’s instructions arrive as your next message.';
-        return {
-          content: [{ type: 'text' as const, text: `Phase advance recorded — ${next}` }],
-        };
+          gateAttended(state, phase)
+            ? 'the run moves to the human gate. End your turn with a one-line status; the gate decision arrives as your next message.'
+            : dispatcher
+              ? // The interactive host (a dispatcher is present): a pre-authorized
+                // gate does NOT auto-continue here — only the headless driver
+                // auto-crosses — so the message must not promise the next phase
+                // arrives automatically. It says to hand off instead.
+                'this phase’s gate was pre-authorized, so your packet is saved for the human’s later review. On this interactive host the run does NOT auto-continue here — hand off with `duet afk` (or `duet continue --approve --headless`) to run the pre-authorized rest unattended. End your turn with a one-line status.'
+              : 'this phase’s gate was pre-authorized by the human at run start, so your packet is saved for their later review and the run continues immediately. End your turn with a one-line status; the next phase’s instructions arrive as your next message.';
+        return ok(block(`Phase advance recorded — ${next}`));
       },
     ),
 
@@ -1186,14 +1275,11 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         });
         saveRunState(state);
         log(`[propose_snippet_edit] queued for ${args.snippet_key}`);
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: `Proposal queued (${state.snippetProposals.length} pending) — it appears in duet status and the human reviews it at the end of the run. Continue the phase with your per-turn adaptation in the meantime.`,
-            },
-          ],
-        };
+        return ok(
+          block(
+            `Proposal queued (${state.snippetProposals.length} pending) — it appears in duet status and the human reviews it at the end of the run. Continue the phase with your per-turn adaptation in the meantime.`,
+          ),
+        );
       },
     ),
 
@@ -1205,7 +1291,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       },
       async (args) => {
         appendNote(state, 'orchestrator', args.observation);
-        return { content: [{ type: 'text' as const, text: 'Noted.' }] };
+        return ok(block('Noted.'));
       },
     ),
   ];
@@ -1232,13 +1318,13 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         async (args) => {
           const raw = args.raw === true;
           const ready = dispatcher.collectReady();
-          const content: Array<{ type: 'text'; text: string }> = [];
+          const content: TextBlock[] = [];
           for (const { role, result } of ready) {
-            content.push({ type: 'text' as const, text: `── ${role} ──` });
-            for (const block of result.content) {
-              if (typeof block === 'object' && block !== null && (block as { type?: string }).type === 'text') {
-                const t = (block as { text: string }).text;
-                content.push({ type: 'text' as const, text: raw ? t : projectDetail(t) });
+            content.push(block(`── ${role} ──`));
+            for (const c of result.content) {
+              if (typeof c === 'object' && c !== null && (c as { type?: string }).type === 'text') {
+                const t = (c as { text: string }).text;
+                content.push(block(raw ? t : projectDetail(t)));
               }
             }
           }
@@ -1249,10 +1335,11 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
               // the other role) is the identity's durable contract, not re-taught
               // on every poll; `status --wait` stays because this is the surface
               // nearest the idle moment (docs/prompting-and-tool-design.md).
-              content.push({
-                type: 'text' as const,
-                text: `The ${role} turn is still running — collect it on a later check_turns, or arm \`duet status --wait\` so its settling brings you back.`,
-              });
+              content.push(
+                block(
+                  `The ${role} turn is still running — collect it on a later check_turns, or arm \`duet status --wait\` so its settling brings you back.`,
+                ),
+              );
             }
           }
           // collectReady cleared the just-collected records from disk; re-read so
@@ -1262,17 +1349,16 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           for (const role of ROLES) {
             if (afterCollect.pendingTurns?.[role] && dispatcher.statusOf(role) === undefined) {
               // A discard-and-reseed role's orphan is "just resend," not "takeover".
-              const text = orphanRecoveryFor(role) === 'discard-and-reseed' ? orphanDiscardText(role) : orphanRefusalText(role);
-              content.push({ type: 'text' as const, text });
+              const text = orphanRecoveryFor(role) === 'discard-and-reseed' ? orphanDiscardText(role) : orphanRefusalText(role, state);
+              content.push(block(text));
             }
           }
           if (content.length === 0) {
-            content.push({
-              type: 'text' as const,
-              text: 'No worker turns are in flight — nothing to collect. Dispatch one with send_prompt, or advance the phase if the work is done.',
-            });
+            content.push(
+              block('No worker turns are in flight — nothing to collect. Dispatch one with send_prompt, or advance the phase if the work is done.'),
+            );
           }
-          return { content };
+          return ok(...content);
         },
       ),
     );
@@ -1303,7 +1389,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       try {
         const steers = listPendingSteers(state);
         if (steers.length === 0) return result;
-        result.content.push({ type: 'text' as const, text: renderSteerBlock(steers, 'live') });
+        result.content.push(block(renderSteerBlock(steers, 'live')));
         markSteersDelivered(state, steers);
         for (const steer of steers) {
           appendVoiceLog(state, 'orchestrator', `human steer delivered (staged ${steer.stagedAt})`, steer.text);
@@ -1337,15 +1423,10 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     // effect, so the quiescence rationale for refusing work tools doesn't apply
     // — a friction observation can be recorded at the gate moment it crystallizes.
   ]);
-  const phaseEnding = (toolName: string): CallToolResult => ({
-    content: [
-      {
-        type: 'text' as const,
-        text: `This phase is ending — it is parked at its gate or flag and that decision is recorded, so ${toolName} is refused here. Present the packet to the human and cross with duet continue, or re-anchor with get_task; the run proceeds from the decision already made.`,
-      },
-    ],
-    isError: true,
-  });
+  const phaseEnding = (toolName: string): Refusal =>
+    refuse(
+      `This phase is ending — it is parked at its gate or flag and that decision is recorded, so ${toolName} is refused here. Present the packet to the human and cross with duet continue, or re-anchor with get_task; the run proceeds from the decision already made.`,
+    );
   const withPostTerminalRail = (def: KernelTool<any>): KernelTool<any> => ({
     ...def,
     handler: async (args, extra) => {

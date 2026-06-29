@@ -12,17 +12,16 @@ import {
   gateAttended,
   highDecisionsAt,
   holdsMcpOwner,
-  listPendingSteers,
+  clearTurnActive,
   listRuns,
   loadMachineSnapshot,
   loadRunState,
-  markSteersDelivered,
+  markTurnActive,
   recordPhaseLabel,
   runDirOf,
   saveMachineSnapshot,
   saveRunState,
   stageHumanInput,
-  stageSteer,
   workflowOf,
 } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
@@ -149,6 +148,30 @@ describe('persistence', () => {
   });
 });
 
+describe('the mutate discipline (concurrency-safe crash-state)', () => {
+  test('a concurrent cross-role write does not clobber the sibling role', ({ projectDir, run }) => {
+    // Two in-memory copies of the same on-disk run, each unaware of the other.
+    const copyA = loadRunState(projectDir, run.runId);
+    const copyB = loadRunState(projectDir, run.runId);
+    markTurnActive(copyA, 'implementer', 'impl-tag');
+    // copyB was loaded before A's write, but markTurnActive reloads fresh and
+    // merges its own role surgically — so the implementer entry survives.
+    markTurnActive(copyB, 'reviewer', 'rev-tag');
+    const disk = loadRunState(projectDir, run.runId);
+    expect(disk.activeTurns?.implementer?.tag).toBe('impl-tag');
+    expect(disk.activeTurns?.reviewer?.tag).toBe('rev-tag');
+  });
+
+  test('a no-op clear does not save its stale copy over a concurrent sibling write', ({ projectDir, run }) => {
+    const stale = loadRunState(projectDir, run.runId); // captured before the sibling write
+    markTurnActive(run, 'reviewer', 'rev-tag'); // a sibling writes the reviewer entry to disk
+    // The implementer entry is absent for `stale`, so the clear is a no-op — and
+    // must NOT save `stale`'s (reviewer-less) snapshot over the live write.
+    clearTurnActive(stale, 'implementer');
+    expect(loadRunState(projectDir, run.runId).activeTurns?.reviewer?.tag).toBe('rev-tag');
+  });
+});
+
 describe('the human-input handshake', () => {
   test('staged input survives a process boundary and is consumed exactly once', ({ projectDir, run }) => {
     stageHumanInput(run, { kind: 'feedback', text: 'tighten the scope' });
@@ -179,57 +202,6 @@ describe('the human-input handshake', () => {
     const driverCopy = loadRunState(projectDir, run.runId);
     consumeHumanInput(driverCopy);
     expect(driverCopy.pendingQuestion).toEqual({ question: 'still open' });
-  });
-});
-
-describe('the steer store', () => {
-  test('staging creates one file per steer, listed in staging order with verbatim text', ({ run }) => {
-    stageSteer(run, 'drop the retry tests', 'impl');
-    stageSteer(run, 'and keep the fixture name');
-
-    const pending = listPendingSteers(run);
-    expect(pending).toHaveLength(2);
-    expect.soft(pending[0]?.text).toBe('drop the retry tests');
-    expect.soft(pending[0]?.stagedDuring).toBe('impl');
-    expect.soft(pending[0]?.stagedAt).toBeTruthy();
-    expect.soft(pending[1]?.text).toBe('and keep the fixture name');
-    expect.soft(pending[1]?.stagedDuring).toBeUndefined();
-  });
-
-  test('a second process copy staging concurrently appends without clobbering (file-per-steer)', ({
-    projectDir,
-    run,
-  }) => {
-    stageSteer(run, 'from the driver-side copy');
-    const cliCopy = loadRunState(projectDir, run.runId);
-    stageSteer(cliCopy, 'from the CLI');
-
-    expect(listPendingSteers(run).map((s) => s.text)).toEqual(['from the driver-side copy', 'from the CLI']);
-  });
-
-  test('marking delivered removes steers from the pending list but keeps the files (audit trail)', ({
-    projectDir,
-    run,
-  }) => {
-    const steer = stageSteer(run, 'one note');
-    markSteersDelivered(run, [steer]);
-
-    expect.soft(listPendingSteers(run)).toEqual([]);
-    const delivered = join(runDirOf(projectDir, run.runId), 'steers', 'delivered', steer.file);
-    expect.soft(readFileSync(delivered, 'utf8')).toContain('one note');
-  });
-
-  test('marking an already-delivered steer is a no-op (a parallel drain won the race)', ({ run }) => {
-    const steer = stageSteer(run, 'raced note');
-    markSteersDelivered(run, [steer]);
-    expect(() => markSteersDelivered(run, [steer])).not.toThrow();
-  });
-
-  test('staging lands in the orchestrator voice log', ({ projectDir, run }) => {
-    stageSteer(run, 'drop the retry tests', 'impl');
-    const log = readFileSync(join(runDirOf(projectDir, run.runId), 'orchestrator.log'), 'utf8');
-    expect.soft(log).toContain('human steer staged (during impl)');
-    expect.soft(log).toContain('drop the retry tests');
   });
 });
 
