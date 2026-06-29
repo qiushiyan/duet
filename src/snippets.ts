@@ -257,6 +257,13 @@ export interface SnippetRenderOpts {
    */
   consultantBound?: boolean;
   /**
+   * Whether this run is gateless. A gateless run runs the consultant as a backstop
+   * only, so its bet-level checkpoint snippets (frame/specGate/implGate) are hidden
+   * — the same per-run honesty the `consultantBound`/`workflow` filters already
+   * give. Default false (no narrowing), so a non-gateless render is unchanged.
+   */
+  gateless?: boolean;
+  /**
    * Run/project context for override discovery. When PRESENT, the served library
    * is the merged effective library (shipped + user + project overrides); when
    * ABSENT, the shipped library is served verbatim — the no-context path stays
@@ -280,12 +287,13 @@ export interface SnippetRenderOpts {
  */
 export function renderSnippetLibrary(opts: SnippetRenderOpts = {}): string {
   const consultantBound = opts.consultantBound ?? false;
+  const gateless = opts.gateless ?? false;
   // No libraryContext ⇒ shipped-only (byte-for-byte today's, no override file read).
   // A context ⇒ the merged effective library. The renderers take the resolved
   // array, so the override layering is invisible past this line.
   const library: Snippet[] = opts.libraryContext ? loadEffectiveSnippets(opts.libraryContext) : loadSnippets();
-  if (opts.all || !opts.phase) return renderFlat(library, opts.sentTo, opts.all, consultantBound, opts.workflow);
-  return renderForPhase(library, opts.phase, opts.workflow ?? workflowOfPhase(opts.phase), opts.sentTo, consultantBound);
+  if (opts.all || !opts.phase) return renderFlat(library, opts.sentTo, opts.all, consultantBound, opts.workflow, gateless);
+  return renderForPhase(library, opts.phase, opts.workflow ?? workflowOfPhase(opts.phase), opts.sentTo, consultantBound, gateless);
 }
 
 function snippetBlock(s: Snippet, sentTo?: Record<string, string[]>): string {
@@ -294,16 +302,17 @@ function snippetBlock(s: Snippet, sentTo?: Record<string, string[]>): string {
   return `<snippet key="${s.key}"${attr}>\n${withLessonsDir(s.expand)}\n</snippet>`;
 }
 
-function renderFlat(library: Snippet[], sentTo?: Record<string, string[]>, all?: boolean, consultantBound = false, workflow?: WorkflowName): string {
+function renderFlat(library: Snippet[], sentTo?: Record<string, string[]>, all?: boolean, consultantBound = false, workflow?: WorkflowName, gateless = false): string {
   // The flat library is the whole file, so the checkpoint snippets must be filtered
   // here: unbound shows NONE; bound shows only the consultant snippets THIS arc's
   // checkpoints reach (per-arc honesty — a bound rir run never sees full's contract
-  // snippets, the leak the workflow filter closes). With no workflow (defensive,
-  // outside the tool path), a bound run falls back to every consultant snippet.
+  // snippets, the leak the workflow filter closes), narrowed to the backstop on a
+  // gateless run. With no workflow (defensive, outside the tool path), a bound run
+  // falls back to every consultant snippet.
   const allowedConsultant = !consultantBound
     ? new Set<string>()
     : workflow
-      ? consultantSnippetsForWorkflow(workflow)
+      ? consultantSnippetsForWorkflow(workflow, { gateless })
       : CONSULTANT_SNIPPETS;
   const snippets = library.filter((s) => !CONSULTANT_SNIPPETS.has(s.key) || allowedConsultant.has(s.key));
   return [
@@ -323,6 +332,7 @@ function renderForPhase(
   workflow: WorkflowName,
   sentTo: Record<string, string[]> | undefined,
   consultantBound: boolean,
+  gateless = false,
 ): string {
   // Look the phase/anytime keys up in the RESOLVED library (so overridden bodies
   // serve), not the shipped-only `getSnippet` global. Insertion order = base
@@ -333,7 +343,7 @@ function renderForPhase(
   // Each phase's ENABLED snippets — the always-on base plus its consultant
   // checkpoint snippet only when bound, so the consultant snippet shows in its
   // owning phase and nowhere else, and an unbound run never sees it.
-  const snippetsOf = (name: PhaseName): readonly string[] => phaseSnippetsFor(name, { consultant: consultantBound });
+  const snippetsOf = (name: PhaseName): readonly string[] => phaseSnippetsFor(name, { consultant: consultantBound, gateless });
   const current = snippetsOf(phase);
   const lines: string[] = [
     `<snippet_library phase="${phase}">`,

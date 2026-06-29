@@ -164,7 +164,8 @@ export function newRunInputOpts(opts: {
   workflow?: string;
   gatesAt?: string;
   retryInfra?: string;
-}): { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string } {
+  gateless?: boolean;
+}): { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; gateless?: boolean } {
   return {
     ...(opts.spec ? { spec: opts.spec } : {}),
     ...(opts.framing ? { framing: opts.framing } : {}),
@@ -172,6 +173,7 @@ export function newRunInputOpts(opts: {
     ...(opts.workflow ? { workflow: opts.workflow } : {}),
     ...(opts.gatesAt !== undefined ? { gatesAt: opts.gatesAt } : {}),
     ...(opts.retryInfra !== undefined ? { retryInfra: opts.retryInfra } : {}),
+    ...(opts.gateless ? { gateless: true } : {}),
   };
 }
 
@@ -276,9 +278,13 @@ program
     'enable the optional consultant — an independent cross-family second reviewer (read-only). provider[:model], e.g. claude:claude-opus-4-8; defaults to claude-opus-4-8 when no model is named. Off by default; settable for every run via [roles.consultant] in the config',
   )
   .option('--no-consultant', 'disable the consultant for this run even when the config binds one')
+  .option(
+    '--gateless',
+    "walk away from the START: attend no gates (every gate auto-crosses) AND run the consultant as a BACKSTOP ONLY — its bet audits don't fire, but the acceptance-contract verify still self-heals and holds a contract that stays broken. ask_human and the merge stay yours. Conflicts with --gates-at; also settable via a gateless: framing key (flag wins)",
+  )
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
   .option('--interactive', "orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over the attended arc up to the workflow's handoff gate (full: through the plan gate; rir: through the Direction gate); implementation onward runs headless after that handoff")
-  .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; budget?: string; orchestrator?: string; impl?: string; reviewer?: string; consultant?: string | boolean; tmux?: boolean; interactive?: boolean }) => {
+  .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; budget?: string; orchestrator?: string; impl?: string; reviewer?: string; consultant?: string | boolean; gateless?: boolean; tmux?: boolean; interactive?: boolean }) => {
     const cwd = process.cwd();
 
     // The framing's frontmatter is the machine/prose boundary: parsed
@@ -291,6 +297,16 @@ program
       fail(err instanceof Error ? err.message : String(err));
     }
 
+    // Pull the frontmatter launch/binding hints out of the run inputs — they
+    // pick the host and the consultant binding, not createRun. Flags win over them.
+    const { framingFile, interactive: framingInteractive, consultantToggle, ...runInputs } = inputs;
+    const interactive = opts.interactive ?? framingInteractive ?? false;
+    if (interactive && runInputs.gateless) {
+      fail(
+        'gateless means walk away from the START, which is incoherent with --interactive (you drive the planning gates in-session). Use `duet new --gateless` for a headless full-send, or `duet new --interactive` then `duet afk --gateless` to walk away mid-run.',
+      );
+    }
+
     const { bindings, budget } = loadRunConfig({
       roleOverrides: {
         ...(opts.orchestrator ? { orchestrator: opts.orchestrator } : {}),
@@ -300,6 +316,8 @@ program
         ...(typeof opts.consultant === 'string' ? { consultant: opts.consultant } : {}),
       },
       ...(opts.consultant === false ? { noConsultant: true } : {}),
+      // The framing `consultant: on|off` toggle; the flags above win over it (loadRunConfig).
+      ...(consultantToggle ? { consultantToggle } : {}),
       ...(opts.budget !== undefined ? { budgetOverride: opts.budget } : {}),
     });
 
@@ -310,7 +328,6 @@ program
       // Not a git repo (or detached weirdness) — the orchestrator will surface it.
     }
 
-    const { framingFile, ...runInputs } = inputs;
     const state = createRun({
       cwd,
       ...runInputs,
@@ -335,8 +352,14 @@ program
           noneSuffix: 'all gates pre-authorized (auto-cross, packets recorded)',
         }),
       );
+    if (state.gateless)
+      console.log(
+        bindings.consultant
+          ? 'gateless: consultant is a backstop only — bet audits off; the acceptance-contract verify still self-heals and holds a contract that stays broken. ask_human and the merge stay yours'
+          : 'gateless: walk away from the start — ask_human and the merge stay yours',
+      );
     console.log('');
-    if (opts.interactive) {
+    if (interactive) {
       // Stage 1: orchestrate from the human's interactive orchestrator session instead
       // of the headless driver — no auto-spawnDrive. runOrchestrate marks the run
       // interactive and launches the wired claude session (it blocks until that
@@ -528,7 +551,11 @@ program
   )
   .argument('[preset]', 'a workflow gates_at preset or phase list for the downstream posture (bare = attend none)')
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
-  .action(async (preset: string | undefined, runId: string | undefined) => {
+  .option(
+    '--gateless',
+    "full-send the rest: hand off attending nothing AND run the consultant as a backstop only (bet audits off; the acceptance-contract verify still self-heals and holds a contract that stays broken). Crosses a held high decision — your explicit walk-away authorizes it, like an explicit approve. Conflicts with a posture argument",
+  )
+  .action(async (preset: string | undefined, runId: string | undefined, options: { gateless?: boolean }) => {
     const cwd = process.cwd();
     // `duet afk <runId>` (bare posture, specific run) and `duet afk <preset>`
     // (posture, latest run) share the first positional — resolveAfkArgs sorts it.
@@ -536,10 +563,15 @@ program
     const state = resolveRun(cwd, runIdArg, 'no runs found in this project — start one with duet new');
     let split;
     try {
+      // --gateless pre-authorizes everything downstream, so a posture argument is
+      // a contradiction — reject it, mirroring `duet new --gateless`.
+      if (options.gateless && presetArg) {
+        fail('duet afk --gateless attends no gates downstream — drop the posture argument (gateless pre-authorizes everything).');
+      }
       // Bare afk → the empty "attend none" posture; a named arg → an existing
       // preset/list (no new presets). parseGatesAt validates against the workflow.
       const posture = presetArg ? parseGatesAt(presetArg, workflowOf(state)) : [];
-      split = await enterAfk(state, posture);
+      split = await enterAfk(state, posture, { gateless: Boolean(options.gateless) });
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
     }
@@ -551,6 +583,12 @@ program
         noneSuffix: 'all downstream gates pre-authorized (auto-cross, packets recorded)',
       }),
     );
+    if (state.gateless)
+      console.log(
+        state.bindings.consultant
+          ? 'gateless: consultant is a backstop only downstream — bet audits off; the verify self-heals and still holds a contract that stays broken. ask_human and the merge stay yours'
+          : 'gateless: full-send — ask_human and the merge stay yours',
+      );
     const pid = spawnDrive(state);
     printWatchHints(state, pid, 'handed off to headless (duet afk)');
   });

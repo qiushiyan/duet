@@ -582,6 +582,7 @@ export function crossInteractive(state: RunState, humanEvent: HumanEvent): void 
 export async function enterAfk(
   state: RunState,
   posture: GatePhase[],
+  opts: { gateless?: boolean } = {},
 ): Promise<{ attended: GatePhase[]; preAuthorized: GatePhase[] }> {
   if (state.orchestrationHost !== 'interactive') {
     throw new Error(
@@ -593,26 +594,33 @@ export async function enterAfk(
     const why = validateInteractiveCrossing(position, 'approve') ?? "isn't parked at a gate";
     throw new Error(`run ${state.runId} ${why} — duet afk hands off only from a gate (steer a live phase, or answer a flag).`);
   }
-  // The severity hold on the present→away transition: `duet afk` is a blanket
-  // walk-away authority — the one interactive path that could turn a `high` into
-  // an unattended approval. Refuse it over a `high`, directing the human to the
-  // explicit one-command substitute (approve THIS gate, then hand off). An
-  // ordinary interactive gate the human attends in person needs no such guard.
-  const held = highDecisionsAt(state, position.phase);
-  if (held.length > 0) {
-    throw new Error(
-      `run ${state.runId} can't hand off to AFK from this gate — it carries a high human decision that needs you (${held
-        .map((d) => d.title)
-        .join('; ')}). duet afk would approve it unattended; approve this gate explicitly and then hand off: duet continue --approve --headless.`,
-    );
+  // The severity hold on the present→away transition: a BARE `duet afk` is a
+  // blanket walk-away that must not silently turn a `high` into an unattended
+  // approval — refuse it over a `high`, directing the human to the explicit
+  // substitute. `duet afk --gateless` IS that explicit substitute: a deliberate
+  // full-send the human chose having pre-decided the direction the high concerns,
+  // so it crosses the high exactly as an explicit `--approve` does.
+  if (!opts.gateless) {
+    const held = highDecisionsAt(state, position.phase);
+    if (held.length > 0) {
+      throw new Error(
+        `run ${state.runId} can't hand off to AFK from this gate — it carries a high human decision that needs you (${held
+          .map((d) => d.title)
+          .join('; ')}). duet afk would approve it unattended; approve this gate explicitly and then hand off (duet continue --approve --headless), or full-send with duet afk --gateless if you accept the call.`,
+      );
+    }
   }
   // Freeze the contract before this gate is crossed away — `duet afk` from the
-  // plan gate is an approve-crossing of the contract gate (no-op elsewhere).
+  // plan gate is an approve-crossing of the contract gate (no-op elsewhere). The
+  // backstop is preserved even under gateless, so this freezes regardless.
   await freezeContractAt(state, position.phase);
   setGatesAt(state, posture);
   crossInteractive(state, { type: 'human.approve' });
   const fresh = loadRunState(state.cwd, state.runId);
   delete fresh.orchestrationHost;
+  // Persist the gateless flag so the headless tail runs the consultant as a
+  // backstop only (the consultant axis; posture, the other axis, is `gatesAt`).
+  if (opts.gateless) fresh.gateless = true;
   saveRunState(fresh);
   Object.assign(state, fresh);
   const gates = gatePhasesOf(workflowOf(state));

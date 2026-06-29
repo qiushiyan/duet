@@ -217,6 +217,26 @@ describe('the consultant binding (optional, present-only)', () => {
       .toBeUndefined();
   });
 
+  test('the framing consultant: on|off toggle flips a binding for the run; the flags win over it', ({ projectDir }) => {
+    const missing = join(projectDir, 'missing.toml');
+    const bound = configIn(projectDir, `[roles.consultant]\nprovider = "codex"`);
+    // off disables a config-bound consultant for this run.
+    expect.soft(loadRunConfig({ consultantToggle: 'off' }, bound).bindings.consultant).toBeUndefined();
+    // on enables the default claude consultant when none is config-bound (it can't bind a model — that's config's job).
+    expect.soft(loadRunConfig({ consultantToggle: 'on' }, missing).bindings.consultant).toEqual({
+      provider: 'claude',
+      model: 'claude-opus-4-8',
+      transport: 'headless',
+    });
+    // on leaves a config-bound consultant exactly as configured — it un-suppresses, never rebinds.
+    expect.soft(loadRunConfig({ consultantToggle: 'on' }, bound).bindings.consultant).toEqual({ provider: 'codex' });
+    // The flags win: --no-consultant beats `on`; an explicit --consultant binding beats `off`.
+    expect.soft(loadRunConfig({ noConsultant: true, consultantToggle: 'on' }, bound).bindings.consultant).toBeUndefined();
+    expect
+      .soft(loadRunConfig({ roleOverrides: { consultant: 'claude' }, consultantToggle: 'off' }, missing).bindings.consultant)
+      .toEqual({ provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' });
+  });
+
   test('[roles.consultant].transport = "interactive" is rejected — the consultant is read-only', ({ projectDir }) => {
     const path = configIn(projectDir, `[roles.consultant]\nprovider = "claude"\ntransport = "interactive"`);
     expect.soft(() => loadRunConfig({}, path)).toThrow(/implementer-only/);

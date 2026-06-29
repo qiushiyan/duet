@@ -4,12 +4,15 @@ import {
   WORKFLOWS,
   acceptanceContractPathForSpec,
   consultantSnippetFor,
+  consultantSnippetsForWorkflow,
   contractAuthorPhaseOf,
   defaultPosture,
   gateOf,
   gatePhasesOf,
   handoffWatchLabel,
+  isBackstopCheckpoint,
   phaseOfGateState,
+  phaseSnippetsFor,
   phasesOf,
   validateRegistry,
 } from '../src/phases.ts';
@@ -261,6 +264,41 @@ describe('consultant checkpoints (registry data per arc)', () => {
     );
     expect.soft(acceptanceContractPathForSpec('SPEC.md')).toBe('SPEC.acceptance.md');
     expect.soft(acceptanceContractPathForSpec('a/b/c/plan.spec.md')).toBe('a/b/c/plan.spec.acceptance.md');
+  });
+});
+
+describe('gateless narrows the consultant to its backstop (registry helpers)', () => {
+  test('isBackstopCheckpoint: only the contract author and the verify survive gateless', () => {
+    // The backstop (correctness) checkpoints.
+    expect.soft(isBackstopCheckpoint('plan')).toBe(true); // contract author
+    expect.soft(isBackstopCheckpoint('impl')).toBe(true); // verify
+    // The bet-level (challenge) checkpoints — dropped in gateless.
+    expect.soft(isBackstopCheckpoint('frame')).toBe(false); // frame analysis
+    expect.soft(isBackstopCheckpoint('spec')).toBe(false); // specGate audit
+    expect.soft(isBackstopCheckpoint('implement')).toBe(false); // rir implGate audit
+    expect.soft(isBackstopCheckpoint('finish')).toBe(false); // no checkpoint at all
+  });
+
+  test('phaseSnippetsFor: gateless drops a bet-level checkpoint snippet but keeps a backstop one', () => {
+    // spec carries the specGate bet audit — gateless omits it; the base list stays.
+    expect.soft(phaseSnippetsFor('spec', { consultant: true })).toContain('consultant-spec');
+    expect.soft(phaseSnippetsFor('spec', { consultant: true, gateless: true })).not.toContain('consultant-spec');
+    // impl carries the verify backstop — gateless keeps it.
+    expect.soft(phaseSnippetsFor('impl', { consultant: true, gateless: true })).toContain('consultant-verify');
+    // Unbound is unchanged either way (default-off).
+    expect.soft(phaseSnippetsFor('spec', { consultant: false, gateless: true })).not.toContain('consultant-spec');
+  });
+
+  test('consultantSnippetsForWorkflow: gateless exposes only the backstop snippets per arc', () => {
+    // Full bound: all four checkpoint snippets; gateless → just the backstop pair.
+    expect.soft([...consultantSnippetsForWorkflow('full')].sort()).toEqual(
+      ['consultant-contract', 'consultant-frame', 'consultant-spec', 'consultant-verify'].sort(),
+    );
+    expect.soft([...consultantSnippetsForWorkflow('full', { gateless: true })].sort()).toEqual(
+      ['consultant-contract', 'consultant-verify'].sort(),
+    );
+    // RIR has no backstop checkpoint, so a gateless RIR run exposes none.
+    expect.soft([...consultantSnippetsForWorkflow('rir', { gateless: true })]).toEqual([]);
   });
 });
 

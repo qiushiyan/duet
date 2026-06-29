@@ -216,7 +216,13 @@ export function parseBudget(value: unknown): number | undefined {
  * caps); it is never `0`.
  */
 export function loadRunConfig(
-  opts: { roleOverrides?: Partial<Record<BindableRole, string>>; budgetOverride?: string; noConsultant?: boolean } = {},
+  opts: {
+    roleOverrides?: Partial<Record<BindableRole, string>>;
+    budgetOverride?: string;
+    noConsultant?: boolean;
+    /** The framing `consultant: on|off` toggle — flips a config-bound consultant for one run (the --consultant/--no-consultant flags win over it). */
+    consultantToggle?: 'on' | 'off';
+  } = {},
   configPath: string = CONFIG_PATH,
 ): { bindings: RoleBindings; budget?: number } {
   const bindings: RoleBindings = { ...DEFAULT_BINDINGS };
@@ -269,8 +275,18 @@ export function loadRunConfig(
   } else {
     const consultantSpec = opts.roleOverrides?.consultant;
     if (consultantSpec) {
+      // An explicit --consultant binding wins over the frontmatter toggle.
       const override = parseRoleOverride('consultant', consultantSpec);
       bindings.consultant = override.provider === 'claude' ? { ...override, transport: 'headless' } : override;
+    } else if (opts.consultantToggle === 'off') {
+      // The framing toggled it off — disable a config-bound consultant for this run.
+      delete bindings.consultant;
+    } else if (opts.consultantToggle === 'on' && !bindings.consultant) {
+      // The framing toggled it on with none config-bound — enable the default
+      // claude consultant (a different family from the codex reviewer is the point;
+      // pick a specific model with --consultant / [roles.consultant] instead).
+      const override = parseRoleOverride('consultant', 'claude');
+      bindings.consultant = { ...override, transport: 'headless' };
     }
   }
 

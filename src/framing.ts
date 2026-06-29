@@ -277,6 +277,17 @@ export interface FramingFrontmatter {
   spec?: string;
   retryInfra?: number;
   workflow?: WorkflowName;
+  /** The gateless posture (a fixed boolean the harness acts on — boundary-rule shape). */
+  gateless?: boolean;
+  /** Orchestrate this run from the human's interactive session (the --interactive flag by another door). */
+  interactive?: boolean;
+  /**
+   * A per-run consultant TOGGLE — flip a config-bound consultant on or off for this
+   * run, the posture-shaped half of the consultant knob. The BINDING (which
+   * provider/model) stays config/--consultant: a fixed value the harness acts on
+   * earns frontmatter; a role binding does not.
+   */
+  consultant?: 'on' | 'off';
 }
 
 const frontmatterSchema = z.object({
@@ -284,7 +295,38 @@ const frontmatterSchema = z.object({
   spec: z.string().optional(),
   retry_infra: z.string().optional(),
   workflow: z.string().optional(),
+  gateless: z.string().optional(),
+  interactive: z.string().optional(),
+  consultant: z.string().optional(),
 });
+
+/**
+ * Parse a boolean frontmatter value (`true`/`false`). Like `gates_at`, a fixed
+ * value with a deterministic harness consumer — it earns frontmatter under the
+ * boundary rule. Throws (never coerces a typo to false) so a misspelled posture
+ * fails loudly rather than silently flipping the run.
+ */
+export function parseBoolKey(key: string, value: string): boolean {
+  const v = value.trim().toLowerCase();
+  if (v === "true") return true;
+  if (v === "false") return false;
+  throw new Error(`${key}: "${value}" is not a boolean — use true or false.`);
+}
+
+/**
+ * Parse the `consultant` toggle (`on`/`off`). It flips a config-bound consultant
+ * for one run — it never BINDS one, so a provider/model value is rejected with a
+ * pointer to where bindings live. This is the toggle-vs-binding line that keeps
+ * "which model" in config and the on/off posture in frontmatter.
+ */
+export function parseConsultantToggle(value: string): "on" | "off" {
+  const v = value.trim().toLowerCase();
+  if (v === "on") return "on";
+  if (v === "off") return "off";
+  throw new Error(
+    `consultant: "${value}" is not on or off — the framing toggles a consultant on or off; it does not bind one. Choose the provider/model with --consultant or [roles.consultant] in your config.`,
+  );
+}
 
 /** Validate a workflow name against the registry; throws with the valid set. */
 export function parseWorkflow(value: string): WorkflowName {
@@ -384,7 +426,7 @@ export function parseFramingFile(content: string): { meta: FramingFrontmatter; b
     const unknown = Object.keys(raw).filter((k) => !(k in frontmatterSchema.shape));
     throw new Error(
       unknown.length > 0
-        ? `framing frontmatter has unknown key(s): ${unknown.join(", ")} — valid keys are gates_at, spec, retry_infra, and workflow. Everything the orchestrator should weigh with judgment belongs in the prose body, not here.`
+        ? `framing frontmatter has unknown key(s): ${unknown.join(", ")} — valid keys are gates_at, spec, retry_infra, workflow, gateless, interactive, and consultant. Everything the orchestrator should weigh with judgment belongs in the prose body, not here.`
         : `framing frontmatter is invalid: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
     );
   }
@@ -398,6 +440,9 @@ export function parseFramingFile(content: string): { meta: FramingFrontmatter; b
   if (parsed.data.gates_at !== undefined) meta.gatesAt = parseGatesAt(parsed.data.gates_at, meta.workflow ?? "full");
   if (parsed.data.spec) meta.spec = parsed.data.spec;
   if (parsed.data.retry_infra !== undefined) meta.retryInfra = parseRetryInfra(parsed.data.retry_infra);
+  if (parsed.data.gateless !== undefined) meta.gateless = parseBoolKey("gateless", parsed.data.gateless);
+  if (parsed.data.interactive !== undefined) meta.interactive = parseBoolKey("interactive", parsed.data.interactive);
+  if (parsed.data.consultant !== undefined) meta.consultant = parseConsultantToggle(parsed.data.consultant);
   return { meta, body };
 }
 
@@ -414,6 +459,16 @@ export interface RunInputs {
   specPath?: string;
   /** Opt-in infra auto-retry budget (0/absent ⇒ off). */
   retryInfra?: number;
+  /** The gateless posture (sugar: gatesAt already materialized to [] here). */
+  gateless?: boolean;
+  /**
+   * Frontmatter launch/binding hints the CLI resolves against its own flags (the
+   * flags win) — not createRun inputs, so the CLI pulls them out before createRun:
+   * `interactive` picks the orchestrator host, `consultantToggle` flips the
+   * consultant binding via loadRunConfig.
+   */
+  interactive?: boolean;
+  consultantToggle?: "on" | "off";
   /** The framing file used, when one was (the CLI consumes the editor draft after archiving). */
   framingFile?: string;
 }
@@ -427,7 +482,7 @@ export interface RunInputs {
  */
 export async function resolveRunInputs(
   cwd: string,
-  opts: { spec?: string; framing?: string; gatesAt?: string; template?: string; retryInfra?: string; workflow?: string },
+  opts: { spec?: string; framing?: string; gatesAt?: string; template?: string; retryInfra?: string; workflow?: string; gateless?: boolean },
 ): Promise<RunInputs> {
   if (opts.template !== undefined && (opts.spec || opts.framing)) {
     throw new Error(
@@ -467,6 +522,22 @@ export async function resolveRunInputs(
   if (opts.gatesAt !== undefined) gatesAt = parseGatesAt(opts.gatesAt, workflow);
   else if (meta.gatesAt) gatesAt = workflow === (meta.workflow ?? "full") ? meta.gatesAt : parseGatesAt(meta.gatesAt.join(","), workflow);
 
+  // Gateless is sugar over two axes: the posture axis (attend nothing) is
+  // materialized here as gatesAt = []; the consultant axis (backstop-only) rides
+  // the returned `gateless` flag onto RunState. Because gateless already
+  // pre-authorizes every gate, naming gates to attend is a contradiction — reject
+  // an explicit attend-something gates_at rather than silently dropping it. An
+  // explicit attend-NONE preset (rir's afk → []) is compatible (same posture).
+  const gateless = opts.gateless ?? meta.gateless ?? false; // flag wins over frontmatter
+  if (gateless) {
+    if (gatesAt && gatesAt.length > 0) {
+      throw new Error(
+        "a gateless run attends no gates — drop the gates_at key / --gates-at (gateless already pre-authorizes every gate so you can walk away from the start).",
+      );
+    }
+    gatesAt = [];
+  }
+
   let specPath: string | undefined;
   const specInput = opts.spec ?? meta.spec; // flag wins over frontmatter
   if (specInput) {
@@ -488,6 +559,10 @@ export async function resolveRunInputs(
     workflow,
     ...(specPath ? { specPath } : {}),
     ...(retryInfra !== undefined ? { retryInfra } : {}),
+    ...(gateless ? { gateless } : {}),
+    // Frontmatter passthrough — the CLI resolves these against its flags (flags win).
+    ...(meta.interactive !== undefined ? { interactive: meta.interactive } : {}),
+    ...(meta.consultant !== undefined ? { consultantToggle: meta.consultant } : {}),
     ...(framingFile ? { framingFile } : {}),
   };
 }

@@ -906,6 +906,23 @@ describe('the severity hold — a high human decision withholds a NON-EXPLICIT c
     expect.soft(loadRunState(projectDir, interactiveRun.runId).orchestrationHost).toBe('interactive');
   });
 
+  test('enterAfk --gateless CROSSES a high (the explicit full-send) and persists the gateless flag', async ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    const parked = loadRunState(projectDir, interactiveRun.runId);
+    parked.terminalMarker = { phase: 'frame', kind: 'advance' };
+    parked.phaseSummaries.frame = { summary: 's', artifacts: [], humanDecisions: [{ title: 'pricing model', severity: 'high' }] };
+    saveRunState(parked);
+
+    await enterAfk(parked, [], { gateless: true }); // an explicit full-send crosses the high, like --approve
+    const after = loadRunState(projectDir, interactiveRun.runId);
+    expect.soft(after.gateless).toBe(true); // the consultant axis persisted for the headless tail
+    expect.soft(after.gatesAt).toEqual([]); // attend nothing downstream
+    expect.soft(after.orchestrationHost).toBeUndefined(); // handed off to headless
+    expect.soft(probeRunPosition(after)).not.toEqual({ kind: 'gate', phase: 'frame' }); // frame crossed
+  });
+
   test('an EXPLICIT crossInteractive crosses a high-carrying gate — explicit approval always crosses', ({
     projectDir,
     interactiveRun,

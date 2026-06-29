@@ -358,6 +358,27 @@ describe('the snippet library', () => {
       expect.soft(atResearch).toContain('consultant-impl'); // implement owns implGate → indexed
       expect.soft(atResearch).not.toContain('consultant-spec'); // RIR has no spec checkpoint
     });
+
+    test('gateless: all=true narrows the consultant bucket to the backstop (bet-level bodies hidden)', () => {
+      // A gateless run runs the consultant as a backstop only, so its bet-level
+      // checkpoint snippets never surface — even bound, even at all=true.
+      const all = renderSnippetLibrary({ phase: 'plan', workflow: 'full', all: true, consultantBound: true, gateless: true });
+      expect.soft(all).not.toContain('<snippet key="consultant-frame">');
+      expect.soft(all).not.toContain('<snippet key="consultant-spec">');
+      expect.soft(all).not.toContain('<snippet key="consultant-impl">');
+      // The backstop survives: the contract author (plan) and the verify (impl).
+      expect.soft(all).toContain('<snippet key="consultant-contract">');
+      expect.soft(all).toContain('<snippet key="consultant-verify">');
+    });
+
+    test('gateless: the phase view shows the backstop checkpoint, never a bet-level one', () => {
+      const atImpl = renderSnippetLibrary({ phase: 'impl', workflow: 'full', consultantBound: true, gateless: true });
+      expect.soft(atImpl).toContain('<snippet key="consultant-verify">'); // impl's backstop checkpoint, in full
+      const atFrame = renderSnippetLibrary({ phase: 'frame', workflow: 'full', consultantBound: true, gateless: true });
+      expect.soft(atFrame).not.toContain('consultant-frame'); // bet-level — gone in gateless
+      expect.soft(atFrame).not.toContain('consultant-spec'); // bet-level — gone
+      expect.soft(atFrame).toContain('consultant-verify'); // backstop still indexed by key
+    });
   });
 });
 

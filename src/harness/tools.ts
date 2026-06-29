@@ -966,7 +966,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         // a silently-partial one.
         let library: string;
         try {
-          library = renderSnippetLibrary({ phase, workflow: workflowOf(state), sentTo: sent, all: args.all, consultantBound: Boolean(state.bindings.consultant), libraryContext });
+          library = renderSnippetLibrary({ phase, workflow: workflowOf(state), sentTo: sent, all: args.all, consultantBound: Boolean(state.bindings.consultant), gateless: Boolean(state.gateless), libraryContext });
         } catch (err) {
           return error(
             block(

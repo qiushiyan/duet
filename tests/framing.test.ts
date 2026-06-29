@@ -121,6 +121,20 @@ describe('parseFramingFile (the machine/prose boundary)', () => {
   plain('a literal empty gates_at is rejected (key-present, not silently ignored)', () => {
     expect(() => parseFramingFile('---\ngates_at:\n---\nbody')).toThrow(/gates_at is empty/);
   });
+
+  plain('a gateless boolean key parses; a non-boolean fails loudly', () => {
+    expect.soft(parseFramingFile('---\ngateless: true\n---\nbody').meta.gateless).toBe(true);
+    expect.soft(parseFramingFile('---\ngateless: false\n---\nbody').meta.gateless).toBe(false);
+    expect.soft(() => parseFramingFile('---\ngateless: yes\n---\nbody')).toThrow(/gateless: "yes" is not a boolean/);
+  });
+
+  plain('interactive and the consultant toggle parse; a binding-shaped consultant is rejected', () => {
+    expect.soft(parseFramingFile('---\ninteractive: true\n---\nbody').meta.interactive).toBe(true);
+    expect.soft(parseFramingFile('---\nconsultant: on\n---\nbody').meta.consultant).toBe('on');
+    expect.soft(parseFramingFile('---\nconsultant: off\n---\nbody').meta.consultant).toBe('off');
+    // The toggle never binds — a provider/model value points to where bindings live.
+    expect.soft(() => parseFramingFile('---\nconsultant: claude:opus\n---\nbody')).toThrow(/is not on or off/);
+  });
 });
 
 describe('composeInEditor (the no-inline-text path for riders and feedback)', () => {
@@ -360,6 +374,53 @@ describe('resolveRunInputs', () => {
     // A literal empty flag value reaches parseGatesAt and fails, rather than
     // being silently dropped to attend-all the way a truthiness check would.
     await expect(resolveRunInputs(projectDir, { framing: 'b.md', gatesAt: '' })).rejects.toThrow(/gates_at is empty/);
+  });
+
+  test('gateless materializes attend-nothing (the posture axis) and carries the flag (the consultant axis)', async ({
+    projectDir,
+  }) => {
+    writeFileSync(join(projectDir, 'plain.md'), 'body');
+    // The flag form — attend nothing, gateless carried onto the inputs.
+    const fromFlag = await resolveRunInputs(projectDir, { framing: 'plain.md', gateless: true });
+    expect.soft(fromFlag.gatesAt).toEqual([]);
+    expect.soft(fromFlag.gateless).toBe(true);
+    // The frontmatter form does the same.
+    writeFileSync(join(projectDir, 'g.md'), '---\ngateless: true\n---\nbody');
+    const fromFrontmatter = await resolveRunInputs(projectDir, { framing: 'g.md' });
+    expect.soft(fromFrontmatter.gatesAt).toEqual([]);
+    expect.soft(fromFrontmatter.gateless).toBe(true);
+    // A non-gateless run never carries the flag (default-off, byte-for-byte).
+    expect.soft((await resolveRunInputs(projectDir, { framing: 'plain.md' })).gateless).toBeUndefined();
+  });
+
+  test('gateless conflicts with an explicit attend-something gates_at, but not with an attend-none preset', async ({
+    projectDir,
+  }) => {
+    writeFileSync(join(projectDir, 'plain.md'), 'body');
+    // Naming gates to attend while going gateless is a contradiction — reject it,
+    // whether the attend-set comes from the flag or the frontmatter.
+    await expect(resolveRunInputs(projectDir, { framing: 'plain.md', gateless: true, gatesAt: 'spec' })).rejects.toThrow(
+      /a gateless run attends no gates/,
+    );
+    writeFileSync(join(projectDir, 'gx.md'), '---\ngateless: true\ngates_at: frame, spec\n---\nbody');
+    await expect(resolveRunInputs(projectDir, { framing: 'gx.md' })).rejects.toThrow(/a gateless run attends no gates/);
+    // An explicit attend-NONE preset (rir afk → []) is the same posture, so it's compatible.
+    writeFileSync(join(projectDir, 'r.md'), '---\nworkflow: rir\ngates_at: afk\n---\nbody');
+    const ok = await resolveRunInputs(projectDir, { framing: 'r.md', gateless: true });
+    expect.soft(ok.gatesAt).toEqual([]);
+    expect.soft(ok.gateless).toBe(true);
+  });
+
+  test('interactive and the consultant toggle surface as frontmatter passthrough for the CLI', async ({ projectDir }) => {
+    writeFileSync(join(projectDir, 'f.md'), '---\ninteractive: true\nconsultant: off\n---\nbody');
+    const inputs = await resolveRunInputs(projectDir, { framing: 'f.md' });
+    expect.soft(inputs.interactive).toBe(true);
+    expect.soft(inputs.consultantToggle).toBe('off');
+    // Absent with no frontmatter — the CLI falls back to its flags / defaults.
+    writeFileSync(join(projectDir, 'plain.md'), 'body');
+    const bare = await resolveRunInputs(projectDir, { framing: 'plain.md' });
+    expect.soft(bare.interactive).toBeUndefined();
+    expect.soft(bare.consultantToggle).toBeUndefined();
   });
 
   test('--retry-infra overrides frontmatter retry_infra (flag wins)', async ({ projectDir }) => {

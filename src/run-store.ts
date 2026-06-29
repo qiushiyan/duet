@@ -125,6 +125,21 @@ export interface RunState {
   /** Gates auto-crossed under pre-authorization, for the morning review. */
   autoApprovals?: Array<{ gate: string; at: string }>;
   /**
+   * The gateless posture (docs/specs/2026-06-29-gateless-and-verify-self-heal.md):
+   * a run the owner walks away from start to finish. Set by `--gateless` /
+   * `gateless: true`, it is sugar over two orthogonal axes — it materializes
+   * `gatesAt: []` (the posture axis: attend nothing) AND flips the consultant to
+   * BACKSTOP-ONLY (the consultant axis this flag carries: the bet-level
+   * checkpoints — frame/specGate/implGate — don't fire; only the
+   * acceptance-contract author + verify run). It changes WHAT PRODUCES holds, not
+   * the severity-hold mechanism, which is untouched; the universal verify
+   * self-heal still holds a contract that stays broken (the AFK correctness
+   * backstop). `ask_human` and the merge remain the two irreducible human points.
+   * ADDITIVE and present-only: absent ⇒ not gateless, every surface byte-for-byte
+   * as before.
+   */
+  gateless?: true;
+  /**
    * Set by `duet abandon`: the human deliberately stopped this run. The marker
    * exists so a deliberate kill isn't read as a crash — `probeRunPosition`
    * short-circuits to an `abandoned` position instead of `crashed`. The
@@ -389,6 +404,8 @@ export function createRun(opts: {
   /** The resolved per-turn budget multiplier (frozen here; absent ⇒ off). */
   budget?: number;
   gatesAt?: GatePhase[];
+  /** The gateless posture (the consultant axis; the posture axis rides gatesAt). */
+  gateless?: boolean;
   retryInfra?: number;
 }): RunState {
   const now = new Date();
@@ -412,6 +429,7 @@ export function createRun(opts: {
     bindings: opts.bindings,
     ...(opts.budget !== undefined ? { budget: opts.budget } : {}),
     ...(gatesAt ? { gatesAt } : {}),
+    ...(opts.gateless ? { gateless: true } : {}),
     ...(opts.retryInfra ? { retryInfra: opts.retryInfra } : {}),
     workerSessions: {},
     phaseStarted: {},

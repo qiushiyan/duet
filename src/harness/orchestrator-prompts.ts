@@ -281,16 +281,29 @@ Branch: the run works on exactly one branch, fixed before your first worker prom
  * below) stay append-style: there the checkpoint is its own gate-adjacent step,
  * not a rewrite of an existing one.
  */
+/**
+ * Whether the consultant's BET-LEVEL checkpoints fire — the framing analysis and
+ * the pre-gate bet audits (its "is this the right bet?" challenge). They run when
+ * a consultant is bound and the run is NOT gateless: a gateless owner walks away
+ * having pre-decided the bet, so the consultant runs only its correctness backstop
+ * (the contract author + verify, which gate on the binding alone and are
+ * unaffected here). Default-off is preserved — no consultant ⇒ false, the exact
+ * pre-feature routing.
+ */
+function consultantChallengeActive(state: RunState): boolean {
+  return Boolean(state.bindings.consultant) && !state.gateless;
+}
+
 function analysisSendStep(state: RunState, phase: PhaseName): string {
   const snippet = consultantSnippetFor(phase);
-  if (!state.bindings.consultant || !snippet) {
+  if (!consultantChallengeActive(state) || !snippet) {
     return `Send think-holistic to both workers in one fan-out call — send_prompt with role ["implementer", "reviewer"] — so one role-neutral problem read reaches each, and they analyze it independently and in parallel. Keep that body role-neutral: the two reads differ by model and session, not by a label you write in, so don't add "you are the implementer/reviewer" framing — just the shared problem and the analysis ask.`;
   }
   return `Send think-holistic to both workers in one fan-out call — send_prompt with role ["implementer", "reviewer"], one role-neutral problem read they each analyze independently — and, separately, ${snippet} to the consultant (its own cross-family, bet-level body, deliberately different, so a separate send rather than part of the fan-out). Keep the workers' body role-neutral: they differ by model and session, not by a label, so no "you are the implementer/reviewer" framing.`;
 }
 
 function synthesisStep(state: RunState): string {
-  if (!state.bindings.consultant) {
+  if (!consultantChallengeActive(state)) {
     return "Send the reviewer's analysis to the implementer with compare-notes: critique, synthesize, don't capitulate.";
   }
   return "Send the reviewer's AND the consultant's analyses to the implementer with compare-notes, presented as two anonymized peers (do not label either by role, so the implementer stays blind to reviewer identity): critique and synthesize across all three voices, don't capitulate or average. The consultant's analysis is a synthesis input to the direction, like the reviewer's — not a gate-holding finding.";
@@ -302,7 +315,7 @@ function synthesisStep(state: RunState): string {
  */
 function consultantAuditStep(state: RunState, phase: PhaseName, seedNote: string): string {
   const snippet = consultantSnippetFor(phase);
-  if (!state.bindings.consultant || !snippet) return '';
+  if (!consultantChallengeActive(state) || !snippet) return '';
   return `
 
 Consultant checkpoint (the consultant is bound for this run): before you advance, run its bet audit. Send the consultant a ${snippet} prompt — a fresh, ephemeral, read-only session, so curate what it sees rather than pointing it at the run's history: ${seedNote} Fold its raw findings into your advance_phase summary, and echo each finding's consultant-assigned severity into advance_phase's human_decisions — record them, never re-grade (you do triage, not opinion). "The bet is sound — ship" is a first-class outcome; a documented tradeoff is by-design, not a finding.`;
@@ -328,11 +341,14 @@ Consultant checkpoint — author the acceptance contract (the consultant is boun
 
 /**
  * The acceptance-contract VERIFY injection (Full's impl) — supplants the
- * open-ended implGate bet audit there. A fresh session re-reads the FROZEN
- * contract and verifies it by exercising the built system. Absent a frozen
- * contract (authoring failed and the human proceeded anyway), it degrades to a
- * noted skip — never silently, and never a fallback audit. Empty when no
- * consultant is bound.
+ * open-ended implGate bet audit there. A fresh consultant session verifies the
+ * frozen contract against the built system; any failure routes to the implementer
+ * first for a bounded fix → re-verify loop (universal — attended and gateless
+ * alike), and only an assertion still failing after that holds the gate as a high
+ * (the preserved AFK backstop, the conscious softening of "a failure always
+ * holds"). Absent a frozen contract (authoring failed and the human proceeded
+ * anyway), it degrades to a noted skip — never silently, and never a fallback
+ * audit. Empty when no consultant is bound.
  */
 function consultantVerifyStep(state: RunState): string {
   const snippet = consultantSnippetFor('impl');
@@ -345,7 +361,11 @@ Consultant checkpoint — no frozen acceptance contract exists for this run (non
   const { path } = state.acceptanceContract;
   return `
 
-Consultant checkpoint — verify the frozen acceptance contract (the consultant is bound for this run): before you advance, send the consultant a ${snippet} prompt over a fresh, ephemeral, read-only session. Point it at the frozen contract at ${path} (committed and ratified at the plan gate): it re-reads each assertion, exercises the BUILT system to gather evidence (run the tests, run the CLI, read logs — never edit or commit), and returns a per-assertion PASS/FAIL with the evidence it cited. Record each FAILED assertion as its own high human_decision (titled by the assertion) — a failed contract assertion is load-bearing AFK protection: it holds the pre-authorized Ship auto-cross and a one-tap afk handoff, so the run stops for the human rather than shipping past a broken target. Fold the per-assertion results and any residual concerns into your advance_phase summary. "Every assertion holds — ship" is a first-class expected outcome.`;
+Consultant checkpoint — verify the frozen acceptance contract, then let the implementer self-heal any failure (the consultant is bound for this run): before you advance, send the consultant a ${snippet} prompt over a fresh, ephemeral, read-only session pointed at the frozen contract at ${path} (committed and ratified at the plan gate). It re-reads each assertion, exercises the built system for evidence (run the tests, run the CLI, read logs — never edit or commit), and returns a per-assertion pass/fail with the evidence it cited. "Every assertion holds — ship" is a first-class expected outcome.
+
+Route a failed assertion to the implementer first, not to the human — it is a fact the implementer can usually just fix, and the human cares only about the ones that resist fixing. Send the failing assertions and their evidence to the implementer as a fix request (like routing a review finding), let it fix, then re-verify by sending a fresh ${snippet} consultant turn — a new session each time, so the check stays independent and a fix only counts when an independent re-run confirms it. Repeat this fix-then-re-verify a round or two; an assertion that passes on an independent re-run is resolved and needs nothing from the human.
+
+Record a high human_decision (titled by the assertion) only for an assertion that still fails after that — the build cannot be made to meet its own ratified target — or if verification could not run at all. That high is the load-bearing AFK protection: it holds the pre-authorized Ship auto-cross and a one-tap afk handoff, so the run stops for the human rather than shipping past a broken target. In your advance_phase summary report the verify outcome so the human can audit it without you: which assertions passed, which the implementer self-healed and in how many rounds, and which remain — plus any residual concerns the consultant raised.`;
 }
 
 function documentsBlock(state: RunState): string {

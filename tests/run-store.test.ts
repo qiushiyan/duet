@@ -115,6 +115,16 @@ describe('run creation', () => {
     expect.soft(loadRunState(projectDir, created.runId).gatesAt).toEqual([]);
   });
 
+  test('createRun persists the gateless flag present-only (default-off byte-for-byte)', ({ projectDir }) => {
+    const gateless = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, gatesAt: [], gateless: true });
+    expect.soft(gateless.gateless).toBe(true);
+    expect.soft(loadRunState(projectDir, gateless.runId).gateless).toBe(true);
+    // Absent on every non-gateless run — the surface reads byte-for-byte as before.
+    const plain = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
+    expect.soft(plain.gateless).toBeUndefined();
+    expect.soft('gateless' in loadRunState(projectDir, plain.runId)).toBe(false);
+  });
+
   test('createRun freezes the resolved budget; a later budgetFor reads it back (scaled)', ({ projectDir }) => {
     const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, budget: 2 });
     expect.soft(created.budget).toBe(2);
