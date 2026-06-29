@@ -58,16 +58,18 @@ A framing can pre-authorize gates so the user can walk away. Before finalizing, 
 
 Record their choice as `gates_at:` in the framing frontmatter. A preset must belong to the chosen workflow (`overnight` / `skip-plan` are full's; `afk` is rir's), so duet rejects a mismatch.
 
+**Walk away from the *start*.** The most hands-off posture is `gateless: true` (a frontmatter key, or the `--gateless` flag): it pre-authorizes *every* gate, so the run flows to an open PR with no attended stop at all — for the user who has already settled the direction and wants to leave immediately, not attend even the early gates. It's a posture in its own right, separate from `gates_at`. When a consultant is bound, gateless runs only its **backstop** (the acceptance-contract verify still guards the build) and drops its bet audits — the user has pre-decided the bet. A genuine product call or a contract that can't be met still stops the run; `ask_human` and the merge always stay theirs. Offer it when the user says "just run it" — but it's the opposite of interactive mode (which exists to drive the early gates in-session), so the two can't be combined.
+
 ## Consultant — an optional outside voice
 
-duet's reviewer is sharp on _is this well-built_, but — invested in the framing it helped shape — rarely challenges the _bet_ underneath. A run can bind an optional **consultant**: a read-only second reviewer that questions assumptions and product fit rather than the build, ideally on a **different model family** from the reviewer — the one outside perspective a single reviewer working harder can't supply. It is **off by default** and never changes what gets built; it checks whether the bet is sound. On the **full** arc it also authors a frozen **acceptance contract** — a short, falsifiable list of what success means, written before the code — which the user ratifies at the plan gate and a fresh session verifies against the built system before shipping; worth mentioning when the consultant is in play, since the plan gate then carries that extra thing to sign off.
+duet's reviewer is sharp on _is this well-built_, but — invested in the framing it helped shape — rarely challenges the _bet_ underneath. A run can bind an optional **consultant**: a read-only second reviewer that questions assumptions and product fit rather than the build, ideally on a **different model family** from the reviewer — the one outside perspective a single reviewer working harder can't supply. It is **off by default** and never changes what gets built; it checks whether the bet is sound. On the **full** arc it also authors a frozen **acceptance contract** — a short, falsifiable list of what success means, written before the code — which the user ratifies at the plan gate and a fresh session verifies against the built system before shipping (a failed assertion routes to the implementer to fix and re-verify first, holding the gate only if it stays broken); worth mentioning when the consultant is in play, since the plan gate then carries that extra thing to sign off.
 
 Surface it like gate posture — offer the choice, don't make it; whether the premise is worth a second opinion is the user's call:
 
 - **Worth raising** when the _premise_ carries the risk: a new direction, an unproven assumption, a product bet where "are we building the right thing?" matters more than execution polish.
 - **Leave it off** for routine, well-understood work — the embedded reviewer is enough there, and an extra voice is just cost and ceremony.
 
-Unlike workflow and gate posture, this is **not frontmatter** — it's a launch flag, `--consultant <provider[:model]>` (e.g. `--consultant claude` — Claude Opus 4.8 by default — for a cross-family read against the default codex reviewer). If the user already binds one in config (`[roles.consultant]`) it runs every time, so skip the flag; `--no-consultant` turns it off for a single run.
+The _binding_ — which provider/model plays consultant — is a launch flag, `--consultant <provider[:model]>` (e.g. `--consultant claude` — Claude Opus 4.8 by default — for a cross-family read against the default codex reviewer), or `[roles.consultant]` in config to bind one for every run; the binding never enters frontmatter (a `consultant: claude:opus` is rejected). What _can_ ride the frontmatter is a `consultant: on | off` **toggle** — the on/off half of the knob, for a template that says "this kind of work always uses the outside voice" (or always skips it). So: the toggle is frontmatter, the binding is a flag; `--no-consultant` turns a config-bound one off for a single run.
 
 ## The framing schema
 
@@ -77,6 +79,9 @@ Frontmatter is optional and machine-parsed; everything else is prose sent to the
 ---
 workflow: rir              # optional: full (default) or rir
 gates_at: afk              # optional: attend every gate (omit); presets are workflow-specific (full: skip-plan / overnight; rir: afk) or a phase list
+gateless: true             # optional: walk away from the START — pre-authorize every gate (conflicts with gates_at and interactive)
+interactive: true          # optional: drive the early gates from your own session (the --interactive flag by another door; for a template's launch hint)
+consultant: on             # optional: on | off toggle for a config-bound consultant (the binding's provider/model stays a flag, never here)
 ---
 
 # Problem
@@ -148,3 +153,9 @@ duet new --interactive --workflow <full|rir> --framing .duet/<slug>.md
 ```
 
 Use the workflow you settled on (omit `--workflow` to take the default `full`). Add `--consultant <provider[:model]>` only if the user chose the outside voice for this run (omit it otherwise, or when their config already binds one). Tell them to run it in their own terminal — `--interactive` hands the terminal to a live orchestrator session, so it can't be launched for them from a non-interactive session.
+
+If the user chose to walk away from the start (gateless), drop `--interactive` and use `--gateless` instead — the two are mutually exclusive, and a gateless run is headless from the first prompt:
+
+```
+duet new --gateless --workflow <full|rir> --framing .duet/<slug>.md
+```

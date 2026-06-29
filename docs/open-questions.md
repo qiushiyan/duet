@@ -30,13 +30,22 @@ The 2026-06-12 fix was transparency, not a model: `send_prompt` and the impl ent
 
 The consultant is a bet on a bet: that a deliberately low-context, ephemeral, cross-family reviewer challenges the *premise* where the embedded reviewer — invested in the run's accumulated context — is strong on execution and blind to it. The mechanism is built and live-verified; its value is still thin on evidence.
 
-The altitude gap is real, and a different model family is the one thing a single reviewer working harder can't supply — so the consultant should surface a class of finding the reviewer structurally won't. It is off by default and additive (never a review round, never substitutive), so a weak consultant's downside is bounded to wasted turns on a run that opted in. The calibration risk to watch is the severity hold: a consultant too eager with `high` converts pre-authorized runs into attended stops. What would settle it — more bound runs reviewed against notes: did a bet audit change a direction or catch a premise the reviewer and human both missed, and how often versus restating known tradeoffs? Did a `high` hold ever save a wrong-subject overnight arc, or only stall good ones?
+The altitude gap is real, and a different model family is the one thing a single reviewer working harder can't supply — so the consultant should surface a class of finding the reviewer structurally won't. It is off by default and additive (never a review round, never substitutive), so a weak consultant's downside is bounded to wasted turns on a run that opted in. The calibration risk to watch is the severity hold: a consultant too eager with `high` converts pre-authorized runs into attended stops. Two recent changes **narrow** this evidence stream to the case that still matters: gateless turns the bet audits off entirely (so the stalling pressure now lives only in *attended* runs), and the universal verify self-heal routes a failed contract assertion to the implementer first, so verify findings rarely reach a `high` at all. What would settle it — more bound runs reviewed against notes: did a bet audit change a direction or catch a premise the reviewer and human both missed, and how often versus restating known tradeoffs? Did a `high` hold ever save a wrong-subject overnight arc, or only stall good ones?
+
+A smaller dial rides along: the **self-heal bound** — how many fix→re-verify cycles before a still-failing assertion holds (`consultantVerifyStep` prose, plan-altitude). Start tight; watch run notes for a contract that thrashes the loop without converging, or one that holds on the first failure where a second round would have fixed it.
 
 ## Codex as the orchestrator
 
 Role–provider decoupling makes orchestrator-on-codex a legal configuration, but the orchestrator's capability contract — custom harness tools, read-only enforcement, pause/resume at a tool call — is claude-only today. This records the designed path so the decoupling isn't an empty promise.
 
 The bridge is the host-neutral kernel served over stdio MCP (`duet _mcp`) — the same server a codex orchestrator would connect to; the harness-side half exists. Two codex-specific unknowns gate it: **pause/resume at a tool call** (codex has no `canUseTool` callback, and what `codex exec resume` does with a turn ended mid-tool-call is unknown — the hard part), and **tool-call faithfulness** under codex's MCP client. It stays deliberately unbuilt because nobody has wanted the configuration — the interface allows it, no one pays for it. If wanted: a half-day spike mirroring the claude substrate spike, against the same tools.
+
+## Deferred small defects (forensics)
+
+Not design questions — two real, small implementation defects surfaced while tracing an AFK run, kept here only so the prune of their origin spec doesn't lose them. Independent of any feature; fix when convenient.
+
+- **Resume-brief narration of a held gate.** The orchestrator's resume brief can narrate a gate that was *held* (a `high` withheld its auto-cross) as "auto-crossed" — the narration doesn't distinguish the held case from the crossed one (observed in an overnight run's `orchestrator.log`).
+- **`autoApprovals` omits the first gate.** The "while you were away" auto-cross ledger doesn't record the frame/Direction gate, so a morning review of a fully pre-authorized run under-counts by one.
 
 ## Settled, still watched
 

@@ -125,7 +125,7 @@ export interface RunState {
   /** Gates auto-crossed under pre-authorization, for the morning review. */
   autoApprovals?: Array<{ gate: string; at: string }>;
   /**
-   * The gateless posture (docs/specs/2026-06-29-gateless-and-verify-self-heal.md):
+   * The gateless posture (docs/automation-design.md §"Gate pre-authorization"):
    * a run the owner walks away from start to finish. Set by `--gateless` /
    * `gateless: true`, it is sugar over two orthogonal axes — it materializes
    * `gatesAt: []` (the posture axis: attend nothing) AND flips the consultant to

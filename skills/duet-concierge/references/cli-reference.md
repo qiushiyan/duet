@@ -9,6 +9,7 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | `duet new --framing <file>` | Start a run from a framing file (the project briefing — the only place project knowledge enters). Returns immediately; the first phase runs in a detached driver. Runs the **full** arc unless `--workflow` says otherwise. |
 | `duet new --workflow <full\|rir> --framing <file>` | Pick the arc. **full** (default): frame → spec → plan → implementation → PR. **rir**: research → implement → one review round → `publish` (reconcile docs → PR), with no spec or plan — for small, well-understood work. Also settable as `workflow:` in the framing frontmatter; the flag wins. |
 | `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates; the rest are pre-authorized and auto-cross with their packets recorded. Phases and presets are **workflow-specific**. full: gates `frame, spec, plan, impl, finish` — **default `overnight` (= frame,spec)**; preset `skip-plan` (= walk away at spec approval, return at the Ship gate). The Open-PR gate (end of `finish`) sits *after* the open — the PR auto-opens and the gate auto-crosses to done; list `finish` to attend a post-open review stop. rir: gates `research, implement, publish` — or the preset `afk` (= attend none, run straight to done with the PR open). |
+| `duet new --framing <file> --gateless` | Walk away from the **start**: pre-authorize every gate (the run flows to an open PR with no attended stop) and, if a consultant is bound, run only its acceptance-contract **backstop** — bet audits off. A genuine product `high` or a contract that can't be met still stops it; `ask_human` and the merge stay the human's. Conflicts with `--gates-at` and `--interactive`. Also settable as `gateless:` in the framing frontmatter (the flag wins). |
 | `duet new --spec <path>` | Start at the spec review loop from a draft spec (skips the FRAME phase). **full-only** — rir has no spec phase and rejects `--spec`. |
 | `duet new --framing <file> --retry-infra <n>` | Opt the headless run into bounded auto-retry of transient infra failures (network/server/rate-limit), default-off; or set `retry_infra:` in the framing frontmatter (the flag wins). `auth` retries once then escalates; login/quota/dns/unknown never retry; exhaustion flags. |
 | `duet new --framing <file> --consultant <provider[:model]>` | Bind the optional **consultant** for the run — a read-only second reviewer that questions the *bet* (assumptions, product fit), ideally on a different model family from the reviewer. Off by default; relay it only when the user asks for it. Also settable for every run via `[roles.consultant]` in config; `--no-consultant` disables a config-bound one for this run. |
@@ -36,7 +37,7 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | `duet view [run-id]` | Open a tmux viewer (one pane per voice). Terminal-side; not useful remotely. |
 | `duet takeover <role> [run-id]` | Hand a role's session to the human in the provider's own interactive CLI. Terminal-only by nature — never the concierge's verb. |
 | `duet orchestrate [run-id]` | Bring up the human's local interactive `/duet` orchestrator for a run over its attended arc (full: FRAME → PLAN; rir: RESEARCH). Terminal-only — never the concierge's verb. Relevant to know about: a run started with `duet new --interactive` is driven by that local session until the handoff gate (full: plan-approval; rir: Direction), after which AFK implementation runs headless and the concierge supervises it exactly as any other run. |
-| `duet afk [preset] [run-id]` | The human's one-tap mid-session handoff from an interactive gate: re-set the downstream gate posture (bare = attend none; a preset/list otherwise) and drop the run to the headless driver. Terminal-only — never the concierge's verb. Relevant to know about: after it runs, the run is an ordinary headless run the concierge supervises like any other, auto-crossing the now-pre-authorized gates and stopping only at a still-attended gate, a queued question, or done. |
+| `duet afk [preset] [run-id] [--gateless]` | The human's one-tap mid-session handoff from an interactive gate: re-set the downstream gate posture (bare = attend none; a preset/list otherwise) and drop the run to the headless driver. `--gateless` adds the consultant-backstop-only narrowing and full-sends the bet/product `high`s at this gate (still preserving the contract backstop), conflicting with a posture argument. Terminal-only — never the concierge's verb. Relevant to know about: after it runs, the run is an ordinary headless run the concierge supervises like any other, auto-crossing the now-pre-authorized gates and stopping only at a still-attended gate, a queued question, or done. |
 
 Every command defaults to the latest run in the project when `[run-id]` is omitted.
 
@@ -127,7 +128,7 @@ Top-level fields:
 
 ## The framing file (for run starts from dictation)
 
-A markdown file: an optional `---`-fenced frontmatter block holding only fixed machine-parsed values (`workflow`, `gates_at`, `spec`), then prose that, at the first phase, each worker reads independently as its own briefing. Everything judgment-weighed belongs in the prose, never the frontmatter. Write that prose as the briefing it is: speak to the reader as "you" and pair each action with the knowledge behind it ("read X to understand Y, then build Z; verify with W"), so whoever opens the file reads it as onboarding written for them. Draft from this skeleton, filling what the human's dictation gives you and asking for what it doesn't — a thin framing produces hours of misdirected autonomous work:
+A markdown file: an optional `---`-fenced frontmatter block holding only fixed machine-parsed values (`workflow`, `gates_at`, `spec`, `retry_infra`, `gateless`, `interactive`, and a `consultant` on/off toggle), then prose that, at the first phase, each worker reads independently as its own briefing. Everything judgment-weighed belongs in the prose, never the frontmatter. Write that prose as the briefing it is: speak to the reader as "you" and pair each action with the knowledge behind it ("read X to understand Y, then build Z; verify with W"), so whoever opens the file reads it as onboarding written for them. Draft from this skeleton, filling what the human's dictation gives you and asking for what it doesn't — a thin framing produces hours of misdirected autonomous work:
 
 ```markdown
 ---
@@ -141,6 +142,13 @@ A markdown file: an optional `---`-fenced frontmatter block holding only fixed m
 #                             overnight (= frame,spec); rir → afk (attend none).
 #                             Or a list, e.g. "frame, spec, finish".
 # spec: path/to/draft.md    — enter at the spec review loop (skips FRAME). full-only.
+# gateless: true            — walk away from the START: pre-authorize every gate +
+#                             consultant-backstop-only. Conflicts with gates_at and
+#                             interactive.
+# interactive: true         — orchestrate from the human's session (needs a live
+#                             terminal); the --interactive flag by another door.
+# consultant: on            — on|off toggle for a config-bound consultant (the
+#                             provider/model binding stays a flag, never here).
 ---
 
 # Problem
