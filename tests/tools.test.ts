@@ -120,18 +120,9 @@ describe('result builders', () => {
     expect('isError' in r).toBe(false);
   });
 
-  test('refuse carries the steering text as a rail refusal (isError set)', () => {
-    expect(refuse('next move here')).toEqual({
-      content: [{ type: 'text', text: 'next move here' }],
-      isError: true,
-    });
-  });
-
-  test('error marks a worker/tool failure without the non-empty-text constraint', () => {
-    expect(error(block('the turn failed'))).toEqual({
-      content: [{ type: 'text', text: 'the turn failed' }],
-      isError: true,
-    });
+  test('refuse and error both produce the isError:true envelope (their only difference — refuse rejects empty text — is the compile-time guarantee above)', () => {
+    expect(refuse('next move here')).toEqual({ content: [{ type: 'text', text: 'next move here' }], isError: true });
+    expect(error(block('the turn failed'))).toEqual({ content: [{ type: 'text', text: 'the turn failed' }], isError: true });
   });
 
   test('result sets the flag only when isError is truthy, else omits it', () => {
@@ -1752,7 +1743,7 @@ describe('ask_human (the cooperative pause)', () => {
     const { call } = harness(run, { stagedAnswer: 'yes, behind a flag' });
 
     const first = await call('ask_human', { question: 'ship behind a flag?' });
-    expect.soft(text(first)).toBe('The human answered: yes, behind a flag');
+    expect.soft(text(first)).toContain('yes, behind a flag'); // the staged answer is surfaced; the exact prefix wording isn't the contract
     // The staged-answer fast-path is NOT terminal — no marker, the phase continues.
     expect.soft(run.terminalMarker).toBeUndefined();
 

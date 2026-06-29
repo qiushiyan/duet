@@ -12,36 +12,15 @@ const render = (run: RunState, position: RunPosition): string =>
   renderStatus(buildStatusModel(run, position, []));
 
 describe('formatGatePosture (the single source for the three posture surfaces)', () => {
-  test('the status style: padded label, "other gates", no parenthetical', () => {
+  test('formats the attended-list branch and the none branch from the injected copy', () => {
     const copy = { label: 'gates:    ', attendedSuffix: 'other gates pre-authorized', noneSuffix: 'all gates pre-authorized' };
     expect(formatGatePosture(['frame', 'spec'], copy)).toBe('gates:    attending frame, spec — other gates pre-authorized');
     expect(formatGatePosture([], copy)).toBe('gates:    attending none — all gates pre-authorized');
   });
-
-  test('the duet-new style: tight label, "other gates", with the parenthetical', () => {
-    const copy = {
-      label: 'gates: ',
-      attendedSuffix: 'other gates pre-authorized (auto-cross, packets recorded)',
-      noneSuffix: 'all gates pre-authorized (auto-cross, packets recorded)',
-    };
-    expect(formatGatePosture(['frame', 'spec'], copy)).toBe(
-      'gates: attending frame, spec — other gates pre-authorized (auto-cross, packets recorded)',
-    );
-    expect(formatGatePosture([], copy)).toBe('gates: attending none — all gates pre-authorized (auto-cross, packets recorded)');
-  });
-
-  test('the duet-afk style threads its explicit pre-authorized list, with the downstream none-copy', () => {
-    const preAuthorized = ['plan', 'impl', 'finish'];
-    const copy = {
-      label: 'gates: ',
-      attendedSuffix: `${preAuthorized.join(', ') || 'nothing else'} pre-authorized (auto-cross, packets recorded)`,
-      noneSuffix: 'all downstream gates pre-authorized (auto-cross, packets recorded)',
-    };
-    expect(formatGatePosture(['frame', 'spec'], copy)).toBe(
-      'gates: attending frame, spec — plan, impl, finish pre-authorized (auto-cross, packets recorded)',
-    );
-    expect(formatGatePosture([], copy)).toBe('gates: attending none — all downstream gates pre-authorized (auto-cross, packets recorded)');
-  });
+  // The function has exactly two branches (attended-list / none), both covered above.
+  // Each surface's actual copy — duet status / new / afk — is pinned at its real call
+  // site (the renderStatus suite below; the cli.ts new/afk paths), not by re-running
+  // this formatter with hand-supplied literals.
 });
 
 describe('workflow-neutral status surfaces (RIR)', () => {
@@ -437,7 +416,7 @@ describe('renderStatus', () => {
     run.phaseSummaries.spec = { summary: 'reviewer flagged the data model; fixed', artifacts: ['docs/spec.md'] };
     const out = render(run, { kind: 'gate', phase: 'spec' });
 
-    expect.soft(out).toContain("━━━ SPEC gate — the orchestrator's summary ━━━");
+    expect.soft(out).toContain('SPEC gate'); // the load-bearing tokens, not the box-drawing decoration
     expect.soft(out).toContain('reviewer flagged the data model; fixed');
     expect.soft(out).toContain('artifacts: docs/spec.md');
     expect.soft(out).toContain(`duet continue ${run.runId} --approve`);

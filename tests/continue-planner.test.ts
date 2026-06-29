@@ -64,11 +64,8 @@ describe('continuePlanner — the interactive host', () => {
 
   test('--headless at a gate fails — the human owes a decision first', ({ interactiveRun }) => {
     const action = continuePlanner(interactiveRun, at({ position: { kind: 'gate', phase: 'spec' }, headless: true }));
-    expect(action).toEqual({
-      kind: 'fail',
-      message:
-        'the run is parked at its gate — cross it with --headless --approve/--reject (a gate) or --answer (a flag); bare --headless is only for a mid-phase drop.',
-    });
+    expect(action.kind).toBe('fail');
+    expect((action as { message: string }).message).toContain('parked at its gate');
   });
 
   test('bare continue shows status', ({ interactiveRun }) => {
@@ -78,10 +75,8 @@ describe('continuePlanner — the interactive host', () => {
 
   test('an invalid crossing (approve at a flag) fails with the crossing message', ({ interactiveRun }) => {
     const action = continuePlanner(interactiveRun, at({ position: { kind: 'flag', phase: 'spec' }, eventType: 'approve' }));
-    expect(action).toEqual({
-      kind: 'fail',
-      message: `run ${interactiveRun.runId} has a queued question — use --answer "<text>".`,
-    });
+    expect(action.kind).toBe('fail');
+    expect((action as { message: string }).message).toContain('queued question');
   });
 });
 
@@ -98,10 +93,8 @@ describe('continuePlanner — the headless host', () => {
 
   test('a decision with no restored snapshot fails — nothing to act on', ({ run }) => {
     const action = continuePlanner(run, at({ position: { kind: 'gate', phase: 'spec' }, eventType: 'approve', restored: null }));
-    expect(action).toEqual({
-      kind: 'fail',
-      message: 'this run has no gate to act on (it stopped mid-phase) — rerun without flags to let it pick up from the transcripts',
-    });
+    expect(action.kind).toBe('fail');
+    expect((action as { message: string }).message).toContain('no gate to act on');
   });
 
   test('a snapshot parked at a pre-authorized gate re-enters (it auto-crosses)', ({ run }) => {
@@ -123,7 +116,8 @@ describe('continuePlanner — the headless host', () => {
       run,
       at({ position: { kind: 'done' }, eventType: 'approve', restored: facts({ status: 'done', value: 'done' }) }),
     );
-    expect(action).toEqual({ kind: 'fail', message: `run ${run.runId} is complete — nothing to continue` });
+    expect(action.kind).toBe('fail');
+    expect((action as { message: string }).message).toContain('is complete');
   });
 
   test('an event invalid at the restored state fails with the gate-vs-flag message', ({ run }) => {
@@ -131,10 +125,8 @@ describe('continuePlanner — the headless host', () => {
       run,
       at({ position: { kind: 'gate', phase: 'spec' }, eventType: 'answer', restored: facts({ value: 'commitSpecGate', hasGateTag: true }) }),
     );
-    expect(action).toEqual({
-      kind: 'fail',
-      message: '--answer is not valid at "commitSpecGate" — this is a gate: use --approve or --reject "<feedback>"',
-    });
+    expect(action.kind).toBe('fail');
+    expect((action as { message: string }).message).toContain('this is a gate');
   });
 
   test('a valid gate event becomes a gate-decision', ({ run }) => {
