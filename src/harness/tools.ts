@@ -393,20 +393,27 @@ export function settleTurn(
   // consultant ran the checkpoint, which the freeze and the advance_phase rails
   // require (so guarantee 2 holds mechanically, not by prompt compliance). Keyed on
   // the registry checkpoint mode, so only full's plan/impl ever set it.
+  const checkpointMode = PHASE[phase].consultantCheckpoint;
   if (role === 'consultant') {
-    const mode = PHASE[phase].consultantCheckpoint;
-    if (mode === 'contract' && fresh.specPath) {
+    if (checkpointMode === 'contract' && fresh.specPath) {
       // A consultant turn settled at the contract checkpoint — this run authored.
       fresh.acceptanceContractDraft = {
         path: acceptanceContractPathForSpec(fresh.specPath),
         sessionId: turn.sessionId,
         authoredAt: new Date().toISOString(),
       };
-    } else if (mode === 'verify' && fresh.acceptanceContract) {
+    } else if (checkpointMode === 'verify' && fresh.acceptanceContract) {
       // A consultant turn settled at the verify checkpoint — verification RAN
       // (pass/fail rides the gate packet; this only records that it happened).
       fresh.acceptanceContract = { ...fresh.acceptanceContract, verifiedAt: new Date().toISOString() };
     }
+  } else if (checkpointMode === 'verify' && !readOnlyFor(role) && fresh.acceptanceContract?.verifiedAt) {
+    // A code-changing (non-read-only) worker turn at the verify checkpoint AFTER a
+    // verification ran: the build just changed, so the prior verify is stale. Drop
+    // verifiedAt so the rail requires a FRESH, independent re-verify before advance —
+    // the self-heal loop's "re-verify after the fix" made structural, not just
+    // prompt-trusted, so a routed fix can't ride the pre-fix verify to auto-cross Ship.
+    delete fresh.acceptanceContract.verifiedAt;
   }
   fresh.lastActivity = `send_prompt → ${role} (${tag})`;
   saveRunState(fresh);

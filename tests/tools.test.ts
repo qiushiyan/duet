@@ -108,6 +108,23 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 
 const text = (result: ToolResult): string => (result.content[0] as { text: string }).text;
 
+// A default rail context for the rail unit tests; `over` patches the fields a case cares about.
+const railCtx = (state: RunState, over: Partial<RailCtx> = {}): RailCtx => ({
+  state,
+  phase: 'spec',
+  cap: 3,
+  // Default to the async host (a dispatcher present) — the common case for these
+  // rails. The blocking host (asyncHost:false) is exercised explicitly below.
+  asyncHost: true,
+  inFlight: () => false,
+  orphanedOnDisk: () => false,
+  sentThisPhase: () => [],
+  resendWarned: new Set<string>(),
+  clearOrphan: () => {},
+  log: () => {},
+  ...over,
+});
+
 // The result-builder contract (#1-floor): the 58 hand-built envelopes collapsed
 // onto these. The compile-time guarantee — `refuse()` with no text is a type
 // error — is pinned by `pnpm typecheck`, not here; these characterize the
@@ -141,21 +158,6 @@ describe('result builders', () => {
 // dispatcher/turnsInFlight-derived adapter in production, a stub here) — mocking
 // at the seam, not our own module.
 describe('rails (the #1-deep internal-seam surface)', () => {
-  const railCtx = (state: RunState, over: Partial<RailCtx> = {}): RailCtx => ({
-    state,
-    phase: 'spec',
-    cap: 3,
-    // Default to the async host (a dispatcher present) — the common case for these
-    // rails. The blocking host (asyncHost:false) is exercised explicitly below.
-    asyncHost: true,
-    inFlight: () => false,
-    orphanedOnDisk: () => false,
-    sentThisPhase: () => [],
-    resendWarned: new Set<string>(),
-    clearOrphan: () => {},
-    log: () => {},
-    ...over,
-  });
 
   test('sameRoleInFlightRail refuses a live same-role send, passes otherwise', ({ run }) => {
     const live = sameRoleInFlightRail({ role: 'reviewer', tag: 'x', isReviewRound: false }, railCtx(run, { inFlight: () => true }));
@@ -1257,6 +1259,42 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     const persisted = loadRunState(projectDir, consultantRun.runId);
     expect.soft(persisted.acceptanceContract?.verifiedAt).toBeDefined(); // verification RAN
     expect.soft(persisted.acceptanceContract?.commit).toBe('abc'); // the freeze record is preserved
+  });
+
+  test('a code-changing impl turn after a verify clears verifiedAt — a fix forces a fresh re-verify before advance', async ({
+    projectDir,
+    consultantRun,
+  }) => {
+    // The self-heal loop: a verify ran, the orchestrator routed the failing assertion
+    // to the implementer; that fix must invalidate the stale verification so the impl
+    // rail can't auto-cross Ship on the pre-fix verify (the Codex adversarial-review
+    // window). Closing it structurally, not by trusting the orchestrator to re-verify.
+    consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc', verifiedAt: 'now' };
+    saveRunState(consultantRun);
+    const { call } = harness(consultantRun, { phase: 'impl', implementer: new FakeWorker('claude') });
+
+    await call('send_prompt', { role: 'implementer', tag: 'respond-review', body: 'fix the failing assertion' });
+
+    const persisted = loadRunState(projectDir, consultantRun.runId);
+    expect.soft(persisted.acceptanceContract?.verifiedAt).toBeUndefined(); // stale verify dropped by the fix
+    expect.soft(persisted.acceptanceContract?.commit).toBe('abc'); // the freeze record survives
+    // With verifiedAt gone and no high, the rail refuses advance until a fresh verify re-stamps it.
+    const verify = verifyCheckpointRail({ verb: 'advance the phase' }, railCtx(persisted, { phase: 'impl' }));
+    expect.soft(verify).not.toBeNull();
+  });
+
+  test('a read-only (reviewer) turn at verify leaves verifiedAt intact — only a code change invalidates it', async ({
+    projectDir,
+    consultantRun,
+  }) => {
+    consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc', verifiedAt: 'now' };
+    saveRunState(consultantRun);
+    const { call } = harness(consultantRun, { phase: 'impl', reviewer: new FakeWorker('codex') });
+
+    await call('send_prompt', { role: 'reviewer', tag: 'review-implementation', body: 'look again' });
+
+    const persisted = loadRunState(projectDir, consultantRun.runId);
+    expect.soft(persisted.acceptanceContract?.verifiedAt).toBe('now'); // a read-only turn doesn't change code, so no invalidation
   });
 
   test('additivity: a consultant turn never counts a review round nor satisfies the loop requirement', async ({
