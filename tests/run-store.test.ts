@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
 import type { Snapshot } from 'xstate';
@@ -6,6 +6,7 @@ import { DEFAULT_BINDINGS } from '../src/config.ts';
 import { claudeArgs } from '../src/providers/claude.ts';
 import {
   acquireMcpOwner,
+  appendVoiceLog,
   budgetFor,
   consumeHumanInput,
   createRun,
@@ -21,6 +22,7 @@ import {
   runDirOf,
   saveMachineSnapshot,
   saveRunState,
+  scratchDirOf,
   stageHumanInput,
   workflowOf,
 } from '../src/run-store.ts';
@@ -33,6 +35,43 @@ describe('recordPhaseLabel — the view-only tmux phase sidecar', () => {
     expect.soft(readFileSync(sidecar, 'utf8')).toBe('impl\n');
     recordPhaseLabel(run, 'finish');
     expect.soft(readFileSync(sidecar, 'utf8')).toBe('finish\n'); // refreshed, not appended
+  });
+});
+
+describe('a vanished .duet self-heals on the next harness write (ensureRunDir)', () => {
+  // Regression for the observed failure: an implementer cleaning its scratch ran
+  // `rm -rf .duet` mid-run, and the next voice-log append threw ENOENT, ending
+  // the phase with no advance and no flag. The write must now recover the dir.
+  test('appendVoiceLog recreates a deleted .duet (with its .gitignore) and writes', ({ projectDir, run }) => {
+    rmSync(join(projectDir, '.duet'), { recursive: true, force: true });
+    expect(existsSync(join(projectDir, '.duet'))).toBe(false);
+
+    appendVoiceLog(run, 'implementer', 'build complete'); // would have thrown ENOENT before the fix
+    const log = join(runDirOf(projectDir, run.runId), 'implementer.log');
+    expect.soft(readFileSync(log, 'utf8')).toContain('build complete');
+    expect.soft(readFileSync(join(projectDir, '.duet', '.gitignore'), 'utf8')).toBe('*\n'); // self-ignore restored
+  });
+
+  test('saveRunState recreates the dir and round-trips after a deletion', ({ projectDir, run }) => {
+    rmSync(join(projectDir, '.duet'), { recursive: true, force: true });
+    saveRunState(run);
+    expect(loadRunState(projectDir, run.runId)).toEqual(run);
+  });
+
+  // saveMachineSnapshot is the durable quiescence writer Codex's adversarial
+  // review flagged as the one run-dir write still bypassing the heal. The
+  // worker-rm path heals before it runs (a settle's voice-log/state save lands
+  // first), but routing it through ensureRunDir makes the invariant uniform —
+  // every durable run-dir write self-heals, no implicit "something saves first".
+  test('saveMachineSnapshot recreates the dir (with its .gitignore) and round-trips after a deletion', ({
+    projectDir,
+    run,
+  }) => {
+    const snapshot: Snapshot<unknown> = { status: 'active', output: undefined, error: undefined };
+    rmSync(join(projectDir, '.duet'), { recursive: true, force: true });
+    saveMachineSnapshot(run, snapshot); // would throw ENOENT on machine.json.tmp before the fix
+    expect.soft(loadMachineSnapshot(run)).toEqual(snapshot);
+    expect.soft(readFileSync(join(projectDir, '.duet', '.gitignore'), 'utf8')).toBe('*\n'); // self-ignore restored
   });
 });
 
@@ -84,6 +123,15 @@ describe('run creation', () => {
     expect(run.cwd).toBe(projectDir); // the run fixture created .duet here
     expect(readFileSync(join(projectDir, '.duet', '.gitignore'), 'utf8')).toBe('*\n');
     expect(existsSync(join(projectDir, '.gitignore'))).toBe(false);
+  });
+
+  test('the run-scoped scratch dir is pre-created under the run dir, not a top-level .duet/scratch', ({
+    projectDir,
+    run,
+  }) => {
+    expect.soft(scratchDirOf(projectDir, run.runId)).toBe(join(runDirOf(projectDir, run.runId), 'scratch'));
+    expect.soft(existsSync(scratchDirOf(projectDir, run.runId))).toBe(true); // ready for the impl turn
+    expect.soft(existsSync(join(projectDir, '.duet', 'scratch'))).toBe(false); // the old shared-parent location is gone
   });
 
   test('loading an unknown run names the path and the likely mistake', ({ projectDir }) => {

@@ -376,6 +376,37 @@ export function runDirOf(cwd: string, runId: string): string {
   return join(runsRoot(cwd), runId);
 }
 
+/**
+ * The run's scratch dir for a worker's ephemeral verification harnesses
+ * (throwaway tsconfigs, probe scripts). It lives *inside* the run dir — not a
+ * top-level `.duet/scratch/` — so it shares the run's lifecycle: gitignored
+ * like everything under `.duet/`, and torn down by `--purge` with the rest of
+ * the run. That ownership is what lets the impl brief drop the old "delete it
+ * before handoff" step: there is nothing for a worker to clean up, so a worker
+ * is never asked to `rm` anything under `.duet/` (see ensureRunDir for why that
+ * matters).
+ */
+export function scratchDirOf(cwd: string, runId: string): string {
+  return join(runDirOf(cwd, runId), 'scratch');
+}
+
+/**
+ * Re-ensure `.duet/` (with its self-ignore) and the run dir exist, then return
+ * the run dir. Every run-dir write routes through here so a stray deletion of
+ * `.duet/` mid-run self-heals instead of stranding the run: a worker runs with
+ * full permissions in the run's own cwd, and one *did* delete the live run —
+ * an implementer cleaning its scratch ran `rm -rf .duet` and the next voice-log
+ * append threw ENOENT, ending the phase with no advance and no flag (the missing
+ * docs/PR were downstream of exactly that). Restoring the dir (and its
+ * `.gitignore`) here turns that into a recovered write, not a silent death.
+ */
+export function ensureRunDir(cwd: string, runId: string): string {
+  ensureDuetDir(cwd);
+  const dir = runDirOf(cwd, runId);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 const STATE_FILE = 'state.json';
 const SNAPSHOT_FILE = 'machine.json';
 
@@ -438,9 +469,10 @@ export function createRun(opts: {
     costs: { orchestratorUsd: 0, orchestratorCostPartial: false, claudeWorkersUsd: 0, claudeWorkersCostPartial: false, codexTokens: { input: 0, output: 0 } },
     snippetProposals: [],
   };
-  ensureDuetDir(opts.cwd);
-  const dir = runDirOf(opts.cwd, runId);
-  mkdirSync(dir, { recursive: true });
+  const dir = ensureRunDir(opts.cwd, runId);
+  // Pre-create the run's scratch dir so the impl brief can hand the implementer
+  // a path that already exists (under the run dir, removed with the run).
+  mkdirSync(scratchDirOf(opts.cwd, runId), { recursive: true });
   saveRunState(state);
   // The run dir is self-contained: the framing is archived next to the logs
   // (state.json also embeds it, but the file is the human-readable artifact).
@@ -457,8 +489,7 @@ export function loadRunState(cwd: string, runId: string): RunState {
 }
 
 export function saveRunState(state: RunState): void {
-  const dir = runDirOf(state.cwd, state.runId);
-  mkdirSync(dir, { recursive: true });
+  const dir = ensureRunDir(state.cwd, state.runId);
   atomicWrite(join(dir, STATE_FILE), JSON.stringify(state, null, 2) + '\n');
 }
 
@@ -625,8 +656,7 @@ const OWNER_FILE = 'mcp-owner.json';
  */
 export function acquireMcpOwner(state: RunState): string {
   const nonce = randomBytes(8).toString('hex');
-  const dir = runDirOf(state.cwd, state.runId);
-  mkdirSync(dir, { recursive: true });
+  const dir = ensureRunDir(state.cwd, state.runId);
   atomicWrite(
     join(dir, OWNER_FILE),
     JSON.stringify({ pid: process.pid, nonce, at: new Date().toISOString() }, null, 2) + '\n',
@@ -731,7 +761,7 @@ export function fmtTokens(n: number): string {
  */
 export function recordContextUsage(state: RunState, voice: Voice, usage: ContextUsage): void {
   (state.contextUsage ??= {})[voice] = { ...usage, at: new Date().toISOString() };
-  const dir = join(runDirOf(state.cwd, state.runId), 'context');
+  const dir = join(ensureRunDir(state.cwd, state.runId), 'context');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, voice), `${contextPercent(usage)}%\n`);
 }
@@ -745,7 +775,7 @@ export function recordContextUsage(state: RunState, voice: Voice, usage: Context
  */
 export function recordPhaseLabel(state: RunState, phase: PhaseName): void {
   try {
-    const dir = join(runDirOf(state.cwd, state.runId), 'context');
+    const dir = join(ensureRunDir(state.cwd, state.runId), 'context');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'phase'), `${phase}\n`);
   } catch {
@@ -759,7 +789,8 @@ export function recordPhaseLabel(state: RunState, phase: PhaseName): void {
  * sites can pass it straight to createActor without casts.
  */
 export function saveMachineSnapshot(state: RunState, snapshot: Snapshot<unknown>): void {
-  atomicWrite(join(runDirOf(state.cwd, state.runId), SNAPSHOT_FILE), JSON.stringify(snapshot, null, 2) + '\n');
+  const dir = ensureRunDir(state.cwd, state.runId);
+  atomicWrite(join(dir, SNAPSHOT_FILE), JSON.stringify(snapshot, null, 2) + '\n');
 }
 
 export function loadMachineSnapshot(state: RunState): Snapshot<unknown> | undefined {
@@ -774,7 +805,7 @@ export function loadMachineSnapshot(state: RunState): Snapshot<unknown> | undefi
  * panes running `tail -n +1 -F` on these files.
  */
 export function appendVoiceLog(state: RunState, voice: Voice, header: string, body?: string): void {
-  const path = join(runDirOf(state.cwd, state.runId), `${voice}.log`);
+  const path = join(ensureRunDir(state.cwd, state.runId), `${voice}.log`);
   const stamp = new Date().toISOString();
   const block = body === undefined ? `[${stamp}] ${header}\n` : `[${stamp}] ${header}\n${body}\n\n`;
   appendFileSync(path, block);
@@ -782,7 +813,7 @@ export function appendVoiceLog(state: RunState, voice: Voice, header: string, bo
 
 /** The notes file — the run's dogfooding journal, written by both the human and the orchestrator. */
 export function appendNote(state: RunState, author: 'human' | 'orchestrator', note: string): void {
-  const path = join(runDirOf(state.cwd, state.runId), 'notes.md');
+  const path = join(ensureRunDir(state.cwd, state.runId), 'notes.md');
   appendFileSync(path, `- ${new Date().toISOString()} [${author}] ${note}\n`);
 }
 

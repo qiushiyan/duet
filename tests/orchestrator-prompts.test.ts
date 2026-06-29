@@ -5,6 +5,7 @@ import {
   implementPhaseEntryPrompt,
   specPhaseEntryPrompt,
 } from '../src/harness/orchestrator-prompts.ts';
+import { DEFAULT_BINDINGS } from '../src/config.ts';
 import { createRun } from '../src/run-store.ts';
 import { consultantBindings, test } from './helpers/fixtures.ts';
 
@@ -45,6 +46,30 @@ describe('gateless drops the consultant bet-audit in the phase briefs, keeping f
     expect.soft(implementPhaseEntryPrompt(rir, 1)).toContain('bet audit');
     rir.gateless = true;
     expect.soft(implementPhaseEntryPrompt(rir, 1)).not.toContain('bet audit');
+  });
+});
+
+// The impl/implement briefs put a worker's scratch in the run-scoped dir and
+// forbid deleting under .duet/ — the regression guard for an implementer that
+// ran `rm -rf .duet` cleaning its scratch and deleted the live run mid-build.
+// The old top-level `.duet/scratch/` and its "delete before handoff" step (the
+// trigger) are gone; scratch now rides the run's own lifecycle.
+describe('the scratch guardrail keeps a worker out of the live run state', () => {
+  test('full impl: per-run scratch path, no cleanup step, deleting under .duet/ forbidden', ({ projectDir }) => {
+    const run = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, framing: 'x' });
+    const brief = implPhaseEntryPrompt(run, 3);
+    expect.soft(brief).toContain(`.duet/runs/${run.runId}/scratch/`); // inside the run dir, not a shared parent
+    expect.soft(brief).toContain('never delete .duet/'); // the hard guardrail, with its reason in the brief
+    expect.soft(brief).not.toContain('.duet/scratch/'); // the old top-level location is gone
+    expect.soft(brief).not.toContain('delete them before handoff'); // and the cleanup step that triggered the rm
+  });
+
+  test('rir implement: same guardrail and per-run scratch path', ({ projectDir }) => {
+    const rir = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'x' });
+    const brief = implementPhaseEntryPrompt(rir, 1);
+    expect.soft(brief).toContain(`.duet/runs/${rir.runId}/scratch/`);
+    expect.soft(brief).toContain('never delete .duet/');
+    expect.soft(brief).not.toContain('delete them before handoff');
   });
 });
 
