@@ -359,33 +359,34 @@ describe('the snippet library', () => {
       expect.soft(atResearch).not.toContain('consultant-spec'); // RIR has no spec checkpoint
     });
 
-    test('gateless: all=true narrows the consultant bucket to the backstop (bet-level bodies hidden)', () => {
-      // A gateless run runs the consultant as a backstop only, so its bet-level
-      // checkpoint snippets never surface — even bound, even at all=true.
+    test('gateless: all=true keeps the generative frame + backstop, hides the bet-audit body', () => {
+      // A gateless run drops the consultant's holding bet audit, so its bet-audit
+      // checkpoint snippets never surface — even bound, even at all=true; the
+      // non-holding generative frame and the correctness backstop do surface.
       const all = renderSnippetLibrary({ phase: 'plan', workflow: 'full', all: true, consultantBound: true, gateless: true });
-      expect.soft(all).not.toContain('<snippet key="consultant-frame">');
-      expect.soft(all).not.toContain('<snippet key="consultant-spec">');
+      expect.soft(all).not.toContain('<snippet key="consultant-spec">'); // bet audit — hidden
       expect.soft(all).not.toContain('<snippet key="consultant-impl">');
-      // The backstop survives: the contract author (plan) and the verify (impl).
+      // The generative frame survives, and so does the backstop (contract + verify).
+      expect.soft(all).toContain('<snippet key="consultant-frame">');
       expect.soft(all).toContain('<snippet key="consultant-contract">');
       expect.soft(all).toContain('<snippet key="consultant-verify">');
     });
 
-    test('gateless: the phase view shows the backstop checkpoint, never a bet-level one', () => {
+    test('gateless: the phase view shows the generative frame + backstop, never a bet-audit', () => {
       const atImpl = renderSnippetLibrary({ phase: 'impl', workflow: 'full', consultantBound: true, gateless: true });
       expect.soft(atImpl).toContain('<snippet key="consultant-verify">'); // impl's backstop checkpoint, in full
       const atFrame = renderSnippetLibrary({ phase: 'frame', workflow: 'full', consultantBound: true, gateless: true });
-      expect.soft(atFrame).not.toContain('consultant-frame'); // bet-level — gone in gateless
-      expect.soft(atFrame).not.toContain('consultant-spec'); // bet-level — gone
+      expect.soft(atFrame).toContain('<snippet key="consultant-frame">'); // generative — survives gateless
+      expect.soft(atFrame).not.toContain('consultant-spec'); // bet audit — gone
       expect.soft(atFrame).toContain('consultant-verify'); // backstop still indexed by key
     });
 
-    test('gateless: the no-workflow flat fallback also narrows to the backstop (no bet-level leak)', () => {
+    test('gateless: the no-workflow flat fallback also keeps frame + backstop, no bet-audit leak', () => {
       // The defensive no-workflow flat render must honor gateless too, or it leaks
-      // the bet-level bodies the backstop-only rule hides (review finding #8).
+      // the bet-audit bodies the gateless rule hides (review finding #8).
       const flat = renderSnippetLibrary({ all: true, consultantBound: true, gateless: true });
-      expect.soft(flat).not.toContain('<snippet key="consultant-frame">');
-      expect.soft(flat).not.toContain('<snippet key="consultant-spec">');
+      expect.soft(flat).toContain('<snippet key="consultant-frame">'); // generative kept
+      expect.soft(flat).not.toContain('<snippet key="consultant-spec">'); // bet audit — hidden
       expect.soft(flat).toContain('<snippet key="consultant-contract">'); // backstop kept
       expect.soft(flat).toContain('<snippet key="consultant-verify">');
     });

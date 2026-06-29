@@ -286,11 +286,12 @@ Branch: the run works on exactly one branch, fixed before your first worker prom
  * Whether phase P's consultant checkpoint fires for this run — the run-state
  * adapter over the registry predicate (phases.ts `consultantCheckpointLive`), the
  * SINGLE source the snippet surface also reads, so a brief and the snippet library
- * can never disagree about which checkpoints a run runs. A bet-level checkpoint
- * (frame/specGate/implGate) fires only when bound AND not gateless; a backstop
- * checkpoint (contract/verify) fires whenever bound — the gateless owner walks away
- * from the bet but keeps the correctness backstop. Default-off preserved: no
- * consultant ⇒ false, the exact pre-feature routing.
+ * can never disagree about which checkpoints a run runs. A holding bet-audit
+ * `challenge` (specGate/implGate) fires only when bound AND not gateless; the
+ * non-holding generative frame and the correctness backstop (contract/verify) fire
+ * whenever bound — the gateless owner walks away from the bet-audit friction but
+ * keeps the framing read and the backstop. Default-off preserved: no consultant ⇒
+ * false, the exact pre-feature routing.
  */
 function checkpointLive(state: RunState, phase: PhaseName): boolean {
   return consultantCheckpointLive(phase, { consultant: Boolean(state.bindings.consultant), gateless: state.gateless });

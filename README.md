@@ -87,7 +87,7 @@ duet new --spec spec.md        # start from a spec you already wrote (full arc)
 duet new --workflow rir        # the lighter arc (add --gates-at afk to run unattended → PR open)
 duet new --gates-at skip-plan  # default is hands-off after the spec; this returns you at the Ship gate
 duet new --budget default      # opt in to per-turn cost caps (off by default)
-duet new --gateless            # walk away from the START — every gate pre-authorized; with a consultant bound, its bet-audits are off but the contract/verify backstop remains; still stoppable by ask_human / a correctness hold (conflicts with --interactive)
+duet new --gateless            # walk away from the START — every gate pre-authorized; with a consultant bound, its bet-audits are off but its framing read and the contract/verify backstop remain; still stoppable by ask_human / a correctness hold (conflicts with --interactive)
 duet new --retry-infra 2       # opt in to bounded auto-retry of transient infra errors (off by default)
 ```
 

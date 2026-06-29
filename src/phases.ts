@@ -645,47 +645,82 @@ const CONSULTANT_CHECKPOINT_SNIPPET: Record<ConsultantCheckpoint, string> = {
 export const CONSULTANT_SNIPPETS: ReadonlySet<string> = new Set(Object.values(CONSULTANT_CHECKPOINT_SNIPPET));
 
 /**
- * The consultant checkpoint modes that survive a GATELESS run — the correctness
- * BACKSTOP (the contract author + the verify), as opposed to the bet-level
- * CHALLENGE (frame / specGate / implGate). A gateless owner walks away having
- * pre-decided the bet, so the consultant runs only its backstop, never its
- * challenge. The single source for "which checkpoints a gateless run still
- * fires", read by both the snippet surface and the phase briefs.
+ * The walk-away compatibility of a consultant checkpoint — its KIND, the single
+ * classification every gateless-narrowing helper derives from. Three kinds:
+ *
+ * - `generative` — additive and NON-HOLDING (frame): a third analysis folded into
+ *   the direction. It can never hold a crossing, so a gateless owner keeps it — a
+ *   free upfront perspective at the moment before any code, with no walk-away cost.
+ * - `challenge` — a HOLDING bet-audit (specGate / implGate): open-ended judgment
+ *   whose `high` can hold a pre-authorized crossing. This is the friction a
+ *   walk-away opts out of, so gateless DROPS it.
+ * - `backstop` — the HOLDING correctness floor (contract / verify): automated AFK
+ *   protection against shipping past a broken target. A gateless owner keeps it.
+ *
+ * gateless's rule falls out as `kind !== 'challenge'`: gateless drops only the
+ * holding bet-audit, keeping the non-holding generative frame and the correctness
+ * backstop. This one record is the single source — both `isBackstopCheckpoint`
+ * (which `workflowHasConsultantBackstop` reads to tell full from rir) and
+ * `survivesGateless` (the gateless predicate) derive from it, never from a
+ * parallel set.
  */
-const BACKSTOP_CHECKPOINTS: ReadonlySet<ConsultantCheckpoint> = new Set(['contract', 'verify']);
+type CheckpointKind = 'generative' | 'challenge' | 'backstop';
+const CHECKPOINT_KIND: Record<ConsultantCheckpoint, CheckpointKind> = {
+  frame: 'generative',
+  specGate: 'challenge',
+  implGate: 'challenge',
+  contract: 'backstop',
+  verify: 'backstop',
+};
 
-/** Whether a phase's consultant checkpoint is a backstop one (survives gateless). */
+/** Whether a phase's consultant checkpoint is a correctness backstop (contract / verify). */
 export function isBackstopCheckpoint(phase: PhaseName): boolean {
   const mode = PHASE[phase].consultantCheckpoint;
-  return mode !== undefined && BACKSTOP_CHECKPOINTS.has(mode);
+  return mode !== undefined && CHECKPOINT_KIND[mode] === 'backstop';
 }
 
 /**
- * The consultant snippet keys for the BACKSTOP checkpoints only — the gateless
- * narrowing of CONSULTANT_SNIPPETS for the one render path that has no arc to map
- * phases through (the defensive no-workflow flat render). Derived from the same
- * BACKSTOP_CHECKPOINTS data, so it tracks the registry automatically.
+ * Whether a phase's consultant checkpoint SURVIVES a gateless run — everything but
+ * the holding bet-audit `challenge`. The generative framing read survives (it is
+ * non-holding — pure enrichment of the direction), as does the correctness
+ * backstop; only the `challenge` the owner has pre-decided away is dropped. The
+ * single gateless gate `consultantCheckpointLive` reads.
  */
-export const BACKSTOP_CONSULTANT_SNIPPETS: ReadonlySet<string> = new Set(
-  [...BACKSTOP_CHECKPOINTS].map((m) => CONSULTANT_CHECKPOINT_SNIPPET[m]),
+function survivesGateless(phase: PhaseName): boolean {
+  const mode = PHASE[phase].consultantCheckpoint;
+  return mode !== undefined && CHECKPOINT_KIND[mode] !== 'challenge';
+}
+
+/**
+ * The consultant snippet keys that SURVIVE a gateless run — the gateless narrowing
+ * of CONSULTANT_SNIPPETS for the one render path that has no arc to map phases
+ * through (the defensive no-workflow flat render). Generative + backstop snippets
+ * (everything but the bet-audit `challenge`), derived from CHECKPOINT_KIND so it
+ * tracks the registry automatically.
+ */
+export const GATELESS_CONSULTANT_SNIPPETS: ReadonlySet<string> = new Set(
+  (Object.keys(CHECKPOINT_KIND) as ConsultantCheckpoint[])
+    .filter((mode) => CHECKPOINT_KIND[mode] !== 'challenge')
+    .map((mode) => CONSULTANT_CHECKPOINT_SNIPPET[mode]),
 );
 
 /**
  * Whether phase P's consultant checkpoint is LIVE for a run with these knobs — the
- * single bet-vs-backstop gate BOTH the snippet surface (phaseSnippetsFor,
+ * single gateless gate BOTH the snippet surface (phaseSnippetsFor,
  * consultantSnippetsForWorkflow) and the orchestrator phase briefs derive from, so
  * the two can never disagree about which checkpoints a run fires. Live when a
  * consultant is bound, the phase carries a checkpoint, and EITHER the run is not
- * gateless OR the checkpoint is a backstop one. The asymmetry falls out of
- * isBackstopCheckpoint — a bet-level phase yields `bound && !gateless`, a backstop
- * phase yields `bound` — so no caller re-implements the split (the divergence the
+ * gateless OR the checkpoint survives gateless (generative or backstop — only the
+ * holding `challenge` bet-audit drops). The asymmetry falls out of survivesGateless
+ * — a `challenge` phase yields `bound && !gateless`, a generative/backstop phase
+ * yields `bound` — so no caller re-implements the split (the divergence the
  * scattered `bindings.consultant && !gateless` checks risked). Default-off
  * preserved: no consultant ⇒ false.
  */
 export function consultantCheckpointLive(phase: PhaseName, opts: { consultant: boolean; gateless?: boolean }): boolean {
   if (!opts.consultant) return false;
   if (consultantSnippetFor(phase) === undefined) return false;
-  return !opts.gateless || isBackstopCheckpoint(phase);
+  return !opts.gateless || survivesGateless(phase);
 }
 
 /** Whether a workflow has any backstop checkpoint — full does (contract+verify), rir does not. */
@@ -719,7 +754,8 @@ export function consultantSnippetsForWorkflow(workflow: WorkflowName, opts: { ga
  * list_snippets reads, so "what the orchestrator may reach for" is base ∪
  * (checkpoint iff live) on every render path: an unbound run sees byte-for-byte
  * the base list, a bound run sees the checkpoint snippet in its owning phase, and
- * a gateless run sees only its backstop checkpoints (consultantCheckpointLive).
+ * a gateless run sees only its gateless-surviving checkpoints — the generative
+ * frame and the correctness backstop, never the bet-audit (consultantCheckpointLive).
  */
 export function phaseSnippetsFor(phase: PhaseName, opts: { consultant: boolean; gateless?: boolean }): readonly string[] {
   const checkpoint = consultantSnippetFor(phase);

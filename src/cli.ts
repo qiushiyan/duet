@@ -129,17 +129,17 @@ function resolveRun(cwd: string, runId: string | undefined, notFoundMsg: string)
  * The one-line consent note a gateless run prints — what the human is walking away
  * into. Three honest cases, keyed off what the consultant actually does on THIS
  * arc: no consultant (plain attend-none); a consultant the arc has no backstop for
- * (rir — it would only do bet audits, which gateless turns off, so it runs nothing
- * and the note says so rather than promising a verify backstop the arc lacks); and
- * the full case where the backstop genuinely runs. `where` distinguishes `new`
- * ("from the start") from `afk` ("the rest").
+ * (rir — gateless drops its bet audit, so it runs only its non-holding framing
+ * third-opinion, the note says so rather than promising a verify backstop the arc
+ * lacks); and the full case where the framing read plus the correctness backstop
+ * both run. `where` distinguishes `new` ("from the start") from `afk` ("the rest").
  */
 function gatelessNote(state: RunState, where: 'start' | 'rest'): string {
   const walk = where === 'start' ? 'walk away from the start' : 'full-send the rest';
   if (!state.bindings.consultant) return `gateless: ${walk} — ask_human and the merge stay yours`;
   if (!workflowHasConsultantBackstop(workflowOf(state)))
-    return `gateless: ${walk} — note: the consultant has no acceptance-contract backstop on this arc, so it does not run under gateless. ask_human and the merge stay yours`;
-  return `gateless: ${walk}; the consultant is a backstop only — bet audits off, but the acceptance-contract verify still self-heals and holds a contract that stays broken. ask_human and the merge stay yours`;
+    return `gateless: ${walk}; the consultant runs only its framing third-opinion on this arc — its bet audit is off and there is no acceptance-contract backstop here. ask_human and the merge stay yours`;
+  return `gateless: ${walk}; the consultant runs its framing third-opinion and the acceptance-contract backstop — bet audits off, but the verify still self-heals and holds a contract that stays broken. ask_human and the merge stay yours`;
 }
 
 /**
@@ -297,7 +297,7 @@ program
   .option('--no-consultant', 'disable the consultant for this run even when the config binds one')
   .option(
     '--gateless',
-    "walk away from the START: pre-authorize every gate so the run flows to an open PR, AND run the consultant as a BACKSTOP ONLY — its bet audits don't fire, but the acceptance-contract verify still self-heals and holds a contract that stays broken. A genuine product/direction high (or a missing contract) can still stop the run; ask_human and the merge stay yours. Conflicts with --gates-at; also settable via a gateless: framing key (flag wins)",
+    "walk away from the START: pre-authorize every gate so the run flows to an open PR, AND narrow the consultant to its NON-HOLDING work — its framing third-opinion still informs the direction and the acceptance-contract verify still self-heals and holds a contract that stays broken, but its holding bet audits don't fire. A genuine product/direction high (or a missing contract) can still stop the run; ask_human and the merge stay yours. Conflicts with --gates-at; also settable via a gateless: framing key (flag wins)",
   )
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
   .option('--interactive', "orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over the attended arc up to the workflow's handoff gate (full: through the plan gate; rir: through the Direction gate); implementation onward runs headless after that handoff")
@@ -577,7 +577,7 @@ program
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
   .option(
     '--gateless',
-    "full-send the rest: hand off attending nothing AND run the consultant as a backstop only (bet audits off; the acceptance-contract verify still self-heals and holds a contract that stays broken). Crosses the bet/product highs at this gate — your explicit walk-away authorizes them, like an explicit approve — but still preserves the acceptance-contract backstop. Conflicts with a posture argument",
+    "full-send the rest: hand off attending nothing AND narrow the consultant to its non-holding work (its framing third-opinion still informs the direction and the acceptance-contract verify still self-heals and holds a contract that stays broken; its holding bet audits are off). Crosses the bet/product highs at this gate — your explicit walk-away authorizes them, like an explicit approve — but still preserves the acceptance-contract backstop. Conflicts with a posture argument",
   )
   .action(async (preset: string | undefined, runId: string | undefined, options: { gateless?: boolean }) => {
     const cwd = process.cwd();

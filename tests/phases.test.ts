@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  BACKSTOP_CONSULTANT_SNIPPETS,
+  GATELESS_CONSULTANT_SNIPPETS,
   PHASE,
   WORKFLOWS,
   acceptanceContractPathForSpec,
@@ -270,47 +270,54 @@ describe('consultant checkpoints (registry data per arc)', () => {
   });
 });
 
-describe('gateless narrows the consultant to its backstop (registry helpers)', () => {
-  test('isBackstopCheckpoint: only the contract author and the verify survive gateless', () => {
+describe('gateless drops the consultant bet-audit, keeping the generative frame + backstop (registry helpers)', () => {
+  test('isBackstopCheckpoint: only the contract author and the verify are correctness backstops', () => {
     // The backstop (correctness) checkpoints.
     expect.soft(isBackstopCheckpoint('plan')).toBe(true); // contract author
     expect.soft(isBackstopCheckpoint('impl')).toBe(true); // verify
-    // The bet-level (challenge) checkpoints — dropped in gateless.
-    expect.soft(isBackstopCheckpoint('frame')).toBe(false); // frame analysis
-    expect.soft(isBackstopCheckpoint('spec')).toBe(false); // specGate audit
-    expect.soft(isBackstopCheckpoint('implement')).toBe(false); // rir implGate audit
+    // Not backstops: the generative frame and the bet-audit challenges. (frame still
+    // survives gateless as a generative checkpoint — see consultantCheckpointLive.)
+    expect.soft(isBackstopCheckpoint('frame')).toBe(false); // generative frame analysis
+    expect.soft(isBackstopCheckpoint('spec')).toBe(false); // specGate bet audit
+    expect.soft(isBackstopCheckpoint('implement')).toBe(false); // rir implGate bet audit
     expect.soft(isBackstopCheckpoint('finish')).toBe(false); // no checkpoint at all
   });
 
-  test('phaseSnippetsFor: gateless drops a bet-level checkpoint snippet but keeps a backstop one', () => {
+  test('phaseSnippetsFor: gateless drops the bet-audit snippet but keeps the generative frame and the backstop', () => {
     // spec carries the specGate bet audit — gateless omits it; the base list stays.
     expect.soft(phaseSnippetsFor('spec', { consultant: true })).toContain('consultant-spec');
     expect.soft(phaseSnippetsFor('spec', { consultant: true, gateless: true })).not.toContain('consultant-spec');
+    // frame carries the generative third-opinion — gateless keeps it (non-holding).
+    expect.soft(phaseSnippetsFor('frame', { consultant: true, gateless: true })).toContain('consultant-frame');
     // impl carries the verify backstop — gateless keeps it.
     expect.soft(phaseSnippetsFor('impl', { consultant: true, gateless: true })).toContain('consultant-verify');
     // Unbound is unchanged either way (default-off).
-    expect.soft(phaseSnippetsFor('spec', { consultant: false, gateless: true })).not.toContain('consultant-spec');
+    expect.soft(phaseSnippetsFor('frame', { consultant: false, gateless: true })).not.toContain('consultant-frame');
   });
 
-  test('consultantSnippetsForWorkflow: gateless exposes only the backstop snippets per arc', () => {
-    // Full bound: all four checkpoint snippets; gateless → just the backstop pair.
+  test('consultantSnippetsForWorkflow: gateless exposes the generative frame + the backstop per arc', () => {
+    // Full bound: all four checkpoint snippets; gateless → the frame + backstop trio (specGate dropped).
     expect.soft([...consultantSnippetsForWorkflow('full')].sort()).toEqual(
       ['consultant-contract', 'consultant-frame', 'consultant-spec', 'consultant-verify'].sort(),
     );
     expect.soft([...consultantSnippetsForWorkflow('full', { gateless: true })].sort()).toEqual(
-      ['consultant-contract', 'consultant-verify'].sort(),
+      ['consultant-contract', 'consultant-frame', 'consultant-verify'].sort(),
     );
-    // RIR has no backstop checkpoint, so a gateless RIR run exposes none.
-    expect.soft([...consultantSnippetsForWorkflow('rir', { gateless: true })]).toEqual([]);
+    // RIR has no backstop, so a gateless RIR run exposes just the generative frame (its implGate audit drops).
+    expect.soft([...consultantSnippetsForWorkflow('rir', { gateless: true })]).toEqual(['consultant-frame']);
   });
 
-  test('consultantCheckpointLive: the single bet-vs-backstop predicate both surfaces derive from', () => {
+  test('consultantCheckpointLive: the single gateless predicate both surfaces derive from', () => {
     // Unbound is always false — the default-off floor.
     expect.soft(consultantCheckpointLive('spec', { consultant: false })).toBe(false);
     expect.soft(consultantCheckpointLive('impl', { consultant: false, gateless: true })).toBe(false);
-    // A bet-level checkpoint: bound and not gateless.
+    // A bet-audit challenge: bound and not gateless; gateless drops it.
     expect.soft(consultantCheckpointLive('spec', { consultant: true })).toBe(true);
     expect.soft(consultantCheckpointLive('spec', { consultant: true, gateless: true })).toBe(false);
+    expect.soft(consultantCheckpointLive('implement', { consultant: true, gateless: true })).toBe(false); // rir implGate
+    // The generative frame: bound, gateless-independent (non-holding, so it survives).
+    expect.soft(consultantCheckpointLive('frame', { consultant: true, gateless: true })).toBe(true); // full framing
+    expect.soft(consultantCheckpointLive('research', { consultant: true, gateless: true })).toBe(true); // rir framing
     // A backstop checkpoint: bound, gateless-independent.
     expect.soft(consultantCheckpointLive('plan', { consultant: true, gateless: true })).toBe(true); // contract
     expect.soft(consultantCheckpointLive('impl', { consultant: true, gateless: true })).toBe(true); // verify
@@ -323,8 +330,10 @@ describe('gateless narrows the consultant to its backstop (registry helpers)', (
     expect.soft(workflowHasConsultantBackstop('rir')).toBe(false);
   });
 
-  test('BACKSTOP_CONSULTANT_SNIPPETS: exactly the contract + verify snippet keys', () => {
-    expect([...BACKSTOP_CONSULTANT_SNIPPETS].sort()).toEqual(['consultant-contract', 'consultant-verify'].sort());
+  test('GATELESS_CONSULTANT_SNIPPETS: the generative frame plus the contract + verify backstop keys', () => {
+    expect([...GATELESS_CONSULTANT_SNIPPETS].sort()).toEqual(
+      ['consultant-contract', 'consultant-frame', 'consultant-verify'].sort(),
+    );
   });
 });
 
