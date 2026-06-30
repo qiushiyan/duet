@@ -84,7 +84,16 @@ export function runWithWallClockDeadline<T>(args: WallClockDeadlineArgs<T>): Pro
       // the first post-wake tick.
       if (!settled && now() >= deadline) {
         finish(() => {
-          args.abort();
+          // An abort that itself throws must neither prevent the typed rejection
+          // (S5 classifies on it) nor escape this timer callback as an uncaught
+          // exception (try/finally would re-throw it after the reject). Swallow
+          // it — the kill is best-effort; the WallClockExceededError is what the
+          // caller is owed, exactly once.
+          try {
+            args.abort();
+          } catch {
+            // best-effort kill — the deadline still rejects with the typed error.
+          }
           reject(new WallClockExceededError(args.capMs));
         });
       }

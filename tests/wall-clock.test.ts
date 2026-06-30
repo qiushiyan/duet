@@ -86,6 +86,26 @@ describe('runWithWallClockDeadline (S3 — the wall-clock backstop)', () => {
     expect.soft(abort).toHaveBeenCalledTimes(1);
   });
 
+  test('an abort that itself throws still rejects once with the typed error', async () => {
+    const clock = fakeClock();
+    const abort = vi.fn(() => {
+      throw new Error('the kill itself failed');
+    });
+    const promise = runWithWallClockDeadline({
+      run: new Promise<string>(() => {}),
+      abort,
+      capMs: 90 * 60_000,
+      now: clock.now,
+      schedule: clock.schedule,
+    });
+    const assertion = expect(promise).rejects.toBeInstanceOf(WallClockExceededError);
+    clock.advance(91 * 60_000);
+    clock.fireTick();
+    clock.fireTick(); // a second tick must not re-abort or double-settle
+    await assertion;
+    expect.soft(abort).toHaveBeenCalledTimes(1);
+  });
+
   test('a suspend-sized jump past the deadline aborts on the first post-wake tick', async () => {
     const clock = fakeClock();
     const abort = vi.fn();
