@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { describe, expect, onTestFinished, vi } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import { runPhase } from '../src/harness/driver.ts';
+import { buildOrchestratorOptions, runPhase } from '../src/harness/driver.ts';
 import type { RunOrchestratorTurn } from '../src/harness/driver.ts';
 import { claudeApiError, claudeAssistantText, jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
 import {
@@ -17,7 +17,7 @@ import {
 } from '../src/harness/orchestrator-prompts.ts';
 import { PHASE } from '../src/phases.ts';
 import type { PhaseName } from '../src/phases.ts';
-import { loadRunState, saveRunState } from '../src/run-store.ts';
+import { budgetFor, loadRunState, saveRunState } from '../src/run-store.ts';
 import { listPendingSteers, stageSteer } from '../src/steer-store.ts';
 import { test } from './helpers/fixtures.ts';
 
@@ -772,5 +772,16 @@ describe('provider-agnostic onboarding — workers get document paths, not slash
     // finish: the reconcile-docs step sends the path, never a slash command; incomplete → ask_human.
     expect.soft(finish).toContain('never a slash command');
     expect.soft(finish).toMatch(/incomplete[\s\S]*ask_human/);
+  });
+});
+
+describe('buildOrchestratorOptions (S2 — the forced watchdog on the orchestrator session)', () => {
+  test('its env forces API_FORCE_IDLE_TIMEOUT=1 and keeps CLAUDE_CODE_STREAM_CLOSE_TIMEOUT', ({ run }) => {
+    const options = buildOrchestratorOptions(run, budgetFor(run, 'frame'));
+    expect.soft(options.env?.API_FORCE_IDLE_TIMEOUT).toBe('1');
+    // the existing stream-close window survives the merge (both ride the same env).
+    expect.soft(options.env?.CLAUDE_CODE_STREAM_CLOSE_TIMEOUT).toBe(String(2 * 60 * 60_000));
+    // merged over process.env, not a replacement.
+    expect.soft(options.env?.PATH).toBe(process.env.PATH);
   });
 });

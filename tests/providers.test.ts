@@ -6,6 +6,7 @@ import { COMPACT_CONFIRMATION, ClaudeWorker, claudeArgs, claudeExecaOptions, par
 import { codexThreadOptions, parseRolloutContext, reconstructCodexTurn } from '../src/providers/codex.ts';
 import type { ThreadEvent } from '@openai/codex-sdk';
 import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn, sessionIdForNonce } from '../src/providers/interactive-claude.ts';
+import { claudePaneLaunchCommand } from '../src/providers/pane.ts';
 import { createWorkers, providerFor } from '../src/providers/index.ts';
 import { BudgetCutoffError } from '../src/providers/types.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
@@ -149,6 +150,42 @@ describe('claudeExecaOptions (the cleanup tripwire — review finding 3)', () =>
   test('absent a per-turn override, the construction cap stands (byte-for-byte today)', () => {
     const o = claudeExecaOptions({ prompt: 'p' }, { timeoutMs: 90 * 60_000 });
     expect(o.timeout).toBe(90 * 60_000);
+  });
+
+  // S2 — force the native byte-stream idle watchdog on for the headless worker.
+  test('forces API_FORCE_IDLE_TIMEOUT=1 on the worker env, merged over process.env', () => {
+    const o = claudeExecaOptions({ prompt: 'p' }, { timeoutMs: 60_000 });
+    expect.soft(o.env?.API_FORCE_IDLE_TIMEOUT).toBe('1');
+    // merged over process.env, not a replacement — PATH (always present) survives.
+    expect.soft(o.env?.PATH).toBe(process.env.PATH);
+  });
+});
+
+describe('claudePaneLaunchCommand (S2 — the forced watchdog on the interactive launch)', () => {
+  test('carries API_FORCE_IDLE_TIMEOUT=1 as a command-level env prefix, keeping the flags', () => {
+    const cmd = claudePaneLaunchCommand({ model: 'claude-opus-4-8' });
+    // The env assignment leads the command so sh sets it for THIS claude only
+    // (not inherited from the tmux server env).
+    expect.soft(cmd[0]).toBe('API_FORCE_IDLE_TIMEOUT=1');
+    expect.soft(cmd[1]).toBe('claude');
+    expect.soft(cmd).toContain('--model');
+    expect.soft(cmd).toContain('claude-opus-4-8');
+    expect.soft(cmd).toContain('--permission-mode');
+    expect.soft(cmd).toContain('bypassPermissions');
+  });
+
+  test('resumes a session id when present, still carrying the watchdog prefix', () => {
+    const cmd = claudePaneLaunchCommand({ model: 'm', sessionId: 'sess-9' });
+    expect.soft(cmd[0]).toBe('API_FORCE_IDLE_TIMEOUT=1');
+    expect.soft(cmd).toContain('--resume');
+    expect.soft(cmd).toContain('sess-9');
+  });
+});
+
+describe('the watchdog is Claude-only (S2 — never leaked into codex)', () => {
+  test('codexThreadOptions carries no API_FORCE_IDLE_TIMEOUT (a Claude API knob)', () => {
+    const opts = codexThreadOptions({ cwd: '/repo' });
+    expect(JSON.stringify(opts)).not.toContain('API_FORCE_IDLE_TIMEOUT');
   });
 });
 

@@ -301,6 +301,14 @@ export interface ClaudeExecaOptions {
   input: string;
   timeout: number;
   forceKillAfterDelay: number;
+  /**
+   * The child's environment — process.env plus `API_FORCE_IDLE_TIMEOUT=1`, which
+   * forces claude's native byte-stream idle watchdog on so a stalled stream
+   * aborts in ~5 min instead of riding the full per-turn cap. Built explicitly
+   * (not left to execa's extendEnv merge) so the merge is verifiable in the pure
+   * builder. A Claude API knob — never set on the codex path.
+   */
+  env: NodeJS.ProcessEnv;
   cleanup?: boolean;
 }
 
@@ -317,6 +325,9 @@ export function claudeExecaOptions(
     // construction value, byte-for-byte today.
     timeout: opts.timeoutMs ?? config.timeoutMs ?? 15 * 60_000,
     forceKillAfterDelay: 10_000,
+    // Force the native byte-stream idle watchdog on for this `claude -p` turn —
+    // merged over the inherited process.env, never leaked into codex.
+    env: { ...process.env, API_FORCE_IDLE_TIMEOUT: '1' },
   };
 }
 
