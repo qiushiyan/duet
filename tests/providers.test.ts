@@ -132,6 +132,24 @@ describe('claudeExecaOptions (the cleanup tripwire — review finding 3)', () =>
   test('defaults the timeout to 15 minutes when the config omits it', () => {
     expect(claudeExecaOptions({ prompt: 'p' }, {}).timeout).toBe(15 * 60_000);
   });
+
+  // S1 — the per-turn timeoutMs contract. The effective cap is
+  // `opts.timeoutMs ?? config.timeoutMs ?? 15-min floor`; a per-turn override
+  // (e.g. /compact's short cap) wins over the construction-time phase cap.
+  test('a per-turn timeoutMs override wins over the construction cap', () => {
+    const o = claudeExecaOptions({ prompt: 'p', timeoutMs: 8 * 60_000 }, { timeoutMs: 90 * 60_000 });
+    expect(o.timeout).toBe(8 * 60_000);
+  });
+
+  test('a per-turn override wins even over the 15-min floor (no construction cap)', () => {
+    const o = claudeExecaOptions({ prompt: 'p', timeoutMs: 8 * 60_000 }, {});
+    expect(o.timeout).toBe(8 * 60_000);
+  });
+
+  test('absent a per-turn override, the construction cap stands (byte-for-byte today)', () => {
+    const o = claudeExecaOptions({ prompt: 'p' }, { timeoutMs: 90 * 60_000 });
+    expect(o.timeout).toBe(90 * 60_000);
+  });
 });
 
 describe('parseInteractiveTurn (the interactive-transcript boundary)', () => {

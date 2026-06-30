@@ -90,6 +90,19 @@ export interface RunTurnOptions {
   readOnly?: boolean;
   cwd?: string;
   /**
+   * Per-turn override of the construction-time worker cap — the provider-wide
+   * contract every WorkerProvider honors (claude, the interactive transport, and
+   * codex alike), so one knob can give a single turn a shorter or longer cap than
+   * its phase's default. The effective cap each provider enforces is
+   * `opts.timeoutMs ?? <its construction value>` — absent ⇒ byte-for-byte the
+   * phase cap, so an existing call site that passes no override moves nothing.
+   * This is the seam `/compact`'s short cap (B) and the wall-clock backstop (A)
+   * both ride; the enforcement style is the provider's (claude/codex monotonic
+   * today, the interactive transport already Date-based — the wall-clock
+   * conversion lands separately), never this option's concern.
+   */
+  timeoutMs?: number;
+  /**
    * Fired with this turn's provider session id as EARLY as the provider knows
    * it — before spawn (claude: a freshly minted id, or the resume id) or on the
    * first stream event (codex: `thread.started`). The harness stages it onto the

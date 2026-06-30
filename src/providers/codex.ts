@@ -127,7 +127,12 @@ export class CodexWorker implements WorkerProvider {
     // runStreamed (not run): draining the events ourselves is what lets us see
     // thread.started — and the session id — mid-turn. run() exposes the id only
     // after it resolves, which is the blindness this whole change removes.
-    const { events } = await thread.runStreamed(opts.prompt, { signal: AbortSignal.timeout(this.timeoutMs) });
+    // Effective cap: a per-turn override wins over the construction value (which
+    // already carries codex's 15-min default), so this is two-tier — no extra
+    // floor here. Still monotonic via AbortSignal.timeout; the wall-clock
+    // conversion lands in a later slice.
+    const effectiveTimeoutMs = opts.timeoutMs ?? this.timeoutMs;
+    const { events } = await thread.runStreamed(opts.prompt, { signal: AbortSignal.timeout(effectiveTimeoutMs) });
     const { finalResponse, usage } = await reconstructCodexTurn(events, opts.onSessionId);
 
     const sessionId = thread.id;

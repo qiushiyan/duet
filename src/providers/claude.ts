@@ -304,11 +304,18 @@ export interface ClaudeExecaOptions {
   cleanup?: boolean;
 }
 
-export function claudeExecaOptions(opts: { cwd?: string; prompt: string }, config: { timeoutMs?: number }): ClaudeExecaOptions {
+export function claudeExecaOptions(
+  opts: { cwd?: string; prompt: string; timeoutMs?: number },
+  config: { timeoutMs?: number },
+): ClaudeExecaOptions {
   return {
     cwd: opts.cwd,
     input: opts.prompt,
-    timeout: config.timeoutMs ?? 15 * 60_000,
+    // The effective cap: a per-turn override (RunTurnOptions.timeoutMs, e.g.
+    // /compact's short cap) wins over the construction-time phase cap, which
+    // wins over the provider's own 15-min floor. Absent an override ⇒ the
+    // construction value, byte-for-byte today.
+    timeout: opts.timeoutMs ?? config.timeoutMs ?? 15 * 60_000,
     forceKillAfterDelay: 10_000,
   };
 }

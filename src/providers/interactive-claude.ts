@@ -377,7 +377,10 @@ export class InteractiveClaudeWorker implements WorkerProvider {
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
     });
-    const deadline = Date.now() + this.timeoutMs;
+    // Effective cap: a per-turn override wins over the construction value (which
+    // is required here, so no provider floor to fall back to). Already Date-based,
+    // so this transport needs no wall-clock conversion — the deadline is real time.
+    const deadline = Date.now() + (opts.timeoutMs ?? this.timeoutMs);
     try {
       await pane.open();
       await waitUntilReady(pane, deadline);
