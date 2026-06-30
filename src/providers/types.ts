@@ -55,6 +55,18 @@ export interface WorkerTurn {
    * generated content, never by the error wording.
    */
   interrupted?: true;
+  /**
+   * The turn was killed at its per-turn cap (the wall-clock backstop, or execa's
+   * timeout) AFTER its prompt was accepted into the session — a settled, resumable
+   * CHECKPOINT, like `interrupted`/`budgetTruncated`, never an infra failure. The
+   * proof is "this turn's prompt was accepted" (a transcript record at/after the
+   * turn start, or codex's `thread.started` seen this turn), NOT "a session id was
+   * minted" (claude mints before the process runs) — so the orchestrator is told
+   * to RESUME, not re-send (a re-send would duplicate the conversation). A turn
+   * killed BEFORE acceptance (pre-flight) is the distinct infra error (retry
+   * verbatim), never an aborted WorkerTurn.
+   */
+  aborted?: true;
 }
 
 /**

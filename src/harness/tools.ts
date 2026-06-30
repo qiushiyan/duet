@@ -364,11 +364,21 @@ export function settleTurn(
     return;
   }
   const turn = outcome;
+  // An aborted turn (wall-clock cap hit AFTER the prompt was accepted) is a
+  // SETTLED, resumable checkpoint — not a completed response. It persists the
+  // session + sent snippet + cost/context (below, shared with the success path),
+  // but it delivered no usable review and completed no consultant checkpoint, so
+  // it counts NO round, writes the abort marker (not a ▶ response), and sets no
+  // consultant contract/verify marker. The settle MUST branch on it — a non-Error
+  // WorkerTurn is otherwise treated as a completed response.
+  const aborted = turn.aborted === true;
   const fresh = loadRunState(state.cwd, state.runId);
   fresh.workerSessions[role] = turn.sessionId;
   // Re-read off fresh rather than a call-start snapshot: the minutes-long await
-  // means a parallel call may have moved the round count.
-  if (isReviewRound) fresh.rounds[phase] = (fresh.rounds[phase] ?? 0) + 1;
+  // means a parallel call may have moved the round count. An aborted turn delivered
+  // no review — counting it would burn the phase cap and make later rails believe
+  // a review ran.
+  if (isReviewRound && !aborted) fresh.rounds[phase] = (fresh.rounds[phase] ?? 0) + 1;
   if (isBaseTemplate(tag)) {
     const sent = ((fresh.sentSnippets ??= {})[phase] ??= {});
     const tags = (sent[role] ??= []);
@@ -395,14 +405,17 @@ export function settleTurn(
   // the registry checkpoint mode, so only full's plan/impl ever set it.
   const checkpointMode = PHASE[phase].consultantCheckpoint;
   if (role === 'consultant') {
-    if (checkpointMode === 'contract' && fresh.specPath) {
+    // An aborted consultant turn did NOT complete its checkpoint — set no
+    // draft/verifiedAt (the freeze + verify rails must see a real completion, not
+    // a turn cut off at its cap).
+    if (!aborted && checkpointMode === 'contract' && fresh.specPath) {
       // A consultant turn settled at the contract checkpoint — this run authored.
       fresh.acceptanceContractDraft = {
         path: acceptanceContractPathForSpec(fresh.specPath),
         sessionId: turn.sessionId,
         authoredAt: new Date().toISOString(),
       };
-    } else if (checkpointMode === 'verify' && fresh.acceptanceContract) {
+    } else if (!aborted && checkpointMode === 'verify' && fresh.acceptanceContract) {
       // A consultant turn settled at the verify checkpoint — verification RAN
       // (pass/fail rides the gate packet; this only records that it happened).
       fresh.acceptanceContract = { ...fresh.acceptanceContract, verifiedAt: new Date().toISOString() };
@@ -415,12 +428,18 @@ export function settleTurn(
     // prompt-trusted, so a routed fix can't ride the pre-fix verify to auto-cross Ship.
     delete fresh.acceptanceContract.verifiedAt;
   }
-  fresh.lastActivity = `send_prompt → ${role} (${tag})`;
+  fresh.lastActivity = `send_prompt → ${role} (${tag})${aborted ? ' [aborted]' : ''}`;
   saveRunState(fresh);
   Object.assign(state, fresh);
   const ctx = turn.context ? ` · context ${contextPercent(turn.context)}%` : '';
-  appendVoiceLog(state, role, `▶ response (session ${turn.sessionId})${ctx}`, turn.text);
-  log(`[send_prompt] ← ${role} responded (${turn.text.length} chars${ctx})`);
+  if (aborted) {
+    // A resumable checkpoint, not a delivered response — the marker, not ▶ response.
+    appendVoiceLog(state, role, `⚠ turn aborted (resumable) (session ${turn.sessionId})${ctx}`);
+    log(`[send_prompt] ⚠ ${role} turn aborted at its cap — session ${turn.sessionId} is resumable`);
+  } else {
+    appendVoiceLog(state, role, `▶ response (session ${turn.sessionId})${ctx}`, turn.text);
+    log(`[send_prompt] ← ${role} responded (${turn.text.length} chars${ctx})`);
+  }
   clearTurnActive(state, role);
 }
 
@@ -473,6 +492,16 @@ export function renderTurnResult(
     content.push(
       block(
         `(the connection dropped mid-response — the worker's partial work above is committed to its session, which is resumable. Send it a short continuation to finish from where it stopped; do not re-send the original prompt. This is a checkpoint, not a failure.)`,
+      ),
+    );
+  }
+  // An aborted turn hit its per-turn time cap AFTER its prompt was accepted — the
+  // worker saw the prompt and committed work may be on disk, in a resumable
+  // session. Resume, never re-send (a re-send would duplicate the conversation).
+  if (outcome.aborted) {
+    content.push(
+      block(
+        `(the worker ran to its time cap and was aborted — but it saw your prompt and committed work may be on disk, in a resumable session. Resume that session with a short continuation to finish the remainder; do NOT re-send the original prompt (it would duplicate the conversation). This is a checkpoint, not a failure.)`,
       ),
     );
   }

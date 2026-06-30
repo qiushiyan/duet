@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Codex, type ThreadEvent, type ThreadOptions, type Usage } from '@openai/codex-sdk';
 import type { ContextUsage, RunTurnOptions, WorkerProvider, WorkerTurn } from './types.ts';
-import { runWithWallClockDeadline } from './wall-clock.ts';
+import { WallClockExceededError, runWithWallClockDeadline } from './wall-clock.ts';
 
 /**
  * Codex worker provider, via `@openai/codex-sdk` (a thin spawn-the-CLI
@@ -86,12 +86,18 @@ export function codexThreadOptions(opts: { cwd?: string }): ThreadOptions {
 export async function reconstructCodexTurn(
   events: AsyncIterable<ThreadEvent>,
   onSessionId?: (id: string) => void,
+  onThreadStarted?: (threadId: string) => void,
 ): Promise<{ finalResponse: string; usage: Usage | null }> {
   let finalResponse = '';
   let usage: Usage | null = null;
   for await (const event of events) {
     if (event.type === 'thread.started') {
       onSessionId?.(event.thread_id);
+      // The acceptance signal, distinct from onSessionId: this fires ONLY from
+      // the stream's thread.started, so it proves THIS turn's prompt was accepted
+      // — onSessionId also fires pre-stream for a resumed thread (a heartbeat /
+      // session-location signal), which is not proof the new prompt was accepted.
+      onThreadStarted?.(event.thread_id);
     } else if (event.type === 'item.completed') {
       if (event.item.type === 'agent_message') finalResponse = event.item.text;
     } else if (event.type === 'turn.completed') {
@@ -101,6 +107,22 @@ export async function reconstructCodexTurn(
     }
   }
   return { finalResponse, usage };
+}
+
+/**
+ * Recover a codex turn that threw out of its wall-clock-bounded stream. A
+ * WallClockExceededError whose turn actually started (thread.started seen this
+ * turn ⇒ `startedThreadId` set) is a resumable aborted CHECKPOINT — resume with
+ * `codex exec resume <id>`, don't re-send. Anything else (the abort fired before
+ * thread.started — a pre-flight failure — or a non-abort error) propagates as
+ * infra (retry verbatim). The pure decision seam, so the accepted/never-accepted
+ * split is testable without the real SDK stream (mirrors recoverClaudeFailure).
+ */
+export function recoverCodexAbort(err: unknown, startedThreadId: string | undefined): WorkerTurn {
+  if (err instanceof WallClockExceededError && startedThreadId !== undefined) {
+    return { text: '', sessionId: startedThreadId, aborted: true };
+  }
+  throw err instanceof Error ? err : new Error(String(err));
 }
 
 export class CodexWorker implements WorkerProvider {
@@ -136,14 +158,27 @@ export class CodexWorker implements WorkerProvider {
     // codex turn would never hit the abort S5's honest accepted-abort recovery
     // depends on. The wall-clock helper re-checks real time and aborts on wake.
     const controller = new AbortController();
-    const { finalResponse, usage } = await runWithWallClockDeadline({
-      run: (async () => {
-        const { events } = await thread.runStreamed(opts.prompt, { signal: controller.signal });
-        return reconstructCodexTurn(events, opts.onSessionId);
-      })(),
-      abort: () => controller.abort(),
-      capMs: effectiveTimeoutMs,
-    });
+    // Set ONLY by the stream's thread.started (not onSessionId) — the honest
+    // proof THIS turn's prompt was accepted, which recoverCodexAbort keys on.
+    let startedThreadId: string | undefined;
+    let finalResponse: string;
+    let usage: Usage | null;
+    try {
+      ({ finalResponse, usage } = await runWithWallClockDeadline({
+        run: (async () => {
+          const { events } = await thread.runStreamed(opts.prompt, { signal: controller.signal });
+          return reconstructCodexTurn(events, opts.onSessionId, (id) => {
+            startedThreadId = id;
+          });
+        })(),
+        abort: () => controller.abort(),
+        capMs: effectiveTimeoutMs,
+      }));
+    } catch (err) {
+      // A wall-clock abort after thread.started is a resumable aborted checkpoint;
+      // anything else (pre-acceptance abort, or a non-abort failure) re-throws.
+      return recoverCodexAbort(err, startedThreadId);
+    }
 
     const sessionId = thread.id;
     if (!sessionId) throw new Error('codex worker turn completed without a thread id');

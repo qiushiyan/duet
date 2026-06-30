@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { execa } from 'execa';
 import { z } from 'zod';
+import { readTranscriptTailForSession } from '../sessions.ts';
+import { transcriptShowsPromptAccepted } from '../worker-health.ts';
 import { BudgetCutoffError } from './types.ts';
-import { runWithWallClockDeadline } from './wall-clock.ts';
+import { WallClockExceededError, runWithWallClockDeadline } from './wall-clock.ts';
 import type { RunTurnOptions, WorkerProvider, WorkerTurn } from './types.ts';
 
 /**
@@ -262,7 +264,18 @@ export function conciseExecaError(err: unknown): string {
  * envelope the signal is the exit code + stderr, via conciseExecaError. Exported
  * as the provider's testable failure seam.
  */
-export function recoverClaudeFailure(err: unknown, prompt: string): WorkerTurn {
+export function recoverClaudeFailure(
+  err: unknown,
+  prompt: string,
+  opts: {
+    /** This turn's minted/resume session id — the key to locate its transcript. */
+    sessionId: string;
+    /** Captured before spawn — the lower bound that proves a record is THIS turn's. */
+    turnStartedAt: number;
+    /** Injectable transcript read (a seam) so tests fake the accepted/never-accepted split. */
+    readTail?: (sessionId: string) => { jsonl: string } | undefined;
+  },
+): WorkerTurn {
   if (err instanceof BudgetCutoffError) throw err;
   const stdout = (err as { stdout?: unknown }).stdout;
   if (typeof stdout === 'string' && stdout.length > 0) {
@@ -281,6 +294,21 @@ export function recoverClaudeFailure(err: unknown, prompt: string): WorkerTurn {
       // event, not JSON) falls through to the exit-code/stderr path below, which
       // carries more than a bare "not JSON" would.
       if (parseErr instanceof ClaudeTurnFailedError) throw parseErr;
+    }
+  }
+  // A timeout / wall-clock abort with no usable stdout envelope: was THIS turn's
+  // prompt accepted into the session? Locate the transcript by the minted id and
+  // ask whether a record landed at/after the turn start. Accepted ⇒ a resumable
+  // aborted checkpoint (resume, don't re-send); not accepted, or no transcript ⇒
+  // the worker never saw the prompt, so it stays an infra error (retry verbatim).
+  // The proof is per-turn (the turnStartedAt lower bound), never a whole-transcript
+  // scan — a persistent session holds prior turns' records.
+  const timedOut = (err as { timedOut?: unknown }).timedOut === true || err instanceof WallClockExceededError;
+  if (timedOut) {
+    const readTail = opts.readTail ?? ((id) => readTranscriptTailForSession('claude', id));
+    const tail = readTail(opts.sessionId);
+    if (tail && transcriptShowsPromptAccepted(tail.jsonl, opts.turnStartedAt)) {
+      return { text: '', sessionId: opts.sessionId, aborted: true };
     }
   }
   throw new Error(conciseExecaError(err));
@@ -382,6 +410,9 @@ export class ClaudeWorker implements WorkerProvider {
   }
 
   async runTurn(opts: RunTurnOptions): Promise<WorkerTurn> {
+    // Captured BEFORE spawn: the lower bound that proves a later transcript record
+    // belongs to THIS turn (recoverClaudeFailure's accepted-vs-never-accepted split).
+    const turnStartedAt = Date.now();
     // Resume an existing session, or mint a fresh id and predeclare it with
     // --session-id. Minting (rather than letting the CLI assign one) is what
     // lets us announce the id BEFORE spawn — the live-activity poll then locates
@@ -416,9 +447,10 @@ export class ClaudeWorker implements WorkerProvider {
       // sees stdout. recoverClaudeFailure re-parses the captured stdout: a
       // budget-truncated turn is a checkpoint (returned); a session-less cutoff
       // is a BudgetCutoffError (propagated); a CLI-reported failure surfaces the
-      // envelope's own reason; anything unparseable becomes a concise exit/stderr
-      // error — never execa's raw multi-KB stdout dump.
-      return recoverClaudeFailure(err, opts.prompt);
+      // envelope's own reason; a timeout/abort whose transcript shows the prompt
+      // was accepted becomes a resumable aborted checkpoint; anything else becomes
+      // a concise exit/stderr error — never execa's raw multi-KB stdout dump.
+      return recoverClaudeFailure(err, opts.prompt, { sessionId, turnStartedAt });
     }
   }
 }

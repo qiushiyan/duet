@@ -2,8 +2,9 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
-import { COMPACT_CONFIRMATION, ClaudeWorker, claudeArgs, claudeExecaOptions, parseClaudeTurn } from '../src/providers/claude.ts';
-import { codexThreadOptions, parseRolloutContext, reconstructCodexTurn } from '../src/providers/codex.ts';
+import { COMPACT_CONFIRMATION, ClaudeWorker, claudeArgs, claudeExecaOptions, parseClaudeTurn, recoverClaudeFailure } from '../src/providers/claude.ts';
+import { codexThreadOptions, parseRolloutContext, reconstructCodexTurn, recoverCodexAbort } from '../src/providers/codex.ts';
+import { WallClockExceededError } from '../src/providers/wall-clock.ts';
 import type { ThreadEvent } from '@openai/codex-sdk';
 import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn, sessionIdForNonce } from '../src/providers/interactive-claude.ts';
 import { claudePaneLaunchCommand } from '../src/providers/pane.ts';
@@ -404,22 +405,26 @@ describe('InteractiveClaudeWorker (driving over FakePane + a tmpdir, no live aut
       rmSync(dir, { recursive: true, force: true });
     }));
 
-  test('a located turn that never completes rejects at the deadline, pane still killed (Finding 4)', async () =>
+  test('a located-but-incomplete turn settles as a resumable aborted checkpoint at the deadline, pane still killed (S5)', async () =>
     withFakeTimers(async () => {
       const dir = tmpRoot();
       const { worker, pane } = wire(dir, {
         readyAfter: 0,
-        // turn-open + a tool step, but no final assistant — the post-injection stall
+        // turn-open + a tool step, but no final assistant — the post-injection stall.
+        // The nonce IS correlated (the prompt was injected and accepted), so the
+        // deadline now yields a resumable aborted checkpoint (resume, don't re-send)
+        // — the interactive accepted-abort split — rather than the old infra reject.
         onSubmit: (text) =>
           writeFileSync(join(dir, 'ours.jsonl'), session('sess-i', userMessage(text), toolStep('Bash', 'running'))),
       });
 
       const promise = worker.runTurn({ prompt: 'do it', cwd: dir });
-      const assertion = expect(promise).rejects.toThrow(/did not complete in the transcript/);
       await vi.advanceTimersByTimeAsync(61_000);
-      await assertion;
+      const turn = await promise;
 
-      expect(pane().killed).toBe(true);
+      expect.soft(turn.aborted).toBe(true);
+      expect.soft(turn.sessionId).toBe('sess-i'); // the resumable handle, from the correlated transcript
+      expect.soft(pane().killed).toBe(true); // the finally still tears the pane down (Finding 4)
       rmSync(dir, { recursive: true, force: true });
     }));
 
@@ -768,6 +773,81 @@ describe('ClaudeWorker.runTurn (failure recovery at the execa boundary)', () => 
   });
 });
 
+describe('recoverClaudeFailure (S5 — the accepted-abort vs never-accepted split)', () => {
+  const turnStartedAt = Date.parse('2026-06-20T12:00:00.000Z');
+  const timeoutErr = () => Object.assign(new Error('Command timed out after 90 minutes'), { timedOut: true, stdout: '' });
+  const acceptedTail = JSON.stringify({ type: 'assistant', timestamp: new Date(turnStartedAt + 5_000).toISOString() });
+  const preStartTail = JSON.stringify({ type: 'assistant', timestamp: new Date(turnStartedAt - 60_000).toISOString() });
+
+  test('a timeout whose transcript shows the prompt accepted ⇒ a resumable aborted checkpoint', () => {
+    const turn = recoverClaudeFailure(timeoutErr(), 'do it', {
+      sessionId: 'sess-abc',
+      turnStartedAt,
+      readTail: () => ({ jsonl: acceptedTail }),
+    });
+    expect.soft(turn.aborted).toBe(true);
+    expect.soft(turn.sessionId).toBe('sess-abc');
+  });
+
+  test('a WallClockExceededError with an accepted transcript ⇒ aborted checkpoint (the suspend-on-wake path)', () => {
+    const turn = recoverClaudeFailure(new WallClockExceededError(90 * 60_000), 'do it', {
+      sessionId: 'sess-wc',
+      turnStartedAt,
+      readTail: () => ({ jsonl: acceptedTail }),
+    });
+    expect.soft(turn.aborted).toBe(true);
+    expect.soft(turn.sessionId).toBe('sess-wc');
+  });
+
+  test('a timeout with only PRE-start records (resumed session, this turn never accepted) ⇒ throws infra', () => {
+    expect(() =>
+      recoverClaudeFailure(timeoutErr(), 'do it', { sessionId: 's', turnStartedAt, readTail: () => ({ jsonl: preStartTail }) }),
+    ).toThrow();
+  });
+
+  test('a timeout with no locatable transcript ⇒ throws infra', () => {
+    expect(() =>
+      recoverClaudeFailure(timeoutErr(), 'do it', { sessionId: 's', turnStartedAt, readTail: () => undefined }),
+    ).toThrow();
+  });
+
+  test('a NON-timeout failure never reads as aborted, even with an accepted transcript available', () => {
+    const err = Object.assign(new Error('spawn claude ENOENT'), { stdout: '' });
+    expect(() =>
+      recoverClaudeFailure(err, 'do it', { sessionId: 's', turnStartedAt, readTail: () => ({ jsonl: acceptedTail }) }),
+    ).toThrow(/ENOENT/);
+  });
+
+  test('a budgetTruncated stdout settles as its own checkpoint even on a timeout error (stdout precedes the abort branch)', () => {
+    const err = Object.assign(new Error('exit 1'), { stdout: budgetStdout('sess-b'), timedOut: true });
+    const turn = recoverClaudeFailure(err, 'do it', {
+      sessionId: 'sess-minted',
+      turnStartedAt,
+      readTail: () => ({ jsonl: acceptedTail }),
+    });
+    expect.soft(turn.budgetTruncated).toBe(true);
+    expect.soft(turn.aborted).toBeUndefined();
+    expect.soft(turn.sessionId).toBe('sess-b'); // from the envelope, not the minted id or the abort branch
+  });
+});
+
+describe('recoverCodexAbort (S5 — the codex accepted-abort split, no SDK needed)', () => {
+  test('a wall-clock abort with thread.started seen this turn ⇒ a resumable aborted checkpoint', () => {
+    const turn = recoverCodexAbort(new WallClockExceededError(90 * 60_000), 'thread-123');
+    expect.soft(turn.aborted).toBe(true);
+    expect.soft(turn.sessionId).toBe('thread-123');
+  });
+
+  test('a wall-clock abort BEFORE thread.started (pre-acceptance) ⇒ throws infra', () => {
+    expect(() => recoverCodexAbort(new WallClockExceededError(90 * 60_000), undefined)).toThrow(WallClockExceededError);
+  });
+
+  test('a non-abort error re-throws unchanged regardless of thread.started', () => {
+    const boom = new Error('turn.failed: model exploded');
+    expect(() => recoverCodexAbort(boom, 'thread-123')).toThrow(/model exploded/);
+  });
+});
+
 describe('claudeArgs (the session-flag + budget-cap seams)', () => {
   test('a fresh turn predeclares its id with --session-id (and no --resume)', () => {
     // Predeclaring the id is what lets runTurn announce it BEFORE spawn — the
@@ -849,6 +929,22 @@ describe('reconstructCodexTurn (the codex event-stream seam)', () => {
     await expect(
       reconstructCodexTurn(stream({ type: 'thread.started', thread_id: 'th-x' }, { type: 'turn.failed', error: { message: 'model exploded' } })),
     ).rejects.toThrow('model exploded');
+  });
+
+  test('S5: onThreadStarted fires from the stream thread.started with the thread id (the acceptance signal)', async () => {
+    const started: string[] = [];
+    await reconstructCodexTurn(
+      stream(
+        { type: 'thread.started', thread_id: 'th-accept' },
+        { type: 'item.completed', item: { id: 'i0', type: 'agent_message', text: 'done' } },
+        { type: 'turn.completed', usage },
+      ),
+      undefined,
+      (id) => started.push(id),
+    );
+    // The separate hook fires from the stream event — the proof recoverCodexAbort
+    // keys on, distinct from the pre-stream onSessionId for a resumed thread.
+    expect(started).toEqual(['th-accept']);
   });
 });
 

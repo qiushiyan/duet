@@ -424,6 +424,46 @@ describe('send_prompt', () => {
     expect.soft(persisted.rounds.spec).toBe(1);
   });
 
+  test('S5: an aborted reviewer turn settles as a resumable checkpoint — session kept, base snippet sent, NO round, abort marker, resume-not-resend', async ({
+    projectDir,
+    run,
+  }) => {
+    const reviewer = new FakeWorker('codex', [{ aborted: true, sessionId: 'sess-ab' }]);
+    const { call } = harness(run, { reviewer });
+    const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+
+    expect.soft(result.isError).toBeFalsy(); // a settled checkpoint, not an infra error
+    expect.soft(joined).toContain('do NOT re-send the original prompt'); // resume, don't re-send
+    expect.soft(joined).not.toContain('never saw your prompt'); // not the infra envelope
+
+    const persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.workerSessions.reviewer).toBe('sess-ab'); // the resumable handle is captured
+    expect.soft(persisted.rounds.spec ?? 0).toBe(0); // NO review round — the abort delivered none
+    expect.soft(persisted.sentSnippets?.spec?.reviewer ?? []).toContain('review-spec'); // base snippet marked sent (a later full re-send must warn)
+
+    const log = readFileSync(join(runDirOf(projectDir, run.runId), 'reviewer.log'), 'utf8');
+    expect.soft(log).toContain('⚠ turn aborted (resumable)'); // the abort marker, not a ▶ response
+    expect.soft(log).not.toContain('▶ response');
+  });
+
+  test('S5: an aborted consultant turn at the contract checkpoint does NOT set the acceptance-contract draft', async ({
+    projectDir,
+    consultantRun,
+  }) => {
+    // With a spec path present, a SUCCESSFUL consultant contract turn would author
+    // the draft (settleTurn). An aborted turn completed no checkpoint, so it must not.
+    consultantRun.specPath = 'docs/spec.md';
+    saveRunState(consultantRun);
+    const consultant = new FakeWorker('claude', [{ aborted: true, sessionId: 'sess-c' }]);
+    const { call } = harness(consultantRun, { consultant, phase: 'plan' });
+    await call('send_prompt', { role: 'consultant', tag: 'consultant-contract', body: 'audit' });
+
+    const persisted = loadRunState(projectDir, consultantRun.runId);
+    expect.soft(persisted.acceptanceContractDraft).toBeUndefined(); // checkpoint NOT recorded
+    expect.soft(persisted.workerSessions.consultant).toBe('sess-c'); // but the session is still captured (resumable)
+  });
+
   test('a BudgetCutoffError settles nothing and renders a budget-control recovery, distinct from infra', async ({
     projectDir,
     run,
