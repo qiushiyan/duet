@@ -139,6 +139,16 @@ describe('the snippet library', () => {
     expect(rendered).toContain('<snippet key="review-spec">');
   });
 
+  test('S7: recover-context is an ANYTIME helper that names its narrow post-compact trigger (distinct from reread-context)', () => {
+    expect.soft(ANYTIME_SNIPPETS).toContain('recover-context');
+    const body = loadSnippets().find((s) => s.key === 'recover-context')?.expand ?? '';
+    expect.soft(body).not.toBe(''); // it resolves to a real body
+    // It frames a post-compact fresh-session recovery, and points at reread-context
+    // as the routine alternative — so it isn't used as a generic reread.
+    expect.soft(body).toMatch(/compact/i);
+    expect.soft(body).toContain('reread-context');
+  });
+
   test('every snippet is classified, and the three buckets stay disjoint (cross-workflow sharing allowed)', () => {
     // The phase-aware list_snippets default shows phase templates + anytime
     // helpers in full and indexes the rest; a snippet in no bucket would be

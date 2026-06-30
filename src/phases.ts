@@ -614,6 +614,7 @@ export function gateOf(phase: GatePhase): PhaseSpec['gate'] {
  */
 export const ANYTIME_SNIPPETS: readonly string[] = [
   'reread-context',
+  'recover-context',
   'commits-summary',
   'find-similar-bugs',
   'list-assumptions',

@@ -5,12 +5,15 @@ import { describe, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { CONSULTANT_IDENTITY_CLAUSE, ORCHESTRATOR_SYSTEM_PROMPT, buildPhaseBrief, orchestratorSystemPrompt } from '../src/harness/orchestrator-prompts.ts';
 import {
+  COMPACT_TIMEOUT_MS,
   block,
   contractCheckpointRail,
   createPhaseTools,
   error,
   firstRefusal,
+  isCompactBody,
   ok,
+  perTurnTimeoutFor,
   orphanRail,
   pendingTurnGateRail,
   projectDetail,
@@ -148,6 +151,21 @@ describe('result builders', () => {
     const clean = result([block('x')], { isError: false });
     expect(clean).toEqual({ content: [{ type: 'text', text: 'x' }] });
     expect('isError' in clean).toBe(false);
+  });
+});
+
+describe('isCompactBody / perTurnTimeoutFor (S7 — the body-derived compact rule)', () => {
+  test('a /compact body (leading whitespace tolerated) is compact and gets the short cap', () => {
+    expect.soft(isCompactBody('/compact keep the spec, drop the journey')).toBe(true);
+    expect.soft(isCompactBody('  /compact foo')).toBe(true);
+    expect.soft(perTurnTimeoutFor('/compact foo')).toBe(COMPACT_TIMEOUT_MS);
+    expect.soft(COMPACT_TIMEOUT_MS).toBe(8 * 60_000);
+  });
+
+  test('a normal body is not compact and gets no override (the phase cap stands)', () => {
+    expect.soft(isCompactBody('review the spec')).toBe(false);
+    expect.soft(isCompactBody('please run /compact later')).toBe(false); // not at the start
+    expect.soft(perTurnTimeoutFor('review the spec')).toBeUndefined();
   });
 });
 
@@ -462,6 +480,68 @@ describe('send_prompt', () => {
     const persisted = loadRunState(projectDir, consultantRun.runId);
     expect.soft(persisted.acceptanceContractDraft).toBeUndefined(); // checkpoint NOT recorded
     expect.soft(persisted.workerSessions.consultant).toBe('sess-c'); // but the session is still captured (resumable)
+  });
+
+  test('S7: a /compact send carries the short 8-min cap; a normal send carries no override (blocking host)', async ({
+    run,
+  }) => {
+    const implementer = new FakeWorker('claude');
+    const { call } = harness(run, { implementer });
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact keep the spec, drop the journey' });
+    await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft the spec' });
+
+    expect.soft(implementer.calls[0]?.timeoutMs).toBe(8 * 60_000); // the /compact send
+    expect.soft(implementer.calls[1]?.timeoutMs).toBeUndefined(); // the normal send
+  });
+
+  test('S7: an accepted-but-failed /compact resets the implementer session and prescribes recover-context (body-derived, tag=custom)', async ({
+    projectDir,
+    run,
+  }) => {
+    // tag=custom proves the reset is BODY-derived, never tag-derived.
+    const implementer = new FakeWorker('claude', [{ aborted: true, sessionId: 'sess-compact' }]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact drop the journey' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+
+    // The bloated session is reset (not resumed) so the next send mints fresh.
+    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer).toBeUndefined();
+    expect.soft(joined).toContain('recover-context'); // the recovery prescription, not the generic resume
+    expect.soft(joined).not.toContain('Resume that session with a short continuation');
+  });
+
+  test('S7: a PRE-FLIGHT /compact failure does NOT reset the session and prescribes retry-verbatim', async ({
+    projectDir,
+    run,
+  }) => {
+    // A never-accepted /compact (an infra Error) — the old session never saw the
+    // compact and is still the one to compact, so it must NOT be reset.
+    run.workerSessions = { implementer: 'sess-prior' };
+    saveRunState(run);
+    const implementer = new FakeWorker('claude', [new Error('spawn claude ENOENT')]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact drop the journey' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+
+    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer).toBe('sess-prior'); // unchanged
+    expect.soft(joined).toContain('Retry this same send_prompt'); // the infra retry-verbatim envelope
+    expect.soft(joined).not.toContain('recover-context');
+  });
+
+  test('S7: a non-/compact aborted turn is NOT reset, even with a misleading compact-ish tag (not tag-derived)', async ({
+    projectDir,
+    run,
+  }) => {
+    // A normal aborted turn carrying tag=compact-for-impl: the BODY isn't /compact,
+    // so it's a plain resumable checkpoint — no reset, the generic resume note.
+    const implementer = new FakeWorker('claude', [{ aborted: true, sessionId: 'sess-x' }]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'compact-for-impl', body: 'build the next slice' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+
+    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer).toBe('sess-x'); // resumable, not reset
+    expect.soft(joined).toContain('Resume that session with a short continuation'); // the generic resume note
+    expect.soft(joined).not.toContain('recover-context');
   });
 
   test('a BudgetCutoffError settles nothing and renders a budget-control recovery, distinct from infra', async ({
@@ -2340,6 +2420,34 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     const collected = await call('check_turns');
     expect.soft(allText(collected)).toContain('scripted response');
     expect.soft(loadRunState(projectDir, run.runId).pendingTurns?.reviewer).toBeUndefined();
+  });
+
+  test('S7: an accepted-but-failed /compact resets the implementer and prescribes recover-context, on the async path', async ({
+    projectDir,
+    run,
+  }) => {
+    run.workerSessions = { implementer: 'sess-prior' };
+    saveRunState(run);
+    const implementer = new DeferredWorker('claude');
+    const { call } = harness(run, { implementer, async: true });
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact drop the journey' });
+
+    // The short /compact cap rode the dispatched turn (dispatcher path).
+    expect.soft(implementer.calls[0]?.timeoutMs).toBe(8 * 60_000);
+
+    // The compact aborts (accepted-but-failed) — it stays collectible, the reset
+    // lands at settle, and collect renders the recover-context prescription.
+    implementer.resolve({ aborted: true, sessionId: 'sess-compact' });
+    await flush();
+    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer).toBeUndefined(); // reset at settle
+
+    const collected = await call('check_turns');
+    expect.soft(allText(collected)).toContain('recover-context');
+    expect.soft(loadRunState(projectDir, run.runId).pendingTurns?.implementer).toBeUndefined(); // collected clean
+
+    // The next send to the (re-opened) implementer mints fresh — no resume of the bloated session.
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'reread and continue' });
+    expect.soft(implementer.calls[1]?.sessionId).toBeUndefined();
   });
 
   test('the same-role guard spans the lifecycle: running and ready-uncollected refuse; collecting re-opens', async ({
