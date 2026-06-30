@@ -302,7 +302,8 @@ program
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
   .option('--interactive', "orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over the attended arc up to the workflow's handoff gate (full: through the plan gate; rir: through the Direction gate); implementation onward runs headless after that handoff")
   .option('--no-interactive', 'force headless orchestration even when the framing carries interactive: true (the flag wins over the frontmatter)')
-  .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; budget?: string; orchestrator?: string; impl?: string; reviewer?: string; consultant?: string | boolean; gateless?: boolean; tmux?: boolean; interactive?: boolean }) => {
+  .option('--resume-session <id>', 'warm-start the interactive orchestrator from an existing Claude Code session: resume that session (its discussion context intact) as this run’s orchestrator instead of opening a fresh one. Needs --interactive; capture the id with `printenv CLAUDE_CODE_SESSION_ID` inside the session you want to continue')
+  .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; budget?: string; orchestrator?: string; impl?: string; reviewer?: string; consultant?: string | boolean; gateless?: boolean; tmux?: boolean; interactive?: boolean; resumeSession?: string }) => {
     const cwd = process.cwd();
 
     // The framing's frontmatter is the machine/prose boundary: parsed
@@ -324,6 +325,11 @@ program
     if (interactive && runInputs.gateless) {
       fail(
         'gateless means walk away from the START, which is incoherent with --interactive (you drive the planning gates in-session). Use `duet new --gateless` for a headless full-send, or `duet new --interactive` then `duet afk --gateless` to walk away mid-run.',
+      );
+    }
+    if (opts.resumeSession && !interactive) {
+      fail(
+        '--resume-session warm-starts the interactive orchestrator from an existing session, so it needs --interactive (a headless run has no orchestrator session to resume).',
       );
     }
     // Interactive orchestration drives a live terminal session (it spawns claude
@@ -390,7 +396,7 @@ program
       // session ends). --gates-at still applies to the headless tail after the
       // workflow's handoff gate (full: plan; rir: Direction).
       console.log(`bringing up the interactive orchestrator for run ${state.runId} …`);
-      const launched = runOrchestrate(state);
+      const launched = runOrchestrate(state, { ...(opts.resumeSession ? { resumeSessionId: opts.resumeSession } : {}) });
       if (launched.error) fail(launched.error.message);
       return;
     }
@@ -404,11 +410,12 @@ program
     'Bring up the interactive orchestrator for a run: a Claude Code session wired to drive it over the attended arc up to the handoff gate (full: FRAME → PLAN; rir: RESEARCH → Direction), with the single gate-safety ask rule applied. Relaunch to reconnect after a dropped session (it re-anchors on disk via get_task).',
   )
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
-  .action((runId: string | undefined) => {
+  .option('--resume-session <id>', 'warm-start from an existing Claude Code session: resume it (its context intact) as this run’s orchestrator. Capture the id with `printenv CLAUDE_CODE_SESSION_ID` inside that session. Omit to reconnect the orchestrator’s own session after a drop (its id is remembered) or to open a fresh one')
+  .action((runId: string | undefined, opts: { resumeSession?: string }) => {
     const cwd = process.cwd();
     const state = resolveRun(cwd, runId, 'no runs found in this project — start one with duet new --interactive');
     console.log(`bringing up the interactive orchestrator for run ${state.runId} …`);
-    const launched = runOrchestrate(state);
+    const launched = runOrchestrate(state, { ...(opts.resumeSession ? { resumeSessionId: opts.resumeSession } : {}) });
     if (launched.error) fail(launched.error.message);
   });
 
