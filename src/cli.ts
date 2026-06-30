@@ -281,7 +281,7 @@ program
   )
   .option(
     '--retry-infra <n>',
-    'opt-in bounded auto-retry of TRANSIENT infra failures (network/server/rate-limit, and auth once) before flagging — n attempts. login/quota/persistent-auth are never retried; exhaustion always falls back to a flag. Default: off (every infra failure flags, as today)',
+    'bounded auto-retry of TRANSIENT infra failures (network/server/rate-limit, and auth once) before flagging — n attempts. login/quota/persistent-auth are never retried; exhaustion always falls back to a flag. Default 3 for a new run (materialized at creation); --retry-infra 0 is the explicit opt-out; an old run started without the field stays off.',
   )
   .option(
     '--budget <off|default|N>',

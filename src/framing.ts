@@ -345,7 +345,7 @@ export function parseWorkflow(value: string): WorkflowName {
 export function parseRetryInfra(value: string): number {
   const n = Number(value.trim());
   if (!Number.isInteger(n) || n < 0) {
-    throw new Error(`retry_infra: "${value}" is not a non-negative integer — it is the auto-retry attempt budget (0 or omit to disable).`);
+    throw new Error(`retry_infra: "${value}" is not a non-negative integer — it is the auto-retry attempt budget (0 disables it; omit to take the default).`);
   }
   return n;
 }
@@ -457,7 +457,7 @@ export interface RunInputs {
   workflow: WorkflowName;
   /** Validated spec path, relative to cwd. */
   specPath?: string;
-  /** Opt-in infra auto-retry budget (0/absent ⇒ off). */
+  /** Infra auto-retry budget; absent ⇒ createRun materializes DEFAULT_RETRY_INFRA, an explicit 0 ⇒ off. */
   retryInfra?: number;
   /** The gateless posture (sugar: gatesAt already materialized to [] here). */
   gateless?: boolean;

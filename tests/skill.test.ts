@@ -363,3 +363,29 @@ describe('shipped gate-posture copy teaches the overnight-default, post-open fin
     expect.soft(referenceMd, 'concierge cli-reference omits the budget cause').toMatch(/cause[\s\S]{0,200}budget/i);
   });
 });
+
+describe('the infra-retry copy teaches the materialized default-3, not the retired opt-in/off story', () => {
+  // The AFK change flipped the headless infra auto-retry default to 3,
+  // materialized at createRun (run-store.ts DEFAULT_RETRY_INFRA). The behavior
+  // test lives in run-store.test.ts; this is the WORDING-LOCK the reviewer asked
+  // for — the user-facing help + the shipped concierge reference must teach
+  // "default 3 for new runs; 0 disables", never the retired opt-in / default-off
+  // copy, so the surfaces can't silently drift back behind the behavior again.
+  const retryHelp = publicCommands.get('new')?.options.find((o) => o.long === '--retry-infra')?.description ?? '';
+  const retryRow = referenceMd.split('\n').find((l) => l.includes('--retry-infra')) ?? '';
+
+  test('both the --retry-infra help and the concierge reference row name the default-3 model', () => {
+    for (const [label, text] of [
+      ['--retry-infra help', retryHelp],
+      ['concierge reference row', retryRow],
+    ] as const) {
+      const lower = text.toLowerCase();
+      expect.soft(lower, `${label} omits the default-3 wording`).toMatch(/default[^.]*\b3\b/);
+      expect.soft(lower, `${label} omits that 0 disables`).toContain('0');
+      // The retired framing — opt-in / "opt … into" / default-off / off by default.
+      expect.soft(lower, `${label} still calls retry opt-in`).not.toContain('opt-in');
+      expect.soft(lower, `${label} still frames retry as opt-into`).not.toMatch(/opt\s+the\b.*\binto/);
+      expect.soft(lower, `${label} still says default-off`).not.toMatch(/default-?off|off by default|default:\s*off/);
+    }
+  });
+});
