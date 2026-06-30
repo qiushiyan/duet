@@ -72,6 +72,24 @@ export const GATE_ASK_RULE = 'Bash(duet continue:*)';
 export const KICKOFF_PROMPT =
   'Read get_task to anchor on the current phase and the framing, then give me a one-paragraph plan of attack and wait for my go before sending the first worker prompt.';
 
+/**
+ * The WARM-START kickoff — the first user turn when the session being launched is
+ * the user's own discussion session, resumed (`--resume <id>`) to become this
+ * run's orchestrator. It fires once, at the transition moment, so it does the one
+ * job a user turn does well: flip the session into the role and trigger the first
+ * act. It deliberately does NOT re-spec the role or repeat the worker-prompting
+ * discipline — that durable posture lives in the appended identity (system
+ * prompt), one source of truth. Framed positively (a senior engineer who
+ * delegates and monitors, not a list of prohibitions) and points at get_task as
+ * the source of truth, so the rich discussion context informs without overriding
+ * the framing. Used only on a warm start; a fresh launch and a plain reconnect
+ * both use the re-anchoring KICKOFF_PROMPT above.
+ */
+export const RESUME_KICKOFF_PROMPT =
+  "We've turned everything we worked through in this discussion into a duet framing, so the thinking is settled — and from here your job changes. You're the orchestrator for this run now: the senior engineer who hands the actual building to an implementer and a reviewer, keeps the run on track, and holds it to the product goals we just agreed on.\n\n" +
+  "First, read get_task to see where the run really stands — the phase, the framing, the brief. That's the source of truth to work from; our conversation is the shared understanding behind it. Then give me a one-paragraph plan of attack, and wait for my go before you send the first worker prompt.\n\n" +
+  'What we worked out here stays useful the whole way through — for briefing the workers well, and for judging what comes back against what we were actually trying to build.';
+
 export interface LaunchSpec {
   command: string;
   args: string[];
@@ -90,8 +108,19 @@ export interface CliSelfRef {
 }
 const currentSelfRef = (): CliSelfRef => ({ exec: process.execPath, entry: process.argv[1]! });
 
-/** Build the `claude` argv that wires an interactive session to drive `state`. */
-export function buildLaunchSpec(state: RunState, self: CliSelfRef = currentSelfRef()): LaunchSpec {
+/**
+ * Build the `claude` argv that wires an interactive session to drive `state`.
+ *
+ * When `state.interactiveOrchestratorSessionId` is set, the session is RESUMED
+ * (`--resume <id>`) rather than opened fresh — a warm start (the user's discussion
+ * session) or a reconnect (the same orchestrator session after a drop). The
+ * appended identity, MCP config, and settings are re-passed every launch (they are
+ * per-invocation and do not persist across resume), so a resumed session gets the
+ * orchestrator role, the kernel surface, and the gate-safety rule identically.
+ * `opts.warmStart` only chooses the kickoff: the transition prompt on a first
+ * attach, the re-anchoring KICKOFF_PROMPT on a fresh launch or a plain reconnect.
+ */
+export function buildLaunchSpec(state: RunState, self: CliSelfRef = currentSelfRef(), opts: { warmStart?: boolean } = {}): LaunchSpec {
   // The MCP server is THIS cli's own executable + entry (self.exec self.entry),
   // not a bare `duet` PATH lookup — so the kernel the session attaches is the
   // same duet that launched it (the spawnDrive pattern, lifecycle.ts). The runId
@@ -107,19 +136,29 @@ export function buildLaunchSpec(state: RunState, self: CliSelfRef = currentSelfR
   return {
     command: 'claude',
     args: [
+      // Resume an existing session as the orchestrator when one is recorded (warm
+      // start / reconnect); absent, claude opens a fresh session. The resume id
+      // is the human's own session, so the orchestrator keeps its conversation.
+      ...(state.interactiveOrchestratorSessionId ? ['--resume', state.interactiveOrchestratorSessionId] : []),
       '--mcp-config', mcpConfig,
       // The session's MCP surface is exactly the duet kernel — no user/global
       // MCP leakage, the hygiene the headless host gets from strictMcpConfig.
+      // On a resume this also drops the discussion session's other MCP servers,
+      // which is the wanted clean surface (their old tool calls stay inert in
+      // history); a newly added server may prompt for trust once, fine attended.
       '--strict-mcp-config',
       // Bound: the run-dir composed identity (base + consultant clause), written
       // by runOrchestrate before launch. Unbound: the shipped identity, verbatim.
+      // Re-fed every launch — appended prompts are per-invocation, so a resumed
+      // session would otherwise lose the orchestrator role.
       '--append-system-prompt-file', state.bindings.consultant ? composedIdentityPath(state) : IDENTITY_PATH,
       '--settings', settings,
       // Family A: the first user turn, as claude's positional [prompt] operand,
       // so the session opens working instead of blank. It trails every option —
       // the variadic `--mcp-config` stopped at `--strict-mcp-config`, and
-      // `--settings` takes a single value — so claude parses it as [prompt].
-      KICKOFF_PROMPT,
+      // `--settings` takes a single value — so claude parses it as [prompt]. The
+      // warm-start variant marks the discussion→orchestrator transition.
+      opts.warmStart ? RESUME_KICKOFF_PROMPT : KICKOFF_PROMPT,
     ],
   };
 }
@@ -183,16 +222,28 @@ export function runOrchestrate(
   state: RunState,
   opts: {
     launcher?: ClaudeLauncher;
-    buildSpec?: (state: RunState) => LaunchSpec;
+    buildSpec?: (state: RunState, o: { warmStart: boolean }) => LaunchSpec;
     log?: (line: string) => void;
     /** Preflight target; defaults to the launcher's IDENTITY_PATH (test seam). */
     identityPath?: string;
+    /**
+     * Warm start: resume this existing Claude Code session as the orchestrator
+     * instead of opening a fresh one (the discussion session the framing grew out
+     * of). Persisted onto the run, so a later reconnect re-attaches the same
+     * session. Absent ⇒ a fresh launch (or a reconnect that reuses the already-
+     * persisted id) — byte-for-byte the pre-feature behavior.
+     */
+    resumeSessionId?: string;
   } = {},
 ): { pid?: number; error?: Error } {
   const launcher = opts.launcher ?? defaultLauncher;
-  const buildSpec = opts.buildSpec ?? buildLaunchSpec;
+  const buildSpec = opts.buildSpec ?? ((s: RunState, o: { warmStart: boolean }) => buildLaunchSpec(s, undefined, o));
   const log = opts.log ?? ((line: string) => console.error(line));
   const identityPath = opts.identityPath ?? IDENTITY_PATH;
+  // An explicit resume id is a first warm start (the discussion→orchestrator
+  // transition); its absence is a fresh launch or a plain reconnect (which
+  // resumes the already-persisted id, re-anchoring rather than re-transitioning).
+  const warmStart = opts.resumeSessionId !== undefined;
 
   // Preflight before marking: if the identity file is missing the run must stay
   // untouched, so a broken install fails fast rather than launching a roleless
@@ -214,12 +265,16 @@ export function runOrchestrate(
   // headless-crash semantics, and zeroing the partial flag would lie about cost.
   const prevHost = state.orchestrationHost;
   const prevPartial = state.costs.orchestratorCostPartial;
+  const prevInteractiveId = state.interactiveOrchestratorSessionId;
 
   state.orchestrationHost = 'interactive';
   // Sticky: orchestrator spend now runs on the flat subscription quota, so the
   // known total is partial — and stays partial past the handoff that clears
   // orchestrationHost.
   state.costs.orchestratorCostPartial = true;
+  // A warm start records the session to resume; a reconnect leaves the persisted
+  // id untouched so buildLaunchSpec re-attaches the same session.
+  if (opts.resumeSessionId) state.interactiveOrchestratorSessionId = opts.resumeSessionId;
   saveRunState(state);
 
   // When a consultant is bound, compose the identity the launcher will feed:
@@ -234,7 +289,7 @@ export function runOrchestrate(
     writeFileSync(composedIdentityPath(state), `${base.trimEnd()}\n\n${consultantIdentityClause(workflowOf(state))}\n`);
   }
 
-  const spec = buildSpec(state);
+  const spec = buildSpec(state, { warmStart });
   if (!gateAskRuleLive(spec)) {
     log(
       `[orchestrate] WARNING: the gate-safety ask rule (${GATE_ASK_RULE}) is missing from the launch settings — a "duet continue" could cross a gate WITHOUT a permission prompt. Apply it manually before trusting this session for gate decisions.`,
@@ -250,6 +305,11 @@ export function runOrchestrate(
     if (prevHost === undefined) delete fresh.orchestrationHost;
     else fresh.orchestrationHost = prevHost;
     fresh.costs.orchestratorCostPartial = prevPartial;
+    // A failed warm start must not strand a resume id pointing at a session no
+    // launch ever attached: revert to the pre-call value (undefined on a fresh
+    // warm start; the prior id on a failed reconnect), keeping "the run is unchanged".
+    if (prevInteractiveId === undefined) delete fresh.interactiveOrchestratorSessionId;
+    else fresh.interactiveOrchestratorSessionId = prevInteractiveId;
     saveRunState(fresh);
     const enoent = (result.error as NodeJS.ErrnoException).code === 'ENOENT';
     return {

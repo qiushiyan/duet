@@ -2,7 +2,7 @@
 name: duet-frame
 description: Turn a rough, natural-language problem into a polished duet framing document.
 disable-model-invocation: true
-allowed-tools: Read, Grep, Glob, Write, Bash(git:*), Bash(grep:*), Bash(rg:*), Bash(ls:*), Bash(find:*)
+allowed-tools: Read, Grep, Glob, Write, Bash(git:*), Bash(grep:*), Bash(rg:*), Bash(ls:*), Bash(find:*), Bash(printenv:*)
 ---
 
 # duet-frame — sharpen a problem into a framing
@@ -70,6 +70,21 @@ Surface it like gate posture — offer the choice, don't make it; whether the pr
 - **Leave it off** for routine, well-understood work — the embedded reviewer is enough there, and an extra voice is just cost and ceremony.
 
 The _binding_ — which provider/model plays consultant — is a launch flag, `--consultant <provider[:model]>` (e.g. `--consultant claude` — Claude Opus 4.8 by default — for a cross-family read against the default codex reviewer), or `[roles.consultant]` in config to bind one for every run; the binding never enters frontmatter (a `consultant: claude:opus` is rejected). What _can_ ride the frontmatter is a `consultant: on | off` **toggle** — the on/off half of the knob, for a template that says "this kind of work always uses the outside voice" (or always skips it). So: the toggle is frontmatter, the binding is a flag; `--no-consultant` turns a config-bound one off for a single run.
+
+## Attach to this discussion (warm start)
+
+An interactive run brings up the orchestrator in its own Claude Code session. By default that's a _fresh_ session — but when the framing grew out of a real discussion in **this** session, you can warm-start the orchestrator by resuming this session instead, so it carries the understanding you just built rather than meeting the problem cold. It steps in as the senior engineer who settled the goals and now delegates the build and watches the run.
+
+This only applies to interactive runs (it's meaningless for a headless `gateless` one). Offer it like the consultant — the user's call, not yours:
+
+- **Offer the warm start** when the framing distills a genuine back-and-forth here: libraries weighed, approaches compared, a mental model built. That shared context makes the orchestrator a stronger partner.
+- **Leave it off** (a clean start) when this session holds little relevant history, or the user would rather the orchestrator reason from the framing alone.
+
+If they want it:
+
+1. Read this session's id: `printenv CLAUDE_CODE_SESSION_ID`.
+2. Put the **literal** id into the launch command as `--resume-session <id>`. Never emit the `$CLAUDE_CODE_SESSION_ID` variable — once the user quits this session to run the command, that variable is gone from their shell, so only the resolved value works.
+3. Tell them to **quit this session first (Ctrl+C), then run the command** in the same terminal — resuming needs this session closed.
 
 ## The framing schema
 
@@ -153,6 +168,12 @@ duet new --interactive --workflow <full|rir> --framing .duet/<slug>.md
 ```
 
 Use the workflow you settled on (omit `--workflow` to take the default `full`). Add `--consultant <provider[:model]>` only if the user chose the outside voice for this run (omit it otherwise, or when their config already binds one). Tell them to run it in their own terminal — `--interactive` hands the terminal to a live orchestrator session, so it can't be launched for them from a non-interactive session.
+
+If the user chose to warm-start from this session (see "Attach to this discussion"), add the captured id and remind them to quit this session before running it:
+
+```
+duet new --interactive --resume-session <session-id> --workflow <full|rir> --framing .duet/<slug>.md
+```
 
 If the user chose to walk away from the start (gateless), drop `--interactive` and use `--gateless` instead — the two are mutually exclusive, and a gateless run is headless from the first prompt:
 

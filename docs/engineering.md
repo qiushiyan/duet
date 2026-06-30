@@ -51,7 +51,7 @@ The trust gradient grounded in code. Modules cluster by subsystem; each line nam
 
 - `src/cli.ts` — command wiring only; parses under `import.meta.main` (so the table imports clean). Hides `_drive` and `_mcp`. *Genuinely thin:* the one command with real branching, `continue`, gathers facts and hands the decision to a pure planner, then just executes the returned action.
 - `src/continue-planner.ts` — that planner: `(run state, restored facts) → ContinueAction`, no IO, exhaustively unit-tested (the `takeoverPlan` precedent generalized). It holds the crash-recovery / gate-decision / interactive-crossing logic that used to be tangled into the CLI handler.
-- `src/orchestrate.ts` — the `duet orchestrate` launcher (the run-scoped `_mcp`, the identity prompt, the one gate-safety `ask` rule).
+- `src/orchestrate.ts` — the `duet orchestrate` launcher (the run-scoped `_mcp`, the identity prompt, the one gate-safety `ask` rule). Also the warm-start/reconnect resume: `--resume-session <id>` opens the orchestrator on an existing session (`claude --resume`) with a transition kickoff, persisted as `interactiveOrchestratorSessionId` so a drop reconnects the same one. *That field is deliberately distinct from the headless driver's `orchestratorSessionId`* — the driver SDK-resumes the latter, so conflating them would resume a human TUI session over the SDK.
 - `src/framing.ts` — the framing's journey (seed → editor → frontmatter parse); the machine/prose boundary rule lives here.
 - `src/status.ts` — RunState + position → the status model and its renderers (text, `--json` verbatim, `--brief`). Pure; *the JSON schema is additive-only, pinned by test.*
 

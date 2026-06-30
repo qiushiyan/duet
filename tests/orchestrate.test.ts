@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
-import { GATE_ASK_RULE, KICKOFF_PROMPT, buildLaunchSpec, gateAskRuleLive, runOrchestrate } from '../src/orchestrate.ts';
+import { GATE_ASK_RULE, KICKOFF_PROMPT, RESUME_KICKOFF_PROMPT, buildLaunchSpec, gateAskRuleLive, runOrchestrate } from '../src/orchestrate.ts';
 import type { ClaudeLauncher } from '../src/orchestrate.ts';
 import { CONSULTANT_IDENTITY_CLAUSE } from '../src/harness/orchestrator-prompts.ts';
 import { loadRunState, runDirOf, saveRunState } from '../src/run-store.ts';
@@ -72,6 +72,68 @@ describe('buildLaunchSpec — the wired claude argv', () => {
     expect.soft(args[args.length - 1]).toBe(KICKOFF_PROMPT);
     // It drives the session to its first act — anchoring via get_task.
     expect.soft(KICKOFF_PROMPT).toMatch(/get_task/);
+  });
+});
+
+describe('warm start — resume an existing session as the orchestrator', () => {
+  test('no recorded session id ⇒ no --resume and the fresh re-anchoring kickoff (byte-for-byte today)', ({ run }) => {
+    const args = buildLaunchSpec(run).args;
+    expect.soft(args).not.toContain('--resume');
+    expect.soft(args[args.length - 1]).toBe(KICKOFF_PROMPT);
+  });
+
+  test('a recorded session id ⇒ --resume <id>; warmStart picks the transition kickoff', ({ run }) => {
+    run.interactiveOrchestratorSessionId = 'sess-abc';
+    const warm = buildLaunchSpec(run, undefined, { warmStart: true }).args;
+    // The session is resumed, not opened fresh.
+    expect.soft(warm[warm.indexOf('--resume') + 1]).toBe('sess-abc');
+    // A first attach gets the discussion→orchestrator transition prompt, last.
+    expect.soft(warm[warm.length - 1]).toBe(RESUME_KICKOFF_PROMPT);
+    // It still drives the session to anchor on disk truth.
+    expect.soft(RESUME_KICKOFF_PROMPT).toMatch(/get_task/);
+
+    // A plain reconnect (warmStart false) resumes the same id but re-anchors
+    // rather than re-announcing the transition.
+    const reconnect = buildLaunchSpec(run, undefined, { warmStart: false }).args;
+    expect.soft(reconnect[reconnect.indexOf('--resume') + 1]).toBe('sess-abc');
+    expect.soft(reconnect[reconnect.length - 1]).toBe(KICKOFF_PROMPT);
+  });
+
+  test('runOrchestrate persists the resume id and launches a resumed, transition-kicked session', ({ projectDir, run }) => {
+    const rec = recordingLauncher();
+    runOrchestrate(run, { resumeSessionId: 'sess-abc', launcher: rec.launcher });
+
+    // Persisted, so a later reconnect re-attaches the same session.
+    const after = loadRunState(projectDir, run.runId);
+    expect.soft(after.interactiveOrchestratorSessionId).toBe('sess-abc');
+    // The real spec reached the launcher: resumed + transition kickoff.
+    const args = rec.calls[0]!.args;
+    expect.soft(args[args.indexOf('--resume') + 1]).toBe('sess-abc');
+    expect.soft(args[args.length - 1]).toBe(RESUME_KICKOFF_PROMPT);
+    // Distinct from the headless SDK orchestrator field — never conflated.
+    expect.soft(after.orchestratorSessionId).toBeUndefined();
+  });
+
+  test('reconnect: a persisted id resumes the same session with the re-anchoring kickoff (no flag needed)', ({ projectDir, run }) => {
+    run.interactiveOrchestratorSessionId = 'sess-xyz';
+    saveRunState(run);
+    const rec = recordingLauncher();
+    runOrchestrate(run, { launcher: rec.launcher }); // no resumeSessionId — the reconnect path
+
+    const args = rec.calls[0]!.args;
+    expect.soft(args[args.indexOf('--resume') + 1]).toBe('sess-xyz');
+    expect.soft(args[args.length - 1]).toBe(KICKOFF_PROMPT);
+    expect.soft(loadRunState(projectDir, run.runId).interactiveOrchestratorSessionId).toBe('sess-xyz');
+  });
+
+  test('a failed warm-start launch reverts the resume id — the run is left unchanged', ({ projectDir, run }) => {
+    const enoent = Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' });
+    const result = runOrchestrate(run, { resumeSessionId: 'sess-abc', launcher: () => ({ error: enoent }) });
+    expect.soft(result.error).toBeDefined();
+    // No session ever attached, so the id must not be stranded on the run.
+    const after = loadRunState(projectDir, run.runId);
+    expect.soft(after.interactiveOrchestratorSessionId).toBeUndefined();
+    expect.soft(after.orchestrationHost).toBeUndefined();
   });
 });
 

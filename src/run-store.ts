@@ -165,6 +165,23 @@ export interface RunState {
   /** Mirror of the machine's state value, for humans and `duet status`. */
   machineState?: string;
   orchestratorSessionId?: string;
+  /**
+   * The interactive orchestrator's OWN Claude Code session id — the human's
+   * session that hosts the orchestrator over the attended arc. Set by
+   * runOrchestrate: from `--resume-session <id>` on a warm start (the user
+   * attaches the discussion session the framing grew out of), then carried
+   * forward so a later `duet orchestrate <runId>` re-attaches the SAME session
+   * after a drop instead of starting cold. buildLaunchSpec resumes from it
+   * (`claude --resume`); a warm start also flips the kickoff to its transition
+   * variant.
+   *
+   * Deliberately DISTINCT from `orchestratorSessionId` above, which is the
+   * HEADLESS driver's in-process SDK orchestrator session (driver.ts resumes it
+   * over the SDK) — conflating them would have the post-handoff headless driver
+   * try to SDK-resume a human TUI session. ADDITIVE: absent on every run that
+   * never warm-started, so cold-interactive and headless launches are unchanged.
+   */
+  interactiveOrchestratorSessionId?: string;
   workerSessions: Partial<Record<WorkerRole, string>>;
 
   /** Which phases have had their entry prompt sent (drives entry-vs-resume). */
