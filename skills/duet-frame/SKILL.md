@@ -122,7 +122,10 @@ consultant: on             # optional: on | off toggle for a config-bound consul
 <paths to the concrete evidence that grounds the problem — data files, archives, logs, articles; link, don't summarize. Omit if none.>
 
 # Docs
-<docs-update skill, or where docs live and what usually needs updating>
+<the project's doc-update method, BY PATH — a doc-update skill's file (e.g.
+ .claude/skills/update-docs/SKILL.md) or the docs that need it and what usually
+ changes. Name a skill by its file path, not a bare name: the orchestrator
+ relays this to a worker that reads paths, not slash commands.>
 ```
 
 Keep a section the user gave even if it is terse; drop a heading that genuinely doesn't apply rather than padding it.

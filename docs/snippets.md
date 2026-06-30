@@ -165,14 +165,17 @@ If a decision turns out wrong or underspecified once you're in the code, **stop 
 
 ### `reconcile-docs`
 
-Shared by full's `finish` phase and rir's `publish` phase — the docs step; both arcs ride the docs into the PR. It reconciles them with what actually shipped — preferring the project's own doc-update skill (under `.claude/`/`.agents/`) when one exists, else a consolidate-don't-patch default pitched for a senior engineer — commits directly (no docs gate), and holds the one product boundary back to the human (deleting a documented concept, rewriting a load-bearing design claim, pruning a superseded doc). Self-contained — it names no vendored skill of its own. Override it to change how a project reconciles docs.
+Shared by full's `finish` phase and rir's `publish` phase — the docs step; both arcs ride the docs into the PR. The body is an invariant contract (commit directly — no docs gate; hold the one product boundary back to the human — deleting a documented concept, rewriting a load-bearing design claim, pruning a superseded doc) wrapped around a **method chosen by precedence**: a doc-update skill or document the framing names (the orchestrator relays it, authoritative — it outranks discovery, so a run's explicit choice is never overridden by a generic find), else the project's own doc-update skill (under `.claude/`/`.agents/`) when one exists, else a consolidate-don't-patch default pitched for a senior engineer. The orchestrator can't reach the filesystem, so it only relays a named method; the implementer (which can) locates and follows it. Self-contained — it names no vendored skill of its own. Override it to change how a project reconciles docs.
 
 ```text
 The docs ship with this change — they ride the branch (and the PR, where there is one) into the shippable record. Reconcile them with what actually shipped, in one pass.
 
-**Use the project's own doc method first.** If a doc-update skill lives under `.claude/` or `.agents/` (e.g. an `update-docs` skill), follow it — it's the project's authoritative guide. Otherwise: **consolidate, don't patch** — fold the change into the existing prose so a senior engineer still gets the mental model, not a changelog; stay at the docs' own altitude (the *what* and *why*, never an implementation play-by-play); derive the impact from the code, and leave what still reads true (no manufactured churn).
+**How to write the update — in order of precedence:**
+1. If this prompt names a doc-update skill or a document to follow, that is the method: read it and follow it — it's this project's authoritative guide for the rest of this update.
+2. Otherwise, look for the project's own doc-update skill (under `.claude/` or `.agents/`) and follow it if one exists.
+3. If there's no project method, reconcile by hand: **consolidate, don't patch** — fold the change into the existing prose so a senior engineer still gets the mental model, not a changelog; stay at the docs' own altitude (the *what* and *why*, never an implementation play-by-play); derive the impact from the code, and leave what still reads true (no manufactured churn).
 
-**Commit the docs directly**, on top of the implementation — no approval step.
+**Commit the doc changes directly**, on top of the implementation — no approval step.
 
 **One boundary stays mine:** a genuine product or design call — deleting a documented concept, rewriting a load-bearing design claim, pruning a doc the work superseded — flag it and leave it, don't decide it.
 
