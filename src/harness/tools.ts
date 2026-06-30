@@ -6,7 +6,7 @@ import type { PhaseName } from '../phases.ts';
 import { providerFor } from '../providers/index.ts';
 import { BudgetCutoffError } from '../providers/types.ts';
 import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
-import { countsReviewRound, orphanRecoveryFor, readOnlyFor, sessionIdFor, workerRolesFor } from '../roles.ts';
+import { countsReviewRound, orphanRecoveryFor, readOnlyFor, sessionIdFor, shouldResetAfterCompactAbort, workerRolesFor } from '../roles.ts';
 import { getSnippet, renderSnippetLibrary, runtimeLibraryContext } from '../snippets.ts';
 import {
   appendNote,
@@ -394,16 +394,20 @@ export function settleTurn(
   // The compaction fresh-session reset (foundation #2): an ACCEPTED-but-failed
   // `/compact` (an aborted compact turn — S5's proof + the body-derived flag)
   // leaves the session un-compacted and bloated, so resuming it is exactly wrong.
-  // Clear the implementer session below so the next send seeds fresh
+  // Clear THIS role's session below so the next send seeds fresh
   // (sessionIdFor → undefined → mint), and render the recover-context prescription
-  // (renderTurnResult). NEVER on a pre-flight failure (that is the Error branch
-  // above, which never reaches here — the old session never saw the compact and
-  // is still the one to compact). Rides this shared settle path, so the async
-  // interactive lifecycle (collectible, orphan/in-flight rails) is preserved.
-  const compactReset = aborted && meta.isCompactTurn === true && role === 'implementer';
+  // (renderTurnResult). Gated by the role policy (shouldResetAfterCompactAbort:
+  // only a `persistent` role carries a resumable session — the implementer or a
+  // compacting reviewer; the ephemeral consultant already reseeds), the SAME
+  // predicate renderTurnResult reads, so the delete and the copy can't drift.
+  // NEVER on a pre-flight failure (that is the Error branch above, which never
+  // reaches here — the old session never saw the compact and is still the one to
+  // compact). Rides this shared settle path, so the async interactive lifecycle
+  // (collectible, orphan/in-flight rails) is preserved.
+  const compactReset = shouldResetAfterCompactAbort(role, meta.isCompactTurn === true, aborted);
   const fresh = loadRunState(state.cwd, state.runId);
   fresh.workerSessions[role] = turn.sessionId;
-  if (compactReset) delete fresh.workerSessions.implementer;
+  if (compactReset) delete fresh.workerSessions[role];
   // Re-read off fresh rather than a call-start snapshot: the minutes-long await
   // means a parallel call may have moved the round count. An aborted turn delivered
   // no review — counting it would burn the phase cap and make later rails believe
@@ -464,7 +468,7 @@ export function settleTurn(
   const ctx = turn.context ? ` · context ${contextPercent(turn.context)}%` : '';
   if (compactReset) {
     // The session was reset (not resumable) — re-anchor with recover-context.
-    appendVoiceLog(state, role, `⚠ /compact aborted — implementer session reset; re-anchor with recover-context${ctx}`);
+    appendVoiceLog(state, role, `⚠ /compact aborted — ${role} session reset; re-anchor with recover-context${ctx}`);
     log(`[send_prompt] ⚠ ${role} /compact aborted at its cap — session reset, next send seeds fresh`);
   } else if (aborted) {
     // A resumable checkpoint, not a delivered response — the marker, not ▶ response.
@@ -532,14 +536,16 @@ export function renderTurnResult(
   // An aborted turn hit its per-turn time cap AFTER its prompt was accepted — the
   // worker saw the prompt and committed work may be on disk, in a resumable
   // session. Resume, never re-send (a re-send would duplicate the conversation).
-  // The one exception is an aborted `/compact`: its session is un-compacted and
-  // bloated, so duet has RESET the implementer to a fresh session — re-anchor it
-  // with recover-context, never resume (the generic resume note would be wrong).
+  // The one exception is an aborted `/compact` of a PERSISTENT role: its session
+  // is un-compacted and bloated, so duet has RESET that role to a fresh session —
+  // re-anchor it with recover-context, never resume (the generic resume note would
+  // be wrong). Gated by the SAME shouldResetAfterCompactAbort the settle delete
+  // reads, so the copy can never claim a reset the settle didn't perform.
   if (outcome.aborted) {
     content.push(
       block(
-        meta.isCompactTurn
-          ? `(the /compact turn ran to its cap and was aborted — its session is un-compacted and bloated, so resuming it is the wrong move. duet has RESET the implementer to a fresh session; re-anchor it by sending the recover-context snippet (a project/status overview + reread), NOT the original /compact or a resume. This is a recovery checkpoint, not a failure.)`
+        shouldResetAfterCompactAbort(role, meta.isCompactTurn === true, true)
+          ? `(the /compact turn ran to its cap and was aborted — its session is un-compacted and bloated, so resuming it is the wrong move. duet has RESET the ${role} to a fresh session; re-anchor it by sending the recover-context snippet (a project/status overview + reread), NOT the original /compact or a resume. This is a recovery checkpoint, not a failure.)`
           : `(the worker ran to its time cap and was aborted — but it saw your prompt and committed work may be on disk, in a resumable session. Resume that session with a short continuation to finish the remainder; do NOT re-send the original prompt (it would duplicate the conversation). This is a checkpoint, not a failure.)`,
       ),
     );

@@ -510,6 +510,31 @@ describe('send_prompt', () => {
     expect.soft(joined).not.toContain('Resume that session with a short continuation');
   });
 
+  test('S7 / Finding-2: an aborted /compact resets the PERSISTENT reviewer too, and the copy names the reviewer (not the implementer)', async ({
+    projectDir,
+    run,
+  }) => {
+    // The reset is role-policy-gated (shouldResetAfterCompactAbort), NOT hard-coded
+    // to the implementer: a reviewer's /compact aborts identically, so settleTurn
+    // must reset the REVIEWER session and renderTurnResult must name the reviewer.
+    // The bug this pins: render claimed "duet has RESET the implementer" for ANY
+    // aborted compact while settle reset nobody but the implementer — the two sites
+    // disagreeing. Both now read the one predicate, so they move together.
+    run.workerSessions = { implementer: 'impl-keep', reviewer: 'rev-old' };
+    saveRunState(run);
+    const reviewer = new FakeWorker('claude', [{ aborted: true, sessionId: 'rev-compact' }]);
+    const { call } = harness(run, { reviewer });
+    const result = await call('send_prompt', { role: 'reviewer', tag: 'custom', body: '/compact drop the journey' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+
+    const after = loadRunState(projectDir, run.runId);
+    expect.soft(after.workerSessions.reviewer).toBeUndefined(); // the persistent reviewer was reset
+    expect.soft(after.workerSessions.implementer).toBe('impl-keep'); // the OTHER role untouched
+    expect.soft(joined).toContain('RESET the reviewer'); // the copy names the ACTUAL role…
+    expect.soft(joined).not.toContain('RESET the implementer'); // …never the old hard-coded implementer
+    expect.soft(joined).toContain('recover-context'); // the same recovery prescription
+  });
+
   test('S7: a PRE-FLIGHT /compact failure does NOT reset the session and prescribes retry-verbatim', async ({
     projectDir,
     run,
