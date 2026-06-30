@@ -6,6 +6,7 @@ import type { ClaudeLauncher } from '../src/orchestrate.ts';
 import { CONSULTANT_IDENTITY_CLAUSE } from '../src/harness/orchestrator-prompts.ts';
 import { loadRunState, runDirOf, saveRunState } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
+import { plantClaudeTranscript } from './helpers/transcripts.ts';
 
 /**
  * The `duet orchestrate` launcher — over the process-spawn seam, so no test ever
@@ -100,8 +101,10 @@ describe('warm start — resume an existing session as the orchestrator', () => 
   });
 
   test('runOrchestrate persists the resume id and launches a resumed, transition-kicked session', ({ projectDir, run }) => {
+    const home = join(projectDir, 'home');
+    plantClaudeTranscript(home, 'sess-abc', '{}'); // the discussion session exists, so preflight passes
     const rec = recordingLauncher();
-    runOrchestrate(run, { resumeSessionId: 'sess-abc', launcher: rec.launcher });
+    runOrchestrate(run, { resumeSessionId: 'sess-abc', launcher: rec.launcher, home });
 
     // Persisted, so a later reconnect re-attaches the same session.
     const after = loadRunState(projectDir, run.runId);
@@ -114,11 +117,29 @@ describe('warm start — resume an existing session as the orchestrator', () => 
     expect.soft(after.orchestratorSessionId).toBeUndefined();
   });
 
-  test('reconnect: a persisted id resumes the same session with the re-anchoring kickoff (no flag needed)', ({ projectDir, run }) => {
+  test('a resume id with no transcript is refused at preflight — the run is left untouched', ({ projectDir, run }) => {
+    const home = join(projectDir, 'home'); // nothing planted — the id does not exist
+    const rec = recordingLauncher();
+    const result = runOrchestrate(run, { resumeSessionId: 'ghost-id', launcher: rec.launcher, home });
+
+    // Refused with prescribed recovery, before any marking or launch.
+    expect.soft(result.error).toBeDefined();
+    expect.soft(result.error?.message).toContain('ghost-id');
+    expect.soft(result.error?.message).toContain('was found to resume');
+    expect.soft(rec.calls).toHaveLength(0); // never reached the launcher
+    const after = loadRunState(projectDir, run.runId);
+    expect.soft(after.orchestrationHost).toBeUndefined();
+    expect.soft(after.interactiveOrchestratorSessionId).toBeUndefined();
+    expect.soft(after.costs.orchestratorCostPartial).toBe(false);
+  });
+
+  test('reconnect: a persisted id whose transcript still exists resumes the same session (no flag)', ({ projectDir, run }) => {
+    const home = join(projectDir, 'home');
+    plantClaudeTranscript(home, 'sess-xyz', '{}');
     run.interactiveOrchestratorSessionId = 'sess-xyz';
     saveRunState(run);
     const rec = recordingLauncher();
-    runOrchestrate(run, { launcher: rec.launcher }); // no resumeSessionId — the reconnect path
+    runOrchestrate(run, { launcher: rec.launcher, home }); // no resumeSessionId — the reconnect path
 
     const args = rec.calls[0]!.args;
     expect.soft(args[args.indexOf('--resume') + 1]).toBe('sess-xyz');
@@ -126,9 +147,26 @@ describe('warm start — resume an existing session as the orchestrator', () => 
     expect.soft(loadRunState(projectDir, run.runId).interactiveOrchestratorSessionId).toBe('sess-xyz');
   });
 
+  test('reconnect fallback: a persisted id whose transcript has vanished opens a FRESH session and clears the dead id', ({ projectDir, run }) => {
+    const home = join(projectDir, 'home'); // 'gone-id' is NOT planted — its transcript is gone
+    run.interactiveOrchestratorSessionId = 'gone-id';
+    saveRunState(run);
+    const rec = recordingLauncher();
+    runOrchestrate(run, { launcher: rec.launcher, home });
+
+    // No re-resume of the dead id — a genuinely fresh session, so reconnect can't loop.
+    const args = rec.calls[0]!.args;
+    expect.soft(args).not.toContain('--resume');
+    expect.soft(args[args.length - 1]).toBe(KICKOFF_PROMPT);
+    // And the dead id is cleared on disk.
+    expect.soft(loadRunState(projectDir, run.runId).interactiveOrchestratorSessionId).toBeUndefined();
+  });
+
   test('a failed warm-start launch reverts the resume id — the run is left unchanged', ({ projectDir, run }) => {
+    const home = join(projectDir, 'home');
+    plantClaudeTranscript(home, 'sess-abc', '{}'); // exists, so it gets past preflight to the launch
     const enoent = Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' });
-    const result = runOrchestrate(run, { resumeSessionId: 'sess-abc', launcher: () => ({ error: enoent }) });
+    const result = runOrchestrate(run, { resumeSessionId: 'sess-abc', launcher: () => ({ error: enoent }), home });
     expect.soft(result.error).toBeDefined();
     // No session ever attached, so the id must not be stranded on the run.
     const after = loadRunState(projectDir, run.runId);

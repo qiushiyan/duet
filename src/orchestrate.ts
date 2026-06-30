@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { consultantIdentityClause } from './harness/orchestrator-prompts.ts';
 import { loadRunState, runDirOf, saveRunState, workflowOf } from './run-store.ts';
 import type { RunState } from './run-store.ts';
+import { locateSessionTranscripts } from './sessions.ts';
 
 /**
  * The `duet orchestrate <runId>` launcher (Stage 1) — the one place that brings
@@ -234,6 +235,8 @@ export function runOrchestrate(
      * persisted id) — byte-for-byte the pre-feature behavior.
      */
     resumeSessionId?: string;
+    /** Transcript-lookup home (the environment seam); defaults to `homedir()`. */
+    home?: string;
   } = {},
 ): { pid?: number; error?: Error } {
   const launcher = opts.launcher ?? defaultLauncher;
@@ -254,6 +257,36 @@ export function runOrchestrate(
         `the orchestrator identity file is missing (${identityPath}) — the interactive orchestrator session would launch without its role. This is a broken install: confirm duet's prompts/ shipped (it is in package.json "files"), then retry: duet orchestrate ${state.runId}. The run is unchanged.`,
       ),
     };
+  }
+
+  // Warm-start resume preflight, before marking: a resume id with no transcript
+  // on disk (a typo, a stale id, an id from another project) must NOT be
+  // persisted — once it is, every reconnect re-resumes the dead id and fails the
+  // same way, and `spawnSync` reports a spawned-then-rejected resume as a non-zero
+  // EXIT (a `status`), not a spawn `error`, so the launch-failure rollback never
+  // fires. Refuse here with the run untouched, mirroring the identity preflight
+  // above. (The interactive orchestrator is always claude — buildLaunchSpec runs
+  // `claude` — so the resume target is a claude transcript.)
+  if (opts.resumeSessionId && locateSessionTranscripts('claude', opts.resumeSessionId, opts.home).length === 0) {
+    return {
+      error: new Error(
+        `no Claude Code session "${opts.resumeSessionId}" was found to resume — check the id (capture it with \`printenv CLAUDE_CODE_SESSION_ID\` inside the session you want to continue), or omit --resume-session to start the orchestrator fresh. The run is unchanged.`,
+      ),
+    };
+  }
+
+  // Reconnect fallback: buildLaunchSpec resumes the persisted interactive session
+  // id, but if that session's transcript has since vanished (purged, deleted),
+  // resuming it would fail identically every time. Drop it so this launch opens a
+  // FRESH session instead of looping on a dead id. Only on a reconnect — an
+  // explicit resume id took the preflight path just above.
+  if (
+    !opts.resumeSessionId &&
+    state.interactiveOrchestratorSessionId &&
+    locateSessionTranscripts('claude', state.interactiveOrchestratorSessionId, opts.home).length === 0
+  ) {
+    log(`[orchestrate] the remembered orchestrator session ${state.interactiveOrchestratorSessionId} is gone — opening a fresh session instead`);
+    delete state.interactiveOrchestratorSessionId;
   }
 
   // Capture the pre-marking state so an immediate launch failure can RESTORE it
