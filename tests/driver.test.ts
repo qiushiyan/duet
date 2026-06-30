@@ -769,9 +769,13 @@ describe('provider-agnostic onboarding — workers get document paths, not slash
     expect.soft(frame).toContain('document PATHS');
     expect.soft(frame).toMatch(/incomplete[\s\S]*ask_human/);
     expect.soft(research).toContain('document PATHS');
-    // finish: the reconcile-docs step sends the path, never a slash command; incomplete → ask_human.
-    expect.soft(finish).toContain('never a slash command');
-    expect.soft(finish).toMatch(/incomplete[\s\S]*ask_human/);
+    // finish: the reconcile-docs step relays the framing's named doc method (path
+    // or skill) faithfully rather than a self-invented one — provider-agnostic by
+    // staying with what the framing named (the 4912afe reconcile rewrite reframed
+    // the old "never a slash command" guard this way) — and a doc-scope product
+    // call still surfaces via ask_human.
+    expect.soft(finish).toContain('path or skill faithfully');
+    expect.soft(finish).toMatch(/doc-scope product call[\s\S]*ask_human/);
   });
 });
 
