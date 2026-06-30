@@ -345,6 +345,19 @@ describe('gateless drops the consultant bet-audit, keeping the generative frame 
     expect.soft(workflowHasConsultantBackstop('rir')).toBe(false);
   });
 
+  test('S8: the full-arc afk preset is attend-none registry data, keeping every consultant net (gateless OFF)', () => {
+    // Registry data only — afk mirrors rir's, no statechart change.
+    expect.soft(WORKFLOWS.full.presets.afk).toEqual([]);
+    expect.soft(WORKFLOWS.rir.presets.afk).toEqual([]); // rir unchanged
+
+    // The defining difference from --gateless: afk runs with gateless OFF, so BOTH
+    // the holding bet-audit challenge AND the correctness backstop stay live.
+    expect.soft(consultantCheckpointLive('spec', { consultant: true, gateless: false })).toBe(true); // challenge kept
+    expect.soft(consultantCheckpointLive('plan', { consultant: true, gateless: false })).toBe(true); // contract backstop
+    expect.soft(consultantCheckpointLive('impl', { consultant: true, gateless: false })).toBe(true); // verify backstop
+    // (Whereas gateless drops only the holding challenge — pinned in the gateless test above.)
+  });
+
   test('GATELESS_CONSULTANT_SNIPPETS: the generative frame plus the contract + verify backstop keys', () => {
     expect([...GATELESS_CONSULTANT_SNIPPETS].sort()).toEqual(
       ['consultant-contract', 'consultant-frame', 'consultant-verify'].sort(),

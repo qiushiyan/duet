@@ -274,6 +274,14 @@ export const WORKFLOWS = {
        * plan gates); whether this earns default status is Q20's evidence stream.
        */
       'skip-plan': ['frame', 'spec', 'impl'],
+      /**
+       * Walk away from the START, keeping every safety net — the missing rung that
+       * completes overnight → skip-plan → afk → gateless. Attends NO gate (mirrors
+       * rir's afk), but with `gateless` OFF, so the consultant's holding bet-audit
+       * AND the correctness backstop both still fire (that is the ONLY difference
+       * from --gateless; for a no-consultant run the two collapse to attend-none).
+       */
+      afk: [],
     },
     // The full sleep posture is the default (2026-06-26, Q20 resolved to it):
     // plan, impl (Ship), and finish (Open-PR) are all pre-authorized, so a new
