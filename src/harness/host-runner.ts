@@ -144,6 +144,16 @@ export async function runHostedPhase(input: PhaseInput, host: PhaseHost): Promis
         const decision = retryDecision(errorClass, state.retryState, state.retryInfra ?? 0);
         if (decision.action === 'retry') {
           state.retryState = decision.nextRetryState;
+          // Record the auto-retry beside the log line — the "while you were away"
+          // ledger (status.ts), so a degrading environment surfaces in the morning
+          // review instead of churning silently (the property that motivated
+          // default-off; now default-on, the visibility is what keeps it honest).
+          (state.autoRetries ??= []).push({
+            phase,
+            errorClass,
+            attempt: decision.nextRetryState.attempts,
+            at: new Date().toISOString(),
+          });
           saveRunState(state);
           console.log(
             `[driver] infra ${errorClass} — auto-retry ${decision.nextRetryState.attempts}/${state.retryInfra} after ${Math.round(decision.delayMs / 1000)}s`,

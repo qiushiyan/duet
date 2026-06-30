@@ -139,6 +139,8 @@ export interface StatusModel {
   sessions: SessionRef[];
   gatesAt?: GatePhase[];
   autoApprovals: Array<{ gate: string; at: string; headline: string }>;
+  /** Infra failures auto-retried while away (#4b) — a sibling of autoApprovals, not gate-shaped. */
+  awayRetries: Array<{ phase: PhaseName; errorClass: ErrorClass; attempt: number; at: string }>;
   rounds: Array<{ phase: PhaseName; used: number; cap: number }>;
   costs: RunState['costs'];
   /** Context-window fill per voice, captured at turn boundaries (a hint; stale after manual takeover). */
@@ -171,6 +173,7 @@ export function buildStatusModel(state: RunState, position: RunPosition, pending
     sessions: resolveSessions(state),
     ...(state.gatesAt ? { gatesAt: state.gatesAt } : {}),
     autoApprovals: (state.autoApprovals ?? []).map((a) => ({ ...a, headline: packetHeadline(state, a.gate) })),
+    awayRetries: state.autoRetries ?? [],
     rounds: phasesOf(workflow)
       .filter((p) => (state.rounds[p.name] ?? 0) > 0 || p.reviewLoop)
       .map((p) => ({ phase: p.name, used: state.rounds[p.name] ?? 0, cap: p.roundCap })),
@@ -307,6 +310,13 @@ export function formatGatePosture(
     : `${copy.label}attending none — ${copy.noneSuffix}`;
 }
 
+/** A compact per-class tally of auto-retries — e.g. `network ×2, server ×1` (first-seen order). */
+function summarizeRetriesByClass(retries: ReadonlyArray<{ errorClass: ErrorClass }>): string {
+  const counts = new Map<ErrorClass, number>();
+  for (const r of retries) counts.set(r.errorClass, (counts.get(r.errorClass) ?? 0) + 1);
+  return [...counts].map(([cls, n]) => `${cls} ×${n}`).join(', ');
+}
+
 export function renderStatus(model: StatusModel): string {
   const lines: string[] = [];
   lines.push(`\n━━━ duet run ${model.runId} ━━━`);
@@ -381,6 +391,13 @@ export function renderStatus(model: StatusModel): string {
       lines.push(`  ✓ ${a.gate}  ${fmtStamp(a.at)}  ${a.headline}`);
     }
     lines.push(`  full packets: duet logs ${model.runId}`);
+  }
+
+  if (model.awayRetries.length > 0) {
+    lines.push(`\nwhile you were away — infra auto-retries: ${model.awayRetries.length} (${summarizeRetriesByClass(model.awayRetries)}):`);
+    for (const r of model.awayRetries) {
+      lines.push(`  ↻ ${r.phase} ${r.errorClass} (attempt ${r.attempt})  ${fmtStamp(r.at)}`);
+    }
   }
 
   // The per-stop tail — an exhaustive switch (matching the sibling renderers
@@ -483,6 +500,8 @@ export interface BriefModel {
   nextCommand?: string;
   pendingSteers: number;
   autoApprovals: Array<{ gate: string; at: string; headline: string }>;
+  /** Infra auto-retries while away (#4b) — surfaced as a per-class tally in the brief. */
+  awayRetries: Array<{ phase: PhaseName; errorClass: ErrorClass; attempt: number; at: string }>;
   humanDecisions?: HumanDecision[];
   /**
    * Interactive-host worker turns in flight or settled-uncollected — narrowed
@@ -540,6 +559,7 @@ export function buildBrief(model: StatusModel): BriefModel {
     ...(nextCommand ? { nextCommand } : {}),
     pendingSteers: model.pendingSteers.length,
     autoApprovals: model.autoApprovals,
+    awayRetries: model.awayRetries,
     ...(stop.kind === 'gate' && stop.packet?.humanDecisions ? { humanDecisions: stop.packet.humanDecisions } : {}),
     ...(model.pendingTurns && model.pendingTurns.length > 0
       ? { pendingTurns: model.pendingTurns.map(({ role, tag, status }) => ({ role, tag, status })) }
@@ -562,6 +582,7 @@ export function renderBrief(brief: BriefModel): string {
     lines.push(`pending turns: ${brief.pendingTurns.map((t) => `${t.role} ${t.status}`).join(' · ')}`);
   }
   if (brief.autoApprovals.length > 0) lines.push(`auto-approved: ${brief.autoApprovals.map((a) => a.gate).join(', ')}`);
+  if (brief.awayRetries.length > 0) lines.push(`auto-retried: ${summarizeRetriesByClass(brief.awayRetries)}`);
   if (brief.nextCommand) lines.push(`next: ${brief.nextCommand}`);
   return lines.join('\n');
 }

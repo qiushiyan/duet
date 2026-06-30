@@ -308,6 +308,10 @@ describe('the silent-turn nudge', () => {
 
 describe('infrastructure failure', () => {
   test('a session crash flags the human with the failure, not a silent dead end', async ({ projectDir, run }) => {
+    // Retry explicitly off so the transient failure flags immediately — this test
+    // pins the flag classification, not the retry loop (S6 made retry default-on).
+    run.retryInfra = 0;
+    saveRunState(run);
     const runTurn: RunOrchestratorTurn = async function* () {
       yield assistantText('starting');
       throw new Error('ECONNRESET mid-stream');
@@ -317,7 +321,7 @@ describe('infrastructure failure', () => {
     expect(result).toEqual({ type: 'phase.flag' });
     const q = loadRunState(projectDir, run.runId).pendingQuestion;
     expect.soft(q?.question).toContain('failed at the infrastructure layer (ECONNRESET mid-stream)');
-    // With retry off (the default), the flag is classified infra (#4a) but behaves as before.
+    // With retry explicitly off, the flag is classified infra (#4a) but behaves as before.
     expect.soft(q?.cause).toBe('infra');
     expect.soft(q?.errorClass).toBe('network');
   });
@@ -354,7 +358,11 @@ describe('opt-in infra auto-retry (#4b)', () => {
     throw new Error('fetch failed: ECONNRESET');
   };
 
-  test('with retry OFF (default), a transient failure flags immediately — behavior unchanged', async ({ projectDir, run }) => {
+  test('with retry explicitly OFF (--retry-infra 0), a transient failure flags immediately, no retry', async ({ projectDir, run }) => {
+    // S6 made retry default-on (materialized 3); 0 is the explicit opt-out, and an
+    // old/absent state.json (host-runner reads `?? 0`) stays off the same way.
+    run.retryInfra = 0;
+    saveRunState(run);
     const { runTurn } = scriptedSession(async () => network());
     const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
     expect(result).toEqual({ type: 'phase.flag' });
@@ -393,6 +401,44 @@ describe('opt-in infra auto-retry (#4b)', () => {
     await vi.advanceTimersByTimeAsync(60_000); // cascade through both retries
     expect(await p).toEqual({ type: 'phase.flag' });
     expect(loadRunState(projectDir, run.runId).pendingQuestion?.cause).toBe('infra');
+  });
+
+  test('S6: each auto-retry appends an autoRetries ledger entry (the morning-review record)', async ({ projectDir, run }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    run.retryInfra = 2;
+    saveRunState(run);
+    // Two transient failures then a clean advance: two retries → two ledger entries.
+    const { runTurn } = scriptedSession(
+      async () => network(),
+      async () => network(),
+      async (ctx) => {
+        await callTool(ctx, 'advance_phase', { summary: 'done', artifacts: [] });
+        return [success()];
+      },
+    );
+    const p = runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await p).toEqual({ type: 'phase.advance' });
+    const ledger = loadRunState(projectDir, run.runId).autoRetries ?? [];
+    expect.soft(ledger).toHaveLength(2);
+    expect.soft(ledger.map((r) => r.errorClass)).toEqual(['network', 'network']);
+    expect.soft(ledger.map((r) => r.attempt)).toEqual([1, 2]); // the attempt number after each retry
+    expect.soft(ledger.every((r) => r.phase === 'frame')).toBe(true);
+  });
+
+  test('S6: an old-shape state.json with no retryInfra stays OFF (host-runner reads `?? 0`)', async ({ projectDir, run }) => {
+    // The materialization is at createRun, so a pre-feature / hand-written run with
+    // no retryInfra is byte-for-byte off — it flags immediately, never retries.
+    delete run.retryInfra;
+    saveRunState(run);
+    const { runTurn } = scriptedSession(async () => network());
+    const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    expect.soft(result).toEqual({ type: 'phase.flag' });
+    expect.soft(loadRunState(projectDir, run.runId).retryState).toBeUndefined();
+    expect.soft(loadRunState(projectDir, run.runId).autoRetries).toBeUndefined();
   });
 
   test('login-required is never retried even with budget', async ({ projectDir, run }) => {

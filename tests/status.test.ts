@@ -184,6 +184,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     run.machineState = 'shipGate';
     run.gatesAt = ['impl', 'finish'];
     run.autoApprovals = [{ gate: 'directionGate', at: '2026-06-12T03:14:00.000Z' }];
+    run.autoRetries = [{ phase: 'impl', errorClass: 'network', attempt: 1, at: '2026-06-12T03:15:00.000Z' }];
     run.lastActivity = 'send_prompt → reviewer';
     const model = buildStatusModel(run, { kind: 'gate', phase: 'impl' }, [
       { file: 'f.json', text: 'note', stagedAt: 'now' },
@@ -191,6 +192,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
 
     expect(Object.keys(model).sort()).toEqual([
       'autoApprovals',
+      'awayRetries',
       'branch',
       'context',
       'costs',
@@ -466,6 +468,22 @@ describe('renderStatus', () => {
     // derive the expected local form so the assertion is timezone-robust.
     expect.soft(out).toContain(`✓ directionGate  ${localStamp('2026-06-12T03:14:00.000Z')}  Direction: invert the scope`);
     expect.soft(out).toContain('gates:    attending impl, finish — other gates pre-authorized');
+  });
+
+  test('S6: the while-you-were-away section lists infra auto-retries with a per-class tally, and the brief projects them', ({ run }) => {
+    run.machineState = 'shipGate';
+    run.autoRetries = [
+      { phase: 'impl', errorClass: 'network', attempt: 1, at: '2026-06-12T03:14:00.000Z' },
+      { phase: 'impl', errorClass: 'network', attempt: 2, at: '2026-06-12T03:14:08.000Z' },
+      { phase: 'impl', errorClass: 'server', attempt: 1, at: '2026-06-12T03:15:00.000Z' },
+    ];
+    const out = render(run, { kind: 'gate', phase: 'impl' });
+    expect.soft(out).toContain('while you were away — infra auto-retries: 3 (network ×2, server ×1):');
+    expect.soft(out).toContain(`↻ impl network (attempt 1)  ${localStamp('2026-06-12T03:14:00.000Z')}`);
+
+    // The lean brief (what the concierge reads remotely) projects the per-class tally.
+    const brief = renderBrief(buildBrief(buildStatusModel(run, { kind: 'gate', phase: 'impl' }, [])));
+    expect.soft(brief).toContain('auto-retried: network ×2, server ×1');
   });
 
   test('a completed run shows the final summary and queued snippet proposals', ({ run }) => {

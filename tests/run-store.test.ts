@@ -10,6 +10,7 @@ import {
   budgetFor,
   consumeHumanInput,
   createRun,
+  DEFAULT_RETRY_INFRA,
   gateAttended,
   highDecisionsAt,
   holdsMcpOwner,
@@ -171,6 +172,20 @@ describe('run creation', () => {
     const plain = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
     expect.soft(plain.gateless).toBeUndefined();
     expect.soft('gateless' in loadRunState(projectDir, plain.runId)).toBe(false);
+  });
+
+  test('createRun materializes the default retry budget (3), nullish so 0 stays 0 and N stays N (S6)', ({ projectDir }) => {
+    // Default-on for NEW runs, via materialization (the gatesAt discipline). An
+    // absent opt ⇒ DEFAULT_RETRY_INFRA; an explicit 0 ⇒ 0 (off); an explicit N ⇒ N.
+    const dflt = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
+    expect.soft(dflt.retryInfra).toBe(DEFAULT_RETRY_INFRA);
+    expect.soft(loadRunState(projectDir, dflt.runId).retryInfra).toBe(3);
+
+    const off = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, retryInfra: 0 });
+    expect.soft(off.retryInfra).toBe(0); // nullish, not truthy — the explicit opt-out survives
+
+    const five = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, retryInfra: 5 });
+    expect.soft(five.retryInfra).toBe(5);
   });
 
   test('createRun freezes the resolved budget; a later budgetFor reads it back (scaled)', ({ projectDir }) => {
