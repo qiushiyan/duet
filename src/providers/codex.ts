@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Codex, type ThreadEvent, type ThreadOptions, type Usage } from '@openai/codex-sdk';
 import type { ContextUsage, RunTurnOptions, WorkerProvider, WorkerTurn } from './types.ts';
+import { runWithWallClockDeadline } from './wall-clock.ts';
 
 /**
  * Codex worker provider, via `@openai/codex-sdk` (a thin spawn-the-CLI
@@ -128,12 +129,21 @@ export class CodexWorker implements WorkerProvider {
     // thread.started — and the session id — mid-turn. run() exposes the id only
     // after it resolves, which is the blindness this whole change removes.
     // Effective cap: a per-turn override wins over the construction value (which
-    // already carries codex's 15-min default), so this is two-tier — no extra
-    // floor here. Still monotonic via AbortSignal.timeout; the wall-clock
-    // conversion lands in a later slice.
+    // already carries codex's 15-min default) — two-tier, no extra floor here.
     const effectiveTimeoutMs = opts.timeoutMs ?? this.timeoutMs;
-    const { events } = await thread.runStreamed(opts.prompt, { signal: AbortSignal.timeout(effectiveTimeoutMs) });
-    const { finalResponse, usage } = await reconstructCodexTurn(events, opts.onSessionId);
+    // Own the AbortController so the wall-clock backstop drives the abort.
+    // AbortSignal.timeout is MONOTONIC — a suspend freezes it, so a suspended
+    // codex turn would never hit the abort S5's honest accepted-abort recovery
+    // depends on. The wall-clock helper re-checks real time and aborts on wake.
+    const controller = new AbortController();
+    const { finalResponse, usage } = await runWithWallClockDeadline({
+      run: (async () => {
+        const { events } = await thread.runStreamed(opts.prompt, { signal: controller.signal });
+        return reconstructCodexTurn(events, opts.onSessionId);
+      })(),
+      abort: () => controller.abort(),
+      capMs: effectiveTimeoutMs,
+    });
 
     const sessionId = thread.id;
     if (!sessionId) throw new Error('codex worker turn completed without a thread id');

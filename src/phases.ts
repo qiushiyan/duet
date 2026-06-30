@@ -219,7 +219,11 @@ export const WORKFLOWS = {
         roundCap: 3,
         orchestratorBudgetUsd: 30,
         workerBudgetUsd: 25,
-        workerTurnTimeoutMs: 60 * 60_000,
+        // The AFK build cap — a wall-clock bound (S3). 90 min = 3× the longest
+        // healthy build turn measured across the corpus (29.5 min), the
+        // disciplined high end of the 2–3× band; a hit is a resumable checkpoint
+        // (post-C), so erring high costs only resume-churn.
+        workerTurnTimeoutMs: 90 * 60_000,
         // The acceptance-contract VERIFY checkpoint: a fresh session verifies the
         // frozen contract by running the built system, supplanting the
         // open-ended implGate bet-audit (RIR keeps implGate — it has no contract).
@@ -328,7 +332,10 @@ export const WORKFLOWS = {
         roundCap: 1,
         orchestratorBudgetUsd: 30,
         workerBudgetUsd: 25,
-        workerTurnTimeoutMs: 60 * 60_000,
+        // The AFK build cap — the same wall-clock 90-min bound as full's `impl`
+        // (S3). The measurement spans both arcs (rir's implement-direct turns run
+        // up to 25 min), so leaving the two build phases split would be unmotivated.
+        workerTurnTimeoutMs: 90 * 60_000,
         consultantCheckpoint: 'implGate',
       },
       {

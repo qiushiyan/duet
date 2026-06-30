@@ -270,6 +270,21 @@ describe('consultant checkpoints (registry data per arc)', () => {
   });
 });
 
+describe('the AFK build caps (S3 — wall-clock-bounded per-turn timeouts)', () => {
+  test('both arcs’ build phases carry the 90-min wall-clock cap', () => {
+    // 90 min = 3× the longest healthy build turn (29.5 min) measured across the
+    // corpus — the high end of the 2–3× band; a hit is a resumable checkpoint.
+    expect.soft(PHASE['impl'].workerTurnTimeoutMs).toBe(90 * 60_000);
+    expect.soft(PHASE['implement'].workerTurnTimeoutMs).toBe(90 * 60_000);
+  });
+
+  test('the planning and finishing phases keep the 30-min cap (their longest healthy turns ≈17 min)', () => {
+    for (const phase of ['frame', 'spec', 'plan', 'finish', 'research', 'publish'] as const) {
+      expect.soft(PHASE[phase].workerTurnTimeoutMs).toBe(30 * 60_000);
+    }
+  });
+});
+
 describe('gateless drops the consultant bet-audit, keeping the generative frame + backstop (registry helpers)', () => {
   test('isBackstopCheckpoint: only the contract author and the verify are correctness backstops', () => {
     // The backstop (correctness) checkpoints.

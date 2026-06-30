@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { execa } from 'execa';
 import { z } from 'zod';
 import { BudgetCutoffError } from './types.ts';
+import { runWithWallClockDeadline } from './wall-clock.ts';
 import type { RunTurnOptions, WorkerProvider, WorkerTurn } from './types.ts';
 
 /**
@@ -395,8 +396,20 @@ export class ClaudeWorker implements WorkerProvider {
     // builder; execa options (incl. the load-bearing `cleanup` default) come
     // from the pinned claudeExecaOptions builder.
     const args = claudeArgs({ sessionId, resume }, this.config);
+    const execaOpts = claudeExecaOptions(opts, this.config);
+    const child = execa('claude', args, execaOpts);
     try {
-      const { stdout } = await execa('claude', args, claudeExecaOptions(opts, this.config));
+      // execa's monotonic `timeout` (execaOpts.timeout) stays for the kill
+      // mechanics and the no-suspend fast path; the wall-clock backstop bounds the
+      // SAME cap in REAL time, so an overnight-suspended turn is killed promptly on
+      // wake (the monotonic timer, frozen through the sleep, would not).
+      const { stdout } = await runWithWallClockDeadline({
+        run: child,
+        abort: () => {
+          child.kill();
+        },
+        capMs: execaOpts.timeout,
+      });
       return parseClaudeTurn(stdout, opts.prompt);
     } catch (err) {
       // A budget cutoff exits non-zero, so execa throws BEFORE parseClaudeTurn
