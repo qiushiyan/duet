@@ -280,9 +280,10 @@ export interface RunState {
    */
   pendingQuestion?: { question: string; context?: string; cause?: 'human' | 'infra' | 'budget'; errorClass?: ErrorClass };
   /**
-   * Opt-in bounded auto-retry of transient infra failures (#4b) — the attempt
-   * budget. 0/absent ⇒ off (the default; behavior is byte-for-byte as before).
-   * Set from `--retry-infra <n>` or framing `retry_infra:`.
+   * Bounded auto-retry of transient infra failures (#4b) — the attempt budget.
+   * Absent on a loaded OLD state.json ⇒ off (byte-for-byte as before); a NEW run
+   * materializes `DEFAULT_RETRY_INFRA` (3) at `createRun`, and an explicit `0`
+   * disables. Set from `--retry-infra <n>` or framing `retry_infra:`.
    */
   retryInfra?: number;
   /** The per-episode retry budget state — persisted so the cap holds across a driver re-spawn; reset on a clean phase outcome. */

@@ -388,4 +388,26 @@ describe('the infra-retry copy teaches the materialized default-3, not the retir
       expect.soft(lower, `${label} still says default-off`).not.toMatch(/default-?off|off by default|default:\s*off/);
     }
   });
+
+  // docs/engineering.md is LIVE engineering guidance (not a shipped skill), but it
+  // teaches the same retry model — so it gets the negative half of the lock the
+  // round-1 surfaces missed: no sentence may frame infra retry as opt-in /
+  // default-off, the retired model. Scoped to retry SENTENCES (the `[^.\n]` bound
+  // stops at the sentence boundary) because the doc legitimately uses "opt-in" for
+  // the budget/gates rails elsewhere (e.g. its "Opt-in rails, safe defaults"
+  // section, which also says "infra-retry" — far apart, a different concept).
+  const engineeringMd = readFileSync(new URL('../docs/engineering.md', import.meta.url), 'utf8');
+  const STALE_RETRY_FRAMINGS = [
+    /opt-in[^.\n]*\b(?:auto-)?retr/i,
+    /\b(?:auto-)?retr[a-z-]*[^.\n]*opt-in/i,
+    /\bretr[a-z-]*[^.\n]*(?:default-?off|off by default)/i,
+    /(?:default-?off|off by default)[^.\n]*\bretr/i,
+  ];
+
+  test('docs/engineering.md frames infra retry as default-on, never opt-in/default-off (retry-scoped)', () => {
+    for (const re of STALE_RETRY_FRAMINGS) {
+      const hit = engineeringMd.match(re);
+      expect.soft(hit?.[0], `engineering.md carries retired retry framing: "${hit?.[0]}"`).toBeUndefined();
+    }
+  });
 });
