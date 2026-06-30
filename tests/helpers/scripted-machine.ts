@@ -32,3 +32,22 @@ export function scriptedMachine(
   });
   return { machine, calls };
 }
+
+/**
+ * A workflow's machine whose phase driver WEDGES — it records the phase it
+ * entered and then never emits a terminal phase.* event, so the actor sits in
+ * the phase loop indefinitely. The model for a hung phase: driveToQuiescence's
+ * quiescence timeout must convert this into a crash=flag, not a stranded run.
+ */
+export function wedgedMachine(workflow: WorkflowName = 'full'): { machine: typeof duetMachine; calls: string[] } {
+  const calls: string[] = [];
+  const machine = machineFor(workflow).provide({
+    actors: {
+      phaseDriver: fromCallback<EventObject, PhaseInput>(({ input }) => {
+        calls.push(input.phase);
+        // never sendBack — the phase hangs; the outer quiescence timeout fires.
+      }),
+    },
+  });
+  return { machine, calls };
+}
