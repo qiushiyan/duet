@@ -13,6 +13,7 @@ import {
   gatePhasesOf,
   handoffWatchLabel,
   isBackstopCheckpoint,
+  isPostHandoffPhase,
   phaseOfGateState,
   phaseSnippetsFor,
   phasesOf,
@@ -374,5 +375,27 @@ describe('handoffWatchLabel — the interactive→headless handoff hint, per arc
 
   test('rir hands off at the Direction (research) gate into implement', () => {
     expect(handoffWatchLabel('rir')).toBe('research approved — AFK implement');
+  });
+});
+
+describe('isPostHandoffPhase — the "doing" set strictly after the handoff gate', () => {
+  // full's handoffGate is `plan`; rir's is `research`. The planning phases up to
+  // and INCLUDING the handoff gate are pre-handoff; the build + finishing tail are
+  // post-handoff — this is the boundary the per-phase implementer-model swap keys on.
+  test('full: planning phases (through the plan handoff gate) are pre-handoff', () => {
+    expect.soft(isPostHandoffPhase('frame')).toBe(false);
+    expect.soft(isPostHandoffPhase('spec')).toBe(false);
+    expect.soft(isPostHandoffPhase('plan')).toBe(false); // the handoff gate itself is NOT after itself
+  });
+
+  test('full: the build and finishing tail are post-handoff', () => {
+    expect.soft(isPostHandoffPhase('impl')).toBe(true);
+    expect.soft(isPostHandoffPhase('finish')).toBe(true);
+  });
+
+  test('rir: research (the handoff gate) is pre-handoff; implement and publish are post', () => {
+    expect.soft(isPostHandoffPhase('research')).toBe(false);
+    expect.soft(isPostHandoffPhase('implement')).toBe(true);
+    expect.soft(isPostHandoffPhase('publish')).toBe(true);
   });
 });

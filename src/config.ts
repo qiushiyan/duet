@@ -2,6 +2,8 @@ import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
+import { isPostHandoffPhase } from './phases.ts';
+import type { PhaseName } from './phases.ts';
 
 /**
  * Run config — the one config duet ships (docs/automation-design.md
@@ -39,6 +41,19 @@ export interface RoleBinding {
    * for codex (rejected there) — codex already bills the subscription.
    */
   transport?: 'headless' | 'interactive';
+  /**
+   * The IMPLEMENTER's post-handoff model override (present-only, implementer-only):
+   * the claude model the implementer switches to for phases strictly after the
+   * workflow's handoff gate (the AFK build + finishing tail), typically a
+   * cheaper/faster model than the base that plans. A `RoleOverride`, not a
+   * `RoleBinding`, precisely because it carries no transport — the post-handoff
+   * turn keeps the base implementer's transport. Claude-only and same-provider in
+   * v1 (a non-claude provider is grammar-reserved but rejected at the config
+   * boundary); validated once in loadRunConfig so `implementerModelFor` can trust
+   * it. ABSENT ⇒ byte-for-byte today: the implementer runs its base model in every
+   * phase. Only ever set on `bindings.implementer`.
+   */
+  impl?: RoleOverride;
 }
 
 /**
@@ -83,6 +98,31 @@ export const DEFAULT_CLAUDE_MODEL: Record<BindableRole, string> = {
   // the cross-family binding is fully configurable and that is the point.
   consultant: 'claude-opus-4-8',
 };
+
+/**
+ * The Anthropic model the IMPLEMENTER runs on at `phase` — the one place the
+ * per-phase model split resolves, and the opt-in resolver the design mirrors on
+ * `budgetFor`/`gateAttended` (pure, absent-knob ⇒ identity). Pre-/at-handoff
+ * phases (the planning arc: frame, spec, plan) run the base binding's model;
+ * phases strictly after the handoff gate (the AFK build + finishing tail — full's
+ * {impl, finish}, rir's {implement, publish}) run the optional `impl` override's
+ * model when one is bound. Absent `impl` ⇒ the base model for every phase,
+ * byte-for-byte today.
+ *
+ * Returns a model STRING, never a provider switch: `impl` is validated at the
+ * config boundary (loadRunConfig) to be claude-only, so the swap only ever changes
+ * the model — the base binding's provider/transport still build the worker. A
+ * codex implementer has no model and never reaches here (createWorkers' codex
+ * branch skips it); the base-model fallback keeps the function total regardless.
+ */
+export function implementerModelFor(bindings: RoleBindings, phase: PhaseName): string {
+  const binding = bindings.implementer;
+  const base = binding.model ?? DEFAULT_CLAUDE_MODEL.implementer;
+  if (binding.provider === 'claude' && binding.impl && isPostHandoffPhase(phase)) {
+    return binding.impl.model ?? DEFAULT_CLAUDE_MODEL.implementer;
+  }
+  return base;
+}
 
 /** Shipped default when no config file is present (claude roles on Opus 4.8, reviewer on codex). */
 export const DEFAULT_BINDINGS: RoleBindings = {
