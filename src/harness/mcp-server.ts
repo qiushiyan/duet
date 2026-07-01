@@ -51,7 +51,7 @@ export function buildKernelTools(cwd: string, runId: string, phaseRaw: string): 
   const tools = createPhaseTools({
     state,
     phase,
-    providers: createWorkers(state.bindings, {
+    providers: createWorkers(state.bindings, phase, {
       workerBudgetUsd: budgetFor(state, phase).worker,
       timeoutMs: PHASE[phase].workerTurnTimeoutMs,
     }),
@@ -135,7 +135,7 @@ function hostablePhase(position: RunPosition): PhaseName | undefined {
 export type WorkerFactory = (state: RunState, phase: PhaseName) => WorkerProviders;
 
 const defaultWorkerFactory: WorkerFactory = (state, phase) =>
-  createWorkers(state.bindings, {
+  createWorkers(state.bindings, phase, {
     workerBudgetUsd: budgetFor(state, phase).worker,
     timeoutMs: PHASE[phase].workerTurnTimeoutMs,
   });

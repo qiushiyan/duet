@@ -134,7 +134,7 @@ function makeInProcessHost(runTurn: RunOrchestratorTurn): PhaseHost {
       const { tools } = createPhaseTools({
         state,
         phase,
-        providers: createWorkers(state.bindings, {
+        providers: createWorkers(state.bindings, phase, {
           workerBudgetUsd: budget.worker,
           timeoutMs: PHASE[phase].workerTurnTimeoutMs,
         }),
