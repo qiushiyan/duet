@@ -132,6 +132,20 @@ describe('buildStats — the pure parse core', () => {
   });
 });
 
+describe('buildStats — the implementer-model label', () => {
+  plain('attaches the resolved implementer model per phase when a labeler is supplied', () => {
+    const orchestrator = [line(at(0), '◀ harness prompt (phase=impl)'), line(at(5), 'advance_phase (impl)')].join('\n');
+    const model = buildStats('run-lbl', orchestrator, [], FULL_ORDER, (phase) => (phase === 'impl' ? 'claude-sonnet-5' : undefined));
+    expect.soft(model.phases[0]).toMatchObject({ phase: 'impl', implementerModel: 'claude-sonnet-5' });
+  });
+
+  plain('no labeler ⇒ no implementerModel field (byte-for-byte the aggregate rows)', () => {
+    const orchestrator = [line(at(0), '◀ harness prompt (phase=impl)'), line(at(5), 'advance_phase (impl)')].join('\n');
+    const model = buildStats('run-nolbl', orchestrator, [], FULL_ORDER);
+    expect.soft(model.phases[0]).not.toHaveProperty('implementerModel');
+  });
+});
+
 describe('buildStatsModel — the fs composer over real appendVoiceLog output', () => {
   test('reads the planted voice logs and produces a phase row and a tag', ({ run }) => {
     appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=spec)', 'brief');
@@ -146,5 +160,22 @@ describe('buildStatsModel — the fs composer over real appendVoiceLog output', 
     expect.soft(model.phases[0]?.turns).toBe(1);
     expect.soft(model.tags.map((t) => t.tag)).toEqual(['write-spec']);
     expect.soft(renderStats(model)).toContain('━━━ duet stats');
+  });
+
+  test('labels each phase with the model that ran it — base through planning, impl model after handoff', ({ run }) => {
+    run.bindings.implementer = {
+      provider: 'claude',
+      model: 'claude-opus-4-8',
+      transport: 'headless',
+      impl: { provider: 'claude', model: 'claude-sonnet-5' },
+    };
+    appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=plan)', 'brief');
+    appendVoiceLog(run, 'orchestrator', 'advance_phase (plan)', 'ok');
+    appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=impl)', 'brief');
+    appendVoiceLog(run, 'orchestrator', 'advance_phase (impl)', 'ok');
+
+    const byPhase = Object.fromEntries(buildStatsModel(run).phases.map((p) => [p.phase, p.implementerModel]));
+    expect.soft(byPhase['plan']).toBe('claude-opus-4-8'); // planning ran on the base model
+    expect.soft(byPhase['impl']).toBe('claude-sonnet-5'); // the build ran on the impl model
   });
 });
