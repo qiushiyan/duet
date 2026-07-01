@@ -840,7 +840,7 @@ program
     const state = resolveRun(cwd, runId, 'no runs found in this project');
     const position = probeRunPosition(state);
     if (position.kind !== 'running' && position.kind !== 'crashed') {
-      fail(steerRefusal(position, state.runId) ?? `nothing to steer at ${position.kind}`);
+      fail(steerRefusal(workflowOf(state), position, state.runId) ?? `nothing to steer at ${position.kind}`);
     }
     const note = await resolveHumanText(
       text,

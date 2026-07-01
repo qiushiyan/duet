@@ -1,11 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  PHASE,
   acceptanceContractPathForSpec,
   consultantCheckpointLive,
   consultantSnippetFor,
   contractAuthorPhaseOf,
+  phaseSpec,
   priorPhaseOf,
 } from '../phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from '../phases.ts';
@@ -294,11 +294,11 @@ Branch: the run works on exactly one branch, fixed before your first worker prom
  * false, the exact pre-feature routing.
  */
 function checkpointLive(state: RunState, phase: PhaseName): boolean {
-  return consultantCheckpointLive(phase, { consultant: Boolean(state.bindings.consultant), gateless: state.gateless });
+  return consultantCheckpointLive(workflowOf(state), phase, { consultant: Boolean(state.bindings.consultant), gateless: state.gateless });
 }
 
 function analysisSendStep(state: RunState, phase: PhaseName): string {
-  const snippet = consultantSnippetFor(phase);
+  const snippet = consultantSnippetFor(workflowOf(state), phase);
   if (!checkpointLive(state, phase) || !snippet) {
     return `Send think-holistic to both workers in one fan-out call — send_prompt with role ["implementer", "reviewer"] — so one role-neutral problem read reaches each, and they analyze it independently and in parallel. Keep that body role-neutral: the two reads differ by model and session, not by a label you write in, so don't add "you are the implementer/reviewer" framing — just the shared problem and the analysis ask.`;
   }
@@ -317,7 +317,7 @@ function synthesisStep(state: RunState, phase: PhaseName): string {
  * `seedNote` names exactly what to curate into the ephemeral session.
  */
 function consultantAuditStep(state: RunState, phase: PhaseName, seedNote: string): string {
-  const snippet = consultantSnippetFor(phase);
+  const snippet = consultantSnippetFor(workflowOf(state), phase);
   if (!checkpointLive(state, phase) || !snippet) return '';
   return `
 
@@ -334,7 +334,7 @@ Consultant checkpoint (the consultant is bound for this run): before you advance
  * bound AND a spec path is known (the contract location derives from it).
  */
 function consultantContractStep(state: RunState): string {
-  const snippet = consultantSnippetFor('plan');
+  const snippet = consultantSnippetFor(workflowOf(state), 'plan');
   if (!checkpointLive(state, 'plan') || !snippet || !state.specPath) return '';
   const path = acceptanceContractPathForSpec(state.specPath);
   return `
@@ -354,7 +354,7 @@ Consultant checkpoint — author the acceptance contract (the consultant is boun
  * audit. Empty when no consultant is bound.
  */
 function consultantVerifyStep(state: RunState): string {
-  const snippet = consultantSnippetFor('impl');
+  const snippet = consultantSnippetFor(workflowOf(state), 'impl');
   if (!checkpointLive(state, 'impl') || !snippet) return '';
   if (!state.acceptanceContract) {
     return `
@@ -551,7 +551,7 @@ export function openPrPhaseEntryPrompt(
   phase: PhaseName,
 ): string {
   const openPrAttended = gateAttended(state, phase);
-  const priorPhase = priorPhaseOf(phase);
+  const priorPhase = priorPhaseOf(workflowOf(state), phase);
   return `<task>
 ${approvalClause(
     state,
@@ -657,7 +657,7 @@ const phaseBriefBuilders = {
 } satisfies Record<PhaseName, (state: RunState, cap: number, phase: PhaseName) => string>;
 
 export function buildPhaseBrief(state: RunState, phase: PhaseName): string {
-  return phaseBriefBuilders[phase](state, PHASE[phase].roundCap, phase);
+  return phaseBriefBuilders[phase](state, phaseSpec(workflowOf(state), phase).roundCap, phase);
 }
 
 /**
@@ -697,8 +697,9 @@ export function answerResumePrompt(answer: string): string {
   return `The human answered your queued question: ${JSON.stringify(answer)}. Continue the phase from where you paused, taking their answer into account.`;
 }
 
-export function feedbackResumePrompt(phase: PhaseName, feedback: string): string {
-  const artifact = PHASE[phase].artifactLabel;
+export function feedbackResumePrompt(workflow: WorkflowName, phase: PhaseName, feedback: string): string {
+  const spec = phaseSpec(workflow, phase);
+  const artifact = spec.artifactLabel;
   // A gate rejection is the editor-in-chief returning the artifact — always to
   // the implementer. Whether the *reviewer* re-engages is a phase property, not
   // a default: only the multi-round review-loop phases (reviewLoop && cap > 1 —
@@ -707,7 +708,7 @@ export function feedbackResumePrompt(phase: PhaseName, feedback: string): string
   // implement, cap 1) and the non-loop phases (frame/research/docs/pr) route the
   // human's feedback straight into the revision — instructing a fresh reviewer
   // round there is both wrong for the arc and, at cap 1, blocked by send_prompt.
-  const reRunsReviewLoop = PHASE[phase].reviewLoop && PHASE[phase].roundCap > 1;
+  const reRunsReviewLoop = spec.reviewLoop && spec.roundCap > 1;
   const reviseClause = reRunsReviewLoop
     ? 'run whatever review rounds the changes warrant (with the -again variants), and advance the phase again when converged'
     : "have the implementer apply the changes directly and advance the phase again — this phase doesn't re-run a reviewer round on re-entry, so the human's feedback is the revision itself, not the trigger for a new review pass";
@@ -718,7 +719,7 @@ export function feedbackResumePrompt(phase: PhaseName, feedback: string): string
   // implement no longer folds docs in, so there is no foldsDocs clause here — a
   // Ship-gate reject just routes feedback to the build, and docs reconcile later
   // in the publish phase regardless.)
-  const opensPr = PHASE[phase].gate?.state === 'openPrGate';
+  const opensPr = spec.gate?.state === 'openPrGate';
   const amendClause = opensPr
     ? ` The PR is already open — have the implementer amend it in place (gh pr edit for the description, more commits + push for code or doc changes) and never run gh pr create again (it errors on an existing PR). If the feedback changes what shipped, refresh the docs commit too so it still describes the branch. Re-advance with the PR URL still leading the packet.`
     : '';

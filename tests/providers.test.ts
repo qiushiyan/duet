@@ -968,7 +968,7 @@ describe('reconstructCodexTurn (the codex event-stream seam)', () => {
 
 describe('createWorkers', () => {
   test('binds each role to its provider with the phase rails applied', () => {
-    const workers = createWorkers(DEFAULT_BINDINGS, 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
+    const workers = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
     expect.soft(workers.implementer.name).toBe('claude');
     expect.soft(workers.reviewer.name).toBe('codex');
   });
@@ -977,17 +977,18 @@ describe('createWorkers', () => {
     // The undefined cap is now a legal rail (budgets off); it flows to the
     // ClaudeWorker's config, where claudeArgs leaves --max-budget-usd off the
     // argv (pinned directly by the claudeArgs omission test above).
-    const workers = createWorkers(DEFAULT_BINDINGS, 'spec', { workerBudgetUsd: undefined, timeoutMs: 60_000 });
+    const workers = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: undefined, timeoutMs: 60_000 });
     expect.soft(workers.implementer).toBeInstanceOf(ClaudeWorker);
     expect.soft(workers.implementer.name).toBe('claude');
   });
 
   test('an interactive claude binding builds the interactive transport; headless stays ClaudeWorker', () => {
-    const headless = createWorkers(DEFAULT_BINDINGS, 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
+    const headless = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
     expect.soft(headless.implementer).toBeInstanceOf(ClaudeWorker);
 
     const interactive = createWorkers(
       { ...DEFAULT_BINDINGS, implementer: { provider: 'claude', model: 'claude-opus-4-8', transport: 'interactive' } },
+      'full',
       'spec',
       { workerBudgetUsd: 10, timeoutMs: 60_000 },
     );
@@ -1016,7 +1017,7 @@ describe('createWorkers', () => {
           stdout: JSON.stringify([{ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 's' }]),
         });
       });
-      await createWorkers(bindings, phase, { workerBudgetUsd: 10, timeoutMs: 60_000 }).implementer.runTurn({ prompt: 'go', cwd: '/x' });
+      await createWorkers(bindings, 'full', phase, { workerBudgetUsd: 10, timeoutMs: 60_000 }).implementer.runTurn({ prompt: 'go', cwd: '/x' });
       return argv[argv.indexOf('--model') + 1]!;
     };
     expect.soft(await modelOnArgv('plan')).toBe('claude-opus-4-8'); // planning keeps the smart base
@@ -1024,12 +1025,13 @@ describe('createWorkers', () => {
   });
 
   test('the consultant provider is built only when bound; an un-enabled run has exactly today’s two', () => {
-    const unbound = createWorkers(DEFAULT_BINDINGS, 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
+    const unbound = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
     expect.soft(unbound).not.toHaveProperty('consultant');
     expect.soft(unbound.consultant).toBeUndefined();
 
     const bound = createWorkers(
       { ...DEFAULT_BINDINGS, consultant: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' } },
+      'full',
       'spec',
       { workerBudgetUsd: 10, timeoutMs: 60_000 },
     );
@@ -1040,13 +1042,14 @@ describe('createWorkers', () => {
 
 describe('providerFor (narrow-or-prescribed-error over the optional consultant)', () => {
   test('returns a built provider, and throws a prescribed-recovery error for an unbuilt role', () => {
-    const unbound = createWorkers(DEFAULT_BINDINGS, 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
+    const unbound = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
     expect.soft(providerFor(unbound, 'implementer').name).toBe('claude');
     expect.soft(providerFor(unbound, 'reviewer').name).toBe('codex');
     expect.soft(() => providerFor(unbound, 'consultant')).toThrow(/no consultant worker is built/);
 
     const bound = createWorkers(
       { ...DEFAULT_BINDINGS, consultant: { provider: 'codex' } },
+      'full',
       'spec',
       { workerBudgetUsd: 10, timeoutMs: 60_000 },
     );

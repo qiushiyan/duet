@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import type { Snapshot } from 'xstate';
 import { bindingFor } from './config.ts';
 import type { RoleBinding, RoleBindings } from './config.ts';
-import { PHASE, WORKFLOWS, defaultPosture, defaultPreAuthorizedOf, gatePhasesOf } from './phases.ts';
+import { WORKFLOWS, defaultPosture, defaultPreAuthorizedOf, gatePhasesOf, phaseSpec } from './phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
 import type { ContextUsage, WorkerRole } from './providers/types.ts';
 import { workerRolesFor } from './roles.ts';
@@ -362,20 +362,21 @@ export function highDecisionsAt(state: RunState, gatePhase: GatePhase): HumanDec
 /**
  * The effective per-turn budget caps for a phase — the one source every worker-
  * and orchestrator-construction site reads, replacing direct
- * `PHASE[phase].*BudgetUsd` reads. A cap is a number, or `undefined` when off.
+ * `phaseSpec(...).*BudgetUsd` reads. A cap is a number, or `undefined` when off.
  * The opt-in knob (#3a) is `state.budget`: absent ⇒ OFF (both caps undefined,
  * the maintainer's default), else the per-phase profile scaled by the frozen
  * multiplier. Lives beside gateAttended: both resolve run-state policy against
- * the phase registry.
+ * the phase registry (workflow-scoped — the caps are read against the run's arc).
  */
 export function budgetFor(
   state: RunState,
   phase: PhaseName,
 ): { worker: number | undefined; orchestrator: number | undefined } {
   if (state.budget === undefined) return { worker: undefined, orchestrator: undefined };
+  const spec = phaseSpec(workflowOf(state), phase);
   return {
-    worker: PHASE[phase].workerBudgetUsd * state.budget,
-    orchestrator: PHASE[phase].orchestratorBudgetUsd * state.budget,
+    worker: spec.workerBudgetUsd * state.budget,
+    orchestrator: spec.orchestratorBudgetUsd * state.budget,
   };
 }
 

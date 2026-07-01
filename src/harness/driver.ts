@@ -2,7 +2,7 @@ import { createSdkMcpServer, query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, SDKMessage, SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { colorizeDriverLine } from '../colorize.ts';
 import { DEFAULT_CLAUDE_MODEL } from '../config.ts';
-import { PHASE } from '../phases.ts';
+import { phaseSpec } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
 import { createWorkers } from '../providers/index.ts';
 import {
@@ -13,6 +13,7 @@ import {
   recordContextUsage,
   recordPhaseLabel,
   saveRunState,
+  workflowOf,
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
 import { listPendingSteers, markSteersDelivered } from '../steer-store.ts';
@@ -134,9 +135,9 @@ function makeInProcessHost(runTurn: RunOrchestratorTurn): PhaseHost {
       const { tools } = createPhaseTools({
         state,
         phase,
-        providers: createWorkers(state.bindings, phase, {
+        providers: createWorkers(state.bindings, workflowOf(state), phase, {
           workerBudgetUsd: budget.worker,
-          timeoutMs: PHASE[phase].workerTurnTimeoutMs,
+          timeoutMs: phaseSpec(workflowOf(state), phase).workerTurnTimeoutMs,
         }),
         log: driverLog,
         ...(pendingMessage?.kind === 'answer' ? { stagedAnswer: pendingMessage.text } : {}),
@@ -352,7 +353,7 @@ function basePrompt(
     return buildPhaseBrief(state, phase);
   }
   if (pendingMessage?.kind === 'answer') return answerResumePrompt(pendingMessage.text);
-  if (pendingMessage?.kind === 'feedback') return feedbackResumePrompt(phase, pendingMessage.text);
+  if (pendingMessage?.kind === 'feedback') return feedbackResumePrompt(workflowOf(state), phase, pendingMessage.text);
   // Re-entered the phase with no staged input (e.g. recovery after a crash):
   // ask the orchestrator to take stock and continue.
   return nudgeContinuePrompt();

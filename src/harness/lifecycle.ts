@@ -6,13 +6,13 @@ import { createActor, waitFor } from 'xstate';
 import type { AnyMachineSnapshot, Snapshot } from 'xstate';
 import { notify as desktopNotify } from '../notify.ts';
 import {
-  PHASE,
   WORKFLOWS,
   acceptanceContractPathForSpec,
   contractAuthorPhaseOf,
   entryOf,
   gatePhasesOf,
   phaseOfGateState,
+  phaseSpec,
   phasesOf,
 } from '../phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from '../phases.ts';
@@ -249,7 +249,7 @@ function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running
     const restPhase = (snapshot && interactiveRestPhase(state, snapshot)) || entryPhase;
     const marker = state.terminalMarker;
     if (marker && marker.phase === restPhase) {
-      return marker.kind === 'advance' && PHASE[marker.phase].gate
+      return marker.kind === 'advance' && phaseSpec(wf, marker.phase).gate
         ? { kind: 'gate', phase: marker.phase as GatePhase }
         : { kind: 'flag', phase: marker.phase };
     }

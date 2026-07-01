@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { implementerModelFor } from './config.ts';
 import type { RoleBindings } from './config.ts';
 import { phasesOf } from './phases.ts';
-import type { PhaseName } from './phases.ts';
+import type { PhaseName, WorkflowName } from './phases.ts';
 import { workerRolesFor } from './roles.ts';
 import { runDirOf, workflowOf } from './run-store.ts';
 import type { RunState, Voice } from './run-store.ts';
@@ -228,9 +228,9 @@ export function buildStats(
  * has no model. The single view-time reuse of `implementerModelFor` for the stats
  * column, so the label can never drift from what actually ran.
  */
-function implementerModelLabel(bindings: RoleBindings, phase: PhaseName): string {
+function implementerModelLabel(bindings: RoleBindings, workflow: WorkflowName, phase: PhaseName): string {
   const implementer = bindings.implementer;
-  return implementer.provider === 'claude' ? implementerModelFor(bindings, phase) : implementer.provider;
+  return implementer.provider === 'claude' ? implementerModelFor(bindings, workflow, phase) : implementer.provider;
 }
 
 /** The fs composer: read the voice logs for a run and build the model. */
@@ -259,7 +259,7 @@ export function buildStatsModel(state: RunState): StatsModel {
   // `implementerModelFor` to resolve a phase its workflow doesn't own.
   const arcPhases = new Set<string>(arcOrder);
   return buildStats(state.runId, read('orchestrator'), workers, arcOrder, (phase) =>
-    arcPhases.has(phase) ? implementerModelLabel(state.bindings, phase as PhaseName) : undefined,
+    arcPhases.has(phase) ? implementerModelLabel(state.bindings, workflowOf(state), phase as PhaseName) : undefined,
   );
 }
 

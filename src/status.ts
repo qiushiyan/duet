@@ -47,7 +47,7 @@ export function describeStop(state: RunState, done: boolean): string {
     return `question queued: ${state.pendingQuestion.question}`;
   }
   const gatePhase = phaseOfGateState(workflowOf(state), machineState);
-  if (gatePhase) return gateOf(gatePhase).ready;
+  if (gatePhase) return gateOf(workflowOf(state), gatePhase).ready;
   return `stopped at ${machineState}`;
 }
 
@@ -68,13 +68,13 @@ const continueCommand = {
  * is legal (a live or crashed phase). Quiescent stops have their own
  * channel, and the copy names it — gates stay explicit.
  */
-export function steerRefusal(position: RunPosition, runId: string): string | undefined {
+export function steerRefusal(workflow: WorkflowName, position: RunPosition, runId: string): string | undefined {
   switch (position.kind) {
     case 'running':
     case 'crashed':
       return undefined;
     case 'gate': {
-      const gate = gateOf(position.phase);
+      const gate = gateOf(workflow, position.phase);
       return (
         `the run is waiting at the ${gate.state} — steering here is the gate decision itself: ` +
         `${continueCommand.approve(runId)}, or ${continueCommand.reject(runId)} (your feedback reaches the orchestrator verbatim).`
@@ -206,7 +206,7 @@ function stopModel(state: RunState, position: RunPosition): StopModel {
     case 'interactive':
       return position;
     case 'gate': {
-      const gate = gateOf(position.phase);
+      const gate = gateOf(workflowOf(state), position.phase);
       const packet = state.phaseSummaries[position.phase];
       return {
         kind: 'gate',

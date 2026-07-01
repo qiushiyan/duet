@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { PHASE, phasesOf } from '../phases.ts';
+import { phaseSpec, phasesOf } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
 import { createWorkers } from '../providers/index.ts';
 import type { WorkerProviders, WorkerRole } from '../providers/types.ts';
@@ -51,9 +51,9 @@ export function buildKernelTools(cwd: string, runId: string, phaseRaw: string): 
   const tools = createPhaseTools({
     state,
     phase,
-    providers: createWorkers(state.bindings, phase, {
+    providers: createWorkers(state.bindings, workflow, phase, {
       workerBudgetUsd: budgetFor(state, phase).worker,
-      timeoutMs: PHASE[phase].workerTurnTimeoutMs,
+      timeoutMs: phaseSpec(workflow, phase).workerTurnTimeoutMs,
     }),
     log: (line) => console.error(line),
   }).tools;
@@ -135,9 +135,9 @@ function hostablePhase(position: RunPosition): PhaseName | undefined {
 export type WorkerFactory = (state: RunState, phase: PhaseName) => WorkerProviders;
 
 const defaultWorkerFactory: WorkerFactory = (state, phase) =>
-  createWorkers(state.bindings, phase, {
+  createWorkers(state.bindings, workflowOf(state), phase, {
     workerBudgetUsd: budgetFor(state, phase).worker,
-    timeoutMs: PHASE[phase].workerTurnTimeoutMs,
+    timeoutMs: phaseSpec(workflowOf(state), phase).workerTurnTimeoutMs,
   });
 
 export interface RunScopedKernel {
@@ -199,7 +199,7 @@ export function createRunScopedKernel(
         dispatcher: createTurnDispatcher({
           state,
           phase,
-          cap: PHASE[phase].roundCap,
+          cap: phaseSpec(workflowOf(state), phase).roundCap,
           providers,
           log: (line) => console.error(line),
           holdsLease: leaseHeld,

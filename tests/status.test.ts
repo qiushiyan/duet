@@ -101,32 +101,32 @@ describe('describeStop (the notification body)', () => {
 
 describe('steerRefusal (the steer channel gate)', () => {
   test('a live or crashed phase accepts the steer', () => {
-    expect.soft(steerRefusal({ kind: 'running', pid: 4242, phase: 'impl' }, 'r1')).toBeUndefined();
-    expect.soft(steerRefusal({ kind: 'crashed', phase: 'impl' }, 'r1')).toBeUndefined();
+    expect.soft(steerRefusal('full', { kind: 'running', pid: 4242, phase: 'impl' }, 'r1')).toBeUndefined();
+    expect.soft(steerRefusal('full', { kind: 'crashed', phase: 'impl' }, 'r1')).toBeUndefined();
   });
 
   test('a gate refuses toward the gate decision', () => {
-    const copy = steerRefusal({ kind: 'gate', phase: 'impl' }, 'r1');
+    const copy = steerRefusal('full', { kind: 'gate', phase: 'impl' }, 'r1');
     expect.soft(copy).toContain('shipGate');
     expect.soft(copy).toContain('duet continue r1 --approve');
     expect.soft(copy).toContain('--reject');
   });
 
   test('a flag refuses toward the answer', () => {
-    const copy = steerRefusal({ kind: 'flag', phase: 'impl' }, 'r1');
+    const copy = steerRefusal('full', { kind: 'flag', phase: 'impl' }, 'r1');
     expect.soft(copy).toContain('queued question');
     expect.soft(copy).toContain('duet continue r1 --answer');
   });
 
   test('an interactive run points to the interactive orchestrator session, not a staged steer', () => {
-    const copy = steerRefusal({ kind: 'interactive', phase: 'spec' }, 'r1');
+    const copy = steerRefusal('full', { kind: 'interactive', phase: 'spec' }, 'r1');
     expect.soft(copy).toBeDefined(); // not the generic "nothing to steer" fallback
     expect.soft(copy).toContain('interactive orchestrator session');
     expect.soft(copy).toContain('chat');
   });
 
   test('a finished run says so', () => {
-    expect(steerRefusal({ kind: 'done' }, 'r1')).toContain('complete');
+    expect(steerRefusal('full', { kind: 'done' }, 'r1')).toContain('complete');
   });
 });
 

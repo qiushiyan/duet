@@ -32,9 +32,9 @@ import { createTurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import type { TurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import { BudgetCutoffError } from '../src/providers/types.ts';
 import type { WorkerRole } from '../src/providers/types.ts';
-import { PHASE } from '../src/phases.ts';
+import { phaseSpec } from '../src/phases.ts';
 import type { PhaseName } from '../src/phases.ts';
-import { createRun, loadRunState, markPendingTurn, runDirOf, saveRunState, stageHumanInput } from '../src/run-store.ts';
+import { createRun, loadRunState, markPendingTurn, runDirOf, saveRunState, stageHumanInput, workflowOf } from '../src/run-store.ts';
 import { listPendingSteers, stageSteer } from '../src/steer-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
@@ -79,7 +79,7 @@ function harness(run: RunState, opts: HarnessOpts = {}) {
     ? createTurnDispatcher({
         state: run,
         phase,
-        cap: PHASE[phase].roundCap,
+        cap: phaseSpec(workflowOf(run), phase).roundCap,
         providers,
         log,
         ...(opts.home !== undefined ? { home: opts.home } : {}),
@@ -1611,14 +1611,14 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
     expect.soft(unbound).toContain('["implementer", "reviewer"]');
   });
 
-  test('the RIR research brief takes the same conditional shape', ({ run, consultantRun }) => {
-    const bound = buildPhaseBrief(consultantRun, 'research');
+  test('the RIR research brief takes the same conditional shape', ({ rirRun, rirConsultantRun }) => {
+    const bound = buildPhaseBrief(rirConsultantRun, 'research');
     expect.soft(bound).toContain('one fan-out call');
     expect.soft(bound).toContain('consultant-frame'); // research maps to the frame checkpoint mode
     expect.soft(bound).toContain('separate send');
     expect.soft(bound).toContain('anonymized peers');
 
-    const unbound = buildPhaseBrief(run, 'research');
+    const unbound = buildPhaseBrief(rirRun, 'research');
     expect.soft(unbound.toLowerCase()).not.toContain('consultant');
     expect.soft(unbound).toContain('one fan-out call');
   });

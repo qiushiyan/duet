@@ -225,13 +225,13 @@ describe('the snippet library', () => {
     // arcs map the modes onto their own phases. Full's plan AUTHORS the contract
     // and its impl VERIFIES it (supplanting the open-ended impl bet-audit); RIR
     // keeps the open-ended consultant-impl (no plan phase, no contract to verify).
-    expect.soft(consultantSnippetFor('frame')).toBe('consultant-frame');
-    expect.soft(consultantSnippetFor('spec')).toBe('consultant-spec');
-    expect.soft(consultantSnippetFor('plan')).toBe('consultant-contract');
-    expect.soft(consultantSnippetFor('impl')).toBe('consultant-verify');
-    expect.soft(consultantSnippetFor('research')).toBe('consultant-frame');
-    expect.soft(consultantSnippetFor('implement')).toBe('consultant-impl');
-    expect.soft(consultantSnippetFor('finish'), 'finish carries no consultant checkpoint').toBeUndefined();
+    expect.soft(consultantSnippetFor('full', 'frame')).toBe('consultant-frame');
+    expect.soft(consultantSnippetFor('full', 'spec')).toBe('consultant-spec');
+    expect.soft(consultantSnippetFor('full', 'plan')).toBe('consultant-contract');
+    expect.soft(consultantSnippetFor('full', 'impl')).toBe('consultant-verify');
+    expect.soft(consultantSnippetFor('rir', 'research')).toBe('consultant-frame');
+    expect.soft(consultantSnippetFor('rir', 'implement')).toBe('consultant-impl');
+    expect.soft(consultantSnippetFor('full', 'finish'), 'finish carries no consultant checkpoint').toBeUndefined();
   });
 
   test('information hiding: no worker-directed snippet names the consultant (only the consultant-* snippets may)', () => {
@@ -266,14 +266,12 @@ describe('the snippet library', () => {
     expect.soft(implDirect, 'implement-direct stopped citing the TDD methodology').toContain('{{lessons_dir}}/testing/tdd-loop.md');
   });
 
-  test('a phase given without a workflow infers its owning arc (no Full default crash)', () => {
-    // Finding #3: renderSnippetLibrary({phase}) used to default to Full and
-    // dereference undefined for a RIR-only phase. It now infers the workflow
-    // from the globally-unique phase name.
-    const rendered = renderSnippetLibrary({ phase: 'research' });
-    expect.soft(rendered.startsWith('<snippet_library phase="research">')).toBe(true);
-    expect.soft(rendered).toContain('<snippet key="think-holistic">');
-    expect.soft(rendered).toContain('<phase name="implement">');
+  test('a phase-scoped render requires the workflow — phase names are workflow-scoped', () => {
+    // Phase identity is workflow-scoped now (both arcs share `implement`/`finish`),
+    // so a phase alone can't resolve its arc. The render throws at the one boundary
+    // rather than guessing an arc (the real caller, list_snippets, always supplies
+    // workflowOf(state)); rendering a phase against its actual arc is covered below.
+    expect(() => renderSnippetLibrary({ phase: 'research' })).toThrow(/needs the run workflow/);
   });
 
   test('the phase-grouped view renders a RIR phase against the RIR arc', () => {
@@ -289,7 +287,7 @@ describe('the snippet library', () => {
   });
 
   test('the phase-grouped view shows current-phase bodies and indexes other phases by key', () => {
-    const rendered = renderSnippetLibrary({ phase: 'spec' });
+    const rendered = renderSnippetLibrary({ phase: 'spec', workflow: 'full' });
     expect(rendered.startsWith('<snippet_library phase="spec">')).toBe(true);
     // current phase: full body
     expect(rendered).toContain('<snippet key="review-spec">');
@@ -587,7 +585,7 @@ describe('byte-for-byte identity — no override files ⇒ today’s served libr
   test.for<[string, SnippetRenderOpts]>([
     ['flat menu (no args)', {}],
     ['all=true', { all: true }],
-    ['phase: spec', { phase: 'spec' }],
+    ['phase: spec', { phase: 'spec', workflow: 'full' }],
     ['phase: plan / full', { phase: 'plan', workflow: 'full' }],
     ['phase: research / rir', { phase: 'research', workflow: 'rir' }],
     ['phase: impl / full + all', { phase: 'impl', workflow: 'full', all: true }],
@@ -601,7 +599,7 @@ describe('byte-for-byte identity — no override files ⇒ today’s served libr
 describe('overrides serve through the render path (provenance never leaks to workers)', () => {
   test('an overridden body is served; the XML tag keeps its exact shape (no source marker)', () => {
     const cwd = withProjectSnippets(overrideToml([['write-spec', 'PROJECT-OVERRIDDEN write-spec body']]));
-    const rendered = renderSnippetLibrary({ phase: 'spec', libraryContext: { cwd, configDir: tmpEmpty() } });
+    const rendered = renderSnippetLibrary({ phase: 'spec', workflow: 'full', libraryContext: { cwd, configDir: tmpEmpty() } });
     expect.soft(rendered).toContain('PROJECT-OVERRIDDEN write-spec body');
     expect.soft(rendered).toContain('<snippet key="write-spec">'); // tag closes right after key — no provenance attr
     expect.soft(rendered).not.toContain('source="project"'); // the marker we'd emit if provenance leaked
@@ -609,8 +607,8 @@ describe('overrides serve through the render path (provenance never leaks to wor
 
   test('the override actually takes effect — the served library differs from the no-context render', () => {
     const cwd = withProjectSnippets(overrideToml([['write-spec', 'DISTINCT override marker']]));
-    expect(renderSnippetLibrary({ phase: 'spec', libraryContext: { cwd, configDir: tmpEmpty() } })).not.toBe(
-      renderSnippetLibrary({ phase: 'spec' }),
+    expect(renderSnippetLibrary({ phase: 'spec', workflow: 'full', libraryContext: { cwd, configDir: tmpEmpty() } })).not.toBe(
+      renderSnippetLibrary({ phase: 'spec', workflow: 'full' }),
     );
   });
 

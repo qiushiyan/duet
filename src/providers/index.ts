@@ -1,6 +1,6 @@
 import { DEFAULT_CLAUDE_MODEL, bindingFor, implementerModelFor } from '../config.ts';
 import type { RoleBindings } from '../config.ts';
-import type { PhaseName } from '../phases.ts';
+import type { PhaseName, WorkflowName } from '../phases.ts';
 import { ClaudeWorker } from './claude.ts';
 import { CodexWorker } from './codex.ts';
 import { InteractiveClaudeWorker } from './interactive-claude.ts';
@@ -24,17 +24,19 @@ import type { WorkerProvider, WorkerProviders, WorkerRole } from './types.ts';
  * resolves its base model through planning and the optional `impl` model after the
  * handoff gate, so the same run can plan on a smart model and build on a cheaper
  * one. Every other claude role runs one model across all phases — hence the
- * `phase` parameter (already the per-phase construction site for budget/timeout).
+ * `workflow`+`phase` parameters (the handoff boundary is arc-specific, and this is
+ * already the per-phase construction site for budget/timeout).
  */
 export function createWorkers(
   bindings: RoleBindings,
+  workflow: WorkflowName,
   phase: PhaseName,
   rails: { workerBudgetUsd: number | undefined; timeoutMs: number },
 ): WorkerProviders {
   const forRole = (role: WorkerRole): WorkerProvider => {
     const binding = bindingFor(bindings, role);
     if (binding.provider !== 'claude') return new CodexWorker({ timeoutMs: rails.timeoutMs });
-    const model = role === 'implementer' ? implementerModelFor(bindings, phase) : binding.model ?? DEFAULT_CLAUDE_MODEL[role];
+    const model = role === 'implementer' ? implementerModelFor(bindings, workflow, phase) : binding.model ?? DEFAULT_CLAUDE_MODEL[role];
     if (binding.transport === 'interactive') {
       return new InteractiveClaudeWorker({ model, timeoutMs: rails.timeoutMs });
     }

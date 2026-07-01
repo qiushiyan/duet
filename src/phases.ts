@@ -7,14 +7,15 @@
  * which workflow it is on (`RunState.workflow`); everything arc-shaped resolves
  * through it.
  *
- * The flat lookups everything already uses — `PHASE[name]`, the
- * `Record<PhaseName, …>` run-state maps, the entry-prompt dispatch — are
- * DERIVED from the registry and stay flat, made unambiguous by globally-unique
- * phase names. Only genuinely topology/policy-shaped helpers are
- * workflow-scoped (`phasesOf`, `gatePhasesOf`, `phaseOfGateState`, the machine
- * factory, the lifecycle position probe). `validateRegistry` (run once at
- * module load) checks the two invariants the split rests on: phase names are
- * globally unique, and gate-state names are unique within a workflow.
+ * Phase identity is WORKFLOW-SCOPED: a phase is identified by (workflow, name),
+ * so both arcs can name their build phase "implement" and their finish phase
+ * "finish" without collision. `phaseSpec(workflow, phase)` is the one per-phase
+ * lookup — there is no global `PHASE[name]` map, because a shared name across
+ * arcs would collapse it. The run-state maps stay `Record<PhaseName, …>`: a run
+ * lives on exactly one arc and only ever keys its own arc's phase names, so the
+ * shared-name union is unambiguous per run. `validateRegistry` (run once at
+ * module load) checks two invariants: phase names are unique WITHIN a workflow,
+ * and gate-state names are unique within a workflow.
  *
  * Every per-phase fact lives here: the order of phases, each phase's gate (its
  * machine state name and human-facing copy), the review-loop posture, and the
@@ -453,18 +454,15 @@ export interface PhaseSpec {
  * each workflow makes to its own gate/phase names. Throws naming the violation.
  */
 export function validateRegistry(workflows: Record<string, WorkflowSpecInput>): void {
-  const phaseOwner = new Map<string, string>(); // phase name → owning workflow
   for (const [wfName, wf] of Object.entries(workflows)) {
     const phaseNames = new Set<string>();
     const gateStates = new Set<string>();
     for (const p of wf.phases) {
-      const prior = phaseOwner.get(p.name);
-      if (prior !== undefined) {
+      if (phaseNames.has(p.name)) {
         throw new Error(
-          `registry: phase name "${p.name}" appears in both "${prior}" and "${wfName}" — phase names must be globally unique so the derived PHASE/PhaseName are unambiguous`,
+          `registry: workflow "${wfName}" has two phases named "${p.name}" — phase names must be unique WITHIN a workflow so phaseSpec(workflow, …) is total. (Across workflows a shared name is legal and intended: both arcs name their build phase "implement" and their finish phase "finish".)`,
         );
       }
-      phaseOwner.set(p.name, wfName);
       phaseNames.add(p.name);
       if (gateStates.has(p.gate.state)) {
         throw new Error(
@@ -540,37 +538,24 @@ export function handoffWatchLabel(workflow: WorkflowName): string {
 }
 
 /**
- * The workflow a phase belongs to — unambiguous because phase names are
- * globally unique (validateRegistry enforces it). Lets a phase-scoped surface
- * resolve its arc without being handed the workflow explicitly.
- */
-export function workflowOfPhase(phase: PhaseName): WorkflowName {
-  const owner = (Object.keys(WORKFLOWS) as WorkflowName[]).find((w) =>
-    WORKFLOWS[w].phases.some((p) => p.name === phase),
-  );
-  if (!owner) throw new Error(`no workflow owns phase "${phase}" — the registry and PhaseName disagree`);
-  return owner;
-}
-
-/**
  * The phase immediately before `phase` in its own arc — the predecessor whose
  * gate approval enters `phase`. Registry-derived so a renamed or reordered arc
- * stays correct (Full: finish ← impl; RIR: publish ← implement). Throws if
+ * stays correct (Full: finish ← implement; RIR: finish ← implement). Throws if
  * `phase` is the first in its arc (it has no predecessor) — a caller bug.
  */
-export function priorPhaseOf(phase: PhaseName): PhaseName {
-  const phases = phasesOf(workflowOfPhase(phase));
+export function priorPhaseOf(workflow: WorkflowName, phase: PhaseName): PhaseName {
+  const phases = phasesOf(workflow);
   const prior = phases[phases.findIndex((p) => p.name === phase) - 1];
-  if (!prior) throw new Error(`phase "${phase}" is first in its arc — it has no predecessor`);
+  if (!prior) throw new Error(`phase "${phase}" is first in the "${workflow}" arc — it has no predecessor`);
   return prior.name;
 }
 
 /**
  * Whether `phase` sits strictly AFTER its workflow's handoff gate — the "doing"
  * set that begins once the run crosses into the AFK build. full's handoffGate is
- * `plan`, so its post-handoff phases are {impl, finish}; rir's is `research`, so
- * its are {implement, publish}. Pure arc topology (registry-derived), the twin of
- * `priorPhaseOf`.
+ * `plan`, so its post-handoff phases are {implement, finish}; rir's is `research`,
+ * so its are {implement, finish}. Pure arc topology (registry-derived), the twin
+ * of `priorPhaseOf`.
  *
  * The per-phase implementer-model swap keys off this: the base model plans (frame,
  * spec, plan), the impl model builds and finishes. Deliberately ALIASED onto the
@@ -578,22 +563,26 @@ export function priorPhaseOf(phase: PhaseName): PhaseName {
  * AFK/headless — so if `handoffGate` ever moves, this boundary moves with it (a
  * coupling we accept, not a coincidence).
  */
-export function isPostHandoffPhase(phase: PhaseName): boolean {
-  const workflow = workflowOfPhase(phase);
+export function isPostHandoffPhase(workflow: WorkflowName, phase: PhaseName): boolean {
   const phases = phasesOf(workflow);
   const handoffIdx = phases.findIndex((p) => p.name === WORKFLOWS[workflow].handoffGate);
   return phases.findIndex((p) => p.name === phase) > handoffIdx;
 }
 
-/** Every phase across all workflows, widened to the consumer-facing view. */
-const ALL_PHASES: readonly PhaseSpec[] = Object.values(WORKFLOWS).flatMap(
-  (w): readonly PhaseSpec[] => w.phases,
-);
-
-/** Per-phase lookup, flat across all workflows (phase names are globally unique). */
-export const PHASE: Record<PhaseName, PhaseSpec> = Object.fromEntries(
-  ALL_PHASES.map((p) => [p.name, p]),
-) as Record<PhaseName, PhaseSpec>;
+/**
+ * A phase's spec within its workflow — the one per-phase lookup, replacing the
+ * old global `PHASE[name]` map (which a phase name shared across arcs would have
+ * collapsed to a single, arc-arbitrary entry). Throws on an unknown (workflow,
+ * phase): a lookup that names a phase the arc doesn't own is a caller bug, and
+ * failing loud beats silently resolving a foreign arc's phase.
+ */
+export function phaseSpec(workflow: WorkflowName, phase: PhaseName): PhaseSpec {
+  const spec = phasesOf(workflow).find((p) => p.name === phase);
+  if (!spec) {
+    throw new Error(`phase "${phase}" is not part of the "${workflow}" workflow (phases: ${phasesOf(workflow).map((p) => p.name).join(', ')})`);
+  }
+  return spec;
+}
 
 /** A workflow's gate-bearing phase names, in arc order — its `gates_at` vocabulary. */
 export function gatePhasesOf(workflow: WorkflowName): readonly GatePhase[] {
@@ -631,8 +620,8 @@ export function phaseOfGateState(workflow: WorkflowName, stateName: string): Gat
 }
 
 /** A gate phase's gate spec — non-null by construction (every phase gates). */
-export function gateOf(phase: GatePhase): PhaseSpec['gate'] {
-  return PHASE[phase].gate;
+export function gateOf(workflow: WorkflowName, phase: GatePhase): PhaseSpec['gate'] {
+  return phaseSpec(workflow, phase).gate;
 }
 
 /**
@@ -710,8 +699,8 @@ const CHECKPOINT_KIND: Record<ConsultantCheckpoint, CheckpointKind> = {
 };
 
 /** Whether a phase's consultant checkpoint is a correctness backstop (contract / verify). */
-export function isBackstopCheckpoint(phase: PhaseName): boolean {
-  const mode = PHASE[phase].consultantCheckpoint;
+export function isBackstopCheckpoint(workflow: WorkflowName, phase: PhaseName): boolean {
+  const mode = phaseSpec(workflow, phase).consultantCheckpoint;
   return mode !== undefined && CHECKPOINT_KIND[mode] === 'backstop';
 }
 
@@ -722,8 +711,8 @@ export function isBackstopCheckpoint(phase: PhaseName): boolean {
  * backstop; only the `challenge` the owner has pre-decided away is dropped. The
  * single gateless gate `consultantCheckpointLive` reads.
  */
-function survivesGateless(phase: PhaseName): boolean {
-  const mode = PHASE[phase].consultantCheckpoint;
+function survivesGateless(workflow: WorkflowName, phase: PhaseName): boolean {
+  const mode = phaseSpec(workflow, phase).consultantCheckpoint;
   return mode !== undefined && CHECKPOINT_KIND[mode] !== 'challenge';
 }
 
@@ -753,15 +742,15 @@ export const GATELESS_CONSULTANT_SNIPPETS: ReadonlySet<string> = new Set(
  * scattered `bindings.consultant && !gateless` checks risked). Default-off
  * preserved: no consultant ⇒ false.
  */
-export function consultantCheckpointLive(phase: PhaseName, opts: { consultant: boolean; gateless?: boolean }): boolean {
+export function consultantCheckpointLive(workflow: WorkflowName, phase: PhaseName, opts: { consultant: boolean; gateless?: boolean }): boolean {
   if (!opts.consultant) return false;
-  if (consultantSnippetFor(phase) === undefined) return false;
-  return !opts.gateless || survivesGateless(phase);
+  if (consultantSnippetFor(workflow, phase) === undefined) return false;
+  return !opts.gateless || survivesGateless(workflow, phase);
 }
 
 /** Whether a workflow has any backstop checkpoint — full does (contract+verify), rir does not. */
 export function workflowHasConsultantBackstop(workflow: WorkflowName): boolean {
-  return phasesOf(workflow).some((p) => isBackstopCheckpoint(p.name));
+  return phasesOf(workflow).some((p) => isBackstopCheckpoint(workflow, p.name));
 }
 
 /**
@@ -778,8 +767,8 @@ export function workflowHasConsultantBackstop(workflow: WorkflowName): boolean {
 export function consultantSnippetsForWorkflow(workflow: WorkflowName, opts: { gateless?: boolean } = {}): ReadonlySet<string> {
   return new Set(
     phasesOf(workflow)
-      .filter((p) => consultantCheckpointLive(p.name, { consultant: true, gateless: opts.gateless }))
-      .map((p) => consultantSnippetFor(p.name)!),
+      .filter((p) => consultantCheckpointLive(workflow, p.name, { consultant: true, gateless: opts.gateless }))
+      .map((p) => consultantSnippetFor(workflow, p.name)!),
   );
 }
 
@@ -793,11 +782,12 @@ export function consultantSnippetsForWorkflow(workflow: WorkflowName, opts: { ga
  * a gateless run sees only its gateless-surviving checkpoints — the generative
  * frame and the correctness backstop, never the bet-audit (consultantCheckpointLive).
  */
-export function phaseSnippetsFor(phase: PhaseName, opts: { consultant: boolean; gateless?: boolean }): readonly string[] {
-  const checkpoint = consultantSnippetFor(phase);
-  return consultantCheckpointLive(phase, opts) && checkpoint
-    ? [...PHASE[phase].snippets, checkpoint]
-    : PHASE[phase].snippets;
+export function phaseSnippetsFor(workflow: WorkflowName, phase: PhaseName, opts: { consultant: boolean; gateless?: boolean }): readonly string[] {
+  const spec = phaseSpec(workflow, phase);
+  const checkpoint = consultantSnippetFor(workflow, phase);
+  return consultantCheckpointLive(workflow, phase, opts) && checkpoint
+    ? [...spec.snippets, checkpoint]
+    : spec.snippets;
 }
 
 /**
@@ -805,8 +795,8 @@ export function phaseSnippetsFor(phase: PhaseName, opts: { consultant: boolean; 
  * phase carries no checkpoint — the single source the orchestrator-brief
  * injection reads, so the phase→snippet mapping is never duplicated in prompts.
  */
-export function consultantSnippetFor(phase: PhaseName): string | undefined {
-  const mode = PHASE[phase].consultantCheckpoint;
+export function consultantSnippetFor(workflow: WorkflowName, phase: PhaseName): string | undefined {
+  const mode = phaseSpec(workflow, phase).consultantCheckpoint;
   return mode ? CONSULTANT_CHECKPOINT_SNIPPET[mode] : undefined;
 }
 
