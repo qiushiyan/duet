@@ -50,7 +50,7 @@ import {
  * session's end into the machine's phase.* event vocabulary (./phase-events.ts).
  *
  * The phase RUN LOOP — entry marker-replay, nudge-once, the twice-ended flag,
- * crash → flag + opt-in retry — is shared with the stdio host in
+ * crash → flag + bounded auto-retry — is shared with the stdio host in
  * ./host-runner.ts; this module is now the in-process `PhaseHost` adapter
  * (`makeInProcessHost`): it drives one SDK turn, classifies a failure with the
  * staleness-aware `classifyInfraError`, and opts into retry (the one headless
@@ -117,7 +117,7 @@ const driverLog = (line: string): void => console.log(colorizeDriverLine(line));
  * any staged human input — and each `driveTurn` streams one SDK turn (the phase
  * prompt, then the nudge). `classifyFailure` is the staleness-aware
  * `classifyInfraError`; `retryable` is true (the headless driver is the one place
- * opt-in infra auto-retry runs). The run-loop rails around it live in
+ * bounded infra auto-retry runs). The run-loop rails around it live in
  * ./host-runner.ts.
  */
 function makeInProcessHost(runTurn: RunOrchestratorTurn): PhaseHost {

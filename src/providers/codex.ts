@@ -160,6 +160,10 @@ export class CodexWorker implements WorkerProvider {
     const controller = new AbortController();
     // Set ONLY by the stream's thread.started (not onSessionId) — the honest
     // proof THIS turn's prompt was accepted, which recoverCodexAbort keys on.
+    // This is a slightly EARLIER bar than claude's (which needs a transcript
+    // record produced): thread.started means the session was configured for this
+    // prompt, not that a token was generated — so it biases to the SAFE side, a
+    // rare false-positive costing a redundant resume, never a lost turn.
     let startedThreadId: string | undefined;
     let finalResponse: string;
     let usage: Usage | null;

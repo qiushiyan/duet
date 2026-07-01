@@ -6,6 +6,7 @@ import { describe, expect, test } from 'vitest';
 import { program } from '../src/cli.ts';
 import { FRAMING_TEMPLATE } from '../src/framing.ts';
 import { IDENTITY_PATH } from '../src/orchestrate.ts';
+import { WORKFLOWS } from '../src/phases.ts';
 
 /**
  * Coherence guard for the shipped concierge skill (skills/duet-concierge/):
@@ -353,6 +354,17 @@ describe('shipped gate-posture copy teaches the overnight-default, post-open fin
       const lower = text.toLowerCase();
       expect.soft(lower, `${label} omits the overnight default`).toContain('overnight');
       expect.soft(lower, `${label} omits the finish gate token`).toContain('finish');
+    }
+  });
+
+  test('the concierge reference names every full preset (CLI→doc completeness — prevents the afk-drift class)', () => {
+    // The round-2 gap: the reference table listed only `skip-plan` for full while
+    // `afk` shipped. tests/skill.test.ts checked doc→CLI token existence, not
+    // CLI→doc completeness — so a preset in the registry but absent from the
+    // reference went uncaught. Derive the preset names from the registry (source
+    // of truth) and assert the shipped reference documents each.
+    for (const preset of Object.keys(WORKFLOWS.full.presets)) {
+      expect.soft(referenceMd, `concierge reference omits full's \`${preset}\` preset`).toContain(preset);
     }
   });
 

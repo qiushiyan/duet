@@ -8,7 +8,7 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 |---|---|
 | `duet new --framing <file>` | Start a run from a framing file (the project briefing — the only place project knowledge enters). Returns immediately; the first phase runs in a detached driver. Runs the **full** arc unless `--workflow` says otherwise. |
 | `duet new --workflow <full\|rir> --framing <file>` | Pick the arc. **full** (default): frame → spec → plan → implementation → PR. **rir**: research → implement → one review round → `publish` (reconcile docs → PR), with no spec or plan — for small, well-understood work. Also settable as `workflow:` in the framing frontmatter; the flag wins. |
-| `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates; the rest are pre-authorized and auto-cross with their packets recorded. Phases and presets are **workflow-specific**. full: gates `frame, spec, plan, impl, finish` — **default `overnight` (= frame,spec)**; preset `skip-plan` (= walk away at spec approval, return at the Ship gate). The Open-PR gate (end of `finish`) sits *after* the open — the PR auto-opens and the gate auto-crosses to done; list `finish` to attend a post-open review stop. rir: gates `research, implement, publish` — or the preset `afk` (= attend none, run straight to done with the PR open). |
+| `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates; the rest are pre-authorized and auto-cross with their packets recorded. Phases and presets are **workflow-specific**. full: gates `frame, spec, plan, impl, finish` — **default `overnight` (= frame,spec)**; presets `skip-plan` (= walk away at spec approval, return at the Ship gate) and `afk` (= attend none from the start — every gate pre-authorized, the consultant's safety nets intact). The Open-PR gate (end of `finish`) sits *after* the open — the PR auto-opens and the gate auto-crosses to done; list `finish` to attend a post-open review stop. rir: gates `research, implement, publish` — or the preset `afk` (= attend none, run straight to done with the PR open). |
 | `duet new --framing <file> --gateless` | Walk away from the **start**: pre-authorize every gate (the run flows to an open PR with no attended stop) and, if a consultant is bound, keep only its **non-holding** work — its framing third-opinion still folds into the direction and the acceptance-contract **verify** still guards the build, with its mid-run bet audits off. A genuine product `high` or a contract that can't be met still stops it; `ask_human` and the merge stay the human's. Conflicts with `--gates-at` and `--interactive`. Also settable as `gateless:` in the framing frontmatter (the flag wins). |
 | `duet new --spec <path>` | Start at the spec review loop from a draft spec (skips the FRAME phase). **full-only** — rir has no spec phase and rejects `--spec`. |
 | `duet new --framing <file> --retry-infra <n>` | Set the headless run's bounded auto-retry budget for transient infra failures (network/server/rate-limit) — **default 3** for a new run, `--retry-infra 0` disables, an old run started without the field stays off; or set `retry_infra:` in the framing frontmatter (the flag wins). `auth` retries once then escalates; login/quota/dns/unknown never retry; exhaustion flags. |
@@ -52,7 +52,7 @@ Top-level fields:
 | `specPath` | The spec file, once one exists (absent on framing-only entry until the spec phase reports it). |
 | `machineState` | The last quiescent stop's statechart state — a display hint; `stop` is what you act on. |
 | `stop` | The discriminated stop (below): what the run is waiting on, with the command that acts there. |
-| `gatesAt` | Phases whose gates the human attends, when gate pre-authorization is active. Absent = every gate attended; `[]` = attend none (the rir `afk` posture — all gates pre-authorized). |
+| `gatesAt` | Phases whose gates the human attends, when gate pre-authorization is active. Absent = every gate attended; `[]` = attend none (the `afk` preset on either arc — all gates pre-authorized). |
 | `autoApprovals` | Gates auto-crossed under pre-authorization: `{ gate, at, headline }` — surface these as "while you were away". |
 | `rounds` | Review rounds per phase against their backstop caps: `{ phase, used, cap }`. |
 | `costs` | `{ orchestratorUsd, claudeWorkersUsd, codexTokens: { input, output } }`. |
@@ -139,7 +139,8 @@ A markdown file: an optional `---`-fenced frontmatter block holding only fixed m
 #                             auto-cross. full's default is overnight. Presets
 #                             are workflow-specific: full → skip-plan (walk away
 #                             at spec approval, return at the Ship gate) /
-#                             overnight (= frame,spec); rir → afk (attend none).
+#                             overnight (= frame,spec) / afk (attend none); rir →
+#                             afk (attend none).
 #                             Or a list, e.g. "frame, spec, finish".
 # spec: path/to/draft.md    — enter at the spec review loop (skips FRAME). full-only.
 # gateless: true            — walk away from the START: pre-authorize every gate;

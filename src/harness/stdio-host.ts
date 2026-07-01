@@ -69,7 +69,7 @@ export async function runPhaseOverStdio(input: PhaseInput, orchestrate: Orchestr
  * supplies the per-turn mechanics over the MCP boundary plus the two facts that
  * make it the interactive-side host: `retryable: false` (a human resumes) and a
  * bare-taxonomy `classifyFailure` (docs/engineering.md §"Infra classification &
- * opt-in retry"). Boundary failure becomes the run loop's crash = flag: a dead
+ * bounded auto-retry"). Boundary failure becomes the run loop's crash = flag: a dead
  * peer or transport error thrown out of `connect`/`orchestrate` is caught there
  * and persisted as an actionable question, so crash = flag survives the boundary.
  */
