@@ -192,6 +192,82 @@ describe('implementerModelFor — the per-phase implementer model resolver', () 
   });
 });
 
+describe('the impl-model knob (post-handoff implementer model)', () => {
+  const implModel = (dir: string, model = 'claude-sonnet-5'): RoleBindings =>
+    loadRunConfig({}, configIn(dir, `[roles.implementer]\nprovider = "claude"\nimpl = "claude:${model}"`)).bindings;
+
+  test('[roles.implementer].impl parses onto the implementer binding as a RoleOverride', ({ projectDir }) => {
+    expect(implModel(projectDir).implementer).toEqual({
+      provider: 'claude',
+      model: 'claude-opus-4-8',
+      transport: 'headless',
+      impl: { provider: 'claude', model: 'claude-sonnet-5' },
+    });
+  });
+
+  test('--impl-model attaches the override; it wins over a configured impl', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.implementer]\nprovider = "claude"\nimpl = "claude:claude-sonnet-5"`);
+    const bindings = loadRunConfig({ implModelOverride: 'claude:claude-haiku-4-5-20251001' }, path).bindings;
+    expect(bindings.implementer.impl).toEqual({ provider: 'claude', model: 'claude-haiku-4-5-20251001' });
+  });
+
+  test('a --impl base override carries a configured impl forward (the load-bearing merge)', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.implementer]\nprovider = "claude"\nimpl = "claude:claude-sonnet-5"`);
+    // Changing only the base model must NOT discard the build-phase model.
+    const bindings = loadRoleBindings({ implementer: 'claude:claude-opus-4-6' }, path);
+    expect.soft(bindings.implementer.model).toBe('claude-opus-4-6');
+    expect.soft(bindings.implementer.impl).toEqual({ provider: 'claude', model: 'claude-sonnet-5' });
+  });
+
+  test('switching the implementer to codex drops the configured impl (mirrors transport)', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.implementer]\nprovider = "claude"\nimpl = "claude:claude-sonnet-5"`);
+    expect(loadRoleBindings({ implementer: 'codex' }, path).implementer).toEqual({ provider: 'codex' });
+  });
+
+  test('impl on a codex implementer is refused — the swap is claude-only, same-provider', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.implementer]\nprovider = "codex"\nimpl = "claude:claude-sonnet-5"`);
+    expect(() => loadRoleBindings(undefined, path)).toThrow(/needs a claude implementer/);
+  });
+
+  test('--impl-model on a codex-configured implementer is refused at the cross-source guard', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.implementer]\nprovider = "codex"`);
+    expect(() => loadRunConfig({ implModelOverride: 'claude:claude-sonnet-5' }, path)).toThrow(
+      /claude-only knob, but the implementer is bound to codex/,
+    );
+  });
+
+  test('impl on a non-implementer role is refused — it is implementer-only', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.reviewer]\nprovider = "claude"\nimpl = "claude:claude-sonnet-5"`);
+    expect(() => loadRoleBindings(undefined, path)).toThrow(/impl is implementer-only/);
+  });
+
+  test('a reserved (non-claude) impl provider is refused with the reserved message — bare and with a model', ({
+    projectDir,
+  }) => {
+    const bare = configIn(projectDir, `[roles.implementer]\nprovider = "claude"\nimpl = "codex"`);
+    expect.soft(() => loadRoleBindings(undefined, bare)).toThrow(/reserved/);
+    const withModel = configIn(projectDir, `[roles.implementer]\nprovider = "claude"\nimpl = "codex:gpt-5"`);
+    expect.soft(() => loadRoleBindings(undefined, withModel)).toThrow(/reserved/);
+    // The flag path shares the same reserved guard.
+    expect.soft(() => loadRunConfig({ implModelOverride: 'codex' }, join(projectDir, 'missing.toml'))).toThrow(/reserved/);
+  });
+
+  test('impl with the interactive transport is refused in v1 (model-swap-on-resume unverified there)', ({
+    projectDir,
+  }) => {
+    const path = configIn(
+      projectDir,
+      `[roles.implementer]\nprovider = "claude"\ntransport = "interactive"\nimpl = "claude:claude-sonnet-5"`,
+    );
+    expect(() => loadRoleBindings(undefined, path)).toThrow(/interactive transport/);
+  });
+
+  test('absent knob ⇒ no impl field on any binding (byte-for-byte today)', ({ projectDir }) => {
+    const bindings = loadRunConfig({}, join(projectDir, 'missing.toml')).bindings;
+    expect(bindings.implementer).not.toHaveProperty('impl');
+  });
+});
+
 describe('parseBudget — the opt-in budget knob', () => {
   test('"off" resolves to undefined (disabled, never a 0 cap)', () => {
     expect(parseBudget('off')).toBeUndefined();
