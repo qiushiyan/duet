@@ -210,13 +210,19 @@ export const WORKFLOWS = {
           'respond-review',
           'review-implementation-again',
           'respond-review-again',
+          // Docs reconcile as the LAST build step — after the review loop settles
+          // and before the ship packet — so the Ship gate reviews code + docs
+          // together and `finish` is left a mechanical PR open. Runs before the
+          // consultant verify (which stays last), so the verification certifies the
+          // exact shipped state.
+          'reconcile-docs',
           'ceo-summary',
         ],
         gate: {
           state: 'shipGate',
           heading: 'SHIP gate — the orchestrator’s packet (CEO summary first)',
           ready: 'Ship gate — implementation packet ready',
-          hint: '(verify in your environment before deciding — migrations, smoke tests; approving enters FINISH: reconcile docs → PR → Open-PR gate)',
+          hint: '(verify in your environment before deciding — migrations, smoke tests; docs are reconciled here too, so approving enters FINISH = open the PR)',
         },
         artifactLabel: 'implementation',
         reviewLoop: true,
@@ -234,25 +240,25 @@ export const WORKFLOWS = {
         consultantCheckpoint: 'verify',
       },
       {
-        // The finishing tail, collapsed to one phase (2026-06-26; was docs → pr
-        // → open, three orchestrator sessions for one logical step). Open-then-
-        // review in one continuous session: reconcile docs + commit → write the
-        // PR description → open the PR — and only THEN does the gate interpose.
-        // Pre-authorized (the default), the PR opens and the gate auto-crosses to
-        // done with the URL leading the packet; attended (`finish` in gates_at),
-        // the run stops at the opened PR — approve marks it done, reject re-enters
-        // this loop to AMEND the open PR (gh pr edit / more commits), never to
-        // re-open. Reject-as-amend is sound because amending an open PR is itself
-        // reversible. The open is idempotent by a worker-side gh-pr-view check, not
-        // run-state. The PR is mergeable on open (the bug-review bots fire on it),
-        // so the env-verification reminder rides the body as a "Verification
-        // (pending)" checklist rather than a draft state. No consultant checkpoint
-        // (the verify checkpoint already ran at impl); compact-for-cleanup stays
-        // reachable for the rare bloated-context case. (Q2 retired the Docs-plan
-        // gate for the identical reasons; this finishes that line.) Mirror of rir's
-        // `finish` — same shape, same entry brief (openPrPhaseEntryPrompt).
+        // The finishing tail — now PR-ONLY: write the PR description → open the PR.
+        // Docs no longer reconcile here; they moved to the tail of `implement`, so
+        // the Ship gate reviews code + docs together and `finish` is left the
+        // mechanical open. Open-then-review in one continuous session: the gate
+        // interposes only after the PR is open. Pre-authorized (the default), the
+        // PR opens and the gate auto-crosses to done with the URL leading the
+        // packet; attended (`finish` in gates_at), the run stops at the opened PR —
+        // approve marks it done, reject re-enters this loop to AMEND the open PR (gh
+        // pr edit / more commits), never to re-open. The open is idempotent by a
+        // worker-side gh-pr-view check, not run-state. The PR is mergeable on open
+        // (the bug-review bots fire on it), so the env-verification reminder rides
+        // the body as a "Verification (pending)" checklist rather than a draft
+        // state. No consultant checkpoint (the verify checkpoint already ran at
+        // implement); compact-for-cleanup stays reachable for the rare
+        // bloated-context case (it inherits an already-focused context from
+        // implement, so it is not a default step). Mirror of rir's `finish` — same
+        // shape, same entry brief (openPrPhaseEntryPrompt).
         name: 'finish',
-        snippets: ['reconcile-docs', 'pr-description', 'compact-for-cleanup'],
+        snippets: ['pr-description', 'compact-for-cleanup'],
         gate: {
           state: 'openPrGate',
           heading: 'OPEN-PR gate — docs reconciled, PR open',
@@ -327,16 +333,16 @@ export const WORKFLOWS = {
       },
       {
         name: 'implement',
-        // The spine order: build, orient the reviewer, one writable review round.
-        // Docs no longer fold in here — they moved to the `finish` phase, where
-        // they ride the PR (the arc now opens one). So the Ship gate reviews the
-        // code + review outcome, like full's impl Ship gate.
-        snippets: ['implement-direct', 'handoff-direct', 'review-direct', 'apply-review'],
+        // The spine order: build, orient the reviewer, one writable review round,
+        // then reconcile docs as the last build step — so the Ship gate reviews
+        // code + docs together and `finish` is left the mechanical PR open (the
+        // same docs-at-implement shape as full). Docs ride the branch into the PR.
+        snippets: ['implement-direct', 'handoff-direct', 'review-direct', 'apply-review', 'reconcile-docs'],
         gate: {
           state: 'shipGate',
           heading: 'SHIP gate — the implementation packet',
           ready: 'Ship gate — implementation packet ready',
-          hint: '(verify in your environment before deciding — migrations, smoke tests; approving enters PUBLISH: reconcile docs → open the real PR)',
+          hint: '(verify in your environment before deciding — migrations, smoke tests; docs are reconciled here too, so approving enters FINISH = open the PR)',
         },
         artifactLabel: 'implementation',
         reviewLoop: true,
@@ -362,7 +368,7 @@ export const WORKFLOWS = {
         // edit / more commits), never to re-open. No consultant checkpoint (the
         // implGate bet-audit already ran at implement).
         name: 'finish',
-        snippets: ['reconcile-docs', 'pr-description', 'compact-for-cleanup'],
+        snippets: ['pr-description', 'compact-for-cleanup'],
         gate: {
           // Gate-state name reused from Full — legal because resolution is
           // workflow-scoped (phaseOfGateState(workflow, …)); reusing it lights up

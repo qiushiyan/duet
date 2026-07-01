@@ -364,7 +364,7 @@ Consultant checkpoint — no frozen acceptance contract exists for this run (non
   const { path } = state.acceptanceContract;
   return `
 
-Consultant checkpoint — verify the frozen acceptance contract, then let the implementer self-heal any failure (the consultant is bound for this run): before you advance, send the consultant a ${snippet} prompt over a fresh, ephemeral, read-only session pointed at the frozen contract at ${path} (committed and ratified at the plan gate). It re-reads each assertion, exercises the built system for evidence (run the tests, run the CLI, read logs — never edit or commit), and returns a per-assertion pass/fail with the evidence it cited. "Every assertion holds — ship" is a first-class expected outcome.
+Consultant checkpoint — verify the frozen acceptance contract, then let the implementer self-heal any failure (the consultant is bound for this run): run this as your FINAL step before advance — after the docs reconcile and the CEO summary — so it certifies the exact state you are shipping (a later code- or doc-changing turn would leave the verification stale). Send the consultant a ${snippet} prompt over a fresh, ephemeral, read-only session pointed at the frozen contract at ${path} (committed and ratified at the plan gate). It re-reads each assertion, exercises the built system for evidence (run the tests, run the CLI, read logs — never edit or commit), and returns a per-assertion pass/fail with the evidence it cited. "Every assertion holds — ship" is a first-class expected outcome.
 
 Route a failed assertion to the implementer first, not to the human — it is a fact the implementer can usually just fix, and the human cares only about the ones that resist fixing. Send the failing assertions and their evidence to the implementer as a fix request (like routing a review finding), let it fix, then re-verify by sending a fresh ${snippet} consultant turn — a new session each time, so the check stays independent and a fix only counts when an independent re-run confirms it. Repeat this fix-then-re-verify a round or two; an assertion that passes on an independent re-run is resolved and needs nothing from the human.
 
@@ -513,7 +513,8 @@ The arc:
 4. Insert a midpoint checkpoint only when the implementation is genuinely large — more than roughly six slices is a rough signal, but judge by the real size and structural risk, not the count. Its whole value is catching a foundational problem while many slices still remain for the correction to save; a small or moderate plan has too little left to pay for the extra turns, so skip it and run straight to the handoff. When you do run it, run it exactly once: have the implementer stop at a sensible point partway (around the first third to half), then midpoint-status → review-midpoint → respond-midpoint. The reviewer weights foundational problems highest — they compound across every remaining slice — and treats unreached slices as intentionally undone, not missing. The implementer then triages the points into fix-now / fold-into-the-remaining-slices / disagree, applies the fix-now items, and continues to the end — folding the rest of the guidance into the remaining slices as it goes. It does not pause again; the next stop is the handoff.
 5. ${reviewCompactionStep}
 6. When all slices are in: implementation-handoff from the implementer, then the review loop — review-implementation to the reviewer, respond-review to the implementer, -again variants for later rounds, fix commits as they're accepted. The backstop cap for this phase is ${roundCap} review rounds; converge well before it.
-7. Last act, after the loop converges: send the implementer ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review history (rounds run, points raised, resolved, disputed), deviations from the plan, and the test state. The human returns from hours away and decides to ship from this packet alone — make it carry everything.${consultantVerifyStep(state)}
+7. When the review loop has converged, reconcile the docs with what shipped — docs are part of the work the Ship gate reviews now, not a later step, so they run here on the finished, reviewed code. Send the implementer the reconcile-docs prompt. Your one decision is the doc method, by precedence: if the framing names a doc-update skill or document, name it in the prompt — relay the framing's path or skill faithfully and treat it as authoritative; the implementer locates and follows it, so you needn't (and can't) verify it exists. If the framing names none, send the snippet's default unchanged — it has the implementer find the project's own doc skill, then reconcile by hand if there is none. Never substitute your own survey for a method the framing named — that drops the human's explicit instruction. The implementer commits the docs; they ride the branch into the PR that FINISH opens (there is no docs gate — the human reviews them in the Ship packet and again in the PR). A doc-scope product call it surfaces — deleting a documented concept, rewriting a design claim, pruning a superseded doc — is yours to ask_human (it pauses the run).
+8. Last, after the docs are committed: send the implementer ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review history (rounds run, points raised, resolved, disputed), the docs reconciled, deviations from the plan, and the test state. The human returns from hours away and decides to ship — code and docs together — from this packet alone, so it must carry everything.${consultantVerifyStep(state)}
 
 Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
 
@@ -522,15 +523,17 @@ ${IMPL_EXAMPLES}
 }
 
 /**
- * The finishing tail shared by full's `finish` and rir's `finish` — one
- * continuous orchestrator session: reconcile docs + commit → write the PR
- * description → open the PR with `gh pr create`, then the Open-PR gate. The gate
- * sits AFTER the open: pre-authorized (full's sleep posture / rir's afk), the PR
- * opens and the gate auto-crosses to done; attended (`finish`/`finish` in
- * gates_at), the run stops at the opened PR — approve completes the run, reject
- * re-enters to amend it (feedbackResumePrompt's amend clause). The open is
- * idempotent by a worker-side `gh pr view` check, so a re-entry or crash-resume
- * edits the existing PR rather than failing on a second create.
+ * The finishing tail shared by both arcs' `finish` — now PR-ONLY: one continuous
+ * orchestrator session that writes the PR description → opens the PR with `gh pr
+ * create`, then the Open-PR gate. Docs were already reconciled and committed at
+ * the tail of `implement` (the Ship gate reviewed them), so they ride the branch
+ * into the PR and `finish` never touches them. The gate sits AFTER the open:
+ * pre-authorized (full's sleep posture / rir's afk), the PR opens and the gate
+ * auto-crosses to done; attended (`finish` in gates_at), the run stops at the
+ * opened PR — approve completes the run, reject re-enters to amend it
+ * (feedbackResumePrompt's amend clause). The open is idempotent by a worker-side
+ * `gh pr view` check, so a re-entry or crash-resume edits the existing PR rather
+ * than failing on a second create.
  *
  * The PR is mergeable on open — that is what lets the bug-review bots fire on it
  * overnight — so the env-verification reminder rides the body as a "Verification
@@ -558,12 +561,11 @@ ${approvalClause(
     priorPhase,
     'The human approved the Ship gate — the implementation is verified and shipping.',
     'The Ship gate was pre-authorized at run start and auto-crossed — the implementation packet is recorded for the human, and their environment verification (migrations, smoke tests) is still pending; what you ship here describes work that has not yet had a human eye.',
-  )} Run the ${phase.toUpperCase()} phase — reconcile the docs, write the PR description, and open the PR, in one continuous pass:
+  )} Run the ${phase.toUpperCase()} phase — write the PR description and open the PR, in one continuous pass. The docs were already reconciled and committed at the end of implementation, so they are on the branch and this phase does not touch them:
 
-1. Reconcile the docs with what shipped: send the implementer the reconcile-docs prompt. Your one decision is the doc method, by precedence: if the framing names a doc-update skill or document, name it in the prompt — relay the framing's path or skill faithfully and treat it as authoritative; the implementer locates and follows it, so you needn't (and can't) verify it exists. If the framing names none, send the snippet's default unchanged — it has the implementer find the project's own doc skill, then reconcile by hand if there is none. Never substitute your own survey for a method the framing named — that drops the human's explicit instruction. The implementer commits the docs directly (there is no docs gate — the diff rides the branch into the PR where the human reviews it with the rest); a doc-scope product call it surfaces — deleting a documented concept, rewriting a design claim, pruning a superseded doc — is yours to ask_human (it pauses the run).
-2. Write the PR description: send the implementer the pr-description snippet. The body must LEAD with a "Verification (pending)" checklist of the environment checks owed before merge — migrations, smoke tests, anything the Ship packet flagged — the human's standing reminder to run them before merging (when the Ship gate auto-crossed unattended they have not run these yet, so the checklist rides the PR until they do). A review round on the description is available when it warrants one (backstop cap ${roundCap}); most are a single pass.
-3. Open the PR, idempotently. Have the implementer first check whether a PR already exists for this branch (gh pr view, or gh pr list --head <branch>): if none exists, push the branch and run gh pr create with the title and description; if one already exists (a re-entry, a resumed run, or a PR already on the branch), don't create a second one — amend it in place (gh pr edit for the body, push any new commits). Report the PR URL. If the push or PR creation fails for an environment reason (auth, remote, permissions), that's the human's to fix: ask_human with the error.
-4. Call advance_phase with the PR URL leading the summary — this is the Open-PR packet. ${
+1. Write the PR description: send the implementer the pr-description snippet. The body must LEAD with a "Verification (pending)" checklist of the environment checks owed before merge — migrations, smoke tests, anything the Ship packet flagged — the human's standing reminder to run them before merging (when the Ship gate auto-crossed unattended they have not run these yet, so the checklist rides the PR until they do). A review round on the description is available when it warrants one (backstop cap ${roundCap}); most are a single pass.
+2. Open the PR, idempotently. Have the implementer first check whether a PR already exists for this branch (gh pr view, or gh pr list --head <branch>): if none exists, push the branch and run gh pr create with the title and description; if one already exists (a re-entry, a resumed run, or a PR already on the branch), don't create a second one — amend it in place (gh pr edit for the body, push any new commits). Report the PR URL. If the push or PR creation fails for an environment reason (auth, remote, permissions), that's the human's to fix: ask_human with the error.
+3. Call advance_phase with the PR URL leading the summary — this is the Open-PR packet. ${
     openPrAttended
       ? 'The Open-PR gate is attended: the human reads the packet and the opened PR, then approves (the run completes) or rejects with feedback (you re-enter to amend the open PR).'
       : 'The Open-PR gate is pre-authorized: the PR is already open, so your packet is recorded and the gate auto-crosses straight to done — make the summary self-contained, leading with the PR URL.'
@@ -600,12 +602,13 @@ ${RESEARCH_EXAMPLES}
 }
 
 /**
- * RIR's implement phase — the AFK build, lighter than Full's impl: no plan to
- * commit, no compaction ceremony, no midpoint, and one writable review round
+ * RIR's implement phase — the AFK build, lighter than Full's: no plan to commit,
+ * no compaction ceremony, no midpoint, and one writable review round
  * (review-direct → apply-review) instead of the reflect-then-round-2 loop. Docs
- * are NOT reconciled here — they moved to the `finish` phase, where they ride
- * the PR (the arc now opens one). The Ship packet is the handoff and the
- * review-and-fix summary — no docs, no CEO summary; approving it enters PUBLISH.
+ * reconcile as the last build step (reconcile-docs), so the Ship gate reviews
+ * code + docs together and `finish` is left the mechanical PR open — the same
+ * docs-at-implement shape as Full, minus Full's CEO summary. Approving Ship
+ * enters FINISH (open the PR).
  */
 export function implementPhaseEntryPrompt(state: RunState, roundCap: number): string {
   return `<task>
@@ -621,7 +624,8 @@ The arc — there is no spec or plan here; the research decisions are the source
 1. Send the implementer the implement-direct prompt: build the change directly from the research decisions, rereading the decisions and the code it touches first, working in coherent commits and keeping tests green as it goes. There is no plan file to commit — the decisions carry the design. Never descope or thin tests to fit a turn: a fresh prompt carries a fresh budget ceiling, so trimming scope for budget is a product decision that needs work-content reasons and an honest line in the Ship packet. Have the implementer put ephemeral verification harnesses (throwaway tsconfigs, probe scripts) in this run's scratch dir, .duet/runs/${state.runId}/scratch/, and leave them there — it's gitignored and torn down with the run, so nothing rides the worktree as an untracked stray and there's no cleanup step. Everything else under .duet/ is this run's own live state and logs; the implementer must never delete .duet/ (or anything under .duet/runs/) or write outside that scratch dir, because removing the run's state strands it mid-build. (Gotcha: a worker can't watch its own budget — a turn that hits the per-turn cap or time limit is cut off mechanically, surfacing as a failed or short response, not a graceful "I'm low" report. Its committed work is on disk, so just resume that session with a short continue prompt for the rest; that's resumption, not a content failure, so don't re-send the original prompt.)
 2. When the build is in: handoff-direct from the implementer — it orients the reviewer fast (what changed, where to look hardest), tied to the research decisions rather than a spec/plan.
 3. One writable review round — this arc has exactly one, no second pass: review-direct to the reviewer (it reviews against the research decisions and the actual goal, not a document), then apply-review to the implementer. apply-review is writable: the implementer assesses each point, fixes the valid ones in place, pushes back on the rest with reasons, and reports what it changed. The backstop cap for this phase is ${roundCap} review round.
-4. Call advance_phase with a lean Ship packet: the implementation handoff, the review-and-fix summary (what the reviewer raised, what was fixed, anything disputed), and the test state. There is no CEO summary in this arc — the human reads what shipped and the review outcome. Docs are not reconciled here — that happens next, in the PUBLISH phase, where they ride the PR. Approving the Ship gate enters PUBLISH (reconcile docs → open the PR); rejecting returns the work to you here. The human returns from away and decides to ship from this packet, so it must reflect the final state of the code.${consultantAuditStep(state, 'implement', "the research decisions treated as the design, the implemented change, and the consultant's own prior research-checkpoint findings — not the raw build or review traffic.")}
+4. When the review round has settled, reconcile the docs with what shipped — docs are part of the work the Ship gate reviews now. Send the implementer the reconcile-docs prompt. Your one decision is the doc method, by precedence: if the framing names a doc-update skill or document, name it in the prompt — relay the framing's path or skill faithfully and treat it as authoritative; the implementer locates and follows it. If the framing names none, send the snippet's default unchanged — it has the implementer find the project's own doc skill, then reconcile by hand if there is none. Never substitute your own survey for a method the framing named. The implementer commits the docs; they ride the branch into the PR that FINISH opens. A doc-scope product call it surfaces — deleting a documented concept, rewriting a design claim — is yours to ask_human.
+5. Call advance_phase with a lean Ship packet: the implementation handoff, the review-and-fix summary (what the reviewer raised, what was fixed, anything disputed), the docs reconciled, and the test state. There is no CEO summary in this arc — the human reads what shipped, the docs, and the review outcome. Approving the Ship gate enters FINISH (open the PR — the docs already ride the branch); rejecting returns the work to you here. The human returns from away and decides to ship from this packet, so it must reflect the final state of the code and docs.${consultantAuditStep(state, 'implement', "the research decisions treated as the design, the implemented change, and the consultant's own prior research-checkpoint findings — not the raw build or review traffic.")}
 
 Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
 

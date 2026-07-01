@@ -199,31 +199,42 @@ describe('the RIR workflow', () => {
     expect.soft(implement.roundCap).toBe(1);
   });
 
-  test('publish and full’s finish are the same finishing-tail shape — both open the PR via the shared brief', () => {
-    // The full→real-PR change converged the two: same gate, same no-review-loop
-    // discipline, same caps, same snippet set. They differ only by name (their gate
-    // tokens) and the prior gate that approves into them; openPrPhaseEntryPrompt is
-    // shared. No draft/real PR-mode flag remains — deleting it from PhaseSpec makes
-    // any `.draftPr` read a compile error, so the type system is the regression
-    // guard. We assert the shape, not the entry prose.
+  test('both arcs’ finish is the same PR-only finishing-tail shape — docs already reconciled at Ship', () => {
+    // Both arcs' finish converged: same gate, same no-review-loop discipline, same
+    // caps, same snippet set. Docs moved OUT of finish into the implement tail, so
+    // finish is now PR-only (pr-description → open PR), with compact-for-cleanup
+    // reachable for the rare bloated case. They differ only by the prior gate that
+    // approves into them; openPrPhaseEntryPrompt is shared.
     for (const p of [phaseSpec('full', 'finish'), phaseSpec('rir', 'finish')]) {
       expect.soft(p.gate?.state).toBe('openPrGate');
       expect.soft(p.reviewLoop).toBe(false);
       expect.soft(p.roundCap).toBe(2);
       expect.soft(p.artifactLabel).toBe('PR');
-      expect.soft(p.snippets).toEqual(['reconcile-docs', 'pr-description', 'compact-for-cleanup']);
+      expect.soft(p.snippets).toEqual(['pr-description', 'compact-for-cleanup']);
+      expect.soft(p.snippets).not.toContain('reconcile-docs'); // docs reconcile at implement now
     }
   });
 
-  test('the rir snippet assignments encode the build spine and the docs move to the finishing phase', () => {
+  test('full implement reconciles docs as the last build step, before the ship packet (Ship reviews code + docs)', () => {
+    const implement = phaseSpec('full', 'implement').snippets;
+    // reconcile-docs sits after the review loop and immediately before ceo-summary,
+    // so the Ship packet covers docs and finish is left the mechanical PR open. It
+    // also precedes the consultant verify (which runs last), keeping the
+    // verification of the exact shipped state.
+    expect.soft(implement).toContain('reconcile-docs');
+    expect.soft(implement.indexOf('reconcile-docs')).toBeLessThan(implement.indexOf('ceo-summary'));
+    expect.soft(implement.indexOf('reconcile-docs')).toBeGreaterThan(implement.indexOf('respond-review-again'));
+  });
+
+  test('the rir snippet assignments encode the build spine with docs at the implement tail', () => {
     const snippetsOf = (name: string) => phasesOf('rir').find((p) => p.name === name)!.snippets;
     // research synthesizes the direction (this arc drafts no spec).
     expect.soft(snippetsOf('research')).toEqual(['think-holistic', 'compare-notes']);
     // the build spine, in order — handoff orients the reviewer before the review
-    // round; reconcile-docs is absent here, having moved to publish.
-    expect.soft(snippetsOf('implement')).toEqual(['implement-direct', 'handoff-direct', 'review-direct', 'apply-review']);
-    // publish reconciles docs (they ride the PR now) and writes the description.
-    expect.soft(snippetsOf('finish')).toEqual(['reconcile-docs', 'pr-description', 'compact-for-cleanup']);
+    // round, then reconcile-docs is the last build step (docs reviewed at Ship).
+    expect.soft(snippetsOf('implement')).toEqual(['implement-direct', 'handoff-direct', 'review-direct', 'apply-review', 'reconcile-docs']);
+    // finish is PR-only now (docs already on the branch from implement).
+    expect.soft(snippetsOf('finish')).toEqual(['pr-description', 'compact-for-cleanup']);
   });
 });
 
