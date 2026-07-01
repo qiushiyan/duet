@@ -186,7 +186,7 @@ Reread the files this change touches and rebuild your mental model from the actu
 [[snippets]]
 key = "recover-context"
 expand = '''
-Your prior session was compacted unsuccessfully and reset, so you're in a fresh session with no memory of this run. Re-anchor before any work — this is a post-compact recovery, not a routine reread (that's reread-context): there's no prior context to lean on, so the orientation below has to carry the whole picture.
+Your prior session was compacted unsuccessfully and reset, so you're in a fresh session with no memory of this run. Re-anchor before any work — this is a post-compact recovery from an empty session, not a routine reread of code you still hold in context: there's no prior context to lean on, so the orientation below has to carry the whole picture.
 
 Orient from what's actually on disk and in git — fill each in concretely:
 - What we're building: the change in a sentence or two, and where the authoritative design lives (the committed spec/plan, or the research decisions).
