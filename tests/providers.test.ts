@@ -1021,7 +1021,7 @@ describe('createWorkers', () => {
       return argv[argv.indexOf('--model') + 1]!;
     };
     expect.soft(await modelOnArgv('plan')).toBe('claude-opus-4-8'); // planning keeps the smart base
-    expect.soft(await modelOnArgv('impl')).toBe('claude-sonnet-5'); // the build switches to the impl model
+    expect.soft(await modelOnArgv('implement')).toBe('claude-sonnet-5'); // the build switches to the impl model
   });
 
   test('the consultant provider is built only when bound; an un-enabled run has exactly today’s two', () => {

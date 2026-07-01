@@ -7,13 +7,13 @@ import { test } from './helpers/fixtures.ts';
 
 describe('the steer store', () => {
   test('staging creates one file per steer, listed in staging order with verbatim text', ({ run }) => {
-    stageSteer(run, 'drop the retry tests', 'impl');
+    stageSteer(run, 'drop the retry tests', 'implement');
     stageSteer(run, 'and keep the fixture name');
 
     const pending = listPendingSteers(run);
     expect(pending).toHaveLength(2);
     expect.soft(pending[0]?.text).toBe('drop the retry tests');
-    expect.soft(pending[0]?.stagedDuring).toBe('impl');
+    expect.soft(pending[0]?.stagedDuring).toBe('implement');
     expect.soft(pending[0]?.stagedAt).toBeTruthy();
     expect.soft(pending[1]?.text).toBe('and keep the fixture name');
     expect.soft(pending[1]?.stagedDuring).toBeUndefined();
@@ -49,7 +49,7 @@ describe('the steer store', () => {
   });
 
   test('staging lands in the orchestrator voice log', ({ projectDir, run }) => {
-    stageSteer(run, 'drop the retry tests', 'impl');
+    stageSteer(run, 'drop the retry tests', 'implement');
     const log = readFileSync(join(runDirOf(projectDir, run.runId), 'orchestrator.log'), 'utf8');
     // The audit contract is the human's verbatim text plus the provenance phase —
     // not the exact log sentence, which is free to reword.

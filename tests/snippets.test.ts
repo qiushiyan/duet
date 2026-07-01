@@ -228,7 +228,7 @@ describe('the snippet library', () => {
     expect.soft(consultantSnippetFor('full', 'frame')).toBe('consultant-frame');
     expect.soft(consultantSnippetFor('full', 'spec')).toBe('consultant-spec');
     expect.soft(consultantSnippetFor('full', 'plan')).toBe('consultant-contract');
-    expect.soft(consultantSnippetFor('full', 'impl')).toBe('consultant-verify');
+    expect.soft(consultantSnippetFor('full', 'implement')).toBe('consultant-verify');
     expect.soft(consultantSnippetFor('rir', 'research')).toBe('consultant-frame');
     expect.soft(consultantSnippetFor('rir', 'implement')).toBe('consultant-impl');
     expect.soft(consultantSnippetFor('full', 'finish'), 'finish carries no consultant checkpoint').toBeUndefined();
@@ -322,7 +322,7 @@ describe('the snippet library', () => {
       expect.soft(atFrame).not.toContain('consultant-spec');
       expect.soft(atFrame).not.toContain('consultant-impl');
       // impl is past spec, so spec's checkpoint would land in already_done if it leaked.
-      const atImpl = renderSnippetLibrary({ phase: 'impl', workflow: 'full' });
+      const atImpl = renderSnippetLibrary({ phase: 'implement', workflow: 'full' });
       expect.soft(atImpl).not.toContain('consultant');
     });
 
@@ -336,7 +336,7 @@ describe('the snippet library', () => {
     test('unbound render is byte-for-byte the same with consultantBound omitted vs false', () => {
       // The default-off invariant at the render layer: an absent flag and an
       // explicit false produce identical output.
-      for (const phase of ['frame', 'spec', 'impl'] as const) {
+      for (const phase of ['frame', 'spec', 'implement'] as const) {
         expect
           .soft(renderSnippetLibrary({ phase, workflow: 'full' }))
           .toBe(renderSnippetLibrary({ phase, workflow: 'full', consultantBound: false }));
@@ -385,7 +385,7 @@ describe('the snippet library', () => {
     });
 
     test('gateless: the phase view shows the generative frame + backstop, never a bet-audit', () => {
-      const atImpl = renderSnippetLibrary({ phase: 'impl', workflow: 'full', consultantBound: true, gateless: true });
+      const atImpl = renderSnippetLibrary({ phase: 'implement', workflow: 'full', consultantBound: true, gateless: true });
       expect.soft(atImpl).toContain('<snippet key="consultant-verify">'); // impl's backstop checkpoint, in full
       const atFrame = renderSnippetLibrary({ phase: 'frame', workflow: 'full', consultantBound: true, gateless: true });
       expect.soft(atFrame).toContain('<snippet key="consultant-frame">'); // generative — survives gateless
@@ -588,7 +588,7 @@ describe('byte-for-byte identity — no override files ⇒ today’s served libr
     ['phase: spec', { phase: 'spec', workflow: 'full' }],
     ['phase: plan / full', { phase: 'plan', workflow: 'full' }],
     ['phase: research / rir', { phase: 'research', workflow: 'rir' }],
-    ['phase: impl / full + all', { phase: 'impl', workflow: 'full', all: true }],
+    ['phase: impl / full + all', { phase: 'implement', workflow: 'full', all: true }],
     ['consultant-bound, frame, all', { phase: 'frame', workflow: 'full', consultantBound: true, all: true }],
   ])('%s renders identically with an empty libraryContext', ([, opts]) => {
     const libraryContext = { cwd: tmpEmpty(), configDir: tmpEmpty() };

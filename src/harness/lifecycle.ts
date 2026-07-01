@@ -292,7 +292,7 @@ function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running
   // A phase-loop snapshot reaches the HEADLESS probe only after an
   // interactive→headless handoff (`duet continue` at the handoff gate, `duet afk`,
   // or a bare `--headless` mid-phase drop): crossInteractive — or the prior
-  // interactive rest — leaves the machine AT a phase loop (e.g. implLoop), then
+  // interactive rest — leaves the machine AT a phase loop (e.g. implementLoop), then
   // orchestrationHost is cleared (cli.ts). The pure-headless path never persists a
   // phase loop (driveToQuiescence saves only at quiescent stops), so this branch's
   // gate/flag checks above don't cover it; map it to its own phase. A live driver

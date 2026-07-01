@@ -354,8 +354,8 @@ Consultant checkpoint — author the acceptance contract (the consultant is boun
  * audit. Empty when no consultant is bound.
  */
 function consultantVerifyStep(state: RunState): string {
-  const snippet = consultantSnippetFor(workflowOf(state), 'impl');
-  if (!checkpointLive(state, 'impl') || !snippet) return '';
+  const snippet = consultantSnippetFor(workflowOf(state), 'implement');
+  if (!checkpointLive(state, 'implement') || !snippet) return '';
   if (!state.acceptanceContract) {
     return `
 
@@ -504,7 +504,7 @@ ${approvalClause(
     'The human approved the plan and walked away —',
     'The plan-approval gate was pre-authorized at run start and auto-crossed; the human is away —',
   )} this is the AFK IMPLEMENTATION phase. You drive it end to end; ask_human still works but now queues the question and pauses the whole run until the human returns, so a flag is a real stop, not a quick check-in. Make each one self-contained, and let everything that can wait for the Ship gate wait.
-${attendancePosture(state, 'impl')}
+${attendancePosture(state, 'implement')}
 The arc:
 
 1. Have the implementer commit the approved plan file with a conventional message, as its own commit. It wrote the plan and still holds it, so keep this prompt short — don't restate the plan back to it.
@@ -522,11 +522,11 @@ ${IMPL_EXAMPLES}
 }
 
 /**
- * The finishing tail shared by full's `finish` and rir's `publish` — one
+ * The finishing tail shared by full's `finish` and rir's `finish` — one
  * continuous orchestrator session: reconcile docs + commit → write the PR
  * description → open the PR with `gh pr create`, then the Open-PR gate. The gate
  * sits AFTER the open: pre-authorized (full's sleep posture / rir's afk), the PR
- * opens and the gate auto-crosses to done; attended (`finish`/`publish` in
+ * opens and the gate auto-crosses to done; attended (`finish`/`finish` in
  * gates_at), the run stops at the opened PR — approve completes the run, reject
  * re-enters to amend it (feedbackResumePrompt's amend clause). The open is
  * idempotent by a worker-side `gh pr view` check, so a re-entry or crash-resume
@@ -603,7 +603,7 @@ ${RESEARCH_EXAMPLES}
  * RIR's implement phase — the AFK build, lighter than Full's impl: no plan to
  * commit, no compaction ceremony, no midpoint, and one writable review round
  * (review-direct → apply-review) instead of the reflect-then-round-2 loop. Docs
- * are NOT reconciled here — they moved to the `publish` phase, where they ride
+ * are NOT reconciled here — they moved to the `finish` phase, where they ride
  * the PR (the arc now opens one). The Ship packet is the handoff and the
  * review-and-fix summary — no docs, no CEO summary; approving it enters PUBLISH.
  */
@@ -638,26 +638,38 @@ ${IMPLEMENT_EXAMPLES}
  * staged human input as a separate appended block). Pure — no side effects —
  * so each caller owns its own phaseStarted/consume bookkeeping.
  *
- * The dispatch is an exhaustive `satisfies Record<PhaseName, …>` — adding a
- * phase to the registry without a builder here is a compile error, the real
- * guard (the totality test is belt-and-braces). Every builder receives the
- * phase name (buildPhaseBrief passes the dispatch key); single-phase builders
- * ignore it, while the shared openPrPhaseEntryPrompt reads it — so `finish` and
- * `publish` map to the same function with no re-stated phase literal to drift.
+ * The dispatch is WORKFLOW-KEYED: both arcs now share the `implement` and
+ * `finish` phase names but need DIFFERENT builders there (full's `implement`
+ * carries the CEO summary + contract verify; rir's is the lighter one-round
+ * build), so a flat `Record<PhaseName, …>` could not hold both. Nesting by
+ * workflow keeps each arc's `implement`/`finish` distinct. Every builder
+ * receives the phase name (buildPhaseBrief passes the dispatch key); single-phase
+ * builders ignore it, while the shared openPrPhaseEntryPrompt reads it so both
+ * arcs' `finish` map to one function with no re-stated phase literal to drift.
  */
-const phaseBriefBuilders = {
-  frame: framePhaseEntryPrompt,
-  spec: specPhaseEntryPrompt,
-  plan: planPhaseEntryPrompt,
-  impl: implPhaseEntryPrompt,
-  finish: openPrPhaseEntryPrompt,
-  research: researchPhaseEntryPrompt,
-  implement: implementPhaseEntryPrompt,
-  publish: openPrPhaseEntryPrompt,
-} satisfies Record<PhaseName, (state: RunState, cap: number, phase: PhaseName) => string>;
+type PhaseBriefBuilder = (state: RunState, cap: number, phase: PhaseName) => string;
+const phaseBriefBuilders: Record<WorkflowName, Partial<Record<PhaseName, PhaseBriefBuilder>>> = {
+  full: {
+    frame: framePhaseEntryPrompt,
+    spec: specPhaseEntryPrompt,
+    plan: planPhaseEntryPrompt,
+    implement: implPhaseEntryPrompt,
+    finish: openPrPhaseEntryPrompt,
+  },
+  rir: {
+    research: researchPhaseEntryPrompt,
+    implement: implementPhaseEntryPrompt,
+    finish: openPrPhaseEntryPrompt,
+  },
+};
 
 export function buildPhaseBrief(state: RunState, phase: PhaseName): string {
-  return phaseBriefBuilders[phase](state, phaseSpec(workflowOf(state), phase).roundCap, phase);
+  const workflow = workflowOf(state);
+  const builder = phaseBriefBuilders[workflow][phase];
+  // A missing builder is a registry/dispatch mismatch — fail loud. The driver's
+  // "every phase builds a non-empty brief" test is the belt-and-braces cover.
+  if (!builder) throw new Error(`no entry-brief builder for phase "${phase}" in the "${workflow}" arc`);
+  return builder(state, phaseSpec(workflow, phase).roundCap, phase);
 }
 
 /**
@@ -713,12 +725,12 @@ export function feedbackResumePrompt(workflow: WorkflowName, phase: PhaseName, f
     ? 'run whatever review rounds the changes warrant (with the -again variants), and advance the phase again when converged'
     : "have the implementer apply the changes directly and advance the phase again — this phase doesn't re-run a reviewer round on re-entry, so the human's feedback is the revision itself, not the trigger for a new review pass";
   // The PR is already open by the time an openPrGate reject is reached (both
-  // finish and publish open it before advancing), so a reject AMENDS it in place —
+  // finish and finish open it before advancing), so a reject AMENDS it in place —
   // gh pr edit / more commits — never re-opens it; a second gh pr create would
   // error. Keyed off the gate state (the same fact status's opensPr reads). (RIR's
   // implement no longer folds docs in, so there is no foldsDocs clause here — a
   // Ship-gate reject just routes feedback to the build, and docs reconcile later
-  // in the publish phase regardless.)
+  // in the finish phase regardless.)
   const opensPr = spec.gate?.state === 'openPrGate';
   const amendClause = opensPr
     ? ` The PR is already open — have the implementer amend it in place (gh pr edit for the description, more commits + push for code or doc changes) and never run gh pr create again (it errors on an existing PR). If the feedback changes what shipped, refresh the docs commit too so it still describes the branch. Re-advance with the PR URL still leading the packet.`

@@ -41,11 +41,11 @@ describe('workflow-neutral status surfaces (RIR)', () => {
     expect.soft(model.rounds.map((r) => r.phase)).toEqual(['implement']);
   });
 
-  test('the done summary reads the run’s last phase (publish), and the render claims the PR', ({
+  test('the done summary reads the run’s last phase (finish), and the render claims the PR', ({
     projectDir,
   }) => {
     const rir = rirRun(projectDir);
-    rir.phaseSummaries.publish = { summary: 'opened the PR', artifacts: [] };
+    rir.phaseSummaries.finish = { summary: 'opened the PR', artifacts: [] };
     const model = buildStatusModel(rir, { kind: 'done' }, []);
     expect.soft(model.stop.kind === 'done' && model.stop.summary).toBe('opened the PR');
     const text = renderStatus(model);
@@ -84,7 +84,7 @@ describe('describeStop (the notification body)', () => {
   });
 
   test('surfaces the queued question at a flag-wait', ({ run }) => {
-    run.machineState = 'implFlagWait';
+    run.machineState = 'implementFlagWait';
     run.pendingQuestion = { question: 'run the migration?' };
     expect(describeStop(run, false)).toBe('question queued: run the migration?');
   });
@@ -101,19 +101,19 @@ describe('describeStop (the notification body)', () => {
 
 describe('steerRefusal (the steer channel gate)', () => {
   test('a live or crashed phase accepts the steer', () => {
-    expect.soft(steerRefusal('full', { kind: 'running', pid: 4242, phase: 'impl' }, 'r1')).toBeUndefined();
-    expect.soft(steerRefusal('full', { kind: 'crashed', phase: 'impl' }, 'r1')).toBeUndefined();
+    expect.soft(steerRefusal('full', { kind: 'running', pid: 4242, phase: 'implement' }, 'r1')).toBeUndefined();
+    expect.soft(steerRefusal('full', { kind: 'crashed', phase: 'implement' }, 'r1')).toBeUndefined();
   });
 
   test('a gate refuses toward the gate decision', () => {
-    const copy = steerRefusal('full', { kind: 'gate', phase: 'impl' }, 'r1');
+    const copy = steerRefusal('full', { kind: 'gate', phase: 'implement' }, 'r1');
     expect.soft(copy).toContain('shipGate');
     expect.soft(copy).toContain('duet continue r1 --approve');
     expect.soft(copy).toContain('--reject');
   });
 
   test('a flag refuses toward the answer', () => {
-    const copy = steerRefusal('full', { kind: 'flag', phase: 'impl' }, 'r1');
+    const copy = steerRefusal('full', { kind: 'flag', phase: 'implement' }, 'r1');
     expect.soft(copy).toContain('queued question');
     expect.soft(copy).toContain('duet continue r1 --answer');
   });
@@ -147,7 +147,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
       },
     });
 
-    const flag = buildStatusModel(run, { kind: 'flag', phase: 'impl' }, []).stop;
+    const flag = buildStatusModel(run, { kind: 'flag', phase: 'implement' }, []).stop;
     expect.soft(flag).toEqual({
       kind: 'flag',
       question: 'migrate?',
@@ -155,15 +155,15 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
       command: `duet continue ${run.runId} --answer "<your answer>"`,
     });
 
-    expect.soft(buildStatusModel(run, { kind: 'running', pid: 7, phase: 'impl' }, []).stop).toEqual({
+    expect.soft(buildStatusModel(run, { kind: 'running', pid: 7, phase: 'implement' }, []).stop).toEqual({
       kind: 'running',
       pid: 7,
-      phase: 'impl',
+      phase: 'implement',
     });
 
-    expect.soft(buildStatusModel(run, { kind: 'crashed', phase: 'impl' }, []).stop).toEqual({
+    expect.soft(buildStatusModel(run, { kind: 'crashed', phase: 'implement' }, []).stop).toEqual({
       kind: 'crashed',
-      phase: 'impl',
+      phase: 'implement',
       command: `duet continue ${run.runId}`,
     });
 
@@ -182,11 +182,11 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     run.branch = 'feat/x';
     run.specPath = 'docs/spec.md';
     run.machineState = 'shipGate';
-    run.gatesAt = ['impl', 'finish'];
+    run.gatesAt = ['implement', 'finish'];
     run.autoApprovals = [{ gate: 'directionGate', at: '2026-06-12T03:14:00.000Z' }];
-    run.autoRetries = [{ phase: 'impl', errorClass: 'network', attempt: 1, at: '2026-06-12T03:15:00.000Z' }];
+    run.autoRetries = [{ phase: 'implement', errorClass: 'network', attempt: 1, at: '2026-06-12T03:15:00.000Z' }];
     run.lastActivity = 'send_prompt → reviewer';
-    const model = buildStatusModel(run, { kind: 'gate', phase: 'impl' }, [
+    const model = buildStatusModel(run, { kind: 'gate', phase: 'implement' }, [
       { file: 'f.json', text: 'note', stagedAt: 'now' },
     ]);
 
@@ -214,13 +214,13 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
 
   test('a flag stop surfaces cause/errorClass when set, absent otherwise (additive, #4a)', ({ run }) => {
     run.pendingQuestion = { question: 'down?', cause: 'infra', errorClass: 'network' };
-    const infra = buildStatusModel(run, { kind: 'flag', phase: 'impl' }, []).stop;
+    const infra = buildStatusModel(run, { kind: 'flag', phase: 'implement' }, []).stop;
     if (infra.kind === 'flag') {
       expect.soft(infra.cause).toBe('infra');
       expect.soft(infra.errorClass).toBe('network');
     }
     run.pendingQuestion = { question: 'plain?' };
-    const plain = buildStatusModel(run, { kind: 'flag', phase: 'impl' }, []).stop;
+    const plain = buildStatusModel(run, { kind: 'flag', phase: 'implement' }, []).stop;
     if (plain.kind === 'flag') {
       expect.soft(plain.cause).toBeUndefined();
       expect.soft(plain.errorClass).toBeUndefined();
@@ -229,7 +229,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
 
   test('a budget-cause flag carries cause budget with no errorClass (the enum-widening, #3b)', ({ run }) => {
     run.pendingQuestion = { question: 'orchestrator capped?', cause: 'budget' };
-    const budget = buildStatusModel(run, { kind: 'flag', phase: 'impl' }, []).stop;
+    const budget = buildStatusModel(run, { kind: 'flag', phase: 'implement' }, []).stop;
     if (budget.kind === 'flag') {
       expect.soft(budget.cause).toBe('budget');
       expect.soft(budget.errorClass).toBeUndefined(); // budget is not an infra taxonomy class
@@ -237,36 +237,36 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
   });
 
   test('the gate packet carries humanDecisions only when present (additive)', ({ run }) => {
-    run.phaseSummaries.impl = { summary: 's', artifacts: [] };
-    const without = buildStatusModel(run, { kind: 'gate', phase: 'impl' }, []).stop;
+    run.phaseSummaries.implement = { summary: 's', artifacts: [] };
+    const without = buildStatusModel(run, { kind: 'gate', phase: 'implement' }, []).stop;
     if (without.kind === 'gate') expect.soft(without.packet?.humanDecisions).toBeUndefined();
 
-    run.phaseSummaries.impl = { summary: 's', artifacts: [], humanDecisions: [{ title: 't', severity: 'low' }] };
-    const withD = buildStatusModel(run, { kind: 'gate', phase: 'impl' }, []).stop;
+    run.phaseSummaries.implement = { summary: 's', artifacts: [], humanDecisions: [{ title: 't', severity: 'low' }] };
+    const withD = buildStatusModel(run, { kind: 'gate', phase: 'implement' }, []).stop;
     if (withD.kind === 'gate') expect.soft(withD.packet?.humanDecisions).toEqual([{ title: 't', severity: 'low' }]);
   });
 
   test('full status renders the structured decisions and names a held high (pre-authorized vs attended) — slice 5', ({
     run,
   }) => {
-    run.phaseSummaries.impl = { summary: 'Shipped.', artifacts: [], humanDecisions: [{ title: 'data retention window', severity: 'high' }] };
+    run.phaseSummaries.implement = { summary: 'Shipped.', artifacts: [], humanDecisions: [{ title: 'data retention window', severity: 'high' }] };
 
     // Pre-authorized (impl not in gatesAt): the high is precisely why it stopped.
     run.gatesAt = ['spec'];
-    const preAuth = renderStatus(buildStatusModel(run, { kind: 'gate', phase: 'impl' }, []));
+    const preAuth = renderStatus(buildStatusModel(run, { kind: 'gate', phase: 'implement' }, []));
     expect.soft(preAuth).toContain('decisions for you:');
     expect.soft(preAuth).toContain('● data retention window'); // the structured decision, in the PRIMARY view
     expect.soft(preAuth).toContain('pre-authorized, but a high decision held it');
 
     // Attended (impl in gatesAt): the high is the human's call at a live gate.
-    run.gatesAt = ['impl'];
-    const attended = renderStatus(buildStatusModel(run, { kind: 'gate', phase: 'impl' }, []));
+    run.gatesAt = ['implement'];
+    const attended = renderStatus(buildStatusModel(run, { kind: 'gate', phase: 'implement' }, []));
     expect.soft(attended).toContain('a high decision is yours to make');
     expect.soft(attended).not.toContain('pre-authorized, but a high');
 
     // A low-only packet renders the decision but no high-hold line.
-    run.phaseSummaries.impl = { summary: 's', artifacts: [], humanDecisions: [{ title: 'minor', severity: 'low' }] };
-    const low = renderStatus(buildStatusModel(run, { kind: 'gate', phase: 'impl' }, []));
+    run.phaseSummaries.implement = { summary: 's', artifacts: [], humanDecisions: [{ title: 'minor', severity: 'low' }] };
+    const low = renderStatus(buildStatusModel(run, { kind: 'gate', phase: 'implement' }, []));
     expect.soft(low).toContain('○ minor');
     expect.soft(low).not.toContain('held it for you');
     expect.soft(low).not.toContain('yours to make');
@@ -274,12 +274,12 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
 
   test('status --brief is a derived lean projection with a computed headline', ({ run }) => {
     run.machineState = 'shipGate';
-    run.phaseSummaries.impl = {
+    run.phaseSummaries.implement = {
       summary: 'Shipped the queue.\nDetails follow…',
       artifacts: ['src/x.ts'],
       humanDecisions: [{ title: 'keep the flag default-off?', severity: 'high' }],
     };
-    const model = buildStatusModel(run, { kind: 'gate', phase: 'impl' }, [{ file: 'f', text: 'note', stagedAt: 't' }]);
+    const model = buildStatusModel(run, { kind: 'gate', phase: 'implement' }, [{ file: 'f', text: 'note', stagedAt: 't' }]);
     const brief = buildBrief(model);
 
     expect.soft(brief.stopKind).toBe('gate');
@@ -295,7 +295,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
 
   test('the brief of a flag stop has no humanDecisions and a question headline', ({ run }) => {
     run.pendingQuestion = { question: 'run the migration first?' };
-    const brief = buildBrief(buildStatusModel(run, { kind: 'flag', phase: 'impl' }, []));
+    const brief = buildBrief(buildStatusModel(run, { kind: 'flag', phase: 'implement' }, []));
     expect.soft(brief.stopKind).toBe('flag');
     expect.soft(brief.headline).toBe('run the migration first?');
     expect.soft(brief.humanDecisions).toBeUndefined();
@@ -317,7 +317,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
       orchestrator: { usedTokens: 83_000, windowTokens: 200_000, at: 't1' },
       reviewer: { usedTokens: 62_228, windowTokens: 258_400, at: 't2' },
     };
-    const model = buildStatusModel(run, { kind: 'running', pid: 1, phase: 'impl' }, []);
+    const model = buildStatusModel(run, { kind: 'running', pid: 1, phase: 'implement' }, []);
 
     expect.soft(model.context).toEqual([
       { role: 'orchestrator', usedTokens: 83_000, windowTokens: 200_000, percent: 42, at: 't1' },
@@ -326,10 +326,10 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
   });
 
   test('pending steers carry text and provenance, never the file handle', ({ run }) => {
-    const model = buildStatusModel(run, { kind: 'running', pid: 1, phase: 'impl' }, [
-      { file: 'internal.json', text: 'drop the retry tests', stagedAt: 't1', stagedDuring: 'impl' },
+    const model = buildStatusModel(run, { kind: 'running', pid: 1, phase: 'implement' }, [
+      { file: 'internal.json', text: 'drop the retry tests', stagedAt: 't1', stagedDuring: 'implement' },
     ]);
-    expect(model.pendingSteers).toEqual([{ stagedAt: 't1', stagedDuring: 'impl', text: 'drop the retry tests' }]);
+    expect(model.pendingSteers).toEqual([{ stagedAt: 't1', stagedDuring: 'implement', text: 'drop the retry tests' }]);
   });
 
   test('pendingTurns surfaces the interactive in-flight/settled turns, and the text names check_turns', ({ run }) => {
@@ -427,16 +427,16 @@ describe('renderStatus', () => {
 
   test('gates with verification stakes carry their hint', ({ run }) => {
     run.machineState = 'shipGate';
-    expect(render(run, { kind: 'gate', phase: 'impl' })).toContain('verify in your environment before deciding');
+    expect(render(run, { kind: 'gate', phase: 'implement' })).toContain('verify in your environment before deciding');
 
     run.machineState = 'openPrGate';
     expect(render(run, { kind: 'gate', phase: 'finish' })).toContain('auto-crosses to done by default');
   });
 
   test('a queued question takes over the action section', ({ run }) => {
-    run.machineState = 'implFlagWait';
+    run.machineState = 'implementFlagWait';
     run.pendingQuestion = { question: 'migrate now?', context: 'schema change in slice 3' };
-    const out = render(run, { kind: 'flag', phase: 'impl' });
+    const out = render(run, { kind: 'flag', phase: 'implement' });
 
     expect.soft(out).toContain('QUEUED QUESTION for you:');
     expect.soft(out).toContain('migrate now?');
@@ -446,43 +446,43 @@ describe('renderStatus', () => {
   });
 
   test('a budget-cause flag names the stop resumable; an infra flag does not', ({ run }) => {
-    run.machineState = 'implFlagWait';
+    run.machineState = 'implementFlagWait';
     run.pendingQuestion = { question: 'orchestrator capped', cause: 'budget' };
-    const budget = render(run, { kind: 'flag', phase: 'impl' });
+    const budget = render(run, { kind: 'flag', phase: 'implement' });
     expect.soft(budget).toContain('budget-control stop');
     expect.soft(budget).toContain('resumable');
 
     run.pendingQuestion = { question: 'down?', cause: 'infra', errorClass: 'network' };
-    expect.soft(render(run, { kind: 'flag', phase: 'impl' })).not.toContain('budget-control stop');
+    expect.soft(render(run, { kind: 'flag', phase: 'implement' })).not.toContain('budget-control stop');
   });
 
   test('the while-you-were-away section lists auto-crossed gates with packet headlines', ({ run }) => {
     run.machineState = 'shipGate';
-    run.gatesAt = ['impl', 'finish'];
+    run.gatesAt = ['implement', 'finish'];
     run.autoApprovals = [{ gate: 'directionGate', at: '2026-06-12T03:14:00.000Z' }];
     run.phaseSummaries.frame = { summary: 'Direction: invert the scope\nmore detail', artifacts: [] };
-    const out = render(run, { kind: 'gate', phase: 'impl' });
+    const out = render(run, { kind: 'gate', phase: 'implement' });
 
     expect.soft(out).toContain('while you were away — gates auto-approved (pre-authorized):');
     // The stamp is localized to the human's zone (the stored field stays UTC) —
     // derive the expected local form so the assertion is timezone-robust.
     expect.soft(out).toContain(`✓ directionGate  ${localStamp('2026-06-12T03:14:00.000Z')}  Direction: invert the scope`);
-    expect.soft(out).toContain('gates:    attending impl, finish — other gates pre-authorized');
+    expect.soft(out).toContain('gates:    attending implement, finish — other gates pre-authorized');
   });
 
   test('S6: the while-you-were-away section lists infra auto-retries with a per-class tally, and the brief projects them', ({ run }) => {
     run.machineState = 'shipGate';
     run.autoRetries = [
-      { phase: 'impl', errorClass: 'network', attempt: 1, at: '2026-06-12T03:14:00.000Z' },
-      { phase: 'impl', errorClass: 'network', attempt: 2, at: '2026-06-12T03:14:08.000Z' },
-      { phase: 'impl', errorClass: 'server', attempt: 1, at: '2026-06-12T03:15:00.000Z' },
+      { phase: 'implement', errorClass: 'network', attempt: 1, at: '2026-06-12T03:14:00.000Z' },
+      { phase: 'implement', errorClass: 'network', attempt: 2, at: '2026-06-12T03:14:08.000Z' },
+      { phase: 'implement', errorClass: 'server', attempt: 1, at: '2026-06-12T03:15:00.000Z' },
     ];
-    const out = render(run, { kind: 'gate', phase: 'impl' });
+    const out = render(run, { kind: 'gate', phase: 'implement' });
     expect.soft(out).toContain('while you were away — infra auto-retries: 3 (network ×2, server ×1):');
-    expect.soft(out).toContain(`↻ impl network (attempt 1)  ${localStamp('2026-06-12T03:14:00.000Z')}`);
+    expect.soft(out).toContain(`↻ implement network (attempt 1)  ${localStamp('2026-06-12T03:14:00.000Z')}`);
 
     // The lean brief (what the concierge reads remotely) projects the per-class tally.
-    const brief = renderBrief(buildBrief(buildStatusModel(run, { kind: 'gate', phase: 'impl' }, [])));
+    const brief = renderBrief(buildBrief(buildStatusModel(run, { kind: 'gate', phase: 'implement' }, [])));
     expect.soft(brief).toContain('auto-retried: network ×2, server ×1');
   });
 
@@ -507,17 +507,17 @@ describe('renderStatus', () => {
     expect.soft(out).toContain('frame 1/2');
     expect.soft(out).toContain('spec 2/3');
     expect.soft(out).toContain('plan 0/3');
-    expect.soft(out).toContain('impl 0/3');
+    expect.soft(out).toContain('implement 0/3');
     expect.soft(out).not.toContain('docs 0');
   });
 
   test('the cost line marks claude-worker cost unavailable only when the total is partial', ({ run }) => {
-    run.machineState = 'implFlagWait';
-    expect.soft(render(run, { kind: 'running', pid: 1, phase: 'impl' })).not.toContain('cost unavailable');
+    run.machineState = 'implementFlagWait';
+    expect.soft(render(run, { kind: 'running', pid: 1, phase: 'implement' })).not.toContain('cost unavailable');
 
     run.costs.claudeWorkersCostPartial = true;
     expect
-      .soft(render(run, { kind: 'running', pid: 1, phase: 'impl' }))
+      .soft(render(run, { kind: 'running', pid: 1, phase: 'implement' }))
       .toContain('claude workers $0.00 known (+ interactive turns: cost unavailable)');
   });
 
@@ -532,23 +532,23 @@ describe('renderStatus', () => {
   });
 
   test('context fill renders as plain percentages per voice', ({ run }) => {
-    run.machineState = 'implFlagWait';
+    run.machineState = 'implementFlagWait';
     run.contextUsage = {
       orchestrator: { usedTokens: 83_000, windowTokens: 200_000, at: 't1' },
       implementer: { usedTokens: 134_000, windowTokens: 200_000, at: 't2' },
     };
-    const out = render(run, { kind: 'running', pid: 1, phase: 'impl' });
+    const out = render(run, { kind: 'running', pid: 1, phase: 'implement' });
     expect.soft(out).toContain('context:  orchestrator 42% (83k/200k) · implementer 67% (134k/200k)');
 
     delete run.contextUsage;
-    expect.soft(render(run, { kind: 'running', pid: 1, phase: 'impl' })).not.toContain('context:');
+    expect.soft(render(run, { kind: 'running', pid: 1, phase: 'implement' })).not.toContain('context:');
   });
 
   test('staged steers awaiting delivery are listed with their text', ({ run }) => {
-    run.machineState = 'implFlagWait';
+    run.machineState = 'implementFlagWait';
     const out = renderStatus(
-      buildStatusModel(run, { kind: 'running', pid: 1, phase: 'impl' }, [
-        { file: 'f.json', text: 'drop the retry tests', stagedAt: '2026-06-12T10:30:00.000Z', stagedDuring: 'impl' },
+      buildStatusModel(run, { kind: 'running', pid: 1, phase: 'implement' }, [
+        { file: 'f.json', text: 'drop the retry tests', stagedAt: '2026-06-12T10:30:00.000Z', stagedDuring: 'implement' },
       ]),
     );
 
@@ -557,14 +557,14 @@ describe('renderStatus', () => {
     // The boundary: human text localizes, but the underlying field (and so
     // `status --json`) keeps raw UTC ISO — a machine consumer never sees local.
     expect.soft(out).not.toContain('2026-06-12T10:30:00.000Z');
-    expect.soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'impl' }, [{ file: 'f.json', text: 'x', stagedAt: '2026-06-12T10:30:00.000Z' }]).pendingSteers[0]?.stagedAt).toBe('2026-06-12T10:30:00.000Z');
+    expect.soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'implement' }, [{ file: 'f.json', text: 'x', stagedAt: '2026-06-12T10:30:00.000Z' }]).pendingSteers[0]?.stagedAt).toBe('2026-06-12T10:30:00.000Z');
   });
 
   test('a crashed phase names itself and the resume command', ({ run }) => {
     run.machineState = 'planApprovalGate';
-    const out = render(run, { kind: 'crashed', phase: 'impl' });
+    const out = render(run, { kind: 'crashed', phase: 'implement' });
 
-    expect.soft(out).toContain('the impl phase stopped mid-flight');
+    expect.soft(out).toContain('the implement phase stopped mid-flight');
     expect.soft(out).toContain(`resume with:  duet continue ${run.runId}`);
   });
 
@@ -583,7 +583,7 @@ describe('displayState — the truthful state label (F5)', () => {
     expect.soft(displayState({ kind: 'interactive', phase: 'spec' }, 'specLoop')).toBe('specLoop');
     // No machineState (the interactive case crossInteractive never mirrored):
     expect.soft(displayState({ kind: 'interactive', phase: 'spec' })).toBe('spec');
-    expect.soft(displayState({ kind: 'running', pid: 1, phase: 'impl' })).toBe('impl');
+    expect.soft(displayState({ kind: 'running', pid: 1, phase: 'implement' })).toBe('implement');
     expect.soft(displayState({ kind: 'crashed', phase: 'plan', command: 'c' })).toBe('plan');
     expect.soft(displayState({ kind: 'gate', phase: 'finish', gate: 'openPrGate', heading: 'h', commands: { approve: 'a', reject: 'r' } } as StopModel)).toBe('openPrGate');
     expect.soft(displayState({ kind: 'flag', question: 'q?', command: 'c' } as StopModel)).toBe('flag');

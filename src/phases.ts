@@ -26,10 +26,13 @@
  * The arcs (docs/automation-design.md §"Phases and gates"):
  *
  *   full:  frame → Direction → spec → Commit-spec → plan → Plan-approval
- *          (walk away) → impl (AFK) → Ship → finish (reconcile docs → PR
+ *          (walk away) → implement (AFK) → Ship → finish (reconcile docs → PR
  *          → Open-PR) → done
  *   rir:   research → Direction (walk away) → implement (AFK) → Ship
- *          → publish (reconcile docs → PR → Open-PR) → done
+ *          → finish (reconcile docs → PR → Open-PR) → done
+ *
+ * Both arcs share the `implement` and `finish` phase names — legal because phase
+ * identity is workflow-scoped (see below); their specs still differ per arc.
  */
 
 import { basename, dirname, extname } from 'node:path';
@@ -195,7 +198,7 @@ export const WORKFLOWS = {
         consultantCheckpoint: 'contract',
       },
       {
-        name: 'impl',
+        name: 'implement',
         snippets: [
           'compact-for-impl',
           'midpoint-status',
@@ -247,7 +250,7 @@ export const WORKFLOWS = {
         // (the verify checkpoint already ran at impl); compact-for-cleanup stays
         // reachable for the rare bloated-context case. (Q2 retired the Docs-plan
         // gate for the identical reasons; this finishes that line.) Mirror of rir's
-        // `publish` — same shape, same entry brief (openPrPhaseEntryPrompt).
+        // `finish` — same shape, same entry brief (openPrPhaseEntryPrompt).
         name: 'finish',
         snippets: ['reconcile-docs', 'pr-description', 'compact-for-cleanup'],
         gate: {
@@ -274,7 +277,7 @@ export const WORKFLOWS = {
        * unattended. Born from run evidence (the human reports rubber-stamping
        * plan gates); whether this earns default status is Q20's evidence stream.
        */
-      'skip-plan': ['frame', 'spec', 'impl'],
+      'skip-plan': ['frame', 'spec', 'implement'],
       /**
        * Walk away from the START, keeping every safety net — the missing rung that
        * completes overnight → skip-plan → afk → gateless. Attends NO gate (mirrors
@@ -295,7 +298,7 @@ export const WORKFLOWS = {
     // only attended when `finish` is listed in gates_at. forceAttend and
     // defaultPreAuthorized must stay disjoint (validateRegistry guards it at load).
     forceAttend: [],
-    defaultPreAuthorized: ['plan', 'impl', 'finish'],
+    defaultPreAuthorized: ['plan', 'implement', 'finish'],
   },
   rir: {
     name: 'rir',
@@ -325,7 +328,7 @@ export const WORKFLOWS = {
       {
         name: 'implement',
         // The spine order: build, orient the reviewer, one writable review round.
-        // Docs no longer fold in here — they moved to the `publish` phase, where
+        // Docs no longer fold in here — they moved to the `finish` phase, where
         // they ride the PR (the arc now opens one). So the Ship gate reviews the
         // code + review outcome, like full's impl Ship gate.
         snippets: ['implement-direct', 'handoff-direct', 'review-direct', 'apply-review'],
@@ -348,15 +351,17 @@ export const WORKFLOWS = {
         consultantCheckpoint: 'implGate',
       },
       {
-        // The finishing tail for rir — the mirror of full's `finish`: same shape,
-        // same entry brief (openPrPhaseEntryPrompt). Reconcile docs (they ride the
-        // PR now that the arc has one) → write the PR description → gh pr create.
+        // The finishing tail for rir — now SHARES full's `finish` name (phase
+        // identity is workflow-scoped, so both arcs may name it `finish`). Same
+        // shape, same entry brief (openPrPhaseEntryPrompt): write the PR
+        // description → gh pr create. Docs no longer reconcile here — they moved
+        // to the tail of `implement`, so `finish` is PR-only in both arcs.
         // Pre-authorized (the `afk` posture), the PR opens and the Open-PR gate
-        // auto-crosses to done; attended (`publish` in gates_at), the run stops at
+        // auto-crosses to done; attended (`finish` in gates_at), the run stops at
         // the opened PR — approve marks it done, reject re-enters to AMEND it (gh pr
         // edit / more commits), never to re-open. No consultant checkpoint (the
         // implGate bet-audit already ran at implement).
-        name: 'publish',
+        name: 'finish',
         snippets: ['reconcile-docs', 'pr-description', 'compact-for-cleanup'],
         gate: {
           // Gate-state name reused from Full — legal because resolution is
@@ -365,7 +370,7 @@ export const WORKFLOWS = {
           state: 'openPrGate',
           heading: 'OPEN-PR gate — docs reconciled, PR open',
           ready: 'Open-PR gate — PR open, ready for your review',
-          hint: '(the PR is already open and auto-crosses to done by default; list `publish` in gates_at for a post-open review stop — approve marks it done, reject amends the open PR. The merge is always yours.)',
+          hint: '(the PR is already open and auto-crosses to done by default; list `finish` in gates_at for a post-open review stop — approve marks it done, reject amends the open PR. The merge is always yours.)',
         },
         artifactLabel: 'PR',
         reviewLoop: false,

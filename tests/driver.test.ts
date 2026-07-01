@@ -93,7 +93,7 @@ describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)
     expect.soft(buildPhaseBrief(run, 'finish')).toBe(openPrPhaseEntryPrompt(run, phaseSpec('full', 'finish').roundCap, 'finish'));
     expect.soft(buildPhaseBrief(rir, 'research')).toBe(researchPhaseEntryPrompt(rir, phaseSpec('rir', 'research').roundCap));
     expect.soft(buildPhaseBrief(rir, 'implement')).toBe(implementPhaseEntryPrompt(rir, phaseSpec('rir', 'implement').roundCap));
-    expect.soft(buildPhaseBrief(rir, 'publish')).toBe(openPrPhaseEntryPrompt(rir, phaseSpec('rir', 'publish').roundCap, 'publish'));
+    expect.soft(buildPhaseBrief(rir, 'finish')).toBe(openPrPhaseEntryPrompt(rir, phaseSpec('rir', 'finish').roundCap, 'finish'));
   });
 
   // Belt-and-braces for the exhaustive `satisfies Record<PhaseName, …>` — the
@@ -113,7 +113,7 @@ describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)
   // — and the `Verification (pending)` checklist that carries the env-verify
   // reminder onto a PR opened after an auto-crossed Ship gate. (The old literal
   // tests pinned the surrounding prose and were brittle; these pin the contract.)
-  test.for([['full', 'finish'], ['rir', 'publish']] as const)(
+  test.for([['full', 'finish'], ['rir', 'finish']] as const)(
     '%s opens the PR idempotently and leads with the verification checklist',
     ([workflow, phase], { projectDir }) => {
       const brief = buildPhaseBrief(runOf(projectDir, workflow), phase);
@@ -133,8 +133,8 @@ describe('feedbackResumePrompt — the human feedback reaches the worker', () =>
   // can't silently flip it; the prose itself is deliberately not re-pinned here —
   // that re-pinning was the brittleness the old literal tests carried.
   test.for([
-    ['full', 'spec'], ['full', 'plan'], ['full', 'impl'], ['full', 'finish'],
-    ['rir', 'research'], ['rir', 'implement'], ['rir', 'publish'],
+    ['full', 'spec'], ['full', 'plan'], ['full', 'implement'], ['full', 'finish'],
+    ['rir', 'research'], ['rir', 'implement'], ['rir', 'finish'],
   ] as const)(
     '%s carries the human feedback verbatim',
     ([workflow, phase]) => {

@@ -14,7 +14,7 @@ import { test } from './helpers/fixtures.ts';
 
 /** A restored-machine fact bundle with overridable fields (defaults: a non-gate active loop). */
 const facts = (over: Partial<RestoredFacts> = {}): RestoredFacts => ({
-  value: 'implLoop',
+  value: 'implementLoop',
   status: 'active',
   hasGateTag: false,
   canApprove: false,
@@ -82,12 +82,12 @@ describe('continuePlanner — the interactive host', () => {
 
 describe('continuePlanner — the headless host', () => {
   test('a crashed run with no decision re-enters from the transcripts, carrying the resume event', ({ run }) => {
-    const action = continuePlanner(run, at({ position: { kind: 'crashed', phase: 'impl', resumeEvent: 'approve' } }));
+    const action = continuePlanner(run, at({ position: { kind: 'crashed', phase: 'implement', resumeEvent: 'approve' } }));
     expect(action).toEqual({ kind: 'crash-recover', resumeEvent: 'approve' });
   });
 
   test('a crashed run with no resume event re-enters with no event', ({ run }) => {
-    const action = continuePlanner(run, at({ position: { kind: 'crashed', phase: 'impl' } }));
+    const action = continuePlanner(run, at({ position: { kind: 'crashed', phase: 'implement' } }));
     expect(action).toEqual({ kind: 'crash-recover' });
   });
 
@@ -107,7 +107,7 @@ describe('continuePlanner — the headless host', () => {
   });
 
   test('no decision at a non-gate restored state shows status', ({ run }) => {
-    const action = continuePlanner(run, at({ position: { kind: 'gate', phase: 'spec' }, restored: facts({ value: 'implLoop' }) }));
+    const action = continuePlanner(run, at({ position: { kind: 'gate', phase: 'spec' }, restored: facts({ value: 'implementLoop' }) }));
     expect(action).toEqual({ kind: 'show-status' });
   });
 

@@ -31,9 +31,9 @@ import { test } from './helpers/fixtures.ts';
 
 describe('recordPhaseLabel — the view-only tmux phase sidecar', () => {
   test('writes the current phase to context/phase, overwriting on the next phase', ({ projectDir, run }) => {
-    recordPhaseLabel(run, 'impl');
+    recordPhaseLabel(run, 'implement');
     const sidecar = join(runDirOf(projectDir, run.runId), 'context', 'phase');
-    expect.soft(readFileSync(sidecar, 'utf8')).toBe('impl\n');
+    expect.soft(readFileSync(sidecar, 'utf8')).toBe('implement\n');
     recordPhaseLabel(run, 'finish');
     expect.soft(readFileSync(sidecar, 'utf8')).toBe('finish\n'); // refreshed, not appended
   });
@@ -193,14 +193,14 @@ describe('run creation', () => {
     expect.soft(created.budget).toBe(2);
     const reloaded = loadRunState(projectDir, created.runId);
     expect.soft(reloaded.budget).toBe(2);
-    expect.soft(budgetFor(reloaded, 'impl')).toEqual({ worker: 50, orchestrator: 60 });
+    expect.soft(budgetFor(reloaded, 'implement')).toEqual({ worker: 50, orchestrator: 60 });
   });
 
   test('createRun omits budget when off (absent) ⇒ budgetFor reads off', ({ projectDir }) => {
     const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
     expect.soft(created.budget).toBeUndefined();
     expect.soft('budget' in loadRunState(projectDir, created.runId)).toBe(false);
-    expect.soft(budgetFor(created, 'impl')).toEqual({ worker: undefined, orchestrator: undefined });
+    expect.soft(budgetFor(created, 'implement')).toEqual({ worker: undefined, orchestrator: undefined });
   });
 });
 
@@ -282,14 +282,14 @@ describe('gate attendance', () => {
   test('absent gates_at means every gate is attended', ({ run }) => {
     delete run.gatesAt; // a legacy run (or an explicit attend-all) carries no gatesAt
     expect(gateAttended(run, 'frame')).toBe(true);
-    expect(gateAttended(run, 'impl')).toBe(true);
+    expect(gateAttended(run, 'implement')).toBe(true);
   });
 
   test('listed phases are attended, unlisted are pre-authorized', ({ run }) => {
     run.gatesAt = ['frame', 'spec', 'finish'];
     expect.soft(gateAttended(run, 'frame')).toBe(true);
     expect.soft(gateAttended(run, 'plan')).toBe(false);
-    expect.soft(gateAttended(run, 'impl')).toBe(false);
+    expect.soft(gateAttended(run, 'implement')).toBe(false);
     expect.soft(gateAttended(run, 'finish')).toBe(true); // attended because explicitly listed
   });
 
@@ -299,7 +299,7 @@ describe('gate attendance', () => {
     const fresh = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
     expect.soft(fresh.gatesAt).toEqual(['frame', 'spec']);
     expect.soft(gateAttended(fresh, 'plan')).toBe(false);
-    expect.soft(gateAttended(fresh, 'impl')).toBe(false);
+    expect.soft(gateAttended(fresh, 'implement')).toBe(false);
     expect.soft(gateAttended(fresh, 'finish')).toBe(false);
 
     // Listing finish restores the post-open review stop (opt-in).
@@ -316,7 +316,7 @@ describe('gate attendance', () => {
 
 describe('highDecisionsAt — the severity-hold resolver', () => {
   test('returns the high decisions, filters low, and is empty with none or no packet', ({ run }) => {
-    run.phaseSummaries.impl = {
+    run.phaseSummaries.implement = {
       summary: 's',
       artifacts: [],
       humanDecisions: [
@@ -325,7 +325,7 @@ describe('highDecisionsAt — the severity-hold resolver', () => {
         { title: 'c', severity: 'high' },
       ],
     };
-    expect.soft(highDecisionsAt(run, 'impl')).toEqual([
+    expect.soft(highDecisionsAt(run, 'implement')).toEqual([
       { title: 'a', severity: 'high' },
       { title: 'c', severity: 'high' },
     ]);
@@ -340,25 +340,25 @@ describe('highDecisionsAt — the severity-hold resolver', () => {
 describe('budgetFor — the opt-in knob', () => {
   test('budget absent ⇒ OFF: both caps undefined (the maintainer default)', ({ run }) => {
     expect.soft(run.budget).toBeUndefined();
-    expect.soft(budgetFor(run, 'impl')).toEqual({ worker: undefined, orchestrator: undefined });
+    expect.soft(budgetFor(run, 'implement')).toEqual({ worker: undefined, orchestrator: undefined });
     expect.soft(budgetFor(run, 'finish')).toEqual({ worker: undefined, orchestrator: undefined });
   });
 
   test('budget ×1 ("default") reproduces the registry profile verbatim', ({ run }) => {
     run.budget = 1;
-    expect.soft(budgetFor(run, 'impl')).toEqual({ worker: 25, orchestrator: 30 });
+    expect.soft(budgetFor(run, 'implement')).toEqual({ worker: 25, orchestrator: 30 });
     expect.soft(budgetFor(run, 'finish')).toEqual({ worker: 15, orchestrator: 15 });
     expect.soft(budgetFor(run, 'frame')).toEqual({ worker: 10, orchestrator: 15 });
   });
 
   test('a scalar scales BOTH the worker and orchestrator caps (one knob, both roles)', ({ run }) => {
     run.budget = 0.5;
-    expect.soft(budgetFor(run, 'impl')).toEqual({ worker: 12.5, orchestrator: 15 });
+    expect.soft(budgetFor(run, 'implement')).toEqual({ worker: 12.5, orchestrator: 15 });
     expect.soft(budgetFor(run, 'frame')).toEqual({ worker: 5, orchestrator: 7.5 });
   });
 
   test('off ⇒ a worker built from the resolved cap omits --max-budget-usd', ({ run }) => {
-    const cap = budgetFor(run, 'impl').worker; // off → undefined
+    const cap = budgetFor(run, 'implement').worker; // off → undefined
     expect.soft(cap).toBeUndefined();
     expect.soft(claudeArgs({ sessionId: 's', resume: false }, { model: 'claude-opus-4-8', maxBudgetUsd: cap })).not.toContain('--max-budget-usd');
   });

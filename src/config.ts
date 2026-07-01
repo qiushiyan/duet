@@ -105,7 +105,7 @@ export const DEFAULT_CLAUDE_MODEL: Record<BindableRole, string> = {
  * `budgetFor`/`gateAttended` (pure, absent-knob ⇒ identity). Pre-/at-handoff
  * phases (the planning arc: frame, spec, plan) run the base binding's model;
  * phases strictly after the handoff gate (the AFK build + finishing tail — full's
- * {impl, finish}, rir's {implement, publish}) run the optional `impl` override's
+ * {implement, finish}, rir's {implement, finish}) run the optional `impl` override's
  * model when one is bound. Absent `impl` ⇒ the base model for every phase,
  * byte-for-byte today.
  *

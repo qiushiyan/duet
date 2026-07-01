@@ -24,7 +24,7 @@ import type { ErrorClass } from './worker-health.ts';
  * breaking change to the shipped skill (and fails the pinned-keys test).
  */
 
-/** Whether a workflow's arc ends by opening a PR — true when a phase carries the Open-PR gate (both arcs do: full's `finish`, rir's `publish`). */
+/** Whether a workflow's arc ends by opening a PR — true when a phase carries the Open-PR gate (both arcs do: full's `finish`, rir's `finish`). */
 function opensPr(workflow: WorkflowName): boolean {
   return phasesOf(workflow).some((p) => p.gate?.state === 'openPrGate');
 }

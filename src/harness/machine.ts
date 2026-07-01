@@ -32,7 +32,7 @@ import type { PhaseName, WorkflowName, WorkflowSpecInput } from '../phases.ts';
  * route ─(no spec)─▶ frameLoop ──▶ directionGate ─approve─▶ specLoop ──▶ commitSpecGate
  *   └──(spec given)───────────────────────────────────────────▲              │ approve
  *                                                                            ▼
- *               shipGate ◀── implLoop ◀─approve── planApprovalGate ◀── planLoop
+ *               shipGate ◀── implementLoop ◀─approve── planApprovalGate ◀── planLoop
  *                  │ approve                                  ▲ (walk away)
  *                  ▼
  *               finishLoop ──▶ openPrGate ─approve─▶ done
