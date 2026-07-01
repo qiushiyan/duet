@@ -4,25 +4,29 @@ import { FakeWorker } from './helpers/fixtures.ts';
 
 /**
  * A deterministic clock + scheduler: `now` is a mutable value the test advances
- * (a machine-sleep makes it JUMP), and `schedule` captures the tick callback so
- * the test fires it by hand — no real timers, so the suspend-on-wake model is
- * exercised exactly.
+ * (a machine-sleep makes it JUMP), and `schedule` captures each callback so the
+ * test fires it by hand — no real timers, so the suspend-on-wake model is
+ * exercised exactly. Two timers exist across a deadline hit: the recurring
+ * deadline re-check (scheduled first — `fireTick`) and the drain grace timer
+ * scheduled after the abort (`fireGrace` = the most recent). `cancelled` reports
+ * whether the deadline re-check was cleared (the happy-path assertion).
  */
 function fakeClock(start = 1_000_000) {
   let nowValue = start;
-  let tick: (() => void) | undefined;
+  const scheduled: Array<() => void> = [];
   let cancelled = false;
   return {
     now: (): number => nowValue,
     advance: (ms: number): void => {
       nowValue += ms;
     },
-    fireTick: (): void => tick?.(),
+    fireTick: (): void => scheduled[0]?.(),
+    fireGrace: (): void => scheduled[scheduled.length - 1]?.(),
     get cancelled(): boolean {
       return cancelled;
     },
     schedule: (cb: () => void): (() => void) => {
-      tick = cb;
+      scheduled.push(cb);
       return () => {
         cancelled = true;
       };
@@ -78,10 +82,12 @@ describe('runWithWallClockDeadline (S3 — the wall-clock backstop)', () => {
     clock.advance(60 * 60_000);
     clock.fireTick();
     expect.soft(abort).not.toHaveBeenCalled();
-    // A tick PAST the deadline aborts and rejects; a further tick must not re-abort.
+    // A tick PAST the deadline aborts and begins the drain; a further tick must
+    // not re-abort. The run never settles, so the grace timer completes the drain.
     clock.advance(31 * 60_000); // 91 min elapsed > 90-min cap
     clock.fireTick();
     clock.fireTick();
+    clock.fireGrace();
     await assertion;
     expect.soft(abort).toHaveBeenCalledTimes(1);
   });
@@ -102,6 +108,7 @@ describe('runWithWallClockDeadline (S3 — the wall-clock backstop)', () => {
     clock.advance(91 * 60_000);
     clock.fireTick();
     clock.fireTick(); // a second tick must not re-abort or double-settle
+    clock.fireGrace(); // the run never settles — the grace cap completes the drain
     await assertion;
     expect.soft(abort).toHaveBeenCalledTimes(1);
   });
@@ -121,6 +128,55 @@ describe('runWithWallClockDeadline (S3 — the wall-clock backstop)', () => {
     // wake `now()` has jumped far past the deadline. ONE post-wake tick catches it.
     clock.advance(8 * 60 * 60_000); // an 8-hour overnight sleep
     clock.fireTick();
+    clock.fireGrace(); // the never-resolving run drains to its grace cap
+    await assertion;
+    expect.soft(abort).toHaveBeenCalledTimes(1);
+  });
+
+  test('the deadline DRAINS before rejecting: no resumable checkpoint is exposed until the killed run settles', async () => {
+    // The race Codex flagged: the deadline rejection becomes a "resume this
+    // session" checkpoint (S5), so exposing it while the aborted process/stream
+    // is still tearing down could let a fast resume race a dying writer. The
+    // deadline must abort, WAIT for `run` to settle, and only THEN reject.
+    const clock = fakeClock();
+    const abort = vi.fn();
+    let killRun: () => void = () => {};
+    const run = new Promise<string>((resolve) => {
+      killRun = () => resolve('the child finally exited');
+    });
+    const promise = runWithWallClockDeadline({ run, abort, capMs: 90 * 60_000, now: clock.now, schedule: clock.schedule });
+    let rejected = false;
+    void promise.catch(() => {
+      rejected = true;
+    });
+    // Deadline wins: abort fires at once, but the checkpoint is WITHHELD.
+    clock.advance(91 * 60_000);
+    clock.fireTick();
+    expect.soft(abort).toHaveBeenCalledTimes(1);
+    await Promise.resolve(); // flush microtasks — still draining, still pending
+    expect.soft(rejected).toBe(false);
+    // The killed run settles (the child exited) → NOW it rejects, and with the
+    // typed error, never the run's own (untrustworthy) late value.
+    killRun();
+    await expect(promise).rejects.toBeInstanceOf(WallClockExceededError);
+  });
+
+  test('the drain is BOUNDED: an unkillable run rejects at the grace cap, never hangs the driver', async () => {
+    // If abort can't actually stop the turn, the deadline must still reject — the
+    // grace cap is what keeps a wedged, unkillable turn from hanging the driver.
+    const clock = fakeClock();
+    const abort = vi.fn();
+    const promise = runWithWallClockDeadline({
+      run: new Promise<string>(() => {}), // never settles, even after abort
+      abort,
+      capMs: 90 * 60_000,
+      now: clock.now,
+      schedule: clock.schedule,
+    });
+    const assertion = expect(promise).rejects.toBeInstanceOf(WallClockExceededError);
+    clock.advance(91 * 60_000);
+    clock.fireTick(); // deadline wins → abort + drain begins
+    clock.fireGrace(); // run never settled → the grace cap rejects anyway
     await assertion;
     expect.soft(abort).toHaveBeenCalledTimes(1);
   });

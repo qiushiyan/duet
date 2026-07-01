@@ -14,7 +14,12 @@
  * It races the in-flight turn promise against that deadline. The turn settling
  * first wins (its value or its error), with the timer cleared and `abort` never
  * called; the deadline winning calls `abort` exactly once (the execa child-kill,
- * or the owned AbortController) and rejects with a typed WallClockExceededError.
+ * or the owned AbortController), then DRAINS — waits for the killed `run` to
+ * actually settle, bounded by a short grace — before rejecting with a typed
+ * WallClockExceededError. The drain matters because that rejection becomes a
+ * *resumable* checkpoint (S5): exposing it while the killed process/stream is
+ * still tearing down would let a fast resume race a dying writer on the same
+ * session. The grace cap keeps an unkillable turn from hanging the driver.
  *
  * `now`/`schedule` are injected (defaults: Date.now + setInterval) so a test
  * drives `now` past the deadline and fires the captured tick deterministically,
@@ -37,6 +42,15 @@ export class WallClockExceededError extends Error {
 /** How often the deadline is re-checked against wall-clock `now()` (overridable for tests). */
 export const WALL_CLOCK_TICK_MS = 30_000;
 
+/**
+ * How long the deadline waits for the aborted `run` to actually settle before it
+ * rejects anyway. Comfortably above execa's SIGTERM→SIGKILL escalation (~5 s
+ * default), so the killed child's own exit normally wins the race; the cap only
+ * bites if a turn is genuinely unkillable, where returning late still beats
+ * hanging the driver forever (the bounded-waste-then-recover philosophy).
+ */
+export const WALL_CLOCK_DRAIN_GRACE_MS = 10_000;
+
 export interface WallClockDeadlineArgs<T> {
   /** The in-flight turn promise raced against the deadline. */
   run: Promise<T>;
@@ -53,6 +67,12 @@ export interface WallClockDeadlineArgs<T> {
   schedule?: (cb: () => void, ms: number) => () => void;
   /** Re-check cadence; default WALL_CLOCK_TICK_MS. */
   tickMs?: number;
+  /**
+   * Max wait for the aborted `run` to settle before the deadline rejects anyway.
+   * Default WALL_CLOCK_DRAIN_GRACE_MS. The drain never exposes the checkpoint
+   * while the killed process/stream may still be writing the session.
+   */
+  graceMs?: number;
 }
 
 export function runWithWallClockDeadline<T>(args: WallClockDeadlineArgs<T>): Promise<T> {
@@ -64,6 +84,7 @@ export function runWithWallClockDeadline<T>(args: WallClockDeadlineArgs<T>): Pro
       return () => clearInterval(id);
     });
   const tickMs = args.tickMs ?? WALL_CLOCK_TICK_MS;
+  const graceMs = args.graceMs ?? WALL_CLOCK_DRAIN_GRACE_MS;
   const deadline = now() + args.capMs;
 
   return new Promise<T>((resolve, reject) => {
@@ -94,7 +115,22 @@ export function runWithWallClockDeadline<T>(args: WallClockDeadlineArgs<T>): Pro
           } catch {
             // best-effort kill — the deadline still rejects with the typed error.
           }
-          reject(new WallClockExceededError(args.capMs));
+          // DRAIN, then reject. The rejection is a *resumable* checkpoint (S5),
+          // so don't expose it until the killed `run` has actually settled — else
+          // a fast resume could race the dying process/stream writing the same
+          // session. Whichever comes first — `run` settling (the child exited) or
+          // the grace cap (an unkillable turn) — reaps exactly once with the typed
+          // error. `run`'s outcome is discarded: the deadline already won.
+          let drained = false;
+          let cancelGrace: () => void = () => {};
+          const reap = (): void => {
+            if (drained) return;
+            drained = true;
+            cancelGrace();
+            reject(new WallClockExceededError(args.capMs));
+          };
+          cancelGrace = schedule(reap, graceMs);
+          args.run.then(reap, reap);
         });
       }
     }, tickMs);
