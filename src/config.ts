@@ -264,6 +264,11 @@ export function parseRoleOverride(role: BindableRole, spec: string): RoleOverrid
  * construction, so downstream never re-checks it.
  */
 export function parseImplOverride(spec: string): RoleOverride {
+  if (spec.trim() === '') {
+    throw new Error(
+      'impl model is empty — set it to a "claude:model" spec (e.g. "claude:claude-sonnet-5"), or omit it to keep the base model in every phase',
+    );
+  }
   const provider = spec.split(':')[0];
   if (provider !== 'claude') {
     throw new Error(

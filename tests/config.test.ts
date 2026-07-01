@@ -281,8 +281,8 @@ describe('the impl-model knob (post-handoff implementer model)', () => {
     expect.soft(DEFAULT_BINDINGS.implementer).not.toHaveProperty('impl');
   });
 
-  test('an empty --impl-model spec is rejected, not silently dropped', ({ projectDir }) => {
-    expect(() => loadRunConfig({ implModelOverride: '' }, join(projectDir, 'missing.toml'))).toThrow(/reserved/);
+  test('an empty --impl-model spec is rejected with a clear message, not silently dropped', ({ projectDir }) => {
+    expect(() => loadRunConfig({ implModelOverride: '' }, join(projectDir, 'missing.toml'))).toThrow(/impl model is empty/);
   });
 });
 

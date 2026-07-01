@@ -178,4 +178,13 @@ describe('buildStatsModel — the fs composer over real appendVoiceLog output', 
     expect.soft(byPhase['plan']).toBe('claude-opus-4-8'); // planning ran on the base model
     expect.soft(byPhase['impl']).toBe('claude-sonnet-5'); // the build ran on the impl model
   });
+
+  test('a codex implementer labels its phases "codex" — it has no model to resolve', ({ run }) => {
+    run.bindings.implementer = { provider: 'codex' };
+    appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=impl)', 'brief');
+    appendVoiceLog(run, 'orchestrator', 'advance_phase (impl)', 'ok');
+
+    const byPhase = Object.fromEntries(buildStatsModel(run).phases.map((p) => [p.phase, p.implementerModel]));
+    expect.soft(byPhase['impl']).toBe('codex');
+  });
 });
