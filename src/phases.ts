@@ -26,10 +26,10 @@
  * The arcs (docs/automation-design.md §"Phases and gates"):
  *
  *   full:  frame → Direction → spec → Commit-spec → plan → Plan-approval
- *          (walk away) → implement (AFK) → Ship → finish (reconcile docs → PR
- *          → Open-PR) → done
- *   rir:   research → Direction (walk away) → implement (AFK) → Ship
- *          → finish (reconcile docs → PR → Open-PR) → done
+ *          (walk away) → implement (AFK; build → review → reconcile docs) → Ship
+ *          → finish (open the PR) → Open-PR → done
+ *   rir:   research → Direction (walk away) → implement (AFK; build → review →
+ *          reconcile docs) → Ship → finish (open the PR) → Open-PR → done
  *
  * Both arcs share the `implement` and `finish` phase names — legal because phase
  * identity is workflow-scoped (see below); their specs still differ per arc.
@@ -48,7 +48,7 @@ import { basename, dirname, extname } from 'node:path';
  * - `contract` — the generative-and-writing mode: the consultant AUTHORS the
  *   acceptance contract (Full's `plan`), blind to the plan and code.
  * - `verify` — the evidence-grounded verification mode: a fresh session VERIFIES
- *   the frozen acceptance contract (Full's `impl`), supplanting the open-ended
+ *   the frozen acceptance contract (Full's `implement`), supplanting the open-ended
  *   `implGate` audit there.
  *
  * Each arc maps the modes onto its own phases (Full: frame/specGate/contract/
@@ -350,7 +350,7 @@ export const WORKFLOWS = {
         roundCap: 1,
         orchestratorBudgetUsd: 30,
         workerBudgetUsd: 25,
-        // The AFK build cap — the same wall-clock 90-min bound as full's `impl`
+        // The AFK build cap — the same wall-clock 90-min bound as full's `implement`
         // (S3). The measurement spans both arcs (rir's implement-direct turns run
         // up to 25 min), so leaving the two build phases split would be unmotivated.
         workerTurnTimeoutMs: 90 * 60_000,
