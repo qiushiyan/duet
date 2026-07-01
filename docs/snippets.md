@@ -13,10 +13,10 @@ Each phase pulls a few snippets in the order the orchestrator reaches for them; 
 | [`write-spec`](#write-spec) | full · spec | implementer | the first spec draft |
 | [`start-plan`](#start-plan) | full · plan | implementer | the implementation plan (vertical slices) |
 | [`implement-direct`](#implement-direct) | rir · implement | implementer | code built straight from the research decisions |
-| [`reconcile-docs`](#reconcile-docs) | full · finish, rir · publish | implementer | docs reconciled with what shipped, then committed |
+| [`reconcile-docs`](#reconcile-docs) | full · implement, rir · implement | implementer | docs reconciled with what shipped, then committed |
 | [`review-spec`](#review-spec) | full · spec | reviewer | spec critique (at spec altitude) |
 | [`review-plan`](#review-plan) | full · plan | reviewer | plan critique |
-| [`review-implementation`](#review-implementation) | full · impl | reviewer | code review |
+| [`review-implementation`](#review-implementation) | full · implement | reviewer | code review |
 | [`review-direct`](#review-direct) | rir · implement | reviewer | code review (no spec/plan to measure against) |
 
 The full arc has no draft snippet for the implementation phase by design — the plan is the script, so the orchestrator composes the build prompt from it rather than from a template.
@@ -167,7 +167,7 @@ If a decision turns out wrong or underspecified once you're in the code, **stop 
 
 ### `reconcile-docs`
 
-Shared by full's `finish` phase and rir's `publish` phase — the docs step; both arcs ride the docs into the PR. The body is an invariant contract (commit directly — no docs gate; hold the one product boundary back to the human — deleting a documented concept, rewriting a load-bearing design claim, pruning a superseded doc) wrapped around a **method chosen by precedence**: a doc-update skill or document the framing names (the orchestrator relays it, authoritative — it outranks discovery, so a run's explicit choice is never overridden by a generic find), else the project's own doc-update skill (under `.claude/`/`.agents/`) when one exists, else a consolidate-don't-patch default pitched for a senior engineer. The orchestrator can't reach the filesystem, so it only relays a named method; the implementer (which can) locates and follows it. Self-contained — it names no vendored skill of its own. Override it to change how a project reconciles docs.
+Runs at the tail of `implement` in both arcs — the docs step, the last thing before the Ship gate, so docs are reviewed with the code and then ride the branch into the PR that `finish` opens. The body is an invariant contract (commit directly — no docs gate; hold the one product boundary back to the human — deleting a documented concept, rewriting a load-bearing design claim, pruning a superseded doc) wrapped around a **method chosen by precedence**: a doc-update skill or document the framing names (the orchestrator relays it, authoritative — it outranks discovery, so a run's explicit choice is never overridden by a generic find), else the project's own doc-update skill (under `.claude/`/`.agents/`) when one exists, else a consolidate-don't-patch default pitched for a senior engineer. The orchestrator can't reach the filesystem, so it only relays a named method; the implementer (which can) locates and follows it. Self-contained — it names no vendored skill of its own. Override it to change how a project reconciles docs.
 
 ```text
 The docs ship with this change — they ride the branch (and the PR, where there is one) into the shippable record. Reconcile them with what actually shipped, in one pass.
