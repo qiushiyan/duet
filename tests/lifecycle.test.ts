@@ -211,6 +211,7 @@ describe('attended stops', () => {
     expect.soft(stop.snapshot.value).toBe('directionGate');
     expect.soft(stop.state.machineState).toBe('directionGate');
     expect.soft(stop.state.autoApprovals).toBeUndefined();
+    expect.soft(stop.wedged).toBeUndefined(); // a clean stop never asks the driver to hard-exit
     expect.soft(notifications).toEqual(['Direction gate — synthesized direction ready']);
   });
 
@@ -241,6 +242,9 @@ describe('the quiescence soft-fail (S4 — a hung phase parks, never strands)', 
     // it resolved (no throw, no process kill).
     expect.soft(calls).toEqual(['frame']);
     expect.soft(stop.snapshot.value).toBe('frameFlagWait');
+    // …and it flags the driver to HARD-EXIT: the wedged invoke has no cleanup, so
+    // the process must be killed lest it keep the pid alive or race a late write.
+    expect.soft(stop.wedged).toBe(true);
 
     // The load-bearing ordering: the probe reads a `flag` (not crashed/running)
     // because the flag-wait snapshot sits BESIDE the queued infra question.

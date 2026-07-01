@@ -419,7 +419,7 @@ export async function driveToQuiescence(
   state: RunState,
   options?: { snapshot?: Snapshot<unknown>; event?: HumanEvent },
   deps: LifecycleDeps = {},
-): Promise<{ snapshot: AnyMachineSnapshot; state: RunState }> {
+): Promise<{ snapshot: AnyMachineSnapshot; state: RunState; wedged?: true }> {
   const machine = deps.machine ?? machineFor(workflowOf(state));
   const notify = deps.notify ?? desktopNotify;
   const quiescenceTimeoutMs = deps.quiescenceTimeoutMs ?? QUIESCENCE_TIMEOUT_MS;
@@ -493,6 +493,14 @@ export async function driveToQuiescence(
       actor.send({ type: 'phase.flag' });
       saveMachineSnapshot(state, actor.getPersistedSnapshot());
       const parked = actor.getSnapshot();
+      // `actor.stop()` parks the machine but does NOT tear down the wedged
+      // invoke: `phaseDriver` is a `fromCallback` with no cleanup, so the hung
+      // `runPhase` (its in-process orchestrator turn) keeps running — keeping the
+      // `_drive` pid alive (supervision would read it as running) and able to race
+      // a late in-process write over this parked flag. We can't cancel it from
+      // here (no signal reaches the SDK turn), so we flag the caller to hard-exit
+      // the driver process below — the state is already durably parked, and the
+      // human resumes with a fresh driver.
       actor.stop();
       // First-question-wins: never clobber a question the orchestrator already
       // queued (its own ask_human, a budget stop). Reload-mutate-save so a
@@ -511,7 +519,7 @@ export async function driveToQuiescence(
         `duet ${fresh.runId}`,
         `${phase} phase parked — it ran past its ~${hours}h outer bound; resume with duet continue`,
       );
-      return { snapshot: parked, state: fresh };
+      return { snapshot: parked, state: fresh, wedged: true };
     }
 
     saveMachineSnapshot(state, actor.getPersistedSnapshot());

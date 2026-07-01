@@ -788,6 +788,13 @@ const driveCommand = new Command('_drive')
       ...(event ? { event } : {}),
     });
     showStatus(stop.state);
+    // A wedged-phase soft-fail parked the run but left the hung phase invoke
+    // running (no cleanup reaches the SDK turn), so it would keep this pid alive
+    // and could race a late write over the parked flag. The state is durably
+    // parked; hard-exit so the driver truly stops. Normal stops fall through and
+    // exit naturally (all actors stopped, no dangling work) — the driver log is a
+    // file, so the sync showStatus write above is already flushed.
+    if (stop.wedged) process.exit(0);
   });
 program.addCommand(driveCommand, { hidden: true });
 
