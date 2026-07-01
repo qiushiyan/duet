@@ -55,6 +55,18 @@ export interface WorkerTurn {
    * generated content, never by the error wording.
    */
   interrupted?: true;
+  /**
+   * The turn was killed at its per-turn cap (the wall-clock backstop, or execa's
+   * timeout) AFTER its prompt was accepted into the session — a settled, resumable
+   * CHECKPOINT, like `interrupted`/`budgetTruncated`, never an infra failure. The
+   * proof is "this turn's prompt was accepted" (a transcript record at/after the
+   * turn start, or codex's `thread.started` seen this turn), NOT "a session id was
+   * minted" (claude mints before the process runs) — so the orchestrator is told
+   * to RESUME, not re-send (a re-send would duplicate the conversation). A turn
+   * killed BEFORE acceptance (pre-flight) is the distinct infra error (retry
+   * verbatim), never an aborted WorkerTurn.
+   */
+  aborted?: true;
 }
 
 /**
@@ -89,6 +101,19 @@ export interface RunTurnOptions {
    */
   readOnly?: boolean;
   cwd?: string;
+  /**
+   * Per-turn override of the construction-time worker cap — the provider-wide
+   * contract every WorkerProvider honors (claude, the interactive transport, and
+   * codex alike), so one knob can give a single turn a shorter or longer cap than
+   * its phase's default. The effective cap each provider enforces is
+   * `opts.timeoutMs ?? <its construction value>` — absent ⇒ byte-for-byte the
+   * phase cap, so an existing call site that passes no override moves nothing.
+   * This is the seam `/compact`'s short cap (B) and the wall-clock backstop (A)
+   * both ride; the enforcement style is the provider's (claude/codex monotonic
+   * today, the interactive transport already Date-based — the wall-clock
+   * conversion lands separately), never this option's concern.
+   */
+  timeoutMs?: number;
   /**
    * Fired with this turn's provider session id as EARLY as the provider knows
    * it — before spawn (claude: a freshly minted id, or the resume id) or on the

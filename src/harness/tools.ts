@@ -6,7 +6,7 @@ import type { PhaseName } from '../phases.ts';
 import { providerFor } from '../providers/index.ts';
 import { BudgetCutoffError } from '../providers/types.ts';
 import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
-import { countsReviewRound, orphanRecoveryFor, readOnlyFor, sessionIdFor, workerRolesFor } from '../roles.ts';
+import { countsReviewRound, orphanRecoveryFor, readOnlyFor, sessionIdFor, shouldResetAfterCompactAbort, workerRolesFor } from '../roles.ts';
 import { getSnippet, renderSnippetLibrary, runtimeLibraryContext } from '../snippets.ts';
 import {
   appendNote,
@@ -218,6 +218,25 @@ export function isBaseTemplate(tag: string): boolean {
   return tag !== 'custom' && !tag.endsWith('-again');
 }
 
+/** The short, dedicated `/compact` per-turn cap — well below the build cap so a hung compact fails in minutes, not hours. */
+export const COMPACT_TIMEOUT_MS = 8 * 60_000;
+
+/**
+ * Whether a prompt body is a `/compact` — the ONE honest signal (the literal
+ * body), never the tag: `compact-for-impl` is a naming convention and a
+ * hand-composed compact rides `tag=custom`, so inferring compact-ness from the
+ * tag would miss or misfire. Drives both the short cap and the fresh-session
+ * reset, computed once per send.
+ */
+export function isCompactBody(body: string): boolean {
+  return body.trimStart().startsWith('/compact');
+}
+
+/** The per-turn timeout a body asks for: the short `/compact` cap, else none (the phase cap stands). */
+export function perTurnTimeoutFor(body: string): number | undefined {
+  return isCompactBody(body) ? COMPACT_TIMEOUT_MS : undefined;
+}
+
 // ── send_prompt's three lifecycle steps, as module-level functions ──
 // One blocking call on the headless host runs them in immediate succession
 // (startHeartbeat → await runTurn → settleTurn → renderTurnResult); the
@@ -343,7 +362,7 @@ export function stageSessionId(state: RunState, role: WorkerRole, log: (line: st
  */
 export function settleTurn(
   deps: { state: RunState; phase: PhaseName; providers: WorkerProviders; log: (line: string) => void },
-  meta: { role: WorkerRole; tag: string; isReviewRound: boolean },
+  meta: { role: WorkerRole; tag: string; isReviewRound: boolean; isCompactTurn?: boolean },
   outcome: WorkerTurn | Error,
 ): void {
   const { state, phase, providers, log } = deps;
@@ -364,12 +383,41 @@ export function settleTurn(
     return;
   }
   const turn = outcome;
+  // An aborted turn (wall-clock cap hit AFTER the prompt was accepted) is a
+  // SETTLED, resumable checkpoint — not a completed response. It persists the
+  // session + sent snippet + cost/context (below, shared with the success path),
+  // but it delivered no usable review and completed no consultant checkpoint, so
+  // it counts NO round, writes the abort marker (not a ▶ response), and sets no
+  // consultant contract/verify marker. The settle MUST branch on it — a non-Error
+  // WorkerTurn is otherwise treated as a completed response.
+  const aborted = turn.aborted === true;
+  // The compaction fresh-session reset (foundation #2): an ACCEPTED-but-failed
+  // `/compact` (an aborted compact turn — S5's proof + the body-derived flag)
+  // leaves the session un-compacted and bloated, so resuming it is exactly wrong.
+  // Clear THIS role's session below so the next send seeds fresh
+  // (sessionIdFor → undefined → mint), and render the recover-context prescription
+  // (renderTurnResult). Gated by the role policy (shouldResetAfterCompactAbort:
+  // only a `persistent` role carries a resumable session — the implementer or a
+  // compacting reviewer; the ephemeral consultant already reseeds), the SAME
+  // predicate renderTurnResult reads, so the delete and the copy can't drift.
+  // NEVER on a pre-flight failure (that is the Error branch above, which never
+  // reaches here — the old session never saw the compact and is still the one to
+  // compact). Rides this shared settle path, so the async interactive lifecycle
+  // (collectible, orphan/in-flight rails) is preserved.
+  const compactReset = shouldResetAfterCompactAbort(role, meta.isCompactTurn === true, aborted);
   const fresh = loadRunState(state.cwd, state.runId);
   fresh.workerSessions[role] = turn.sessionId;
+  if (compactReset) delete fresh.workerSessions[role];
   // Re-read off fresh rather than a call-start snapshot: the minutes-long await
-  // means a parallel call may have moved the round count.
-  if (isReviewRound) fresh.rounds[phase] = (fresh.rounds[phase] ?? 0) + 1;
-  if (isBaseTemplate(tag)) {
+  // means a parallel call may have moved the round count. An aborted turn delivered
+  // no review — counting it would burn the phase cap and make later rails believe
+  // a review ran.
+  if (isReviewRound && !aborted) fresh.rounds[phase] = (fresh.rounds[phase] ?? 0) + 1;
+  // Skip the sent-mark when an aborted /compact just reset the session: the fresh
+  // session the next send seeds has NOT received this template, so recording it
+  // would make a legitimate same-phase re-compact hit the false "already sent this
+  // phase" warn-once. Only a session that actually holds the template is recorded.
+  if (isBaseTemplate(tag) && !compactReset) {
     const sent = ((fresh.sentSnippets ??= {})[phase] ??= {});
     const tags = (sent[role] ??= []);
     if (!tags.includes(tag)) tags.push(tag);
@@ -395,14 +443,17 @@ export function settleTurn(
   // the registry checkpoint mode, so only full's plan/impl ever set it.
   const checkpointMode = PHASE[phase].consultantCheckpoint;
   if (role === 'consultant') {
-    if (checkpointMode === 'contract' && fresh.specPath) {
+    // An aborted consultant turn did NOT complete its checkpoint — set no
+    // draft/verifiedAt (the freeze + verify rails must see a real completion, not
+    // a turn cut off at its cap).
+    if (!aborted && checkpointMode === 'contract' && fresh.specPath) {
       // A consultant turn settled at the contract checkpoint — this run authored.
       fresh.acceptanceContractDraft = {
         path: acceptanceContractPathForSpec(fresh.specPath),
         sessionId: turn.sessionId,
         authoredAt: new Date().toISOString(),
       };
-    } else if (checkpointMode === 'verify' && fresh.acceptanceContract) {
+    } else if (!aborted && checkpointMode === 'verify' && fresh.acceptanceContract) {
       // A consultant turn settled at the verify checkpoint — verification RAN
       // (pass/fail rides the gate packet; this only records that it happened).
       fresh.acceptanceContract = { ...fresh.acceptanceContract, verifiedAt: new Date().toISOString() };
@@ -415,12 +466,22 @@ export function settleTurn(
     // prompt-trusted, so a routed fix can't ride the pre-fix verify to auto-cross Ship.
     delete fresh.acceptanceContract.verifiedAt;
   }
-  fresh.lastActivity = `send_prompt → ${role} (${tag})`;
+  fresh.lastActivity = `send_prompt → ${role} (${tag})${aborted ? ' [aborted]' : ''}`;
   saveRunState(fresh);
   Object.assign(state, fresh);
   const ctx = turn.context ? ` · context ${contextPercent(turn.context)}%` : '';
-  appendVoiceLog(state, role, `▶ response (session ${turn.sessionId})${ctx}`, turn.text);
-  log(`[send_prompt] ← ${role} responded (${turn.text.length} chars${ctx})`);
+  if (compactReset) {
+    // The session was reset (not resumable) — re-anchor with recover-context.
+    appendVoiceLog(state, role, `⚠ /compact aborted — ${role} session reset; re-anchor with recover-context${ctx}`);
+    log(`[send_prompt] ⚠ ${role} /compact aborted at its cap — session reset, next send seeds fresh`);
+  } else if (aborted) {
+    // A resumable checkpoint, not a delivered response — the marker, not ▶ response.
+    appendVoiceLog(state, role, `⚠ turn aborted (resumable) (session ${turn.sessionId})${ctx}`);
+    log(`[send_prompt] ⚠ ${role} turn aborted at its cap — session ${turn.sessionId} is resumable`);
+  } else {
+    appendVoiceLog(state, role, `▶ response (session ${turn.sessionId})${ctx}`, turn.text);
+    log(`[send_prompt] ← ${role} responded (${turn.text.length} chars${ctx})`);
+  }
   clearTurnActive(state, role);
 }
 
@@ -432,7 +493,7 @@ export function settleTurn(
  */
 export function renderTurnResult(
   deps: { state: RunState; phase: PhaseName },
-  meta: { role: WorkerRole; isReviewRound: boolean; cap: number },
+  meta: { role: WorkerRole; isReviewRound: boolean; cap: number; isCompactTurn?: boolean },
   outcome: WorkerTurn | Error,
 ): CallToolResult {
   const { state, phase } = deps;
@@ -473,6 +534,23 @@ export function renderTurnResult(
     content.push(
       block(
         `(the connection dropped mid-response — the worker's partial work above is committed to its session, which is resumable. Send it a short continuation to finish from where it stopped; do not re-send the original prompt. This is a checkpoint, not a failure.)`,
+      ),
+    );
+  }
+  // An aborted turn hit its per-turn time cap AFTER its prompt was accepted — the
+  // worker saw the prompt and committed work may be on disk, in a resumable
+  // session. Resume, never re-send (a re-send would duplicate the conversation).
+  // The one exception is an aborted `/compact` of a PERSISTENT role: its session
+  // is un-compacted and bloated, so duet has RESET that role to a fresh session —
+  // re-anchor it with recover-context, never resume (the generic resume note would
+  // be wrong). Gated by the SAME shouldResetAfterCompactAbort the settle delete
+  // reads, so the copy can never claim a reset the settle didn't perform.
+  if (outcome.aborted) {
+    content.push(
+      block(
+        shouldResetAfterCompactAbort(role, meta.isCompactTurn === true, true)
+          ? `(the /compact turn ran to its cap and was aborted — its session is un-compacted and bloated, so resuming it is the wrong move. duet has RESET the ${role} to a fresh session; re-anchor it by sending the recover-context snippet (a project/status overview + reread), NOT the original /compact or a resume. This is a recovery checkpoint, not a failure.)`
+          : `(the worker ran to its time cap and was aborted — but it saw your prompt and committed work may be on disk, in a resumable session. Resume that session with a short continuation to finish the remainder; do NOT re-send the original prompt (it would duplicate the conversation). This is a checkpoint, not a failure.)`,
       ),
     );
   }
@@ -1009,6 +1087,11 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       },
       async (args) => {
         const { tag, body } = args;
+        // Compute the compact-ness ONCE from the body (never the tag): it drives
+        // both the short `/compact` cap (S1's per-turn timeoutMs) and the
+        // fresh-session reset flag threaded into settle/render on both hosts.
+        const isCompactTurn = isCompactBody(body);
+        const perTurnTimeoutMs = perTurnTimeoutFor(body);
         // Normalize role to a deduped list: a single role is a 1-element fan-out,
         // so one path serves both — a single role behaves exactly as before, an
         // array fans the SAME body to each worker (the framing analysis pass).
@@ -1053,7 +1136,14 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         // its promise resolves; check_turns collects the results later.
         if (dispatcher) {
           for (const role of roles) {
-            dispatcher.dispatch({ role, tag, body, isReviewRound: isReviewRoundFor(role) });
+            dispatcher.dispatch({
+              role,
+              tag,
+              body,
+              isReviewRound: isReviewRoundFor(role),
+              isCompactTurn,
+              ...(perTurnTimeoutMs !== undefined ? { timeoutMs: perTurnTimeoutMs } : {}),
+            });
           }
           return ok(block(dispatchedMessage(roles)));
         }
@@ -1078,16 +1168,17 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
               sessionId: sessionIdFor(state, role),
               readOnly: readOnlyFor(role),
               cwd: state.cwd,
+              ...(perTurnTimeoutMs !== undefined ? { timeoutMs: perTurnTimeoutMs } : {}),
               // Stage this turn's id onto the active-turn hint the moment the
               // provider announces it, so the heartbeat poll (closed over the
               // same `state`) can locate the transcript from the turn's start.
               onSessionId: stageSessionId(state, role, log),
             });
-            settleTurn({ state, phase, providers, log }, { role, tag, isReviewRound }, turn);
+            settleTurn({ state, phase, providers, log }, { role, tag, isReviewRound, isCompactTurn }, turn);
             return turn;
           } catch (err) {
             const outcome = err instanceof Error ? err : new Error(String(err));
-            settleTurn({ state, phase, providers, log }, { role, tag, isReviewRound }, outcome);
+            settleTurn({ state, phase, providers, log }, { role, tag, isReviewRound, isCompactTurn }, outcome);
             return outcome;
           } finally {
             turnsInFlight.delete(role);
@@ -1099,7 +1190,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         // the final round/cost state (settleTurn re-syncs `state` on each commit).
         const rendered = settled.map(({ role, outcome }) => ({
           role,
-          result: renderTurnResult({ state, phase }, { role, isReviewRound: isReviewRoundFor(role), cap }, outcome),
+          result: renderTurnResult({ state, phase }, { role, isReviewRound: isReviewRoundFor(role), cap, isCompactTurn }, outcome),
         }));
         return rendered.length === 1 ? rendered[0]!.result : combineFanoutResults(rendered);
       },

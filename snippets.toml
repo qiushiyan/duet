@@ -183,6 +183,19 @@ key = "reread-context"
 expand = '''
 Reread the files this change touches and rebuild your mental model from the actual code, not memory — trace the real data/control flow, note existing constraints, and find the seams the work will build on. **No code yet.**'''
 
+[[snippets]]
+key = "recover-context"
+expand = '''
+Your prior session was compacted unsuccessfully and reset, so you're in a fresh session with no memory of this run. Re-anchor before any work — this is a post-compact recovery from an empty session, not a routine reread of code you still hold in context: there's no prior context to lean on, so the orientation below has to carry the whole picture.
+
+Orient from what's actually on disk and in git — fill each in concretely:
+- What we're building: the change in a sentence or two, and where the authoritative design lives (the committed spec/plan, or the research decisions).
+- What's committed and green: the work that already landed and passes tests, so you don't redo it.
+- What's left: the next unit of work, plus any uncommitted in-flight edits.
+- The load-bearing seams and files: the modules this change turns on, so you reread the right code first.
+
+Then reread those files and rebuild your mental model from the actual code, not the summary — trace the real data and control flow and the constraints in play. No code yet: re-anchor first, then pick the work up from where it actually stands.'''
+
 # tabtype: tdd-plan
 [[snippets]]
 key = "start-plan"

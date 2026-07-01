@@ -6,6 +6,7 @@ import {
   probeRole,
   retryDecision,
   scanTerminalErrors,
+  transcriptShowsPromptAccepted,
   type ErrorClass,
   type RetryState,
   type Verdict,
@@ -27,6 +28,36 @@ const NOW = Date.parse('2026-06-20T12:00:00.000Z');
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
 const SEC = 1_000;
 const MIN = 60_000;
+
+describe('transcriptShowsPromptAccepted (S5 — the per-turn acceptance proof)', () => {
+  const turnStart = Date.parse('2026-06-20T12:00:00.000Z');
+  const rec = (type: string, atMs: number, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ type, timestamp: new Date(atMs).toISOString(), ...extra });
+
+  test('a user/assistant/result record at/after the turn start ⇒ accepted', () => {
+    for (const t of ['user', 'assistant', 'result']) {
+      expect.soft(transcriptShowsPromptAccepted(rec(t, turnStart + SEC), turnStart)).toBe(true);
+    }
+    // exactly at the boundary counts (the >= lower bound).
+    expect.soft(transcriptShowsPromptAccepted(rec('user', turnStart), turnStart)).toBe(true);
+  });
+
+  test('only records BEFORE the turn start (a resumed session whose new prompt never landed) ⇒ false', () => {
+    // The load-bearing case: a persistent session holds prior turns' records, so a
+    // whole-transcript scan would false-positive — the lower bound rejects them.
+    const tail = [rec('user', turnStart - MIN), rec('assistant', turnStart - 30 * SEC)].join('\n');
+    expect(transcriptShowsPromptAccepted(tail, turnStart)).toBe(false);
+  });
+
+  test('only system/init records at/after the start (process launched, prompt not accepted) ⇒ false', () => {
+    const tail = rec('system', turnStart + SEC, { subtype: 'init' });
+    expect(transcriptShowsPromptAccepted(tail, turnStart)).toBe(false);
+  });
+
+  test('an empty transcript ⇒ false', () => {
+    expect(transcriptShowsPromptAccepted('', turnStart)).toBe(false);
+  });
+});
 
 describe('classifyError — first-match-wins taxonomy', () => {
   test.for<[string, ErrorClass]>([

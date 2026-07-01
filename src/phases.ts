@@ -219,7 +219,11 @@ export const WORKFLOWS = {
         roundCap: 3,
         orchestratorBudgetUsd: 30,
         workerBudgetUsd: 25,
-        workerTurnTimeoutMs: 60 * 60_000,
+        // The AFK build cap — a wall-clock bound (S3). 90 min = 3× the longest
+        // healthy build turn measured across the corpus (29.5 min), the
+        // disciplined high end of the 2–3× band; a hit is a resumable checkpoint
+        // (post-C), so erring high costs only resume-churn.
+        workerTurnTimeoutMs: 90 * 60_000,
         // The acceptance-contract VERIFY checkpoint: a fresh session verifies the
         // frozen contract by running the built system, supplanting the
         // open-ended implGate bet-audit (RIR keeps implGate — it has no contract).
@@ -270,6 +274,14 @@ export const WORKFLOWS = {
        * plan gates); whether this earns default status is Q20's evidence stream.
        */
       'skip-plan': ['frame', 'spec', 'impl'],
+      /**
+       * Walk away from the START, keeping every safety net — the missing rung that
+       * completes overnight → skip-plan → afk → gateless. Attends NO gate (mirrors
+       * rir's afk), but with `gateless` OFF, so the consultant's holding bet-audit
+       * AND the correctness backstop both still fire (that is the ONLY difference
+       * from --gateless; for a no-consultant run the two collapse to attend-none).
+       */
+      afk: [],
     },
     // The full sleep posture is the default (2026-06-26, Q20 resolved to it):
     // plan, impl (Ship), and finish (Open-PR) are all pre-authorized, so a new
@@ -328,7 +340,10 @@ export const WORKFLOWS = {
         roundCap: 1,
         orchestratorBudgetUsd: 30,
         workerBudgetUsd: 25,
-        workerTurnTimeoutMs: 60 * 60_000,
+        // The AFK build cap — the same wall-clock 90-min bound as full's `impl`
+        // (S3). The measurement spans both arcs (rir's implement-direct turns run
+        // up to 25 min), so leaving the two build phases split would be unmotivated.
+        workerTurnTimeoutMs: 90 * 60_000,
         consultantCheckpoint: 'implGate',
       },
       {
@@ -607,6 +622,7 @@ export function gateOf(phase: GatePhase): PhaseSpec['gate'] {
  */
 export const ANYTIME_SNIPPETS: readonly string[] = [
   'reread-context',
+  'recover-context',
   'commits-summary',
   'find-similar-bugs',
   'list-assumptions',

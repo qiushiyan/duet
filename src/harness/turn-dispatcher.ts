@@ -52,7 +52,7 @@ import { renderTurnResult, settleTurn, stageSessionId, startHeartbeat } from './
 export type PendingStatus = 'running' | 'ready' | 'failed';
 
 interface PendingRecord {
-  meta: { role: WorkerRole; tag: string; isReviewRound: boolean };
+  meta: { role: WorkerRole; tag: string; isReviewRound: boolean; isCompactTurn: boolean };
   status: PendingStatus;
   /** The settled outcome, present once status leaves `running` (for collect). */
   outcome?: WorkerTurn | Error;
@@ -60,7 +60,16 @@ interface PendingRecord {
 
 export interface TurnDispatcher {
   /** Fire a worker turn into the background and return at once (record → running). */
-  dispatch(args: { role: WorkerRole; tag: string; body: string; isReviewRound: boolean }): void;
+  dispatch(args: {
+    role: WorkerRole;
+    tag: string;
+    body: string;
+    isReviewRound: boolean;
+    /** Body-derived (never tag): drives the fresh-session reset on an accepted-but-failed /compact. */
+    isCompactTurn: boolean;
+    /** The per-turn cap (the short /compact cap), threaded into runTurn; absent ⇒ the phase cap. */
+    timeoutMs?: number;
+  }): void;
   /** This role's live record status, or undefined when it owns no live record. */
   statusOf(role: WorkerRole): PendingStatus | undefined;
   /** Render + clear every settled (ready/failed) record; leaves running ones. */
@@ -148,8 +157,8 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
   };
 
   return {
-    dispatch({ role, tag, body, isReviewRound }) {
-      const meta = { role, tag, isReviewRound };
+    dispatch({ role, tag, body, isReviewRound, isCompactTurn, timeoutMs }) {
+      const meta = { role, tag, isReviewRound, isCompactTurn };
       records.set(role, { meta, status: 'running' });
       // The synchronous dispatch setup is itself fenced. Its durable writes and
       // the heartbeat all touch disk/timers and can fault; if any did, the
@@ -211,6 +220,7 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
               sessionId: sessionIdFor(fresh, role),
               readOnly: readOnlyFor(role),
               cwd: fresh.cwd,
+              ...(timeoutMs !== undefined ? { timeoutMs } : {}),
               // Stage this turn's id onto `fresh` — the same copy startHeartbeat
               // closed over above — so the poll locates the transcript mid-turn.
               onSessionId: stageSessionId(fresh, role, log),
@@ -248,7 +258,7 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
         try {
           const result = renderTurnResult(
             { state: loadRunState(state.cwd, state.runId), phase },
-            { role, isReviewRound: rec.meta.isReviewRound, cap },
+            { role, isReviewRound: rec.meta.isReviewRound, cap, isCompactTurn: rec.meta.isCompactTurn },
             rec.outcome as WorkerTurn | Error,
           );
           clearPendingTurn(state, role); // re-opens the role for the next send_prompt

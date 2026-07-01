@@ -2,10 +2,12 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
-import { COMPACT_CONFIRMATION, ClaudeWorker, claudeArgs, claudeExecaOptions, parseClaudeTurn } from '../src/providers/claude.ts';
-import { codexThreadOptions, parseRolloutContext, reconstructCodexTurn } from '../src/providers/codex.ts';
+import { COMPACT_CONFIRMATION, ClaudeWorker, claudeArgs, claudeExecaOptions, parseClaudeTurn, recoverClaudeFailure } from '../src/providers/claude.ts';
+import { CodexWorker, codexThreadOptions, parseRolloutContext, reconstructCodexTurn, recoverCodexAbort } from '../src/providers/codex.ts';
+import { WALL_CLOCK_DRAIN_GRACE_MS, WALL_CLOCK_TICK_MS, WallClockExceededError } from '../src/providers/wall-clock.ts';
 import type { ThreadEvent } from '@openai/codex-sdk';
 import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn, sessionIdForNonce } from '../src/providers/interactive-claude.ts';
+import { claudePaneLaunchCommand } from '../src/providers/pane.ts';
 import { createWorkers, providerFor } from '../src/providers/index.ts';
 import { BudgetCutoffError } from '../src/providers/types.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
@@ -25,6 +27,22 @@ import {
 // only by the ClaudeWorker.runTurn budget tests below.
 const mockExeca = vi.hoisted(() => vi.fn());
 vi.mock('execa', () => ({ execa: mockExeca }));
+
+// The codex SDK is the codex provider's true external boundary — mocked so the
+// S3 integration test can hand runTurn a hanging stream and drive its wall-clock
+// wrap with fake timers (there is no other CodexWorker test, so the whole-file
+// mock is inert elsewhere; the pure codex helpers don't touch the client).
+const codexRunStreamed = vi.hoisted(() => vi.fn());
+vi.mock('@openai/codex-sdk', () => ({
+  Codex: class {
+    startThread() {
+      return { id: 'codex-thread', runStreamed: codexRunStreamed };
+    }
+    resumeThread() {
+      return { id: 'codex-thread', runStreamed: codexRunStreamed };
+    }
+  },
+}));
 
 // The captured real budget-cutoff shape (probe 2026-06-22, claude 2.1.185): exit
 // 1, and stdout is the full [system, assistant, result] array. The result element
@@ -131,6 +149,60 @@ describe('claudeExecaOptions (the cleanup tripwire — review finding 3)', () =>
 
   test('defaults the timeout to 15 minutes when the config omits it', () => {
     expect(claudeExecaOptions({ prompt: 'p' }, {}).timeout).toBe(15 * 60_000);
+  });
+
+  // S1 — the per-turn timeoutMs contract. The effective cap is
+  // `opts.timeoutMs ?? config.timeoutMs ?? 15-min floor`; a per-turn override
+  // (e.g. /compact's short cap) wins over the construction-time phase cap.
+  test('a per-turn timeoutMs override wins over the construction cap', () => {
+    const o = claudeExecaOptions({ prompt: 'p', timeoutMs: 8 * 60_000 }, { timeoutMs: 90 * 60_000 });
+    expect(o.timeout).toBe(8 * 60_000);
+  });
+
+  test('a per-turn override wins even over the 15-min floor (no construction cap)', () => {
+    const o = claudeExecaOptions({ prompt: 'p', timeoutMs: 8 * 60_000 }, {});
+    expect(o.timeout).toBe(8 * 60_000);
+  });
+
+  test('absent a per-turn override, the construction cap stands (byte-for-byte today)', () => {
+    const o = claudeExecaOptions({ prompt: 'p' }, { timeoutMs: 90 * 60_000 });
+    expect(o.timeout).toBe(90 * 60_000);
+  });
+
+  // S2 — force the native byte-stream idle watchdog on for the headless worker.
+  test('forces API_FORCE_IDLE_TIMEOUT=1 on the worker env, merged over process.env', () => {
+    const o = claudeExecaOptions({ prompt: 'p' }, { timeoutMs: 60_000 });
+    expect.soft(o.env?.API_FORCE_IDLE_TIMEOUT).toBe('1');
+    // merged over process.env, not a replacement — PATH (always present) survives.
+    expect.soft(o.env?.PATH).toBe(process.env.PATH);
+  });
+});
+
+describe('claudePaneLaunchCommand (S2 — the forced watchdog on the interactive launch)', () => {
+  test('carries API_FORCE_IDLE_TIMEOUT=1 as a command-level env prefix, keeping the flags', () => {
+    const cmd = claudePaneLaunchCommand({ model: 'claude-opus-4-8' });
+    // The env assignment leads the command so sh sets it for THIS claude only
+    // (not inherited from the tmux server env).
+    expect.soft(cmd[0]).toBe('API_FORCE_IDLE_TIMEOUT=1');
+    expect.soft(cmd[1]).toBe('claude');
+    expect.soft(cmd).toContain('--model');
+    expect.soft(cmd).toContain('claude-opus-4-8');
+    expect.soft(cmd).toContain('--permission-mode');
+    expect.soft(cmd).toContain('bypassPermissions');
+  });
+
+  test('resumes a session id when present, still carrying the watchdog prefix', () => {
+    const cmd = claudePaneLaunchCommand({ model: 'm', sessionId: 'sess-9' });
+    expect.soft(cmd[0]).toBe('API_FORCE_IDLE_TIMEOUT=1');
+    expect.soft(cmd).toContain('--resume');
+    expect.soft(cmd).toContain('sess-9');
+  });
+});
+
+describe('the watchdog is Claude-only (S2 — never leaked into codex)', () => {
+  test('codexThreadOptions carries no API_FORCE_IDLE_TIMEOUT (a Claude API knob)', () => {
+    const opts = codexThreadOptions({ cwd: '/repo' });
+    expect(JSON.stringify(opts)).not.toContain('API_FORCE_IDLE_TIMEOUT');
   });
 });
 
@@ -349,22 +421,26 @@ describe('InteractiveClaudeWorker (driving over FakePane + a tmpdir, no live aut
       rmSync(dir, { recursive: true, force: true });
     }));
 
-  test('a located turn that never completes rejects at the deadline, pane still killed (Finding 4)', async () =>
+  test('a located-but-incomplete turn settles as a resumable aborted checkpoint at the deadline, pane still killed (S5)', async () =>
     withFakeTimers(async () => {
       const dir = tmpRoot();
       const { worker, pane } = wire(dir, {
         readyAfter: 0,
-        // turn-open + a tool step, but no final assistant — the post-injection stall
+        // turn-open + a tool step, but no final assistant — the post-injection stall.
+        // The nonce IS correlated (the prompt was injected and accepted), so the
+        // deadline now yields a resumable aborted checkpoint (resume, don't re-send)
+        // — the interactive accepted-abort split — rather than the old infra reject.
         onSubmit: (text) =>
           writeFileSync(join(dir, 'ours.jsonl'), session('sess-i', userMessage(text), toolStep('Bash', 'running'))),
       });
 
       const promise = worker.runTurn({ prompt: 'do it', cwd: dir });
-      const assertion = expect(promise).rejects.toThrow(/did not complete in the transcript/);
       await vi.advanceTimersByTimeAsync(61_000);
-      await assertion;
+      const turn = await promise;
 
-      expect(pane().killed).toBe(true);
+      expect.soft(turn.aborted).toBe(true);
+      expect.soft(turn.sessionId).toBe('sess-i'); // the resumable handle, from the correlated transcript
+      expect.soft(pane().killed).toBe(true); // the finally still tears the pane down (Finding 4)
       rmSync(dir, { recursive: true, force: true });
     }));
 
@@ -713,6 +789,81 @@ describe('ClaudeWorker.runTurn (failure recovery at the execa boundary)', () => 
   });
 });
 
+describe('recoverClaudeFailure (S5 — the accepted-abort vs never-accepted split)', () => {
+  const turnStartedAt = Date.parse('2026-06-20T12:00:00.000Z');
+  const timeoutErr = () => Object.assign(new Error('Command timed out after 90 minutes'), { timedOut: true, stdout: '' });
+  const acceptedTail = JSON.stringify({ type: 'assistant', timestamp: new Date(turnStartedAt + 5_000).toISOString() });
+  const preStartTail = JSON.stringify({ type: 'assistant', timestamp: new Date(turnStartedAt - 60_000).toISOString() });
+
+  test('a timeout whose transcript shows the prompt accepted ⇒ a resumable aborted checkpoint', () => {
+    const turn = recoverClaudeFailure(timeoutErr(), 'do it', {
+      sessionId: 'sess-abc',
+      turnStartedAt,
+      readTail: () => ({ jsonl: acceptedTail }),
+    });
+    expect.soft(turn.aborted).toBe(true);
+    expect.soft(turn.sessionId).toBe('sess-abc');
+  });
+
+  test('a WallClockExceededError with an accepted transcript ⇒ aborted checkpoint (the suspend-on-wake path)', () => {
+    const turn = recoverClaudeFailure(new WallClockExceededError(90 * 60_000), 'do it', {
+      sessionId: 'sess-wc',
+      turnStartedAt,
+      readTail: () => ({ jsonl: acceptedTail }),
+    });
+    expect.soft(turn.aborted).toBe(true);
+    expect.soft(turn.sessionId).toBe('sess-wc');
+  });
+
+  test('a timeout with only PRE-start records (resumed session, this turn never accepted) ⇒ throws infra', () => {
+    expect(() =>
+      recoverClaudeFailure(timeoutErr(), 'do it', { sessionId: 's', turnStartedAt, readTail: () => ({ jsonl: preStartTail }) }),
+    ).toThrow();
+  });
+
+  test('a timeout with no locatable transcript ⇒ throws infra', () => {
+    expect(() =>
+      recoverClaudeFailure(timeoutErr(), 'do it', { sessionId: 's', turnStartedAt, readTail: () => undefined }),
+    ).toThrow();
+  });
+
+  test('a NON-timeout failure never reads as aborted, even with an accepted transcript available', () => {
+    const err = Object.assign(new Error('spawn claude ENOENT'), { stdout: '' });
+    expect(() =>
+      recoverClaudeFailure(err, 'do it', { sessionId: 's', turnStartedAt, readTail: () => ({ jsonl: acceptedTail }) }),
+    ).toThrow(/ENOENT/);
+  });
+
+  test('a budgetTruncated stdout settles as its own checkpoint even on a timeout error (stdout precedes the abort branch)', () => {
+    const err = Object.assign(new Error('exit 1'), { stdout: budgetStdout('sess-b'), timedOut: true });
+    const turn = recoverClaudeFailure(err, 'do it', {
+      sessionId: 'sess-minted',
+      turnStartedAt,
+      readTail: () => ({ jsonl: acceptedTail }),
+    });
+    expect.soft(turn.budgetTruncated).toBe(true);
+    expect.soft(turn.aborted).toBeUndefined();
+    expect.soft(turn.sessionId).toBe('sess-b'); // from the envelope, not the minted id or the abort branch
+  });
+});
+
+describe('recoverCodexAbort (S5 — the codex accepted-abort split, no SDK needed)', () => {
+  test('a wall-clock abort with thread.started seen this turn ⇒ a resumable aborted checkpoint', () => {
+    const turn = recoverCodexAbort(new WallClockExceededError(90 * 60_000), 'thread-123');
+    expect.soft(turn.aborted).toBe(true);
+    expect.soft(turn.sessionId).toBe('thread-123');
+  });
+
+  test('a wall-clock abort BEFORE thread.started (pre-acceptance) ⇒ throws infra', () => {
+    expect(() => recoverCodexAbort(new WallClockExceededError(90 * 60_000), undefined)).toThrow(WallClockExceededError);
+  });
+
+  test('a non-abort error re-throws unchanged regardless of thread.started', () => {
+    const boom = new Error('turn.failed: model exploded');
+    expect(() => recoverCodexAbort(boom, 'thread-123')).toThrow(/model exploded/);
+  });
+});
+
 describe('claudeArgs (the session-flag + budget-cap seams)', () => {
   test('a fresh turn predeclares its id with --session-id (and no --resume)', () => {
     // Predeclaring the id is what lets runTurn announce it BEFORE spawn — the
@@ -795,6 +946,22 @@ describe('reconstructCodexTurn (the codex event-stream seam)', () => {
       reconstructCodexTurn(stream({ type: 'thread.started', thread_id: 'th-x' }, { type: 'turn.failed', error: { message: 'model exploded' } })),
     ).rejects.toThrow('model exploded');
   });
+
+  test('S5: onThreadStarted fires from the stream thread.started with the thread id (the acceptance signal)', async () => {
+    const started: string[] = [];
+    await reconstructCodexTurn(
+      stream(
+        { type: 'thread.started', thread_id: 'th-accept' },
+        { type: 'item.completed', item: { id: 'i0', type: 'agent_message', text: 'done' } },
+        { type: 'turn.completed', usage },
+      ),
+      undefined,
+      (id) => started.push(id),
+    );
+    // The separate hook fires from the stream event — the proof recoverCodexAbort
+    // keys on, distinct from the pre-stream onSessionId for a resumed thread.
+    expect(started).toEqual(['th-accept']);
+  });
 });
 
 describe('createWorkers', () => {
@@ -851,5 +1018,57 @@ describe('providerFor (narrow-or-prescribed-error over the optional consultant)'
       { workerBudgetUsd: 10, timeoutMs: 60_000 },
     );
     expect.soft(providerFor(bound, 'consultant').name).toBe('codex');
+  });
+});
+
+describe('the wall-clock backstop is wired into runTurn (S3 — the load-bearing regression guard)', () => {
+  // Two reviewers flagged that runWithWallClockDeadline is thoroughly unit-tested
+  // but NOTHING proved runTurn actually routes through it at the effective cap —
+  // so deleting the wrap or passing a wrong capMs would leave the suite green
+  // while silently reintroducing the 7447 machine-sleep regression this branch
+  // exists to prevent. These pin the wiring per provider: the turn is aborted at
+  // the cap, and NOT one tick before it (which also pins that capMs is the
+  // effective per-turn cap, not a shorter default). Real execa/stream are the
+  // mocked boundary; fake timers drive Date.now + the deadline's re-check ticks.
+  const cap = 90 * 60_000;
+
+  test('claude: runTurn kills the execa child at the effective cap, not before', async () => {
+    vi.useFakeTimers();
+    try {
+      const kill = vi.fn();
+      const hanging = Object.assign(new Promise<never>(() => {}), { kill }); // a subprocess that never settles
+      mockExeca.mockReturnValueOnce(hanging);
+      const promise = new ClaudeWorker({ model: 'claude-opus-4-8' }).runTurn({ prompt: 'build it', cwd: '/x', timeoutMs: cap });
+      const rejects = expect(promise).rejects.toThrow(); // no accepted transcript ⇒ recovers to an infra error
+      await vi.advanceTimersByTimeAsync(cap - WALL_CLOCK_TICK_MS);
+      expect.soft(kill).not.toHaveBeenCalled(); // the cap is honored — not a shorter default
+      await vi.advanceTimersByTimeAsync(2 * WALL_CLOCK_TICK_MS);
+      expect.soft(kill).toHaveBeenCalledTimes(1); // the wrap fired at the cap, exactly once
+      await vi.advanceTimersByTimeAsync(WALL_CLOCK_DRAIN_GRACE_MS); // let the bounded drain settle the turn
+      await rejects;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('codex: runTurn aborts the runStreamed signal at the effective cap, not before', async () => {
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | undefined;
+      codexRunStreamed.mockImplementation((_prompt: string, opts: { signal: AbortSignal }) => {
+        signal = opts.signal;
+        return new Promise(() => {}); // hang — never emits thread.started, never resolves
+      });
+      const promise = new CodexWorker({ timeoutMs: cap }).runTurn({ prompt: 'build it', cwd: '/x' });
+      const rejects = expect(promise).rejects.toBeInstanceOf(WallClockExceededError); // never accepted ⇒ re-thrown
+      await vi.advanceTimersByTimeAsync(cap - WALL_CLOCK_TICK_MS);
+      expect.soft(signal?.aborted).toBe(false); // the deadline has not fired before the cap
+      await vi.advanceTimersByTimeAsync(2 * WALL_CLOCK_TICK_MS);
+      expect.soft(signal?.aborted).toBe(true); // the wall-clock deadline aborted the stream at the cap
+      await vi.advanceTimersByTimeAsync(WALL_CLOCK_DRAIN_GRACE_MS); // let the bounded drain settle the turn
+      await rejects;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

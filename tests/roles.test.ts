@@ -5,6 +5,7 @@ import {
   readOnlyFor,
   sessionIdFor,
   sessionPolicyFor,
+  shouldResetAfterCompactAbort,
   voicesFor,
   workerRolesFor,
 } from '../src/roles.ts';
@@ -60,5 +61,18 @@ describe('role policy helpers', () => {
     expect.soft(sessionPolicyFor('implementer')).toBe('persistent');
     expect.soft(sessionPolicyFor('reviewer')).toBe('persistent');
     expect.soft(sessionPolicyFor('consultant')).toBe('ephemeral');
+  });
+
+  test('shouldResetAfterCompactAbort: only a PERSISTENT role on an aborted /compact resets', () => {
+    // The one predicate settleTurn (delete) and renderTurnResult (copy) both read,
+    // keyed off sessionPolicyFor — so neither site can drift onto a hard-coded
+    // `role === 'implementer'`. A persistent role carries a resumable session a
+    // failed compact bloats; the ephemeral consultant reseeds anyway.
+    expect.soft(shouldResetAfterCompactAbort('implementer', true, true)).toBe(true);
+    expect.soft(shouldResetAfterCompactAbort('reviewer', true, true)).toBe(true); // a compacting reviewer resets too
+    expect.soft(shouldResetAfterCompactAbort('consultant', true, true)).toBe(false); // ephemeral — nothing to reset
+    // Both turn facts are load-bearing: a non-/compact abort, or a /compact that settled, never resets.
+    expect.soft(shouldResetAfterCompactAbort('implementer', false, true)).toBe(false); // not a /compact body
+    expect.soft(shouldResetAfterCompactAbort('implementer', true, false)).toBe(false); // settled, not aborted
   });
 });

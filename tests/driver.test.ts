@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { describe, expect, onTestFinished, vi } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import { runPhase } from '../src/harness/driver.ts';
+import { buildOrchestratorOptions, runPhase } from '../src/harness/driver.ts';
 import type { RunOrchestratorTurn } from '../src/harness/driver.ts';
 import { claudeApiError, claudeAssistantText, jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
 import {
@@ -17,7 +17,7 @@ import {
 } from '../src/harness/orchestrator-prompts.ts';
 import { PHASE } from '../src/phases.ts';
 import type { PhaseName } from '../src/phases.ts';
-import { loadRunState, saveRunState } from '../src/run-store.ts';
+import { budgetFor, loadRunState, saveRunState } from '../src/run-store.ts';
 import { listPendingSteers, stageSteer } from '../src/steer-store.ts';
 import { test } from './helpers/fixtures.ts';
 
@@ -308,6 +308,10 @@ describe('the silent-turn nudge', () => {
 
 describe('infrastructure failure', () => {
   test('a session crash flags the human with the failure, not a silent dead end', async ({ projectDir, run }) => {
+    // Retry explicitly off so the transient failure flags immediately — this test
+    // pins the flag classification, not the retry loop (S6 made retry default-on).
+    run.retryInfra = 0;
+    saveRunState(run);
     const runTurn: RunOrchestratorTurn = async function* () {
       yield assistantText('starting');
       throw new Error('ECONNRESET mid-stream');
@@ -317,7 +321,7 @@ describe('infrastructure failure', () => {
     expect(result).toEqual({ type: 'phase.flag' });
     const q = loadRunState(projectDir, run.runId).pendingQuestion;
     expect.soft(q?.question).toContain('failed at the infrastructure layer (ECONNRESET mid-stream)');
-    // With retry off (the default), the flag is classified infra (#4a) but behaves as before.
+    // With retry explicitly off, the flag is classified infra (#4a) but behaves as before.
     expect.soft(q?.cause).toBe('infra');
     expect.soft(q?.errorClass).toBe('network');
   });
@@ -354,7 +358,11 @@ describe('opt-in infra auto-retry (#4b)', () => {
     throw new Error('fetch failed: ECONNRESET');
   };
 
-  test('with retry OFF (default), a transient failure flags immediately — behavior unchanged', async ({ projectDir, run }) => {
+  test('with retry explicitly OFF (--retry-infra 0), a transient failure flags immediately, no retry', async ({ projectDir, run }) => {
+    // S6 made retry default-on (materialized 3); 0 is the explicit opt-out, and an
+    // old/absent state.json (host-runner reads `?? 0`) stays off the same way.
+    run.retryInfra = 0;
+    saveRunState(run);
     const { runTurn } = scriptedSession(async () => network());
     const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
     expect(result).toEqual({ type: 'phase.flag' });
@@ -393,6 +401,44 @@ describe('opt-in infra auto-retry (#4b)', () => {
     await vi.advanceTimersByTimeAsync(60_000); // cascade through both retries
     expect(await p).toEqual({ type: 'phase.flag' });
     expect(loadRunState(projectDir, run.runId).pendingQuestion?.cause).toBe('infra');
+  });
+
+  test('S6: each auto-retry appends an autoRetries ledger entry (the morning-review record)', async ({ projectDir, run }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    run.retryInfra = 2;
+    saveRunState(run);
+    // Two transient failures then a clean advance: two retries → two ledger entries.
+    const { runTurn } = scriptedSession(
+      async () => network(),
+      async () => network(),
+      async (ctx) => {
+        await callTool(ctx, 'advance_phase', { summary: 'done', artifacts: [] });
+        return [success()];
+      },
+    );
+    const p = runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await p).toEqual({ type: 'phase.advance' });
+    const ledger = loadRunState(projectDir, run.runId).autoRetries ?? [];
+    expect.soft(ledger).toHaveLength(2);
+    expect.soft(ledger.map((r) => r.errorClass)).toEqual(['network', 'network']);
+    expect.soft(ledger.map((r) => r.attempt)).toEqual([1, 2]); // the attempt number after each retry
+    expect.soft(ledger.every((r) => r.phase === 'frame')).toBe(true);
+  });
+
+  test('S6: an old-shape state.json with no retryInfra stays OFF (host-runner reads `?? 0`)', async ({ projectDir, run }) => {
+    // The materialization is at createRun, so a pre-feature / hand-written run with
+    // no retryInfra is byte-for-byte off — it flags immediately, never retries.
+    delete run.retryInfra;
+    saveRunState(run);
+    const { runTurn } = scriptedSession(async () => network());
+    const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
+    expect.soft(result).toEqual({ type: 'phase.flag' });
+    expect.soft(loadRunState(projectDir, run.runId).retryState).toBeUndefined();
+    expect.soft(loadRunState(projectDir, run.runId).autoRetries).toBeUndefined();
   });
 
   test('login-required is never retried even with budget', async ({ projectDir, run }) => {
@@ -769,8 +815,23 @@ describe('provider-agnostic onboarding — workers get document paths, not slash
     expect.soft(frame).toContain('document PATHS');
     expect.soft(frame).toMatch(/incomplete[\s\S]*ask_human/);
     expect.soft(research).toContain('document PATHS');
-    // finish: the reconcile-docs step sends the path, never a slash command; incomplete → ask_human.
-    expect.soft(finish).toContain('never a slash command');
-    expect.soft(finish).toMatch(/incomplete[\s\S]*ask_human/);
+    // finish: the reconcile-docs step relays the framing's named doc method (path
+    // or skill) faithfully rather than a self-invented one — provider-agnostic by
+    // staying with what the framing named (the 4912afe reconcile rewrite reframed
+    // the old "never a slash command" guard this way) — and a doc-scope product
+    // call still surfaces via ask_human.
+    expect.soft(finish).toContain('path or skill faithfully');
+    expect.soft(finish).toMatch(/doc-scope product call[\s\S]*ask_human/);
+  });
+});
+
+describe('buildOrchestratorOptions (S2 — the forced watchdog on the orchestrator session)', () => {
+  test('its env forces API_FORCE_IDLE_TIMEOUT=1 and keeps CLAUDE_CODE_STREAM_CLOSE_TIMEOUT', ({ run }) => {
+    const options = buildOrchestratorOptions(run, budgetFor(run, 'frame'));
+    expect.soft(options.env?.API_FORCE_IDLE_TIMEOUT).toBe('1');
+    // the existing stream-close window survives the merge (both ride the same env).
+    expect.soft(options.env?.CLAUDE_CODE_STREAM_CLOSE_TIMEOUT).toBe(String(2 * 60 * 60_000));
+    // merged over process.env, not a replacement.
+    expect.soft(options.env?.PATH).toBe(process.env.PATH);
   });
 });

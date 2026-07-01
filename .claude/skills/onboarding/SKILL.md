@@ -21,7 +21,7 @@ Map `$ARGUMENTS` to a focus. The `engineering.md` module map is the source of tr
 
 | If the topic mentions…                                                | Focus       |
 | --------------------------------------------------------------------- | ----------- |
-| statechart, machine, phases, gates, lifecycle, driver, crash / resume | `harness`   |
+| statechart, machine, phases, gates, lifecycle, driver, crash / resume, resilience, watchdog, timeout, afk | `harness`   |
 | providers, workers, claude, codex, transport, interactive, pane       | `providers` |
 | prompts, tools, snippets, orchestrator prompt, tool results, errors   | `prompts`   |
 | framing, templates, CLI, status, run-store, steers, persistence, health, doctor, supervision | `surface`   |
@@ -43,7 +43,7 @@ Read them yourself — don't delegate Phase 1 to subagents. They have to be in y
 
 Open your focus's design doc(s), then its code through the `engineering.md` module map — it holds the full file list with one-line pointers, so this skill names only the way in, not every file. Don't re-read Phase 1. Where each focus starts:
 
-- **`harness`** (statechart & run loop) — `automation-design.md` §"Phases and gates" + §"Invocation and lifecycle"; anchor on `src/phases.ts` (the registry, the single source) and `src/harness/machine.ts`.
+- **`harness`** (statechart & run loop) — `automation-design.md` §"Phases and gates" + §"Invocation and lifecycle"; anchor on `src/phases.ts` (the registry, the single source) and `src/harness/machine.ts`. For the AFK resilience window (timeouts, the forced watchdog, the two recovery planes), read `engineering.md` §"AFK resilience" + `automation-design.md` §"Resilience for the AFK window" (the wall-clock backstop is `src/providers/wall-clock.ts`).
 - **`providers`** (worker seam & transports) — `docs/interactive-transport.md`; anchor on `src/providers/types.ts` (the `WorkerProvider` contract).
 - **`prompts`** (agent prompts, tools, snippets) — `docs/prompting-and-tool-design.md` (read first); anchor on `src/harness/tools.ts` and `snippets.toml`.
 - **`surface`** (CLI, framing, status, persistence) — anchor on `src/run-store.ts` and `src/status.ts`; `src/cli.ts` wires the commands.

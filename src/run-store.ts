@@ -125,6 +125,13 @@ export interface RunState {
   /** Gates auto-crossed under pre-authorization, for the morning review. */
   autoApprovals?: Array<{ gate: string; at: string }>;
   /**
+   * Infra failures auto-retried under the retry budget (#4b), for the morning
+   * review — a SIBLING of autoApprovals, not the gate-shaped field (a retry has no
+   * gate and no packet, so forcing it there would lie). Recovered-VISIBLE: count +
+   * class + phase is the "is my environment degrading / am I churning" signal.
+   */
+  autoRetries?: Array<{ phase: PhaseName; errorClass: ErrorClass; attempt: number; at: string }>;
+  /**
    * The gateless posture (docs/automation-design.md §"Gate pre-authorization"):
    * a run the owner walks away from start to finish. Set by `--gateless` /
    * `gateless: true`, it is sugar over two orthogonal axes — it materializes
@@ -273,9 +280,10 @@ export interface RunState {
    */
   pendingQuestion?: { question: string; context?: string; cause?: 'human' | 'infra' | 'budget'; errorClass?: ErrorClass };
   /**
-   * Opt-in bounded auto-retry of transient infra failures (#4b) — the attempt
-   * budget. 0/absent ⇒ off (the default; behavior is byte-for-byte as before).
-   * Set from `--retry-infra <n>` or framing `retry_infra:`.
+   * Bounded auto-retry of transient infra failures (#4b) — the attempt budget.
+   * Absent on a loaded OLD state.json ⇒ off (byte-for-byte as before); a NEW run
+   * materializes `DEFAULT_RETRY_INFRA` (3) at `createRun`, and an explicit `0`
+   * disables. Set from `--retry-infra <n>` or framing `retry_infra:`.
    */
   retryInfra?: number;
   /** The per-episode retry budget state — persisted so the cap holds across a driver re-spawn; reset on a clean phase outcome. */
@@ -438,6 +446,16 @@ function atomicWrite(path: string, content: string): void {
   renameSync(tmp, path);
 }
 
+/**
+ * The default infra auto-retry budget materialized for a NEW run (#4b). Three
+ * attempts recover a transient network/server/rate-limit blip in ≤14 s of
+ * duet-added backoff before flagging. Materialized at createRun (the gatesAt
+ * discipline), so an absent/old `retryInfra` on a loaded state.json stays OFF
+ * byte-for-byte — only newly-created runs get the default; `--retry-infra 0` is
+ * the explicit opt-out.
+ */
+export const DEFAULT_RETRY_INFRA = 3;
+
 export function createRun(opts: {
   cwd: string;
   /** The run's workflow arc (absent ⇒ the `full` default via `workflowOf`). */
@@ -478,7 +496,11 @@ export function createRun(opts: {
     ...(opts.budget !== undefined ? { budget: opts.budget } : {}),
     ...(gatesAt ? { gatesAt } : {}),
     ...(opts.gateless ? { gateless: true } : {}),
-    ...(opts.retryInfra ? { retryInfra: opts.retryInfra } : {}),
+    // Nullish, not truthy: an explicit `--retry-infra 0` stays 0 (off), an absent
+    // value materializes the default. Always present on a new run, so the default
+    // is on for new runs while old/absent state.json stays off (host-runner reads
+    // `state.retryInfra ?? 0`).
+    retryInfra: opts.retryInfra ?? DEFAULT_RETRY_INFRA,
     workerSessions: {},
     phaseStarted: {},
     rounds: {},

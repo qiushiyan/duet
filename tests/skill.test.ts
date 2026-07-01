@@ -6,6 +6,7 @@ import { describe, expect, test } from 'vitest';
 import { program } from '../src/cli.ts';
 import { FRAMING_TEMPLATE } from '../src/framing.ts';
 import { IDENTITY_PATH } from '../src/orchestrate.ts';
+import { WORKFLOWS } from '../src/phases.ts';
 
 /**
  * Coherence guard for the shipped concierge skill (skills/duet-concierge/):
@@ -356,10 +357,69 @@ describe('shipped gate-posture copy teaches the overnight-default, post-open fin
     }
   });
 
+  test('the concierge reference names every full preset (CLI→doc completeness — prevents the afk-drift class)', () => {
+    // The round-2 gap: the reference table listed only `skip-plan` for full while
+    // `afk` shipped. tests/skill.test.ts checked doc→CLI token existence, not
+    // CLI→doc completeness — so a preset in the registry but absent from the
+    // reference went uncaught. Derive the preset names from the registry (source
+    // of truth) and assert the shipped reference documents each.
+    for (const preset of Object.keys(WORKFLOWS.full.presets)) {
+      expect.soft(referenceMd, `concierge reference omits full's \`${preset}\` preset`).toContain(preset);
+    }
+  });
+
   test('the concierge cause docs name the budget cause (slice 5)', () => {
     // stop.cause gained `budget` (slice 5) — the relay docs must list it so the
     // concierge triages a budget stop as resumable, not an outage.
     expect.soft(skillMd, 'concierge SKILL.md omits the budget cause').toMatch(/cause[\s\S]{0,200}budget/i);
     expect.soft(referenceMd, 'concierge cli-reference omits the budget cause').toMatch(/cause[\s\S]{0,200}budget/i);
+  });
+});
+
+describe('the infra-retry copy teaches the materialized default-3, not the retired opt-in/off story', () => {
+  // The AFK change flipped the headless infra auto-retry default to 3,
+  // materialized at createRun (run-store.ts DEFAULT_RETRY_INFRA). The behavior
+  // test lives in run-store.test.ts; this is the WORDING-LOCK the reviewer asked
+  // for — the user-facing help + the shipped concierge reference must teach
+  // "default 3 for new runs; 0 disables", never the retired opt-in / default-off
+  // copy, so the surfaces can't silently drift back behind the behavior again.
+  const retryHelp = publicCommands.get('new')?.options.find((o) => o.long === '--retry-infra')?.description ?? '';
+  const retryRow = referenceMd.split('\n').find((l) => l.includes('--retry-infra')) ?? '';
+
+  test('both the --retry-infra help and the concierge reference row name the default-3 model', () => {
+    for (const [label, text] of [
+      ['--retry-infra help', retryHelp],
+      ['concierge reference row', retryRow],
+    ] as const) {
+      const lower = text.toLowerCase();
+      expect.soft(lower, `${label} omits the default-3 wording`).toMatch(/default[^.]*\b3\b/);
+      expect.soft(lower, `${label} omits that 0 disables`).toContain('0');
+      // The retired framing — opt-in / "opt … into" / default-off / off by default.
+      expect.soft(lower, `${label} still calls retry opt-in`).not.toContain('opt-in');
+      expect.soft(lower, `${label} still frames retry as opt-into`).not.toMatch(/opt\s+the\b.*\binto/);
+      expect.soft(lower, `${label} still says default-off`).not.toMatch(/default-?off|off by default|default:\s*off/);
+    }
+  });
+
+  // docs/engineering.md is LIVE engineering guidance (not a shipped skill), but it
+  // teaches the same retry model — so it gets the negative half of the lock the
+  // round-1 surfaces missed: no sentence may frame infra retry as opt-in /
+  // default-off, the retired model. Scoped to retry SENTENCES (the `[^.\n]` bound
+  // stops at the sentence boundary) because the doc legitimately uses "opt-in" for
+  // the budget/gates rails elsewhere (e.g. its "Opt-in rails, safe defaults"
+  // section, which also says "infra-retry" — far apart, a different concept).
+  const engineeringMd = readFileSync(new URL('../docs/engineering.md', import.meta.url), 'utf8');
+  const STALE_RETRY_FRAMINGS = [
+    /opt-in[^.\n]*\b(?:auto-)?retr/i,
+    /\b(?:auto-)?retr[a-z-]*[^.\n]*opt-in/i,
+    /\bretr[a-z-]*[^.\n]*(?:default-?off|off by default)/i,
+    /(?:default-?off|off by default)[^.\n]*\bretr/i,
+  ];
+
+  test('docs/engineering.md frames infra retry as default-on, never opt-in/default-off (retry-scoped)', () => {
+    for (const re of STALE_RETRY_FRAMINGS) {
+      const hit = engineeringMd.match(re);
+      expect.soft(hit?.[0], `engineering.md carries retired retry framing: "${hit?.[0]}"`).toBeUndefined();
+    }
   });
 });

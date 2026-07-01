@@ -298,13 +298,15 @@ async function waitUntilReady(pane: PaneController, deadline: number): Promise<v
 async function watchForTurn(store: TranscriptStore, nonce: string, deadline: number, onSessionId?: (id: string) => void): Promise<WorkerTurn> {
   let located: string | undefined;
   let announced = false;
+  let lastSessionId: string | undefined;
   while (Date.now() < deadline) {
     if (!located) located = store.locate(nonce); // throws on an ambiguous match
     if (located) {
       const tail = store.read(located);
-      if (!announced) {
-        const sessionId = sessionIdForNonce(tail, nonce);
-        if (sessionId !== undefined) {
+      const sessionId = sessionIdForNonce(tail, nonce);
+      if (sessionId !== undefined) {
+        lastSessionId = sessionId;
+        if (!announced) {
           onSessionId?.(sessionId);
           announced = true;
         }
@@ -313,6 +315,15 @@ async function watchForTurn(store: TranscriptStore, nonce: string, deadline: num
       if (turn) return turn;
     }
     await sleep(POLL_INTERVAL_MS);
+  }
+  // Deadline. A located transcript carrying our nonce IS proof the prompt was
+  // injected and accepted, so with a session id this is a resumable aborted
+  // CHECKPOINT (resume, don't re-send) — the interactive analogue of the headless
+  // accepted-abort split. No located transcript ⇒ no acceptance evidence ⇒ an
+  // infra error (retry). ("Not ready before timeout" is the distinct pre-injection
+  // throw in waitUntilReady, which never reaches here.)
+  if (located && lastSessionId !== undefined) {
+    return { text: '', sessionId: lastSessionId, aborted: true };
   }
   throw new Error(
     located
@@ -377,7 +388,10 @@ export class InteractiveClaudeWorker implements WorkerProvider {
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
     });
-    const deadline = Date.now() + this.timeoutMs;
+    // Effective cap: a per-turn override wins over the construction value (which
+    // is required here, so no provider floor to fall back to). Already Date-based,
+    // so this transport needs no wall-clock conversion — the deadline is real time.
+    const deadline = Date.now() + (opts.timeoutMs ?? this.timeoutMs);
     try {
       await pane.open();
       await waitUntilReady(pane, deadline);

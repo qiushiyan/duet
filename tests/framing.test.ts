@@ -48,6 +48,11 @@ describe('parseGatesAt', () => {
     expect(parseGatesAt('afk', 'rir')).toEqual([]);
   });
 
+  plain('S8: the full-arc afk preset resolves to attend-none ([]) — the missing launch rung', () => {
+    expect(parseGatesAt('afk', 'full')).toEqual([]);
+    expect(parseGatesAt('afk')).toEqual([]); // default workflow is full
+  });
+
   plain('a literal empty list is still rejected for RIR (only a matched preset may be empty)', () => {
     expect(() => parseGatesAt('  ,  ', 'rir')).toThrow(/gates_at is empty/);
   });

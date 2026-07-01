@@ -277,11 +277,11 @@ program
   .option('--workflow <name>', 'which arc to run: full (spec → plan → implement → ship → PR) or rir (research → implement → review); default full. Also settable via a workflow: framing key (flag wins)')
   .option(
     '--gates-at <phases>',
-    'phases whose gates you attend — the set and presets are workflow-specific (full gates: frame, spec, plan, impl, finish; presets "skip-plan" = walk away at spec approval and return at the Ship gate, "overnight" = frame,spec. rir gates: research, implement, publish; preset "afk" = attend none). The rest are pre-authorized and auto-cross with their packets recorded. Default for full: overnight (frame,spec) — plan, Ship, and the Open-PR gate all auto-cross; list `finish` for a post-open review stop on the opened PR. rir attends all three of its gates',
+    'phases whose gates you attend — the set and presets are workflow-specific (full gates: frame, spec, plan, impl, finish; presets "skip-plan" = walk away at spec approval and return at the Ship gate, "overnight" = frame,spec, "afk" = attend none from the start, keeping every safety net — the consultant nets stay on, which --gateless drops. rir gates: research, implement, publish; preset "afk" = attend none). The rest are pre-authorized and auto-cross with their packets recorded. Default for full: overnight (frame,spec) — plan, Ship, and the Open-PR gate all auto-cross; list `finish` for a post-open review stop on the opened PR. rir attends all three of its gates',
   )
   .option(
     '--retry-infra <n>',
-    'opt-in bounded auto-retry of TRANSIENT infra failures (network/server/rate-limit, and auth once) before flagging — n attempts. login/quota/persistent-auth are never retried; exhaustion always falls back to a flag. Default: off (every infra failure flags, as today)',
+    'bounded auto-retry of TRANSIENT infra failures (network/server/rate-limit, and auth once) before flagging — n attempts. login/quota/persistent-auth are never retried; exhaustion always falls back to a flag. Default 3 for a new run (materialized at creation); --retry-infra 0 is the explicit opt-out; an old run started without the field stays off.',
   )
   .option(
     '--budget <off|default|N>',
@@ -788,6 +788,13 @@ const driveCommand = new Command('_drive')
       ...(event ? { event } : {}),
     });
     showStatus(stop.state);
+    // A wedged-phase soft-fail parked the run but left the hung phase invoke
+    // running (no cleanup reaches the SDK turn), so it would keep this pid alive
+    // and could race a late write over the parked flag. The state is durably
+    // parked; hard-exit so the driver truly stops. Normal stops fall through and
+    // exit naturally (all actors stopped, no dangling work) — the driver log is a
+    // file, so the sync showStatus write above is already flushed.
+    if (stop.wedged) process.exit(0);
   });
 program.addCommand(driveCommand, { hidden: true });
 

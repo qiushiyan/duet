@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { describe, expect } from 'vitest';
+import { describe, expect, vi } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { createActor, fromCallback } from 'xstate';
 import type { EventObject } from 'xstate';
@@ -13,11 +13,13 @@ import type { PhaseInput } from '../src/harness/host-runner.ts';
 import { duetMachine, interactiveMachine } from '../src/harness/machine.ts';
 import type { PhaseEvent } from '../src/harness/phase-events.ts';
 import {
+  caffeinateCommand,
   crossInteractive,
   driveToQuiescence,
   enterAfk,
   freezeContractAt,
   interactiveContinueAction,
+  preventSleepUnderDriver,
   probeRunPosition,
   validateInteractiveCrossing,
   waitForRunStop,
@@ -27,7 +29,7 @@ import { acceptanceContractPathForSpec } from '../src/phases.ts';
 import { createRun, gateAttended, loadMachineSnapshot, loadRunState, markAbandoned, runDirOf, saveMachineSnapshot, saveRunState, stageHumanInput } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import { consultantBindings, test } from './helpers/fixtures.ts';
-import { scriptedMachine } from './helpers/scripted-machine.ts';
+import { scriptedMachine, wedgedMachine } from './helpers/scripted-machine.ts';
 
 /**
  * The quiescence loop and gate pre-authorization (gates_at): pre-authorized
@@ -209,6 +211,7 @@ describe('attended stops', () => {
     expect.soft(stop.snapshot.value).toBe('directionGate');
     expect.soft(stop.state.machineState).toBe('directionGate');
     expect.soft(stop.state.autoApprovals).toBeUndefined();
+    expect.soft(stop.wedged).toBeUndefined(); // a clean stop never asks the driver to hard-exit
     expect.soft(notifications).toEqual(['Direction gate — synthesized direction ready']);
   });
 
@@ -221,6 +224,81 @@ describe('attended stops', () => {
     const stop = await driveToQuiescence(run, undefined, { machine, notify });
     expect(stop.snapshot.value).toBe('frameFlagWait');
     expect(loadRunState(projectDir, run.runId).machineState).toBe('frameFlagWait');
+  });
+});
+
+describe('the quiescence soft-fail (S4 — a hung phase parks, never strands)', () => {
+  const quiet = async () => {};
+
+  test('a phase that never reaches quiescence parks in flag-wait with an infra question, not a throw/kill', async ({
+    projectDir,
+    run,
+  }) => {
+    const { machine, calls } = wedgedMachine('full');
+    // A short injected bound trips the soft-fail in ms instead of 12 h.
+    const stop = await driveToQuiescence(run, undefined, { machine, notify: quiet, quiescenceTimeoutMs: 50 });
+
+    // The phase ran (the wedged driver recorded it) and we parked in its flag-wait —
+    // it resolved (no throw, no process kill).
+    expect.soft(calls).toEqual(['frame']);
+    expect.soft(stop.snapshot.value).toBe('frameFlagWait');
+    // …and it flags the driver to HARD-EXIT: the wedged invoke has no cleanup, so
+    // the process must be killed lest it keep the pid alive or race a late write.
+    expect.soft(stop.wedged).toBe(true);
+
+    // The load-bearing ordering: the probe reads a `flag` (not crashed/running)
+    // because the flag-wait snapshot sits BESIDE the queued infra question.
+    const fresh = loadRunState(projectDir, run.runId);
+    expect.soft(fresh.machineState).toBe('frameFlagWait');
+    expect.soft(probeRunPosition(fresh)).toEqual({ kind: 'flag', phase: 'frame' });
+    expect.soft(fresh.pendingQuestion?.cause).toBe('infra');
+    expect.soft(fresh.pendingQuestion?.question).toMatch(/duet continue/);
+  });
+
+  test('it preserves a question the orchestrator already queued (first-question-wins), still parking in flag-wait', async ({
+    projectDir,
+    run,
+  }) => {
+    run.pendingQuestion = { question: 'the orchestrator already asked this', cause: 'human' };
+    saveRunState(run);
+    const { machine } = wedgedMachine('full');
+    await driveToQuiescence(loadRunState(projectDir, run.runId), undefined, {
+      machine,
+      notify: quiet,
+      quiescenceTimeoutMs: 50,
+    });
+
+    const fresh = loadRunState(projectDir, run.runId);
+    // The pre-existing question survives untouched; the machine is parked regardless.
+    expect.soft(fresh.pendingQuestion?.cause).toBe('human');
+    expect.soft(fresh.pendingQuestion?.question).toBe('the orchestrator already asked this');
+    expect.soft(fresh.machineState).toBe('frameFlagWait');
+    expect.soft(probeRunPosition(fresh)).toEqual({ kind: 'flag', phase: 'frame' });
+  });
+});
+
+describe('caffeinate (S4 — best-effort, darwin-only sleep prevention)', () => {
+  test('caffeinateCommand scopes to the driver pid (-w) and prevents idle sleep (-i)', () => {
+    expect(caffeinateCommand(4242)).toEqual(['caffeinate', '-i', '-w', '4242']);
+  });
+
+  test('a no-op off darwin — the sleep-preventer is never spawned', () => {
+    const spawnSleepPreventer = vi.fn();
+    preventSleepUnderDriver(4242, { platform: 'linux', spawnSleepPreventer });
+    expect(spawnSleepPreventer).not.toHaveBeenCalled();
+  });
+
+  test('on darwin it spawns the preventer scoped to the driver pid', () => {
+    const spawnSleepPreventer = vi.fn();
+    preventSleepUnderDriver(4242, { platform: 'darwin', spawnSleepPreventer });
+    expect(spawnSleepPreventer).toHaveBeenCalledWith(4242);
+  });
+
+  test('a spawn failure is swallowed — best-effort, the wall-clock backstop is the real protection', () => {
+    const spawnSleepPreventer = vi.fn(() => {
+      throw new Error('caffeinate not found');
+    });
+    expect(() => preventSleepUnderDriver(4242, { platform: 'darwin', spawnSleepPreventer })).not.toThrow();
   });
 });
 

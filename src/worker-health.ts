@@ -179,6 +179,29 @@ export function parseRecords(jsonl: string): JsonRecord[] {
   return out;
 }
 
+/**
+ * Whether THIS turn's prompt was accepted into the session — true iff the
+ * transcript carries a real activity record (a `user`/`assistant`/`result`
+ * record; tool steps ride inside those) timestamped at/after `sinceMs`, the
+ * turn's start. The lower bound is LOAD-BEARING: a persistent (implementer /
+ * reviewer) session already holds PRIOR turns' records, so a whole-transcript
+ * scan would false-positive on a resumed turn that failed before its new prompt
+ * was ever accepted — and that cascades into wrongly resuming (or, in S7,
+ * wrongly resetting) a session the worker never acted in this turn. `system`
+ * records (init/startup) are excluded: they prove the process launched, not that
+ * the prompt was accepted. Pure — string + number in, boolean out.
+ */
+export function transcriptShowsPromptAccepted(jsonl: string, sinceMs: number): boolean {
+  for (const o of parseRecords(jsonl)) {
+    const t = o['type'];
+    if (t !== 'user' && t !== 'assistant' && t !== 'result') continue;
+    const ts = o['timestamp'];
+    const ms = typeof ts === 'string' ? Date.parse(ts) : NaN;
+    if (Number.isFinite(ms) && ms >= sinceMs) return true;
+  }
+  return false;
+}
+
 function normalize(text: string): string {
   return text.trim().replace(/\s+/g, ' ').slice(0, 200);
 }

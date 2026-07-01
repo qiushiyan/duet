@@ -46,14 +46,69 @@ import { markerToEvent } from './phase-events.ts';
 
 export type HumanEvent = { type: 'human.approve' | 'human.reject' | 'human.answer' };
 
-const QUIESCENCE_TIMEOUT_MS = 6 * 60 * 60_000;
+/**
+ * The outer per-phase bound: above a realistic worst-case overnight impl phase
+ * (several 90-min-capped turns + bounded retry backoff). The number is the
+ * smaller half — the load-bearing change is that a hit now SOFT-FAILS to
+ * crash=flag (driveToQuiescence below), never an uncaught process kill that
+ * strands the run (the 7447 dead-run pattern).
+ */
+const QUIESCENCE_TIMEOUT_MS = 12 * 60 * 60_000;
+
+/** Injectable seams for spawnDrive's best-effort sleep-prevention (defaults: the host platform + a real caffeinate spawn). */
+export interface SpawnDriveDeps {
+  platform?: NodeJS.Platform;
+  /** Spawn the sleep-preventer scoped to the driver pid; defaulted to caffeinate on darwin, swapped for a spy in tests. */
+  spawnSleepPreventer?: (driverPid: number) => void;
+}
+
+/**
+ * The macOS sleep-preventer command — `caffeinate -i` prevents IDLE sleep, `-w
+ * <pid>` scopes it to the driver's lifetime (caffeinate exits when the driver
+ * pid does, so it never holds the machine awake past the run). Pure builder,
+ * pinned by test; the spawn around it is glue.
+ */
+export function caffeinateCommand(driverPid: number): string[] {
+  return ['caffeinate', '-i', '-w', String(driverPid)];
+}
+
+/**
+ * Prevent the machine sleeping under the driver — BEST-EFFORT, darwin-only.
+ * `caffeinate -i` blocks the common IDLE sleep (docked / lid-open); a closed lid
+ * on battery sleeps regardless, where the wall-clock backstop (the real
+ * protection) bounds the waste on wake. A spawn failure is swallowed — losing
+ * sleep-prevention degrades to bounded-waste-then-recover, never a failed run.
+ */
+export function preventSleepUnderDriver(driverPid: number, deps: SpawnDriveDeps = {}): void {
+  if ((deps.platform ?? process.platform) !== 'darwin') return;
+  const run = deps.spawnSleepPreventer ?? defaultSpawnSleepPreventer;
+  try {
+    run(driverPid);
+  } catch {
+    // best-effort — the wall-clock backstop is the load-bearing protection.
+  }
+}
+
+function defaultSpawnSleepPreventer(driverPid: number): void {
+  const [cmd, ...args] = caffeinateCommand(driverPid);
+  const child = spawn(cmd!, args, { detached: true, stdio: 'ignore' });
+  // A missing/failed caffeinate emits 'error' ASYNCHRONOUSLY — swallow it so an
+  // unhandled child 'error' can't crash the parent (best-effort, see above).
+  child.on('error', () => {});
+  child.unref();
+}
 
 /**
  * Spawn the detached phase driver and return its pid. Its stdout/stderr go
  * to `.duet/runs/<id>/driver.log` (crash evidence lives there); the pid file
- * is how later invocations refuse to start a second concurrent driver.
+ * is how later invocations refuse to start a second concurrent driver. On
+ * darwin it also fires a best-effort `caffeinate` scoped to the driver pid.
  */
-export function spawnDrive(state: RunState, eventType?: 'approve' | 'reject' | 'answer'): number {
+export function spawnDrive(
+  state: RunState,
+  eventType?: 'approve' | 'reject' | 'answer',
+  deps: SpawnDriveDeps = {},
+): number {
   const runDir = runDirOf(state.cwd, state.runId);
   const out = openSync(join(runDir, 'driver.log'), 'a');
   const child = spawn(
@@ -64,6 +119,7 @@ export function spawnDrive(state: RunState, eventType?: 'approve' | 'reject' | '
   closeSync(out);
   writeFileSync(join(runDir, 'driver.pid'), `${child.pid}\n`);
   child.unref();
+  preventSleepUnderDriver(child.pid!, deps);
   return child.pid!;
 }
 
@@ -343,6 +399,8 @@ export interface LifecycleDeps {
   /** Injectable for tests: a duetMachine with a scripted phaseDriver. */
   machine?: typeof duetMachine;
   notify?: typeof desktopNotify;
+  /** The outer per-phase quiescence bound; injectable so a test trips the soft-fail fast. Defaults to QUIESCENCE_TIMEOUT_MS (12 h). */
+  quiescenceTimeoutMs?: number;
 }
 
 /**
@@ -361,9 +419,10 @@ export async function driveToQuiescence(
   state: RunState,
   options?: { snapshot?: Snapshot<unknown>; event?: HumanEvent },
   deps: LifecycleDeps = {},
-): Promise<{ snapshot: AnyMachineSnapshot; state: RunState }> {
+): Promise<{ snapshot: AnyMachineSnapshot; state: RunState; wedged?: true }> {
   const machine = deps.machine ?? machineFor(workflowOf(state));
   const notify = deps.notify ?? desktopNotify;
+  const quiescenceTimeoutMs = deps.quiescenceTimeoutMs ?? QUIESCENCE_TIMEOUT_MS;
 
   const actor = createActor(machine, {
     input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
@@ -411,11 +470,57 @@ export async function driveToQuiescence(
   if (options?.event) actor.send(options.event);
 
   for (;;) {
-    const snapshot = await waitFor(
-      actor,
-      (s) => s.hasTag('quiescent') || s.status === 'done',
-      { timeout: QUIESCENCE_TIMEOUT_MS },
-    );
+    let snapshot: AnyMachineSnapshot;
+    try {
+      snapshot = await waitFor(
+        actor,
+        (s) => s.hasTag('quiescent') || s.status === 'done',
+        { timeout: quiescenceTimeoutMs },
+      );
+    } catch {
+      // The phase ran past its outer time bound — a wedged phaseDriver invoke
+      // that never emitted phase.*, so `waitFor` rejected. Convert the would-be
+      // uncaught kill (which strands the run — the 7447 dead-run) into crash=flag,
+      // the universal "every stop has a next command". Order is LOAD-BEARING:
+      // park in flag-wait FIRST (drives the stuck loop to its *FlagWait, stopping
+      // the wedged invoke, and persists that snapshot), THEN queue the question —
+      // probeRunPosition reads a `flag` only from a flag-wait snapshot BESIDE a
+      // pendingQuestion; a question next to a still-phase-loop snapshot reads as
+      // crashed/running, defeating the fix.
+      const wf = workflowOf(state);
+      const value = actor.getSnapshot().value;
+      const phase = (typeof value === 'string' && phaseLoopOf(wf, value)) || phasesOf(wf)[0]!.name;
+      actor.send({ type: 'phase.flag' });
+      saveMachineSnapshot(state, actor.getPersistedSnapshot());
+      const parked = actor.getSnapshot();
+      // `actor.stop()` parks the machine but does NOT tear down the wedged
+      // invoke: `phaseDriver` is a `fromCallback` with no cleanup, so the hung
+      // `runPhase` (its in-process orchestrator turn) keeps running — keeping the
+      // `_drive` pid alive (supervision would read it as running) and able to race
+      // a late in-process write over this parked flag. We can't cancel it from
+      // here (no signal reaches the SDK turn), so we flag the caller to hard-exit
+      // the driver process below — the state is already durably parked, and the
+      // human resumes with a fresh driver.
+      actor.stop();
+      // First-question-wins: never clobber a question the orchestrator already
+      // queued (its own ask_human, a budget stop). Reload-mutate-save so a
+      // concurrent write isn't lost; the machine is parked in flag-wait regardless.
+      const fresh = loadRunState(state.cwd, state.runId);
+      fresh.machineState = typeof parked.value === 'string' ? parked.value : JSON.stringify(parked.value);
+      const hours = Math.round(quiescenceTimeoutMs / 3_600_000);
+      if (!fresh.pendingQuestion) {
+        fresh.pendingQuestion = {
+          question: `the ${phase} phase ran past its outer time bound (~${hours}h) and was parked — check .duet/runs/${fresh.runId}/driver.log or run \`duet doctor\`, then resume with \`duet continue\`.`,
+          cause: 'infra',
+        };
+      }
+      saveRunState(fresh);
+      await notify(
+        `duet ${fresh.runId}`,
+        `${phase} phase parked — it ran past its ~${hours}h outer bound; resume with duet continue`,
+      );
+      return { snapshot: parked, state: fresh, wedged: true };
+    }
 
     saveMachineSnapshot(state, actor.getPersistedSnapshot());
     const fresh = loadRunState(state.cwd, state.runId);

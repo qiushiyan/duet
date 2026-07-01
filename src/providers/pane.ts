@@ -35,6 +35,30 @@ export interface PaneConfig {
 export type PaneFactory = (config: PaneConfig) => PaneController;
 
 /**
+ * The interactive-claude launch command tmux runs, as a token array — extracted
+ * as a pure builder so the load-bearing watchdog env is verifiable by test (the
+ * tmux-driving glue around it stays untested).
+ *
+ * It carries `API_FORCE_IDLE_TIMEOUT=1` as a shell env-assignment PREFIX, so the
+ * native byte-stream idle watchdog is forced on for THIS launched `claude` —
+ * set on the exact command sh runs, NOT inherited from the tmux server env
+ * (which may be a stale reuse). `bypassPermissions` is the unattended
+ * implementer posture (P4), the same one the headless implementer uses.
+ */
+export function claudePaneLaunchCommand(config: PaneConfig): string[] {
+  const launch = [
+    'API_FORCE_IDLE_TIMEOUT=1',
+    'claude',
+    '--model',
+    config.model,
+    '--permission-mode',
+    'bypassPermissions',
+  ];
+  if (config.sessionId) launch.push('--resume', config.sessionId);
+  return launch;
+}
+
+/**
  * The tmux driver adapter — thin, deliberately untested glue, the same boundary
  * as src/tmux-view.ts (a subprocess to tmux). ALL the driving logic lives above
  * it in InteractiveClaudeWorker and is tested via FakePane; this class only owns
@@ -59,10 +83,9 @@ export class TmuxPane implements PaneController {
   }
 
   async open(): Promise<void> {
-    // bypassPermissions is the unattended implementer posture (P4) — the same
-    // one the headless implementer uses (src/providers/claude.ts:134).
-    const launch = ['claude', '--model', this.config.model, '--permission-mode', 'bypassPermissions'];
-    if (this.config.sessionId) launch.push('--resume', this.config.sessionId);
+    // The launch command (incl. the forced watchdog env prefix) comes from the
+    // pinned claudePaneLaunchCommand builder; tmux runs the joined string via sh.
+    const launch = claudePaneLaunchCommand(this.config);
     const args = ['new-session', '-d', '-s', this.session];
     if (this.config.cwd) args.push('-c', this.config.cwd);
     args.push(launch.join(' '));

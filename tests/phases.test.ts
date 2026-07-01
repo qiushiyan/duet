@@ -270,6 +270,21 @@ describe('consultant checkpoints (registry data per arc)', () => {
   });
 });
 
+describe('the AFK build caps (S3 — wall-clock-bounded per-turn timeouts)', () => {
+  test('both arcs’ build phases carry the 90-min wall-clock cap', () => {
+    // 90 min = 3× the longest healthy build turn (29.5 min) measured across the
+    // corpus — the high end of the 2–3× band; a hit is a resumable checkpoint.
+    expect.soft(PHASE['impl'].workerTurnTimeoutMs).toBe(90 * 60_000);
+    expect.soft(PHASE['implement'].workerTurnTimeoutMs).toBe(90 * 60_000);
+  });
+
+  test('the planning and finishing phases keep the 30-min cap (their longest healthy turns ≈17 min)', () => {
+    for (const phase of ['frame', 'spec', 'plan', 'finish', 'research', 'publish'] as const) {
+      expect.soft(PHASE[phase].workerTurnTimeoutMs).toBe(30 * 60_000);
+    }
+  });
+});
+
 describe('gateless drops the consultant bet-audit, keeping the generative frame + backstop (registry helpers)', () => {
   test('isBackstopCheckpoint: only the contract author and the verify are correctness backstops', () => {
     // The backstop (correctness) checkpoints.
@@ -328,6 +343,19 @@ describe('gateless drops the consultant bet-audit, keeping the generative frame 
   test('workflowHasConsultantBackstop: full has the contract+verify backstop, rir has none', () => {
     expect.soft(workflowHasConsultantBackstop('full')).toBe(true);
     expect.soft(workflowHasConsultantBackstop('rir')).toBe(false);
+  });
+
+  test('S8: the full-arc afk preset is attend-none registry data, keeping every consultant net (gateless OFF)', () => {
+    // Registry data only — afk mirrors rir's, no statechart change.
+    expect.soft(WORKFLOWS.full.presets.afk).toEqual([]);
+    expect.soft(WORKFLOWS.rir.presets.afk).toEqual([]); // rir unchanged
+
+    // The defining difference from --gateless: afk runs with gateless OFF, so BOTH
+    // the holding bet-audit challenge AND the correctness backstop stay live.
+    expect.soft(consultantCheckpointLive('spec', { consultant: true, gateless: false })).toBe(true); // challenge kept
+    expect.soft(consultantCheckpointLive('plan', { consultant: true, gateless: false })).toBe(true); // contract backstop
+    expect.soft(consultantCheckpointLive('impl', { consultant: true, gateless: false })).toBe(true); // verify backstop
+    // (Whereas gateless drops only the holding challenge — pinned in the gateless test above.)
   });
 
   test('GATELESS_CONSULTANT_SNIPPETS: the generative frame plus the contract + verify backstop keys', () => {

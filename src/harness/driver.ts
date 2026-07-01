@@ -50,7 +50,7 @@ import {
  * session's end into the machine's phase.* event vocabulary (./phase-events.ts).
  *
  * The phase RUN LOOP — entry marker-replay, nudge-once, the twice-ended flag,
- * crash → flag + opt-in retry — is shared with the stdio host in
+ * crash → flag + bounded auto-retry — is shared with the stdio host in
  * ./host-runner.ts; this module is now the in-process `PhaseHost` adapter
  * (`makeInProcessHost`): it drives one SDK turn, classifies a failure with the
  * staleness-aware `classifyInfraError`, and opts into retry (the one headless
@@ -117,7 +117,7 @@ const driverLog = (line: string): void => console.log(colorizeDriverLine(line));
  * any staged human input — and each `driveTurn` streams one SDK turn (the phase
  * prompt, then the nudge). `classifyFailure` is the staleness-aware
  * `classifyInfraError`; `retryable` is true (the headless driver is the one place
- * opt-in infra auto-retry runs). The run-loop rails around it live in
+ * bounded infra auto-retry runs). The run-loop rails around it live in
  * ./host-runner.ts.
  */
 function makeInProcessHost(runTurn: RunOrchestratorTurn): PhaseHost {
@@ -173,7 +173,7 @@ function makeInProcessHost(runTurn: RunOrchestratorTurn): PhaseHost {
  *  user-config MCP servers via strictMcpConfig — the spike showed claude.ai
  *  connectors leaking in). The budget cap and resume id are set only when
  *  present. */
-function buildOrchestratorOptions(state: RunState, budget: ReturnType<typeof budgetFor>): Options {
+export function buildOrchestratorOptions(state: RunState, budget: ReturnType<typeof budgetFor>): Options {
   return {
     model: state.bindings.orchestrator.model ?? DEFAULT_CLAUDE_MODEL.orchestrator,
     cwd: state.cwd,
@@ -181,8 +181,15 @@ function buildOrchestratorOptions(state: RunState, budget: ReturnType<typeof bud
     strictMcpConfig: true,
     ...(budget.orchestrator !== undefined ? { maxBudgetUsd: budget.orchestrator } : {}),
     systemPrompt: orchestratorSystemPrompt(state),
-    // send_prompt calls outlive the default 60s SDK MCP stream window.
-    env: { ...process.env, CLAUDE_CODE_STREAM_CLOSE_TIMEOUT: String(2 * 60 * 60_000) },
+    // send_prompt calls outlive the default 60s SDK MCP stream window; and
+    // API_FORCE_IDLE_TIMEOUT=1 forces the native byte-stream idle watchdog on for
+    // the orchestrator's own SDK session, so a stalled orchestrator connection
+    // aborts in ~5 min (the headless host then classifies + auto-retries it).
+    env: {
+      ...process.env,
+      CLAUDE_CODE_STREAM_CLOSE_TIMEOUT: String(2 * 60 * 60_000),
+      API_FORCE_IDLE_TIMEOUT: '1',
+    },
     ...(state.orchestratorSessionId ? { resume: state.orchestratorSessionId } : {}),
   };
 }

@@ -79,6 +79,22 @@ export function sessionPolicyFor(role: WorkerRole): 'persistent' | 'ephemeral' {
 }
 
 /**
+ * Whether an ACCEPTED-but-aborted `/compact` turn must RESET the role's worker
+ * session (drop it so the next send mints fresh, `sessionIdFor → undefined`).
+ * Keyed off the SAME role policy as everything else — only a `persistent` role
+ * (implementer, reviewer) carries a resumable session that a failed compact
+ * leaves un-compacted and bloated, so resuming it is exactly wrong; an
+ * `ephemeral` role (the consultant) already reseeds every turn, so there is
+ * nothing to reset. The ONE predicate both the settle (which performs the
+ * delete) and the render (which tells the orchestrator the role was reset) read,
+ * so the two sites cannot drift onto a hard-coded `role === 'implementer'` that
+ * silently bypasses this table.
+ */
+export function shouldResetAfterCompactAbort(role: WorkerRole, isCompactTurn: boolean, aborted: boolean): boolean {
+  return aborted && isCompactTurn && sessionPolicyFor(role) === 'persistent';
+}
+
+/**
  * Whether a turn counts as a review round against the phase's backstop cap: the
  * reviewer on a `review*`-tagged prompt, and only the reviewer. A consultant
  * turn NEVER counts — it is additive, never substitutive, so advance_phase's
