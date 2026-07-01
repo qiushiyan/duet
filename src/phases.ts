@@ -565,6 +565,26 @@ export function priorPhaseOf(phase: PhaseName): PhaseName {
   return prior.name;
 }
 
+/**
+ * Whether `phase` sits strictly AFTER its workflow's handoff gate — the "doing"
+ * set that begins once the run crosses into the AFK build. full's handoffGate is
+ * `plan`, so its post-handoff phases are {impl, finish}; rir's is `research`, so
+ * its are {implement, publish}. Pure arc topology (registry-derived), the twin of
+ * `priorPhaseOf`.
+ *
+ * The per-phase implementer-model swap keys off this: the base model plans (frame,
+ * spec, plan), the impl model builds and finishes. Deliberately ALIASED onto the
+ * handoff boundary — the cheaper build model kicks in exactly when the run goes
+ * AFK/headless — so if `handoffGate` ever moves, this boundary moves with it (a
+ * coupling we accept, not a coincidence).
+ */
+export function isPostHandoffPhase(phase: PhaseName): boolean {
+  const workflow = workflowOfPhase(phase);
+  const phases = phasesOf(workflow);
+  const handoffIdx = phases.findIndex((p) => p.name === WORKFLOWS[workflow].handoffGate);
+  return phases.findIndex((p) => p.name === phase) > handoffIdx;
+}
+
 /** Every phase across all workflows, widened to the consumer-facing view. */
 const ALL_PHASES: readonly PhaseSpec[] = Object.values(WORKFLOWS).flatMap(
   (w): readonly PhaseSpec[] => w.phases,

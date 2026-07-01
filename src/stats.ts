@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { implementerModelFor } from './config.ts';
+import type { RoleBindings } from './config.ts';
 import { phasesOf } from './phases.ts';
 import type { PhaseName } from './phases.ts';
 import { workerRolesFor } from './roles.ts';
@@ -54,6 +56,13 @@ export interface PhaseStat {
   workerMs: number;
   /** Worker turns attributed to this phase. */
   turns: number;
+  /**
+   * The implementer model that ran this phase (the per-phase model dimension the
+   * corpus timing needs) — re-derived from the run's bindings by the same pure
+   * resolver, so it needs no new recorded state. Absent for a phase outside the
+   * run's arc (no confident resolution); a codex implementer labels as "codex".
+   */
+  implementerModel?: string;
 }
 export interface TagStat {
   tag: string;
@@ -145,6 +154,8 @@ export function buildStats(
   orchestratorLog: string | undefined,
   workers: Array<{ role: string; log?: string }>,
   arcOrder: readonly PhaseName[],
+  /** The implementer model that ran a phase — the composer supplies the resolver; default (none) keeps the aggregate rows unlabeled. */
+  implementerModelForPhase: (phase: string) => string | undefined = () => undefined,
 ): StatsModel {
   const notes: string[] = [];
   const { windows, sawOpen } = orchestratorLog ? parsePhaseWindows(orchestratorLog) : { windows: [], sawOpen: false };
@@ -193,17 +204,33 @@ export function buildStats(
   // doesn't (e.g. a run started before an arc change) in first-seen order.
   const seen = [...windowMs.keys()];
   const ordered = [...arcOrder.filter((p) => windowMs.has(p)), ...seen.filter((p) => !arcOrder.includes(p as PhaseName))];
-  const phases: PhaseStat[] = ordered.map((phase) => ({
-    phase,
-    windowMs: windowMs.get(phase) ?? 0,
-    workerMs: workerMs.get(phase) ?? 0,
-    turns: turnCount.get(phase) ?? 0,
-  }));
+  const phases: PhaseStat[] = ordered.map((phase) => {
+    const implementerModel = implementerModelForPhase(phase);
+    return {
+      phase,
+      windowMs: windowMs.get(phase) ?? 0,
+      workerMs: workerMs.get(phase) ?? 0,
+      turns: turnCount.get(phase) ?? 0,
+      ...(implementerModel !== undefined ? { implementerModel } : {}),
+    };
+  });
   const tags: TagStat[] = [...tagAgg.entries()]
     .map(([tag, v]) => ({ tag, totalMs: v.totalMs, turns: v.turns }))
     .sort((a, b) => b.totalMs - a.totalMs);
   const totalWindowMs = phases.reduce((sum, p) => sum + p.windowMs, 0);
   return { runId, phases, tags, totalWindowMs, notes };
+}
+
+/**
+ * The implementer model label for a phase — the pure per-phase resolver for a
+ * claude implementer (base model through planning, the impl model after the
+ * handoff gate), or the provider name ("codex") for a codex implementer, which
+ * has no model. The single view-time reuse of `implementerModelFor` for the stats
+ * column, so the label can never drift from what actually ran.
+ */
+function implementerModelLabel(bindings: RoleBindings, phase: PhaseName): string {
+  const implementer = bindings.implementer;
+  return implementer.provider === 'claude' ? implementerModelFor(bindings, phase) : implementer.provider;
 }
 
 /** The fs composer: read the voice logs for a run and build the model. */
@@ -227,7 +254,13 @@ export function buildStatsModel(state: RunState): StatsModel {
     return state.workerSessions[role] ? [{ role }] : [];
   });
   const arcOrder = phasesOf(workflowOf(state)).map((p) => p.name);
-  return buildStats(state.runId, read('orchestrator'), workers, arcOrder);
+  // Label only phases of THIS run's arc — a foreign phase (a run predating an arc
+  // change) has no confident resolution, so it stays unlabeled rather than force
+  // `implementerModelFor` to resolve a phase its workflow doesn't own.
+  const arcPhases = new Set<string>(arcOrder);
+  return buildStats(state.runId, read('orchestrator'), workers, arcOrder, (phase) =>
+    arcPhases.has(phase) ? implementerModelLabel(state.bindings, phase as PhaseName) : undefined,
+  );
 }
 
 /** The human one-screen render — a phase table, a tag breakdown, and any notes. */
@@ -237,9 +270,10 @@ export function renderStats(model: StatsModel): string {
   if (model.phases.length === 0) {
     lines.push('no phase activity recorded yet.');
   } else {
-    lines.push(`  ${'phase'.padEnd(10)} ${'elapsed'.padEnd(9)} worker (turns)`);
+    lines.push(`  ${'phase'.padEnd(10)} ${'elapsed'.padEnd(9)} ${'worker (turns)'.padEnd(16)} impl model`);
     for (const p of model.phases) {
-      lines.push(`  ${p.phase.padEnd(10)} ${formatDuration(p.windowMs).padEnd(9)} ${formatDuration(p.workerMs)} (${p.turns})`);
+      const worker = `${formatDuration(p.workerMs)} (${p.turns})`;
+      lines.push(`  ${p.phase.padEnd(10)} ${formatDuration(p.windowMs).padEnd(9)} ${worker.padEnd(16)} ${p.implementerModel ?? ''}`);
     }
     lines.push(`  ${'total'.padEnd(10)} ${formatDuration(model.totalWindowMs)}`);
   }

@@ -1,7 +1,15 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
-import { DEFAULT_BINDINGS, loadRoleBindings, loadRunConfig, parseBudget, parseRoleOverride } from '../src/config.ts';
+import {
+  DEFAULT_BINDINGS,
+  implementerModelFor,
+  loadRoleBindings,
+  loadRunConfig,
+  parseBudget,
+  parseRoleOverride,
+} from '../src/config.ts';
+import type { RoleBindings } from '../src/config.ts';
 import { test } from './helpers/fixtures.ts';
 
 const configIn = (dir: string, toml: string): string => {
@@ -138,6 +146,143 @@ describe('parseRoleOverride', () => {
       model: 'claude-opus-4-6',
     });
     expect.soft(parseRoleOverride('reviewer', 'codex')).toEqual({ provider: 'codex' });
+  });
+});
+
+describe('implementerModelFor — the per-phase implementer model resolver', () => {
+  const withImpl = (impl?: { provider: 'claude' | 'codex'; model?: string }): RoleBindings => ({
+    ...DEFAULT_BINDINGS,
+    implementer: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless', ...(impl ? { impl } : {}) },
+  });
+
+  test('no impl override ⇒ the base model in every phase (byte-for-byte today)', () => {
+    const bindings = withImpl();
+    for (const phase of ['frame', 'spec', 'plan', 'impl', 'finish'] as const) {
+      expect.soft(implementerModelFor(bindings, phase)).toBe('claude-opus-4-8');
+    }
+  });
+
+  test('with an impl override: base model through planning, impl model after the handoff gate', () => {
+    const bindings = withImpl({ provider: 'claude', model: 'claude-sonnet-5' });
+    // planning (through the plan handoff gate) keeps the smart base model
+    expect.soft(implementerModelFor(bindings, 'frame')).toBe('claude-opus-4-8');
+    expect.soft(implementerModelFor(bindings, 'spec')).toBe('claude-opus-4-8');
+    expect.soft(implementerModelFor(bindings, 'plan')).toBe('claude-opus-4-8');
+    // the build + finishing tail switch to the cheaper impl model
+    expect.soft(implementerModelFor(bindings, 'impl')).toBe('claude-sonnet-5');
+    expect.soft(implementerModelFor(bindings, 'finish')).toBe('claude-sonnet-5');
+  });
+
+  test('rir: research keeps base; implement and publish take the impl model', () => {
+    const bindings = withImpl({ provider: 'claude', model: 'claude-sonnet-5' });
+    expect.soft(implementerModelFor(bindings, 'research')).toBe('claude-opus-4-8');
+    expect.soft(implementerModelFor(bindings, 'implement')).toBe('claude-sonnet-5');
+    expect.soft(implementerModelFor(bindings, 'publish')).toBe('claude-sonnet-5');
+  });
+
+  test('an impl override with no explicit model defaults the implementer claude model', () => {
+    const bindings = withImpl({ provider: 'claude' });
+    expect.soft(implementerModelFor(bindings, 'plan')).toBe('claude-opus-4-8');
+    expect.soft(implementerModelFor(bindings, 'impl')).toBe('claude-opus-4-8'); // defaulted, a harmless no-op split
+  });
+
+  test('a codex implementer resolves to the base fallback (never reached by createWorkers, but total)', () => {
+    const bindings: RoleBindings = { ...DEFAULT_BINDINGS, implementer: { provider: 'codex' } };
+    expect.soft(implementerModelFor(bindings, 'impl')).toBe('claude-opus-4-8');
+  });
+});
+
+describe('the impl-model knob (post-handoff implementer model)', () => {
+  const implModel = (dir: string, model = 'claude-sonnet-5'): RoleBindings =>
+    loadRunConfig({}, configIn(dir, `[roles.implementer]\nprovider = "claude"\nimpl = "claude:${model}"`)).bindings;
+
+  test('[roles.implementer].impl parses onto the implementer binding as a RoleOverride', ({ projectDir }) => {
+    expect(implModel(projectDir).implementer).toEqual({
+      provider: 'claude',
+      model: 'claude-opus-4-8',
+      transport: 'headless',
+      impl: { provider: 'claude', model: 'claude-sonnet-5' },
+    });
+  });
+
+  test('--impl-model attaches the override; it wins over a configured impl', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.implementer]\nprovider = "claude"\nimpl = "claude:claude-sonnet-5"`);
+    const bindings = loadRunConfig({ implModelOverride: 'claude:claude-haiku-4-5-20251001' }, path).bindings;
+    expect(bindings.implementer.impl).toEqual({ provider: 'claude', model: 'claude-haiku-4-5-20251001' });
+  });
+
+  test('a --impl base override carries a configured impl forward (the load-bearing merge)', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.implementer]\nprovider = "claude"\nimpl = "claude:claude-sonnet-5"`);
+    // Changing only the base model must NOT discard the build-phase model.
+    const bindings = loadRoleBindings({ implementer: 'claude:claude-opus-4-6' }, path);
+    expect.soft(bindings.implementer.model).toBe('claude-opus-4-6');
+    expect.soft(bindings.implementer.impl).toEqual({ provider: 'claude', model: 'claude-sonnet-5' });
+  });
+
+  test('switching the implementer to codex drops the configured impl (mirrors transport)', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.implementer]\nprovider = "claude"\nimpl = "claude:claude-sonnet-5"`);
+    expect(loadRoleBindings({ implementer: 'codex' }, path).implementer).toEqual({ provider: 'codex' });
+  });
+
+  test('impl on a codex implementer is refused — the swap is claude-only, same-provider', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.implementer]\nprovider = "codex"\nimpl = "claude:claude-sonnet-5"`);
+    expect(() => loadRoleBindings(undefined, path)).toThrow(/needs a claude implementer/);
+  });
+
+  test('--impl-model on a codex-configured implementer is refused at the cross-source guard', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.implementer]\nprovider = "codex"`);
+    expect(() => loadRunConfig({ implModelOverride: 'claude:claude-sonnet-5' }, path)).toThrow(
+      /claude-only knob, but the implementer is bound to codex/,
+    );
+  });
+
+  test('impl on a non-implementer role is refused — it is implementer-only', ({ projectDir }) => {
+    const path = configIn(projectDir, `[roles.reviewer]\nprovider = "claude"\nimpl = "claude:claude-sonnet-5"`);
+    expect(() => loadRoleBindings(undefined, path)).toThrow(/impl is implementer-only/);
+  });
+
+  test('a reserved (non-claude) impl provider is refused with the reserved message — bare and with a model', ({
+    projectDir,
+  }) => {
+    const bare = configIn(projectDir, `[roles.implementer]\nprovider = "claude"\nimpl = "codex"`);
+    expect.soft(() => loadRoleBindings(undefined, bare)).toThrow(/reserved/);
+    const withModel = configIn(projectDir, `[roles.implementer]\nprovider = "claude"\nimpl = "codex:gpt-5"`);
+    expect.soft(() => loadRoleBindings(undefined, withModel)).toThrow(/reserved/);
+    // The flag path shares the same reserved guard.
+    expect.soft(() => loadRunConfig({ implModelOverride: 'codex' }, join(projectDir, 'missing.toml'))).toThrow(/reserved/);
+  });
+
+  test('impl with the interactive transport is refused in v1 (model-swap-on-resume unverified there)', ({
+    projectDir,
+  }) => {
+    const path = configIn(
+      projectDir,
+      `[roles.implementer]\nprovider = "claude"\ntransport = "interactive"\nimpl = "claude:claude-sonnet-5"`,
+    );
+    expect(() => loadRoleBindings(undefined, path)).toThrow(/interactive transport/);
+  });
+
+  test('absent knob ⇒ no impl field on any binding (byte-for-byte today)', ({ projectDir }) => {
+    const bindings = loadRunConfig({}, join(projectDir, 'missing.toml')).bindings;
+    expect(bindings.implementer).not.toHaveProperty('impl');
+  });
+
+  test('--impl-model on a default binding never mutates the shared DEFAULT_BINDINGS (absent-knob invariant)', ({
+    projectDir,
+  }) => {
+    const missing = join(projectDir, 'missing.toml');
+    // A flag load with NO config table — the implementer is the shared default object.
+    const withFlag = loadRunConfig({ implModelOverride: 'claude:claude-sonnet-5' }, missing).bindings;
+    expect.soft(withFlag.implementer.impl).toEqual({ provider: 'claude', model: 'claude-sonnet-5' });
+    // A later plain load must return the pristine default — no leaked impl.
+    const plain = loadRunConfig({}, missing).bindings;
+    expect.soft(plain.implementer).not.toHaveProperty('impl');
+    // And the module-global default itself is untouched (the direct proof).
+    expect.soft(DEFAULT_BINDINGS.implementer).not.toHaveProperty('impl');
+  });
+
+  test('an empty --impl-model spec is rejected with a clear message, not silently dropped', ({ projectDir }) => {
+    expect(() => loadRunConfig({ implModelOverride: '' }, join(projectDir, 'missing.toml'))).toThrow(/impl model is empty/);
   });
 });
 

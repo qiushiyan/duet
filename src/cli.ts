@@ -8,7 +8,7 @@ import { createActor } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
 import { continuePlanner } from './continue-planner.ts';
 import type { ContinueEventType, RestoredFacts } from './continue-planner.ts';
-import { bindingFor, loadRunConfig } from './config.ts';
+import { DEFAULT_CLAUDE_MODEL, bindingFor, loadRunConfig } from './config.ts';
 import type { BindableRole } from './config.ts';
 import { sessionPolicyFor, voicesFor } from './roles.ts';
 import { DEFAULT_FRAMING_FILE, composeInEditor, parseGatesAt, resolveHumanText, resolveRunInputs } from './framing.ts';
@@ -288,7 +288,11 @@ program
     'opt-in per-turn cost caps: off (default — unbounded, the flat-quota posture), default (the built-in per-phase profile), or a positive multiplier N scaling it (e.g. 0.5, 2). Overrides the config budget key; one knob covers both the worker and orchestrator caps',
   )
   .option('--orchestrator <provider[:model]>', 'role binding override (claude[:model] only in v1)')
-  .option('--impl <provider[:model]>', 'implementer binding override')
+  .option('--impl <provider[:model]>', 'implementer binding override (the model used for every phase)')
+  .option(
+    '--impl-model <provider[:model]>',
+    "the implementer's model from the implementation phase onward: plan on the base model, build & finish on this (usually cheaper) one. claude[:model] only in v1",
+  )
   .option('--reviewer <provider[:model]>', 'reviewer binding override')
   .option(
     '--consultant <provider[:model]>',
@@ -303,7 +307,7 @@ program
   .option('--interactive', "orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over the attended arc up to the workflow's handoff gate (full: through the plan gate; rir: through the Direction gate); implementation onward runs headless after that handoff")
   .option('--no-interactive', 'force headless orchestration even when the framing carries interactive: true (the flag wins over the frontmatter)')
   .option('--resume-session <id>', 'warm-start the interactive orchestrator from an existing Claude Code session: resume that session (its discussion context intact) as this run’s orchestrator instead of opening a fresh one. Needs --interactive; capture the id with `printenv CLAUDE_CODE_SESSION_ID` inside the session you want to continue')
-  .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; budget?: string; orchestrator?: string; impl?: string; reviewer?: string; consultant?: string | boolean; gateless?: boolean; tmux?: boolean; interactive?: boolean; resumeSession?: string }) => {
+  .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; budget?: string; orchestrator?: string; impl?: string; implModel?: string; reviewer?: string; consultant?: string | boolean; gateless?: boolean; tmux?: boolean; interactive?: boolean; resumeSession?: string }) => {
     const cwd = process.cwd();
 
     // The framing's frontmatter is the machine/prose boundary: parsed
@@ -354,6 +358,7 @@ program
       // The framing `consultant: on|off` toggle; the flags above win over it (loadRunConfig).
       ...(consultantToggle ? { consultantToggle } : {}),
       ...(opts.budget !== undefined ? { budgetOverride: opts.budget } : {}),
+      ...(opts.implModel !== undefined ? { implModelOverride: opts.implModel } : {}),
     });
 
     let branch: string | undefined;
@@ -375,8 +380,12 @@ program
     if (framingFile === DEFAULT_FRAMING_FILE) unlinkSync(join(cwd, DEFAULT_FRAMING_FILE));
     console.log(`run ${state.runId} created`);
     if (opts.tmux) await openTmuxView(state);
+    // The implementer field shows the post-handoff split when an impl model is
+    // bound (base → build model); absent, it reads exactly as before.
+    const implImpl = bindings.implementer.impl;
+    const implModelSplit = implImpl ? ` → build:${implImpl.model ?? DEFAULT_CLAUDE_MODEL.implementer}` : '';
     console.log(
-      `roles: orchestrator=${bindings.orchestrator.provider}:${bindings.orchestrator.model ?? ''} implementer=${bindings.implementer.provider}${bindings.implementer.model ? ':' + bindings.implementer.model : ''} reviewer=${bindings.reviewer.provider}${bindings.reviewer.model ? ':' + bindings.reviewer.model : ''}${bindings.consultant ? ` consultant=${bindings.consultant.provider}${bindings.consultant.model ? ':' + bindings.consultant.model : ''}` : ''}`,
+      `roles: orchestrator=${bindings.orchestrator.provider}:${bindings.orchestrator.model ?? ''} implementer=${bindings.implementer.provider}${bindings.implementer.model ? ':' + bindings.implementer.model : ''}${implModelSplit} reviewer=${bindings.reviewer.provider}${bindings.reviewer.model ? ':' + bindings.reviewer.model : ''}${bindings.consultant ? ` consultant=${bindings.consultant.provider}${bindings.consultant.model ? ':' + bindings.consultant.model : ''}` : ''}`,
     );
     // gatesAt: [] is the afk "attend none" posture — explicit copy, not an empty join.
     if (state.gatesAt)
