@@ -358,7 +358,7 @@ program
       // The framing `consultant: on|off` toggle; the flags above win over it (loadRunConfig).
       ...(consultantToggle ? { consultantToggle } : {}),
       ...(opts.budget !== undefined ? { budgetOverride: opts.budget } : {}),
-      ...(opts.implModel ? { implModelOverride: opts.implModel } : {}),
+      ...(opts.implModel !== undefined ? { implModelOverride: opts.implModel } : {}),
     });
 
     let branch: string | undefined;

@@ -266,6 +266,24 @@ describe('the impl-model knob (post-handoff implementer model)', () => {
     const bindings = loadRunConfig({}, join(projectDir, 'missing.toml')).bindings;
     expect(bindings.implementer).not.toHaveProperty('impl');
   });
+
+  test('--impl-model on a default binding never mutates the shared DEFAULT_BINDINGS (absent-knob invariant)', ({
+    projectDir,
+  }) => {
+    const missing = join(projectDir, 'missing.toml');
+    // A flag load with NO config table — the implementer is the shared default object.
+    const withFlag = loadRunConfig({ implModelOverride: 'claude:claude-sonnet-5' }, missing).bindings;
+    expect.soft(withFlag.implementer.impl).toEqual({ provider: 'claude', model: 'claude-sonnet-5' });
+    // A later plain load must return the pristine default — no leaked impl.
+    const plain = loadRunConfig({}, missing).bindings;
+    expect.soft(plain.implementer).not.toHaveProperty('impl');
+    // And the module-global default itself is untouched (the direct proof).
+    expect.soft(DEFAULT_BINDINGS.implementer).not.toHaveProperty('impl');
+  });
+
+  test('an empty --impl-model spec is rejected, not silently dropped', ({ projectDir }) => {
+    expect(() => loadRunConfig({ implModelOverride: '' }, join(projectDir, 'missing.toml'))).toThrow(/reserved/);
+  });
 });
 
 describe('parseBudget — the opt-in budget knob', () => {

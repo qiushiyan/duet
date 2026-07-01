@@ -371,7 +371,15 @@ export function loadRunConfig(
   // than reaching a worker. The reserved non-claude provider is caught at parse
   // time (parseImplOverride), so it is not re-checked.
   if (opts.implModelOverride !== undefined) {
-    bindings.implementer.impl = parseImplOverride(opts.implModelOverride);
+    // REPLACE the implementer object, never mutate it: when no config table and no
+    // `--impl` override supplied one, `bindings.implementer` is still the SHARED
+    // `DEFAULT_BINDINGS.implementer` reference (`bindings` is only a shallow copy of
+    // DEFAULT_BINDINGS above), so `bindings.implementer.impl = …` would write the
+    // build model onto the process-global default and leak it into every later
+    // default-binding load — breaking the absent-knob invariant. A fresh object
+    // leaves the default pristine (the same replace-don't-mutate discipline the
+    // transport merge above already follows).
+    bindings.implementer = { ...bindings.implementer, impl: parseImplOverride(opts.implModelOverride) };
   }
   if (bindings.implementer.impl) {
     if (bindings.implementer.provider !== 'claude') {
