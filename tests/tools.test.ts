@@ -510,6 +510,24 @@ describe('send_prompt', () => {
     expect.soft(joined).not.toContain('Resume that session with a short continuation');
   });
 
+  test('S7: an aborted /compact does NOT record its base template as sent (the reset session never received it)', async ({
+    projectDir,
+    run,
+  }) => {
+    // A real /compact carries a base-template tag (compact-for-impl), unlike the
+    // custom-tag cases above. On an accepted-but-failed compact the session is
+    // discarded, so recording the template "sent" would make a legitimate
+    // same-phase re-compact hit the false "already sent this phase" warn-once —
+    // it must NOT be recorded against the session that no longer exists.
+    const implementer = new FakeWorker('claude', [{ aborted: true, sessionId: 'sess-compact' }]);
+    const { call } = harness(run, { implementer });
+    await call('send_prompt', { role: 'implementer', tag: 'compact-for-impl', body: '/compact drop the journey' });
+
+    const after = loadRunState(projectDir, run.runId);
+    expect.soft(after.workerSessions.implementer).toBeUndefined(); // the bloated session was reset
+    expect.soft(after.sentSnippets?.spec?.implementer ?? []).not.toContain('compact-for-impl'); // …so nothing is marked sent to it
+  });
+
   test('S7 / Finding-2: an aborted /compact resets the PERSISTENT reviewer too, and the copy names the reviewer (not the implementer)', async ({
     projectDir,
     run,

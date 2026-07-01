@@ -413,7 +413,11 @@ export function settleTurn(
   // no review — counting it would burn the phase cap and make later rails believe
   // a review ran.
   if (isReviewRound && !aborted) fresh.rounds[phase] = (fresh.rounds[phase] ?? 0) + 1;
-  if (isBaseTemplate(tag)) {
+  // Skip the sent-mark when an aborted /compact just reset the session: the fresh
+  // session the next send seeds has NOT received this template, so recording it
+  // would make a legitimate same-phase re-compact hit the false "already sent this
+  // phase" warn-once. Only a session that actually holds the template is recorded.
+  if (isBaseTemplate(tag) && !compactReset) {
     const sent = ((fresh.sentSnippets ??= {})[phase] ??= {});
     const tags = (sent[role] ??= []);
     if (!tags.includes(tag)) tags.push(tag);
