@@ -59,7 +59,7 @@ export function salvageCompactInstructions(facts: { phase: string; specPath?: st
   const spec = facts.specPath ? ` The committed spec at ${facts.specPath} survives on disk — cite it rather than restating it.` : '';
   const branch = facts.branch ? ` The working branch is ${facts.branch}.` : '';
   return (
-    `This session hit its context-window ceiling mid-work, and this compaction is an automatic recovery step — its instructions are generic. ` +
+    `This session hit its context-window ceiling mid-work, and this compaction is an automatic recovery step. ` +
     `Preserve what continuing the work needs: the current task and its exact in-progress state (files mid-edit, the next intended step), ` +
     `every decision already made with its reason, and the concrete repo facts in use (paths, commands, test state). ` +
     `Drop the exploration journey, superseded drafts, and old tool output.` +

@@ -641,7 +641,7 @@ export function renderTurnResult(
         shouldResetAfterCompactAbort(role, meta.isCompactTurn === true, true)
           ? `(the /compact turn ran to its cap and was aborted — its session is un-compacted and bloated, so resuming it is the wrong move. duet has RESET the ${role} to a fresh session; re-anchor it by sending the recover-context snippet (a project/status overview + reread), NOT the original /compact or a resume. This is a recovery checkpoint, not a failure.)`
           : outcome.contextExhausted
-            ? `(the worker turn was cut at the session's context cap — it saw your prompt and its committed work is on disk, but the session is nearly full, so a bare resume would run straight back into the same ceiling. Send the ${role} a "/compact " body with your adapted compact instructions first (a compaction request still fits), then resume with a short continuation to finish the remainder. This is a scheduled maintenance stop, not a failure.)`
+            ? `(the worker turn was cut at the session's context cap — it saw your prompt and committed work may be on disk, but the session is nearly full, so a bare resume would run straight back into the same ceiling. Send the ${role} a "/compact " body with your adapted compact instructions first (a compaction request still fits), then resume with a short continuation to finish the remainder. This is a scheduled maintenance stop, not a failure.)`
             : `(the worker ran to its time cap and was aborted — but it saw your prompt and committed work may be on disk, in a resumable session. Resume that session with a short continuation to finish the remainder; do NOT re-send the original prompt (it would duplicate the conversation). This is a checkpoint, not a failure.)`,
       ),
     );
@@ -979,7 +979,7 @@ export const contextPressureRail: Rail<SendInput> = ({ role, isCompactTurn }, ct
   if (band === 'ok') return null;
   if (band === 'emergency') {
     return refuse(
-      `The ${role}'s session is at ${percent}% of its context window — past ${CONTEXT_EMERGENCY_PERCENT}% a normal send is likely to bounce off "Prompt is too long", and a working turn would certainly hit it. Compact before anything else: send the ${role} a body that is literally "/compact " followed by your adapted compact instructions (a /compact body passes this check), then re-send this prompt into the freshly compacted session.`,
+      `The ${role}'s session is at ${percent}% of its context window — past ${CONTEXT_EMERGENCY_PERCENT}% there is no headroom left for a working turn: one more could carry the session over its window mid-work and wedge it. Compact before anything else: send the ${role} a body that is literally "/compact " followed by your adapted compact instructions (a /compact body passes this check), then re-send this prompt into the freshly compacted session.`,
     );
   }
   // Caution: warn once per role per phase, on the same warned-set the template
@@ -988,7 +988,7 @@ export const contextPressureRail: Rail<SendInput> = ({ role, isCompactTurn }, ct
   if (ctx.resendWarned.has(warnKey)) return null;
   ctx.resendWarned.add(warnKey);
   return refuse(
-    `Before this send: the ${role}'s session is at ${percent}% of its context window (${CONTEXT_CAUTION_PERCENT}% is the caution line). Compaction is due — it is cheaper and preserves more headroom now than closer to the ceiling, and the next long turn could reach the ceiling mid-work. Send the ${role} a "/compact " body with your adapted compact instructions at the next natural pause; if this prompt genuinely can't wait (the worker is mid-thought and the send is small), repeat this exact call and it will go through.`,
+    `The ${role}'s session is at ${percent}% of its context window, past the ${CONTEXT_CAUTION_PERCENT}% caution line. Compaction is due — it is cheaper and preserves more headroom now than closer to the ceiling, and the next long turn could reach the ceiling mid-work. Send the ${role} a "/compact " body with your adapted compact instructions at the next natural pause; if this prompt genuinely can't wait (the worker is mid-thought and the send is small), repeat this exact call and it will go through.`,
   );
 };
 
@@ -1150,7 +1150,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       resetWedgedSession(role);
       return error(
         block(
-          `The ${role} worker's session hit its context-window ceiling again after an automatic salvage compaction — its compact floor is too high to keep working in. duet has RESET the ${role} to a fresh session; re-anchor it with the recover-context snippet (a status overview plus a reread of the committed artifacts), not a resume or a re-send.`,
+          `The ${role} worker's session hit its context-window ceiling again after an automatic salvage compaction — even freshly compacted it stays too full to work in. duet has RESET the ${role} to a fresh session; re-anchor it with the recover-context snippet (a status overview plus a reread of the committed artifacts), not a resume or a re-send.`,
         ),
       );
     }
