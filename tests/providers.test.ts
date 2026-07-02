@@ -640,6 +640,68 @@ describe('context-window probes (per-provider math, one shape)', () => {
     expect.soft(parseClaudeTurn(noWindow, 'p').context).toBeUndefined();
   });
 
+  test('claude: a trailing zero-usage assistant message (the error echo) never zeroes the reading', () => {
+    // The 20260701 wedge: an error-terminated turn's last assistant message is
+    // the CLI's error echo with zeroed usage — taking it verbatim reported
+    // "context 0%" on a session that died of overflow at 98%. The last REAL
+    // request's reading must win.
+    const result = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: 'done',
+      session_id: 'sess-1',
+      modelUsage: { 'claude-opus-4-8[1m]': { contextWindow: 1_000_000 } },
+    };
+    const stdout = JSON.stringify([
+      { type: 'assistant', message: { usage: { input_tokens: 900_000, cache_read_input_tokens: 70_000, output_tokens: 500 } } },
+      { type: 'assistant', message: { usage: { input_tokens: 0, output_tokens: 0 } } },
+      result,
+    ]);
+    expect(parseClaudeTurn(stdout, 'p').context).toEqual({ usedTokens: 970_500, windowTokens: 1_000_000 });
+  });
+
+  test('claude: only zero-usage assistant messages means no reading at all', () => {
+    const result = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: 'x',
+      session_id: 's',
+      modelUsage: { 'claude-opus-4-8[1m]': { contextWindow: 1_000_000 } },
+    };
+    const stdout = JSON.stringify([{ type: 'assistant', message: { usage: { input_tokens: 0, output_tokens: 0 } } }, result]);
+    expect(parseClaudeTurn(stdout, 'p').context).toBeUndefined();
+  });
+
+  test('claude: an interrupted turn keeps the last honest reading, not the error echo’s zero', () => {
+    // The mid-response failure shape from the wedge night: an is_error envelope
+    // whose partial work settles as an interrupted checkpoint. Its context must
+    // come from the last real request — undefined would also be acceptable, but
+    // 0% (the old behavior) actively misled the send-gate.
+    const stdout = JSON.stringify([
+      {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'text', text: 'real partial work' }],
+          usage: { input_tokens: 950_000, cache_read_input_tokens: 20_000, output_tokens: 400 },
+        },
+      },
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'Prompt is too long' }], usage: { input_tokens: 0, output_tokens: 0 } } },
+      {
+        type: 'result',
+        subtype: 'error_during_execution',
+        is_error: true,
+        result: 'Prompt is too long',
+        session_id: 'sess-wedge',
+        modelUsage: { 'claude-opus-4-8[1m]': { contextWindow: 1_000_000 } },
+      },
+    ]);
+    const turn = parseClaudeTurn(stdout, 'continue the keystone');
+    expect.soft(turn.interrupted).toBe(true);
+    expect.soft(turn.context).toEqual({ usedTokens: 970_400, windowTokens: 1_000_000 });
+  });
+
   test('codex: the rollout’s last token_count event wins', () => {
     const tail = [
       JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { total_tokens: 30_000 }, model_context_window: 258_400 } } }),

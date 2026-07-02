@@ -70,26 +70,33 @@ const assistantUsage = z.looseObject({
  * message's request usage (everything the request carried: fresh input,
  * cache reads, cache writes, output) against the model's context window
  * from the result's modelUsage. Either side missing → undefined, honestly.
+ *
+ * Only a usage that actually billed tokens counts: an error-terminated turn's
+ * trailing assistant message is the CLI's error echo with zeroed usage, and
+ * taking it verbatim reported "context 0%" at the exact moment a session died
+ * of context overflow at 98% (the 20260701 wedge) — so a zero-sum usage is
+ * skipped and the last real request's reading stands.
  */
 export function claudeContextUsage(
   candidates: unknown[],
   modelUsage: Record<string, { contextWindow?: number }> | undefined,
 ): { usedTokens: number; windowTokens: number } | undefined {
-  let last: z.infer<typeof assistantUsage> | undefined;
+  let usedTokens: number | undefined;
   for (const m of candidates) {
     if (typeof m !== 'object' || m === null) continue;
     const message = (m as { type?: unknown; message?: { usage?: unknown } });
     if (message.type !== 'assistant' || !message.message?.usage) continue;
     const parsed = assistantUsage.safeParse(message.message.usage);
-    if (parsed.success) last = parsed.data;
+    if (!parsed.success) continue;
+    const total =
+      (parsed.data.input_tokens ?? 0) +
+      (parsed.data.cache_read_input_tokens ?? 0) +
+      (parsed.data.cache_creation_input_tokens ?? 0) +
+      (parsed.data.output_tokens ?? 0);
+    if (total > 0) usedTokens = total;
   }
   const windowTokens = Math.max(0, ...Object.values(modelUsage ?? {}).map((m) => m.contextWindow ?? 0));
-  if (!last || windowTokens === 0) return undefined;
-  const usedTokens =
-    (last.input_tokens ?? 0) +
-    (last.cache_read_input_tokens ?? 0) +
-    (last.cache_creation_input_tokens ?? 0) +
-    (last.output_tokens ?? 0);
+  if (usedTokens === undefined || windowTokens === 0) return undefined;
   return { usedTokens, windowTokens };
 }
 

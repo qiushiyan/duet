@@ -34,7 +34,7 @@ import { BudgetCutoffError } from '../src/providers/types.ts';
 import type { WorkerRole } from '../src/providers/types.ts';
 import { PHASE } from '../src/phases.ts';
 import type { PhaseName } from '../src/phases.ts';
-import { createRun, loadRunState, markPendingTurn, runDirOf, saveRunState, stageHumanInput } from '../src/run-store.ts';
+import { createRun, loadRunState, markPendingTurn, recordContextUsage, runDirOf, saveRunState, stageHumanInput } from '../src/run-store.ts';
 import { listPendingSteers, stageSteer } from '../src/steer-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
@@ -526,6 +526,42 @@ describe('send_prompt', () => {
     const after = loadRunState(projectDir, run.runId);
     expect.soft(after.workerSessions.implementer).toBeUndefined(); // the bloated session was reset
     expect.soft(after.sentSnippets?.spec?.implementer ?? []).not.toContain('compact-for-impl'); // …so nothing is marked sent to it
+  });
+
+  test('a completed /compact clears the role’s context reading — post-compact fill is unknown until the next turn', async ({
+    projectDir,
+    run,
+  }) => {
+    // The compact turn's own usage reflects the summarization REQUEST (the whole
+    // pre-compact conversation) — recording it would pin the high-water at the
+    // very size the compact just removed. The reading clears instead; the next
+    // honest turn re-establishes it.
+    recordContextUsage(run, 'implementer', { usedTokens: 410_000, windowTokens: 1_000_000 });
+    saveRunState(run);
+    const implementer = new FakeWorker('claude', [
+      { sessionId: 'sess-1', context: { usedTokens: 405_000, windowTokens: 1_000_000 } },
+    ]);
+    const { call } = harness(run, { implementer });
+    await call('send_prompt', { role: 'implementer', tag: 'compact-for-impl', body: '/compact keep the plan, drop the journey' });
+
+    const after = loadRunState(projectDir, run.runId);
+    expect.soft(after.contextUsage?.implementer).toBeUndefined();
+    expect.soft(existsSync(join(runDirOf(projectDir, run.runId), 'context', 'implementer'))).toBe(false);
+  });
+
+  test('an aborted /compact’s session reset clears the context reading with the session', async ({
+    projectDir,
+    run,
+  }) => {
+    recordContextUsage(run, 'implementer', { usedTokens: 978_000, windowTokens: 1_000_000 });
+    saveRunState(run);
+    const implementer = new FakeWorker('claude', [{ aborted: true, sessionId: 'sess-compact' }]);
+    const { call } = harness(run, { implementer });
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact drop the journey' });
+
+    const after = loadRunState(projectDir, run.runId);
+    expect.soft(after.workerSessions.implementer).toBeUndefined(); // the reset (existing behavior)
+    expect.soft(after.contextUsage?.implementer).toBeUndefined(); // the fresh session starts near-empty
   });
 
   test('S7 / Finding-2: an aborted /compact resets the PERSISTENT reviewer too, and the copy names the reviewer (not the implementer)', async ({

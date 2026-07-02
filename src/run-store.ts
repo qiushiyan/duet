@@ -324,9 +324,14 @@ export interface RunState {
    * Context-window fill per voice, captured at turn boundaries (claude roles
    * report it in-band; codex from its rollout tail). A hint like everything
    * here — stale after manual takeover turns, refreshed on the next driven
-   * turn.
+   * turn. `usedTokens` is the LAST honest reading (what displays render);
+   * `highWaterTokens`, when present, is the max since this voice's last
+   * compact/session reset — the safety reading (`contextSafetyPercent`) the
+   * context-pressure guards act on, so a later lower reading (cache expiry
+   * shrinking a request, codex auto-compacting) never relaxes a guard
+   * mid-growth. Absent ⇒ usedTokens IS the high-water.
    */
-  contextUsage?: Partial<Record<Voice, ContextUsage & { at: string }>>;
+  contextUsage?: Partial<Record<Voice, ContextUsage & { at: string; highWaterTokens?: number }>>;
   snippetProposals: Array<{ snippetKey: string; proposedBody: string; rationale: string; at: string }>;
   lastActivity?: string;
 }
@@ -797,12 +802,55 @@ export function fmtTokens(n: number): string {
  * the save, as with every handler-side mutation) and refreshes the plain-text
  * sidecar `context/<voice>` ("41%") that the tmux pane titles re-read at
  * their refresh interval — a `cat` per interval, no JSON parsing at view time.
+ *
+ * Alongside the last reading it carries the high-water mark forward: the max
+ * `usedTokens` since the voice's last compact/reset, kept because a session's
+ * fill can legitimately read LOWER on a later turn without any compaction and a
+ * safety guard must not relax on that. A window change (a mid-run model swap)
+ * makes token comparison meaningless, so it restarts the mark. Compacts and
+ * session resets clear the whole record via `clearContextUsage` instead — a
+ * post-compact fill is unknown until the next turn reports it.
  */
 export function recordContextUsage(state: RunState, voice: Voice, usage: ContextUsage): void {
-  (state.contextUsage ??= {})[voice] = { ...usage, at: new Date().toISOString() };
+  const prev = state.contextUsage?.[voice];
+  const highWater =
+    prev && prev.windowTokens === usage.windowTokens
+      ? Math.max(prev.highWaterTokens ?? prev.usedTokens, usage.usedTokens)
+      : usage.usedTokens;
+  (state.contextUsage ??= {})[voice] = {
+    ...usage,
+    at: new Date().toISOString(),
+    ...(highWater > usage.usedTokens ? { highWaterTokens: highWater } : {}),
+  };
   const dir = join(ensureRunDir(state.cwd, state.runId), 'context');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, voice), `${contextPercent(usage)}%\n`);
+}
+
+/**
+ * Drop a voice's context reading — after a successful `/compact` (the fill is
+ * unknown until the next turn's honest reading re-establishes it) or a session
+ * reset (a fresh session starts near-empty). Clearing rather than guessing keeps
+ * the safety reading honest: `contextSafetyPercent` returns undefined and the
+ * pressure guards stand down until real telemetry returns. The sidecar file is
+ * removed too, so the pane shows nothing rather than a stale pre-compact number.
+ */
+export function clearContextUsage(state: RunState, voice: Voice): void {
+  if (state.contextUsage?.[voice]) delete state.contextUsage[voice];
+  rmSync(join(runDirOf(state.cwd, state.runId), 'context', voice), { force: true });
+}
+
+/**
+ * The SAFETY reading of a voice's context fill: whole percent of the window at
+ * the high-water mark since its last compact/reset (falling back to the last
+ * reading when the mark is absent), or undefined when no reading exists. This —
+ * never the display percent — is what the context-pressure guards consult, so a
+ * turn that grew the session and then reported a lower number still trips them.
+ */
+export function contextSafetyPercent(state: RunState, voice: Voice): number | undefined {
+  const usage = state.contextUsage?.[voice];
+  if (!usage) return undefined;
+  return contextPercent({ usedTokens: Math.max(usage.usedTokens, usage.highWaterTokens ?? 0), windowTokens: usage.windowTokens });
 }
 
 /**

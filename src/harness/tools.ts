@@ -11,6 +11,7 @@ import { getSnippet, renderSnippetLibrary, runtimeLibraryContext } from '../snip
 import {
   appendNote,
   appendVoiceLog,
+  clearContextUsage,
   clearPendingTurn,
   clearTurnActive,
   consumeHumanInput,
@@ -436,7 +437,13 @@ export function settleTurn(
     fresh.costs.codexTokens.input += turn.tokens.input;
     fresh.costs.codexTokens.output += turn.tokens.output;
   }
-  if (turn.context) recordContextUsage(fresh, role, turn.context);
+  // A compact turn's own usage reflects the summarization REQUEST (the whole
+  // pre-compact conversation), not the post-compact window — recording it would
+  // pin the high-water at the very size the compact just removed. So a completed
+  // compact (and a session reset, whose fresh session starts near-empty) clears
+  // the reading and lets the next turn re-establish it honestly.
+  if ((meta.isCompactTurn === true && !aborted) || compactReset) clearContextUsage(fresh, role);
+  else if (turn.context) recordContextUsage(fresh, role, turn.context);
   // Acceptance-contract authorship/verification evidence — durable proof THIS run's
   // consultant ran the checkpoint, which the freeze and the advance_phase rails
   // require (so guarantee 2 holds mechanically, not by prompt compliance). Keyed on

@@ -8,7 +8,10 @@ import {
   acquireMcpOwner,
   appendVoiceLog,
   budgetFor,
+  clearContextUsage,
   consumeHumanInput,
+  contextPercent,
+  contextSafetyPercent,
   createRun,
   DEFAULT_RETRY_INFRA,
   gateAttended,
@@ -19,6 +22,7 @@ import {
   loadMachineSnapshot,
   loadRunState,
   markTurnActive,
+  recordContextUsage,
   recordPhaseLabel,
   runDirOf,
   saveMachineSnapshot,
@@ -36,6 +40,43 @@ describe('recordPhaseLabel — the view-only tmux phase sidecar', () => {
     expect.soft(readFileSync(sidecar, 'utf8')).toBe('impl\n');
     recordPhaseLabel(run, 'finish');
     expect.soft(readFileSync(sidecar, 'utf8')).toBe('finish\n'); // refreshed, not appended
+  });
+});
+
+describe('context readings — last honest reading + high-water since compact', () => {
+  test('a later lower reading keeps the high-water for safety, the last reading for display', ({ run }) => {
+    recordContextUsage(run, 'implementer', { usedTokens: 170_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'implementer', { usedTokens: 500_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'implementer', { usedTokens: 300_000, windowTokens: 1_000_000 });
+    const reading = run.contextUsage?.implementer;
+    expect.soft(reading?.usedTokens).toBe(300_000); // display: the last honest reading
+    expect.soft(reading?.highWaterTokens).toBe(500_000); // safety: the mark holds through the drop
+    expect.soft(contextSafetyPercent(run, 'implementer')).toBe(50);
+    expect.soft(contextPercent(reading!)).toBe(30);
+  });
+
+  test('a climbing reading needs no separate mark — usedTokens IS the high-water', ({ run }) => {
+    recordContextUsage(run, 'implementer', { usedTokens: 170_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'implementer', { usedTokens: 500_000, windowTokens: 1_000_000 });
+    expect.soft(run.contextUsage?.implementer?.highWaterTokens).toBeUndefined();
+    expect.soft(contextSafetyPercent(run, 'implementer')).toBe(50);
+  });
+
+  test('a window change (mid-run model swap) restarts the mark — cross-window token math is meaningless', ({ run }) => {
+    recordContextUsage(run, 'implementer', { usedTokens: 800_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'implementer', { usedTokens: 100_000, windowTokens: 200_000 });
+    expect.soft(run.contextUsage?.implementer?.highWaterTokens).toBeUndefined();
+    expect.soft(contextSafetyPercent(run, 'implementer')).toBe(50); // 100k of the NEW 200k window
+  });
+
+  test('clearContextUsage drops the reading and the sidecar; the safety percent stands down', ({ projectDir, run }) => {
+    recordContextUsage(run, 'implementer', { usedTokens: 978_000, windowTokens: 1_000_000 });
+    const sidecar = join(runDirOf(projectDir, run.runId), 'context', 'implementer');
+    expect.soft(existsSync(sidecar)).toBe(true);
+    clearContextUsage(run, 'implementer');
+    expect.soft(run.contextUsage?.implementer).toBeUndefined();
+    expect.soft(existsSync(sidecar)).toBe(false);
+    expect.soft(contextSafetyPercent(run, 'implementer')).toBeUndefined();
   });
 });
 
