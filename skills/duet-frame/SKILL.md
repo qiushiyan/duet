@@ -45,7 +45,7 @@ Surface a conflict as an observation and a question, never a redesign — naming
 duet runs one of three arcs; settle which before gate posture, because the gates differ between them. Choose by how much ceremony the problem warrants, and record it as `workflow:` in the frontmatter (default `full`):
 
 - **`full`** — the thorough arc: frame → spec → plan → implementation → PR. Use it when the ceremony earns its keep: an unfamiliar domain, heavy risk, or work where the product spec and the technical plan genuinely differ and each deserves its own review.
-- **`design`** — the middle arc: frame → design → implementation → PR. One committed **design doc** replaces the spec + plan pair — product goals and behaviors on top, module boundaries and test standards below — reviewed in a single loop and ratified at one gate. Use it for serious work on a trusted frontier-model implementer: the user reads one document, taps once, and walks away.
+- **`design`** — the middle arc: frame → design → implementation → PR. One committed **design doc** replaces the spec + plan pair — product goals and behaviors on top, module boundaries and test standards below — reviewed in a single loop and ratified at one gate. Use it for serious work on a trusted frontier-model implementer.
 - **`rir`** (Research → Implement → Review) — the fast arc: research → implement (build, review, reconcile docs) → a `finish` phase that opens a PR. No spec, no plan; the research decisions are the design. Use it for quick, well-understood iteration where any document ceremony would cost more than it returns.
 
 If the user hasn't said: suggest `rir` when the problem is small and clearly understood, `design` when the work is substantial but they trust the implementer's model with the technical depth, and `full` otherwise — then confirm.
@@ -112,7 +112,7 @@ consultant: on             # optional: on | off toggle for a config-bound consul
  referenced assets under .duet/ so paths don't rot out from under the run>
 
 # Conventions
-- Specs live at: <path>
+- Specs live at: <path — also where the design arc's design doc lands>
 - Plans live at: <path>
 - Branch: <the run's branch, or a naming convention>
 

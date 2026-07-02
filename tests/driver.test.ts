@@ -163,15 +163,20 @@ describe('feedbackResumePrompt — the human feedback reaches the worker', () =>
 });
 
 describe('the orchestrator system prompt is arc-neutral', () => {
-  test('the review-loop language defers to the phase rather than universalizing -again/round-2', () => {
-    // It still names Full's mechanisms (discipline preserved) but scopes them to
-    // the phase, and names RIR's single writable round alongside.
-    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('the phase brief names which');
-    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('apply-review');
+  test('the review-loop language defers to the phase rather than enumerating arcs', () => {
+    // The durable prompt teaches the loop discipline in phase-generic terms and
+    // leaves the phase's own snippets to the brief — an arc enumeration there
+    // went stale the moment a third arc landed (the design arc was the second
+    // time; "spec and plan loops" under-described the system it governs).
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('the phase brief names them');
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('writable round');
     expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('single-round phase');
-    // Full's discipline is not weakened — review-*/update-*/respond-*/-again still taught.
+    // The loop discipline is not weakened — review-*/update-*/respond-*/-again still taught.
     expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('update-*');
     expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('-again');
+    // No arc names in the always-on prompt — arcs live in the registry and briefs.
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT.toLowerCase()).not.toContain('rir');
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).not.toContain('spec and plan loops');
   });
 });
 

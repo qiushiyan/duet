@@ -145,6 +145,13 @@ describe('the snippet library', () => {
       expect.soft(body, `${key} carries the polish output contract`).toContain('Optional polish');
       expect.soft(body, `${key} demands exact replacements`).toMatch(/before → after/);
     }
+    // The empty case has a skip (round-1 templates carry the full contract; the
+    // -agains inherit it in-session): a mandated section with no skip gets
+    // filled — a reviewer with nothing to polish would manufacture items.
+    for (const key of ['review-spec', 'review-plan', 'review-design']) {
+      const body = getSnippet(key)?.expand ?? '';
+      expect.soft(body, `${key} licenses an empty polish section`).toMatch(/nothing qualifies/);
+    }
     for (const key of ['update-spec', 'update-plan', 'update-design', 'update-spec-again', 'update-plan-again', 'update-design-again']) {
       const body = getSnippet(key)?.expand ?? '';
       expect.soft(body, `${key} names the polish section`).toContain('Optional polish');

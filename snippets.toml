@@ -103,7 +103,7 @@ The spec is intentionally high-level: problem, UX goal, conceptual approach, non
 
 Weigh technical merit and UX goals together. **Challenge assumptions and propose alternatives** — don't default to politeness. Don't say "not specific enough" without naming the unanswered concept.
 
-**End with an "Optional polish" section**, separate from the findings above: wording-level fixes where you can supply the exact replacement and the meaning doesn't change. Write each as location plus replacement (before → after), ready to apply verbatim. If an imprecision changes behavior, scope, or a testable claim, it's a finding, not polish; if you can't write the exact replacement, it isn't polish either — raise it as a finding or drop it. Delivered as concerns, wording points cost the author a reread of the whole document; delivered as ready replacements, they cost nothing.
+**End with an "Optional polish" section**, separate from the findings above: wording-level fixes where you can supply the exact replacement and the meaning doesn't change. Write each as location plus replacement (before → after), ready to apply verbatim. If an imprecision changes behavior, scope, or a testable claim, it's a finding, not polish; if you can't write the exact replacement, it isn't polish either — raise it as a finding or drop it. When nothing qualifies, say so in a line rather than manufacturing items. Delivered as concerns, wording points cost the author a reread of the whole document; delivered as ready replacements, they cost nothing.
 
 ---
 
@@ -293,7 +293,7 @@ Challenge sequencing, scope, choice of vertical slices, **whether the plan delet
 
 The right plan should feel inevitable. Don't default to politeness.
 
-**End with an "Optional polish" section**, separate from the findings above: wording-level fixes where you can supply the exact replacement and the meaning doesn't change. Write each as location plus replacement (before → after), ready to apply verbatim. If an imprecision changes behavior, scope, or a testable claim, it's a finding, not polish; if you can't write the exact replacement, it isn't polish either — raise it as a finding or drop it. Delivered as concerns, wording points cost the author a reread of the whole document; delivered as ready replacements, they cost nothing.
+**End with an "Optional polish" section**, separate from the findings above: wording-level fixes where you can supply the exact replacement and the meaning doesn't change. Write each as location plus replacement (before → after), ready to apply verbatim. If an imprecision changes behavior, scope, or a testable claim, it's a finding, not polish; if you can't write the exact replacement, it isn't polish either — raise it as a finding or drop it. When nothing qualifies, say so in a line rather than manufacturing items. Delivered as concerns, wording points cost the author a reread of the whole document; delivered as ready replacements, they cost nothing.
 
 ---
 
@@ -399,7 +399,7 @@ Mid-point review feedback below. **Triage first — no code changes yet.** For e
 
 **Test fallout** — where a finding reveals a test gap in a completed slice, fix it alongside the now-problems; where it reshapes an upcoming slice, fold the test change into that slice's plan.
 
-Then summarize the updated plan — what you'll fix now, then the remaining slices in order — and continue: apply the fix-now items and carry the build to the end, folding the folded points into their slices as you reach them. The next pause is the finished-work handoff; a major disagreement that genuinely needs my input is the one reason to stop instead.
+Then summarize the updated plan — what you'll fix now, then the remaining slices in order — and continue: apply the fix-now items and carry the build to the end, absorbing each fold-into-the-plan point into its slice as you reach it. The next pause is the finished-work handoff; a major disagreement that genuinely needs my input is the one reason to stop instead.
 
 ---
 
@@ -705,7 +705,7 @@ The doc runs top-down — product sections (goals, behaviors, non-goals) above t
 
 Challenge assumptions and propose alternatives — don't default to politeness. Don't say "not specific enough" without naming the unanswered concept and the section that owes it.
 
-**End with an "Optional polish" section**, separate from the findings above: wording-level fixes where you can supply the exact replacement and the meaning doesn't change. Write each as location plus replacement (before → after), ready to apply verbatim. If an imprecision changes behavior, scope, or a testable claim, it's a finding, not polish; if you can't write the exact replacement, it isn't polish either — raise it as a finding or drop it. Delivered as concerns, wording points cost the author a reread of the whole document; delivered as ready replacements, they cost nothing.
+**End with an "Optional polish" section**, separate from the findings above: wording-level fixes where you can supply the exact replacement and the meaning doesn't change. Write each as location plus replacement (before → after), ready to apply verbatim. If an imprecision changes behavior, scope, or a testable claim, it's a finding, not polish; if you can't write the exact replacement, it isn't polish either — raise it as a finding or drop it. When nothing qualifies, say so in a line rather than manufacturing items. Delivered as concerns, wording points cost the author a reread of the whole document; delivered as ready replacements, they cost nothing.
 
 ---
 

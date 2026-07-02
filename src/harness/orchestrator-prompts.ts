@@ -5,6 +5,7 @@ import {
   consultantCheckpointLive,
   consultantSnippetFor,
   contractAuthorPhaseOf,
+  entryOf,
   phaseSpec,
   priorPhaseOf,
 } from '../phases.ts';
@@ -68,7 +69,7 @@ Keep duet's own machinery out of the prompt. The workflow's shape in plain words
 
 ### The review loop
 
-A review loop runs: artifact → reviewer critique → implementer revision or pushback → your judgment: another round, or converged? The snippets that carry each step are the phase's own: the spec and plan loops critique with review-* and revise with update-*, code revises with respond-*, and the RIR arc's single implement round critiques with review-direct and revises with the writable apply-review — the phase brief names which. Where a phase provides -again variants, use them for round 2+, since they verify earlier feedback was integrated rather than relitigating; a single-round phase (RIR's implement) has none and converges within that round.
+A review loop runs: artifact → reviewer critique → implementer revision or pushback → your judgment: another round, or converged? The snippets that carry each step are the phase's own — the phase brief names them: a document loop critiques with review-* and revises with update-*, code revises with respond-* (or fixes in place, where the brief names a writable round). Where a phase provides -again variants, use them for round 2+, since they verify earlier feedback was integrated rather than relitigating; a single-round phase has none and converges within that round.
 
 Exit the loop when the remaining open points are minor (wording, small caveats, settled disagreements with recorded rationale) rather than structural. A disagreement that persists with substantive arguments on both sides is the human's call — flag it. And when a point's resolution turns on a claim about the code you can't verify, route it back to be checked against the actual code rather than trusting the last voice — the workers read what you can't.
 
@@ -422,12 +423,18 @@ Record a high human_decision (titled by the assertion) only for an assertion tha
 }
 
 function documentsBlock(state: RunState): string {
+  // The draft's tag names the arc's own primary artifact (full: draft-spec;
+  // design: draft-design-doc), derived from the entry phase's label so the tag
+  // and the brief's prose can't disagree about what the document is.
+  const workflow = workflowOf(state);
+  const entryPhase = entryOf(workflow).specSkipsTo;
+  const draftName = entryPhase ? `draft-${phaseSpec(workflow, entryPhase).artifactLabel.replace(/\s+/g, '-')}` : 'draft-spec';
   const docs = [
     state.framing
       ? `<document name="framing" description="the human's project briefing for this run">\n${state.framing}\n</document>`
       : '',
     state.specPath
-      ? `<document name="draft-spec" path="${state.specPath}">\n${readFileSync(join(state.cwd, state.specPath), 'utf8')}\n</document>`
+      ? `<document name="${draftName}" path="${state.specPath}">\n${readFileSync(join(state.cwd, state.specPath), 'utf8')}\n</document>`
       : '',
   ].filter(Boolean);
   return `<documents>\n${docs.join('\n')}\n</documents>`;
@@ -630,9 +637,12 @@ function buildPassGuardrails(runId: string): string {
   return `Never descope or thin tests to fit a turn: a fresh prompt carries a fresh budget ceiling, so trimming scope for budget is a product decision that needs work-content reasons and an honest line in the Ship packet. Have the implementer put ephemeral verification harnesses (throwaway tsconfigs, probe scripts) in this run's scratch dir, .duet/runs/${runId}/scratch/, and leave them there — it's gitignored and torn down with the run, so nothing rides the worktree as an untracked stray and there's no cleanup step. Everything else under .duet/ is this run's own live state and logs; the implementer must never delete .duet/ (or anything under .duet/runs/) or write outside that scratch dir, because removing the run's state strands it mid-build. (Gotcha: a worker can't watch its own budget — a turn that hits the per-turn cap or time limit is cut off mechanically, surfacing as a failed or short response, not a graceful "I'm low" report. Its committed slices are on disk, so just resume that session with a short continue prompt for the rest; that's resumption, not a content failure, so don't re-send the original prompt or insert a review between those turns.)`;
 }
 
-// The one midpoint judgment — arc-invariant: the signal is structural
-// dependency and real size, whichever document fixed the shape.
-const MIDPOINT_STEP = `Insert a midpoint checkpoint only when the implementation is genuinely large — more than roughly six slices is a rough signal, but judge by the real size and structural risk, not the count. Its whole value is catching a foundational problem while many slices still remain for the correction to save; a small or moderate build has too little left to pay for the extra turns, so skip it and run straight to the handoff. When you do run it, run it exactly once: have the implementer stop at a sensible point partway (around the first third to half), then midpoint-status → review-midpoint → respond-midpoint. The reviewer weights foundational problems highest — they compound across every remaining slice — and treats unreached slices as intentionally undone, not missing. The implementer then triages the points into fix-now / fold-into-the-remaining-slices / disagree, applies the fix-now items, and continues to the end — folding the rest of the guidance into the remaining slices as it goes. It does not pause again; the next stop is the handoff.`;
+// The one midpoint judgment — shared discipline; the size signal is the arc's
+// own (full reads it off the plan's slice list, the design arc off the doc's
+// scope — it fixes no slice list up front).
+function midpointStep(sizeSignal: string): string {
+  return `Insert a midpoint checkpoint only when the implementation is genuinely large — ${sizeSignal} Its whole value is catching a foundational problem while many slices still remain for the correction to save; a small or moderate build has too little left to pay for the extra turns, so skip it and run straight to the handoff. When you do run it, run it exactly once: have the implementer stop at a sensible point partway (around the first third to half), then midpoint-status → review-midpoint → respond-midpoint. The reviewer weights foundational problems highest — they compound across every remaining slice — and treats unreached slices as intentionally undone, not missing. The implementer then triages the points into fix-now / fold-into-the-remaining-slices / disagree, applies the fix-now items, and continues to the end — folding the rest of the guidance into the remaining slices as it goes. It does not pause again; the next stop is the handoff.`;
+}
 
 // The shared review-and-ship tail (steps 6–8): handoff + review loop, docs
 // reconcile as the last build step, then the CEO summary leading the packet.
@@ -660,7 +670,7 @@ The arc:
 1. Have the implementer commit the approved plan file with a conventional message, as its own commit. It wrote the plan and still holds it, so keep this prompt short — don't restate the plan back to it.
 2. Before the first slice: ${resetForImplStep(claudeImplementer, anchors)}
 3. Drive the implementation as a single pass, not a slice-by-slice loop with reviews between. Send the implementer one prompt to implement the whole plan — every slice, end to end — one commit per slice with that slice's tests per the plan's verification story. The plan already fixes the slice order and verification, so the implementer executes it straight through; a review or a deliberate hold between slices burns a slow worker turn re-covering ground the post-implementation review (step 6) covers anyway. ${buildPassGuardrails(state.runId)}
-4. ${MIDPOINT_STEP}
+4. ${midpointStep('more than roughly six slices is a rough signal, but judge by the real size and structural risk, not the count.')}
 5. ${reviewCompactionStep(claudeImplementer, 'the plan file and the spec')}
 ${implReviewTail(state, roundCap, 'plan')}
 
@@ -694,7 +704,7 @@ The arc:
 1. Have the implementer commit the approved design doc with a conventional message, as its own commit. It wrote the doc and still holds it, so keep this prompt short — don't restate the design back to it.
 2. Before the first slice: ${resetForImplStep(claudeImplementer, anchors)}
 3. Drive the implementation as a single pass, not a piece-by-piece loop with reviews between. Send the implementer an implement-design prompt: it builds the whole change from the committed design doc — the doc fixes the shape and the test standards; the slicing and sequencing are the implementer's own, vertical slices with a commit per slice and that slice's tests per the doc's standards. A review or a deliberate hold between slices burns a slow worker turn re-covering ground the post-implementation review (step 6) covers anyway. ${buildPassGuardrails(state.runId)}
-4. ${MIDPOINT_STEP} With no slice list fixed up front, read the size from the design doc's scope and from how the implementer slices it as the build starts.
+4. ${midpointStep("the design fixes the shape, not a slice list, so read the size from the doc's scope and structural risk, and from how the implementer slices the work as the build starts.")}
 5. ${reviewCompactionStep(claudeImplementer, 'the design doc')}
 ${implReviewTail(state, roundCap, 'design doc')}
 
