@@ -103,6 +103,8 @@ The spec is intentionally high-level: problem, UX goal, conceptual approach, non
 
 Weigh technical merit and UX goals together. **Challenge assumptions and propose alternatives** — don't default to politeness. Don't say "not specific enough" without naming the unanswered concept.
 
+**End with an "Optional polish" section**, separate from the findings above: wording-level fixes where you can supply the exact replacement and the meaning doesn't change. Write each as location plus replacement (before → after), ready to apply verbatim. If an imprecision changes behavior, scope, or a testable claim, it's a finding, not polish; if you can't write the exact replacement, it isn't polish either — raise it as a finding or drop it. Delivered as concerns, wording points cost the author a reread of the whole document; delivered as ready replacements, they cost nothing.
+
 ---
 
 $0'''
@@ -114,6 +116,8 @@ Engineering team's review feedback on your spec below. **For each point:**
 1. **Assess validity** — be honest, don't agree just to agree.
 2. **If valid:** update the spec. You may propose a better solution than suggested — explain why.
 3. **If you disagree:** explain from first principles why the spec is correct as-is.
+
+The feedback may end with an "Optional polish" section — exact before → after replacements, pre-checked to change no meaning. Apply them as given, or skip any you disagree with; they need no re-analysis, so spend the thinking on the findings above them.
 
 ---
 
@@ -131,6 +135,8 @@ Spec updated per your review. Re-check — focus on **whether feedback was integ
 
 Same altitude lens as before — spec stays high-level, don't demand line-level details, test cases, or doc plans. **New issues OK; don't relitigate settled points.**
 
+Wording-level points go in the same "Optional polish" section as before — exact before → after replacements only.
+
 ---
 
 $0'''
@@ -138,7 +144,7 @@ $0'''
 [[snippets]]
 key = "update-spec-again"
 expand = '''
-Round-2 reviewer feedback on the spec below. Apply valid points and update. Disagreements: explain briefly, don't dwell — **this round is about converging**. Major disagreement needing my input → flag clearly and **stop** instead of pushing through.
+Round-2 reviewer feedback on the spec below. Apply valid points and update. Disagreements: explain briefly, don't dwell — **this round is about converging**. Major disagreement needing my input → flag clearly and **stop** instead of pushing through. "Optional polish" items apply as given (or skip) — no re-analysis.
 
 ---
 
@@ -287,6 +293,8 @@ Challenge sequencing, scope, choice of vertical slices, **whether the plan delet
 
 The right plan should feel inevitable. Don't default to politeness.
 
+**End with an "Optional polish" section**, separate from the findings above: wording-level fixes where you can supply the exact replacement and the meaning doesn't change. Write each as location plus replacement (before → after), ready to apply verbatim. If an imprecision changes behavior, scope, or a testable claim, it's a finding, not polish; if you can't write the exact replacement, it isn't polish either — raise it as a finding or drop it. Delivered as concerns, wording points cost the author a reread of the whole document; delivered as ready replacements, they cost nothing.
+
 ---
 
 $0'''
@@ -298,6 +306,8 @@ Engineering team's review feedback on your plan below. **For each point:**
 1. **Assess validity** — be honest, don't agree just to agree.
 2. **If valid:** update the plan. You may propose a better solution than suggested — explain why.
 3. **If you disagree:** explain from first principles why the plan is correct as-is.
+
+The feedback may end with an "Optional polish" section — exact before → after replacements, pre-checked to change no meaning. Apply them as given, or skip any you disagree with; they need no re-analysis, so spend the thinking on the findings above them.
 
 ---
 
@@ -315,6 +325,8 @@ Plan updated per your review. Re-check — focus on **whether feedback was integ
 
 Same altitude lens as before — don't demand full code bodies; the plan describes tests and helpers but doesn't pre-write them. **New issues OK; don't relitigate settled points.**
 
+Wording-level points go in the same "Optional polish" section as before — exact before → after replacements only.
+
 ---
 
 $0'''
@@ -322,7 +334,7 @@ $0'''
 [[snippets]]
 key = "update-plan-again"
 expand = '''
-Round-2 reviewer feedback on the plan below. Apply valid points and update. Disagreements: explain briefly, don't dwell — **this round is about converging**. Major disagreement needing my input → flag clearly and **stop** instead of pushing through.
+Round-2 reviewer feedback on the plan below. Apply valid points and update. Disagreements: explain briefly, don't dwell — **this round is about converging**. Major disagreement needing my input → flag clearly and **stop** instead of pushing through. "Optional polish" items apply as given (or skip) — no re-analysis.
 
 ---
 

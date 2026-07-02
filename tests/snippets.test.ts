@@ -133,6 +133,25 @@ describe('the snippet library', () => {
     }
   });
 
+  test('the review-loop polish contract: reviewers batch wording fixes as replacements, updaters apply without re-analysis', () => {
+    // The polish revision (docs/specs/2026-07-02-design-arc.md Part 2): a review
+    // template ends with an "Optional polish" section of exact before → after
+    // replacements, and the matching update template licenses applying them
+    // without re-analysis (the measured 7-minute reread was a conscientious
+    // implementer re-deriving each wording suggestion). Pinned lightly — the
+    // section name and the no-re-analysis license — not verbatim.
+    for (const key of ['review-spec', 'review-plan', 'review-spec-again', 'review-plan-again']) {
+      const body = getSnippet(key)?.expand ?? '';
+      expect.soft(body, `${key} carries the polish output contract`).toContain('Optional polish');
+      expect.soft(body, `${key} demands exact replacements`).toMatch(/before → after/);
+    }
+    for (const key of ['update-spec', 'update-plan', 'update-spec-again', 'update-plan-again']) {
+      const body = getSnippet(key)?.expand ?? '';
+      expect.soft(body, `${key} names the polish section`).toContain('Optional polish');
+      expect.soft(body, `${key} licenses applying polish without re-analysis`).toMatch(/re-analysis/i);
+    }
+  });
+
   test('renders as the XML-tagged menu the orchestrator reads', () => {
     const rendered = renderSnippetLibrary();
     expect(rendered.startsWith('<snippet_library>')).toBe(true);
