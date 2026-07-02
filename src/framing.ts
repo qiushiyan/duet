@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 import { execa } from "execa";
 import { z } from "zod";
-import { WORKFLOWS, gatePhasesOf } from "./phases.ts";
+import { WORKFLOWS, entryOf, gatePhasesOf } from "./phases.ts";
 import type { GatePhase, WorkflowName } from "./phases.ts";
 import { ensureDuetDir } from "./run-store.ts";
 
@@ -52,20 +52,27 @@ export const FRAMING_TEMPLATE = `---
 # Machine-parsed options (fixed values the harness acts on; judgment-weighed
 # detail belongs in the prose below). Uncomment to use.
 # workflow: full          — full (default): frame → spec → plan → implement →
-#                           finish (reconcile docs, open a PR). rir:
+#                           finish (reconcile docs, open a PR). design:
+#                           frame → design (one design doc replaces spec +
+#                           plan) → implement → finish, for serious work on a
+#                           trusted frontier-model implementer. rir:
 #                           research → implement → review → finish (open a PR;
 #                           no spec/plan), for small, well-understood work.
 # gates_at: overnight     — phases whose gates you attend; the rest are
 #                           pre-authorized and auto-cross with packets
 #                           recorded. Presets are workflow-specific: full →
 #                           skip-plan (walk away at spec approval, return at the
-#                           Ship gate) / overnight (= frame,spec); rir → afk
-#                           (attend none). Or a list, e.g. "frame, spec".
-#                           Default: overnight — attend frame and spec; plan,
-#                           Ship, and the Open-PR gate all auto-cross. List
-#                           "finish" to stop and review the opened PR. rir
-#                           attends all three of its gates by default.
-# spec: path/to/draft.md  — enter at the spec review loop (skips FRAME). full-only.
+#                           Ship gate) / overnight (= frame,spec); design/rir →
+#                           afk (attend none). Or a list, e.g. "frame, spec".
+#                           Default for full: overnight — attend frame and spec;
+#                           plan, Ship, and the Open-PR gate all auto-cross. List
+#                           "finish" to stop and review the opened PR. Default
+#                           for design: attend the design gate only (one
+#                           interruption). rir attends all three of its gates
+#                           by default.
+# spec: path/to/draft.md  — enter at the primary-artifact review loop, skipping
+#                           FRAME (full: the spec; design: the design doc). Not
+#                           for rir, which has no such document.
 ---
 
 # Problem
@@ -541,9 +548,11 @@ export async function resolveRunInputs(
   let specPath: string | undefined;
   const specInput = opts.spec ?? meta.spec; // flag wins over frontmatter
   if (specInput) {
-    if (workflow === "rir") {
+    // --spec means "a draft of the arc's primary artifact" — only an arc whose
+    // entry route admits one (full's spec, design's design doc) can take it.
+    if (entryOf(workflow).specSkipsTo === undefined) {
       throw new Error(
-        "--workflow rir takes no --spec: the RIR arc has no spec phase — its research decisions are the design. Use the default (full) workflow for a spec-entry run.",
+        `--workflow ${workflow} takes no --spec: this arc has no primary design document — its research decisions are the design. Use full (a spec) or design (a design doc) for a draft-entry run.`,
       );
     }
     specPath = relative(cwd, resolve(cwd, specInput));
