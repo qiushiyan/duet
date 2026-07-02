@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { execa } from 'execa';
 import { z } from 'zod';
 import { readTranscriptTailForSession } from '../sessions.ts';
-import { transcriptShowsPromptAccepted } from '../worker-health.ts';
+import { classifyError, transcriptShowsPromptAccepted } from '../worker-health.ts';
 import { BudgetCutoffError } from './types.ts';
 import { WallClockExceededError, runWithWallClockDeadline } from './wall-clock.ts';
 import type { RunTurnOptions, WorkerProvider, WorkerTurn } from './types.ts';
@@ -214,10 +214,15 @@ export function parseClaudeTurn(stdout: string, prompt: string): WorkerTurn {
     const partial = partialBeforeError(candidates, envelope.result ?? '');
     if (partial.trim()) {
       const context = claudeContextUsage(candidates, envelope.modelUsage);
+      // A failure whose reason is the context ceiling qualifies the checkpoint:
+      // the partial work is real, but "resume with a continuation" would bounce
+      // off the same ceiling — renderTurnResult prescribes /compact-first instead.
+      const overflow = classifyError(envelope.result ?? '') === 'context-overflow';
       return {
         text: partial,
         sessionId: envelope.session_id,
         interrupted: true,
+        ...(overflow ? { contextExhausted: true as const } : {}),
         ...(envelope.total_cost_usd !== undefined ? { costUsd: envelope.total_cost_usd } : {}),
         ...(context ? { context } : {}),
       };

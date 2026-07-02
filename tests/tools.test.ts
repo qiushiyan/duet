@@ -528,6 +528,48 @@ describe('send_prompt', () => {
     expect.soft(after.sentSnippets?.spec?.implementer ?? []).not.toContain('compact-for-impl'); // …so nothing is marked sent to it
   });
 
+  test('a context-overflow failure prescribes /compact, never "retry this same call" (the wedge’s futile-retry fix)', async ({
+    run,
+  }) => {
+    // The pre-flight overflow shape from the 20260701 wedge: every send bounces
+    // with "Prompt is too long". The old generic envelope said "retry this same
+    // send_prompt call once" — deterministically futile — and the orchestrator
+    // obeyed it into a 10-hour park.
+    const implementer = new FakeWorker('claude', [
+      new Error('claude worker turn failed (success): Prompt is too long'),
+    ]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue the keystone' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+
+    expect.soft(result.isError).toBe(true);
+    expect.soft(joined).toContain('over its context window');
+    expect.soft(joined).toContain('/compact'); // the prescribed recovery
+    expect.soft(joined).toContain('recover-context'); // the fallback if the compact itself fails
+    expect.soft(joined).not.toContain('Retry this same send_prompt call'); // never the transient-infra advice
+    expect.soft(joined).not.toContain('not a content problem');
+  });
+
+  test('an interrupted turn AT the context ceiling prescribes compact-first, not a short continuation', async ({
+    run,
+  }) => {
+    // Overflow evidence dominates the generic mid-response prescription: a
+    // continuation into a ceiling-full session bounces off the same ceiling.
+    const implementer = new FakeWorker('claude', [
+      { text: 'partial keystone work', sessionId: 'sess-wedge', interrupted: true, contextExhausted: true },
+    ]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+
+    expect.soft(result.isError).toBeFalsy(); // a settled checkpoint, not an error
+    expect.soft(joined).toContain('partial keystone work'); // the real work is delivered
+    expect.soft(joined).toContain('context-window ceiling');
+    expect.soft(joined).toContain('/compact'); // compact first…
+    expect.soft(joined).toContain('then resume'); // …then the continuation
+    expect.soft(joined).not.toContain('Send it a short continuation'); // never the bare-continuation advice
+  });
+
   test('a completed /compact clears the role’s context reading — post-compact fill is unknown until the next turn', async ({
     projectDir,
     run,

@@ -699,7 +699,28 @@ describe('context-window probes (per-provider math, one shape)', () => {
     ]);
     const turn = parseClaudeTurn(stdout, 'continue the keystone');
     expect.soft(turn.interrupted).toBe(true);
+    expect.soft(turn.contextExhausted).toBe(true); // the failure reason WAS the window ceiling
     expect.soft(turn.context).toEqual({ usedTokens: 970_400, windowTokens: 1_000_000 });
+  });
+
+  test('claude: a non-overflow interruption is NOT marked context-exhausted', () => {
+    const stdout = JSON.stringify([
+      {
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'real partial work' }], usage: { input_tokens: 50_000, output_tokens: 200 } },
+      },
+      {
+        type: 'result',
+        subtype: 'error_during_execution',
+        is_error: true,
+        result: 'Connection closed mid-response',
+        session_id: 'sess-drop',
+        modelUsage: { 'claude-opus-4-8[1m]': { contextWindow: 1_000_000 } },
+      },
+    ]);
+    const turn = parseClaudeTurn(stdout, 'p');
+    expect.soft(turn.interrupted).toBe(true);
+    expect.soft(turn.contextExhausted).toBeUndefined(); // a plain drop keeps the continuation recovery
   });
 
   test('codex: the rollout’s last token_count event wins', () => {

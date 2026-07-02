@@ -67,6 +67,16 @@ export interface WorkerTurn {
    * verbatim), never an aborted WorkerTurn.
    */
   aborted?: true;
+  /**
+   * The turn ended because the session hit its context-window ceiling (claude
+   * only — codex auto-compacts). It qualifies whatever checkpoint flag rides
+   * beside it: an `interrupted` turn whose failure was the window is NOT
+   * "resumable with a short continuation" — any further prompt into the session
+   * bounces off the same ceiling, so the recovery is a `/compact` first (which
+   * still fits: a compaction request carries no new content), then resume.
+   * Overflow evidence dominates the generic continuation prescription.
+   */
+  contextExhausted?: true;
 }
 
 /**

@@ -30,7 +30,7 @@ import { listPendingSteers, markSteersDelivered } from '../steer-store.ts';
 import { bindingFor } from '../config.ts';
 import { readTranscriptTailAtPath, readTranscriptTailForSession } from '../sessions.ts';
 import type { TurnDispatcher } from './turn-dispatcher.ts';
-import { formatAge, probeRole } from '../worker-health.ts';
+import { classifyError, formatAge, probeRole } from '../worker-health.ts';
 import { activityLine, latestActivity, repoRelative } from '../worker-activity.ts';
 import {
   answerResumePrompt,
@@ -517,6 +517,17 @@ export function renderTurnResult(
     );
   }
   if (outcome instanceof Error) {
+    // Context overflow is the one DETERMINISTIC failure: the session no longer
+    // fits its window, so "retry the identical call" — the right advice for
+    // transient infra — is guaranteed futile here (the 20260701 wedge retried
+    // twice and parked 10 hours). The recovery is compaction, prescribed instead.
+    if (classifyError(outcome.message) === 'context-overflow') {
+      return error(
+        block(
+          `The ${role} worker's session is over its context window (${outcome.message}) — the send was rejected before the worker saw it, and re-sending can never fit: this is a deterministic limit, not transient infrastructure. Compact the session first: send the ${role} a body that is literally "/compact " followed by your adapted compact instructions (a compaction request still fits — it adds no new content), then re-send this prompt. If the /compact itself fails, its result will say the session was reset and prescribe recover-context.`,
+        ),
+      );
+    }
     return error(
       block(
         `The ${role} worker's turn failed at the infrastructure layer (${outcome.message}). The worker never saw your prompt, so this is not a content problem. Retry this same send_prompt call once; if the retry also fails, stop routing and report the failure to the human via ask_human instead of continuing the round.`,
@@ -536,11 +547,15 @@ export function renderTurnResult(
   // A mid-response interruption (a connection drop after real generation) also
   // settled — the partial work above is committed to a resumable session. The
   // recovery is a short continuation, NOT a re-send: re-sending the original
-  // prompt would restart work the worker already partly did.
+  // prompt would restart work the worker already partly did. Overflow evidence
+  // dominates that prescription: when the interruption WAS the context ceiling,
+  // a continuation bounces off the same ceiling, so compaction comes first.
   if (outcome.interrupted) {
     content.push(
       block(
-        `(the connection dropped mid-response — the worker's partial work above is committed to its session, which is resumable. Send it a short continuation to finish from where it stopped; do not re-send the original prompt. This is a checkpoint, not a failure.)`,
+        outcome.contextExhausted
+          ? `(the turn ended at the session's context-window ceiling — the partial work above is committed and the session is intact, but any further prompt would bounce off the same ceiling. Send the ${role} a "/compact " body with your adapted compact instructions first (a compaction request still fits — it adds no new content), then resume with a short continuation. This is a checkpoint, not a failure.)`
+          : `(the connection dropped mid-response — the worker's partial work above is committed to its session, which is resumable. Send it a short continuation to finish from where it stopped; do not re-send the original prompt. This is a checkpoint, not a failure.)`,
       ),
     );
   }
