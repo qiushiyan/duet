@@ -34,7 +34,7 @@ import { BudgetCutoffError } from '../src/providers/types.ts';
 import type { WorkerRole } from '../src/providers/types.ts';
 import { PHASE } from '../src/phases.ts';
 import type { PhaseName } from '../src/phases.ts';
-import { createRun, loadRunState, markPendingTurn, recordContextUsage, runDirOf, saveRunState, stageHumanInput } from '../src/run-store.ts';
+import { contextSafetyPercent, createRun, loadRunState, markPendingTurn, recordContextUsage, runDirOf, saveRunState, stageHumanInput } from '../src/run-store.ts';
 import { listPendingSteers, stageSteer } from '../src/steer-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
@@ -923,6 +923,81 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
     const hb = lines.find((l) => l.includes('⏳ implementer turn running — 5m elapsed'));
     expect.soft(hb).toContain('last activity');
     expect.soft(hb).toContain('RETRYING (1 retries)'); // the count, never a fabricated class
+
+    finish({ text: 'done', sessionId: 'impl-1' });
+    await pending;
+  });
+
+  test('the 30s tick samples the session fill mid-turn — high-water climbs, the heartbeat carries it', async ({ run, projectDir, onTestFinished }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const home = join(projectDir, 'home');
+    // The window half comes from the last settled reading; the growing usage
+    // comes from the transcript the turn is writing.
+    recordContextUsage(run, 'implementer', { usedTokens: 170_000, windowTokens: 1_000_000 });
+    saveRunState(run);
+    plantClaudeTranscript(
+      home,
+      'impl-1',
+      jsonl({ type: 'assistant', message: { usage: { input_tokens: 400_000, output_tokens: 500 } } }),
+    );
+
+    let finish!: (t: { text: string; sessionId: string }) => void;
+    const slow = new FakeWorker('claude');
+    slow.runTurn = (opts) => {
+      opts.onSessionId?.('impl-1');
+      return new Promise((r) => (finish = r));
+    };
+    const { call, lines } = harness(run, { implementer: slow, home });
+    const pending = call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build the keystone' });
+
+    await vi.advanceTimersByTimeAsync(30_000); // one sampler tick
+    let persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.contextUsage?.implementer?.usedTokens).toBe(400_500);
+
+    // The turn keeps growing; the transcript's latest request is bigger.
+    plantClaudeTranscript(
+      home,
+      'impl-1',
+      jsonl(
+        { type: 'assistant', message: { usage: { input_tokens: 400_000, output_tokens: 500 } } },
+        { type: 'assistant', message: { usage: { input_tokens: 900_000, cache_read_input_tokens: 60_000, output_tokens: 400 } } },
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(30_000);
+    persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.contextUsage?.implementer?.usedTokens).toBe(960_400);
+    expect.soft(contextSafetyPercent(persisted, 'implementer')).toBe(96);
+
+    await vi.advanceTimersByTimeAsync(4 * 60_000); // reach the 5-minute heartbeat
+    const hb = lines.find((l) => l.includes('⏳ implementer turn running — 5m elapsed'));
+    expect.soft(hb).toContain('· context 96%'); // the heartbeat carries the live fill
+
+    finish({ text: 'done', sessionId: 'impl-1' });
+    await pending;
+  });
+
+  test('the sampler stays silent without a known window (no prior reading) — honest silence, not a guess', async ({ run, projectDir, onTestFinished }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const home = join(projectDir, 'home');
+    plantClaudeTranscript(home, 'impl-1', jsonl({ type: 'assistant', message: { usage: { input_tokens: 500_000 } } }));
+
+    let finish!: (t: { text: string; sessionId: string }) => void;
+    const slow = new FakeWorker('claude');
+    slow.runTurn = (opts) => {
+      opts.onSessionId?.('impl-1');
+      return new Promise((r) => (finish = r));
+    };
+    const { call } = harness(run, { implementer: slow, home });
+    const pending = call('send_prompt', { role: 'implementer', tag: 'custom', body: 'first ever turn' });
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect.soft(loadRunState(projectDir, run.runId).contextUsage?.implementer).toBeUndefined();
 
     finish({ text: 'done', sessionId: 'impl-1' });
     await pending;

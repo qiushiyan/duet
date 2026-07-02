@@ -6,6 +6,7 @@ import type { PhaseName } from '../phases.ts';
 import { providerFor } from '../providers/index.ts';
 import { BudgetCutoffError } from '../providers/types.ts';
 import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
+import { latestTranscriptUsageTokens } from '../context-guard.ts';
 import { countsReviewRound, orphanRecoveryFor, readOnlyFor, sessionIdFor, shouldResetAfterCompactAbort, workerRolesFor } from '../roles.ts';
 import { getSnippet, renderSnippetLibrary, runtimeLibraryContext } from '../snippets.ts';
 import {
@@ -278,8 +279,12 @@ export function startHeartbeat(
   const heartbeat = setInterval(() => {
     const mins = Math.round((Date.now() - startedAt) / 60_000);
     const health = heartbeatHealth(state, role, startedAt, Date.now(), home);
-    log(`[send_prompt] ⏳ ${role} turn running — ${mins}m elapsed (tag=${tag})${health}`);
-    appendVoiceLog(state, role, `⏳ turn running — ${mins}m elapsed (tag=${tag})${health}`);
+    // The live fill the 30s sampler below keeps fresh — so a 30-minute quiet
+    // turn's heartbeat says how full the session is, not just that it is alive.
+    const usage = state.contextUsage?.[role];
+    const fill = usage ? ` · context ${contextPercent(usage)}%` : '';
+    log(`[send_prompt] ⏳ ${role} turn running — ${mins}m elapsed (tag=${tag})${health}${fill}`);
+    appendVoiceLog(state, role, `⏳ turn running — ${mins}m elapsed (tag=${tag})${health}${fill}`);
     // Control-plane mirror onto the orchestrator pane — ONLY on the headless
     // host (blockingHost), where the orchestrator is an in-process Agent SDK
     // session blocked inside `await runTurn` while this turn runs, so its pane
@@ -293,6 +298,7 @@ export function startHeartbeat(
     if (blockingHost) appendVoiceLog(state, 'orchestrator', `⏳ awaiting ${role} — ${mins}m`);
   }, 5 * 60_000);
   let lastActivityId: string | undefined;
+  let lastSampledPercent: number | undefined;
   // Cache the located transcript path/schema after the first successful read so
   // the 30s poll does not re-scan the sessions dir every tick (codex's locate is
   // a recursive readdir). KEYED BY the session id it was located for: the in-flight
@@ -313,6 +319,26 @@ export function startHeartbeat(
         located = tail ? { sessionId, path: tail.path, schema: tail.schema } : undefined;
       }
       if (!tail) return;
+      // MID-TURN context sampling (claude only — codex auto-compacts): the same
+      // tail the activity line reads also carries the latest request's usage, so
+      // a long turn's fill is live telemetry rather than a turn-boundary blind
+      // spot (the 20260701 wedge grew 17% → 98% inside ONE turn with zero
+      // readings). The window half comes from the last settled reading — no
+      // reading yet means honest silence, not a guess. Change-detected and
+      // fail-soft like the activity line; recordContextUsage carries the
+      // high-water mark the pressure guards act on.
+      if (tail.schema === 'claude') {
+        const windowTokens = state.contextUsage?.[role]?.windowTokens;
+        const usedTokens = windowTokens ? latestTranscriptUsageTokens(tail.jsonl) : undefined;
+        if (windowTokens && usedTokens !== undefined) {
+          const percent = contextPercent({ usedTokens, windowTokens });
+          if (percent !== lastSampledPercent) {
+            lastSampledPercent = percent;
+            recordContextUsage(state, role, { usedTokens, windowTokens });
+            saveRunState(state);
+          }
+        }
+      }
       const act = latestActivity(tail.jsonl, tail.schema);
       if (!act || act.id === lastActivityId) return; // nothing new since the last tick
       lastActivityId = act.id;
