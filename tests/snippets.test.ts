@@ -123,6 +123,7 @@ describe('the snippet library', () => {
       'compact-for-plan',
       'compact-for-impl',
       'compact-for-review',
+      'compact-inflight',
       'reread-context',
       'ceo-summary',
       'pr-description',

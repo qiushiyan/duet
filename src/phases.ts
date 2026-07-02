@@ -643,6 +643,7 @@ export function gateOf(workflow: WorkflowName, phase: GatePhase): PhaseSpec['gat
 export const ANYTIME_SNIPPETS: readonly string[] = [
   'reread-context',
   'recover-context',
+  'compact-inflight',
   'commits-summary',
   'find-similar-bugs',
   'list-assumptions',

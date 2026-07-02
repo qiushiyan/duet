@@ -179,6 +179,22 @@ expand = '''
 '''
 
 [[snippets]]
+key = "compact-inflight"
+expand = '''
+/compact This compaction lands mid-work — the same task continues in this session immediately after it, so compact for **continuing**, not for a stage transition: keep the work's live state, drop the journey.
+
+**Preserve:**
+- The work in flight and its exact state: what's in progress, files mid-edit, the next intended step.
+- Every decision already made, with its reason.
+- The concrete repo facts in use: paths, commands, test state, the working branch.
+
+**Drop or summarize:**
+- The exploration journey, superseded drafts, and old tool output — keep conclusions, not the path.
+
+The committed artifacts survive on disk — cite their paths rather than restating them.
+'''
+
+[[snippets]]
 key = "reread-context"
 expand = '''
 Reread the files this change touches and rebuild your mental model from the actual code, not memory — trace the real data/control flow, note existing constraints, and find the seams the work will build on. **No code yet.**'''
