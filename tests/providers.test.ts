@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 import { COMPACT_CONFIRMATION, ClaudeWorker, claudeArgs, claudeExecaOptions, parseClaudeTurn, recoverClaudeFailure } from '../src/providers/claude.ts';
 import { CodexWorker, codexThreadOptions, parseRolloutContext, reconstructCodexTurn, recoverCodexAbort } from '../src/providers/codex.ts';
-import { WALL_CLOCK_DRAIN_GRACE_MS, WALL_CLOCK_TICK_MS, WallClockExceededError } from '../src/providers/wall-clock.ts';
+import { ContextDeadlineExceededError, WALL_CLOCK_DRAIN_GRACE_MS, WALL_CLOCK_TICK_MS, WallClockExceededError } from '../src/providers/wall-clock.ts';
+import { classifyError } from '../src/worker-health.ts';
 import type { ThreadEvent } from '@openai/codex-sdk';
 import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn, sessionIdForNonce } from '../src/providers/interactive-claude.ts';
 import { claudePaneLaunchCommand } from '../src/providers/pane.ts';
@@ -898,6 +899,30 @@ describe('recoverClaudeFailure (S5 — the accepted-abort vs never-accepted spli
     });
     expect.soft(turn.aborted).toBe(true);
     expect.soft(turn.sessionId).toBe('sess-wc');
+  });
+
+  test('a ContextDeadlineExceededError with an accepted transcript ⇒ aborted + context-exhausted checkpoint', () => {
+    const turn = recoverClaudeFailure(new ContextDeadlineExceededError(870_000, 850_000), 'do it', {
+      sessionId: 'sess-ctx',
+      turnStartedAt,
+      readTail: () => ({ jsonl: acceptedTail }),
+    });
+    expect.soft(turn.aborted).toBe(true);
+    expect.soft(turn.contextExhausted).toBe(true); // the window ran out, not time — compact-then-resume
+    expect.soft(turn.sessionId).toBe('sess-ctx');
+  });
+
+  test('a never-accepted context cut throws a message that classifies as context-overflow, never generic infra', () => {
+    try {
+      recoverClaudeFailure(new ContextDeadlineExceededError(870_000, 850_000), 'do it', {
+        sessionId: 's',
+        turnStartedAt,
+        readTail: () => undefined,
+      });
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect(classifyError((err as Error).message)).toBe('context-overflow'); // the compaction prescription fires
+    }
   });
 
   test('a timeout with only PRE-start records (resumed session, this turn never accepted) ⇒ throws infra', () => {

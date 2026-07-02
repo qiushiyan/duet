@@ -7,6 +7,7 @@ import { CONSULTANT_IDENTITY_CLAUSE, ORCHESTRATOR_SYSTEM_PROMPT, buildPhaseBrief
 import {
   COMPACT_TIMEOUT_MS,
   block,
+  contextCapFor,
   contractCheckpointRail,
   createPhaseTools,
   error,
@@ -526,6 +527,50 @@ describe('send_prompt', () => {
     const after = loadRunState(projectDir, run.runId);
     expect.soft(after.workerSessions.implementer).toBeUndefined(); // the bloated session was reset
     expect.soft(after.sentSnippets?.spec?.implementer ?? []).not.toContain('compact-for-impl'); // …so nothing is marked sent to it
+  });
+
+  test('contextCapFor: the emergency band of the known window, only where the hazard exists', ({ run, consultantRun }) => {
+    // A persistent claude role with a known window gets the cap…
+    recordContextUsage(run, 'implementer', { usedTokens: 170_000, windowTokens: 1_000_000 });
+    expect.soft(contextCapFor(run, 'implementer', false)).toBe(850_000);
+    // …a /compact turn never does (its whole job is running at high fill)…
+    expect.soft(contextCapFor(run, 'implementer', true)).toBeUndefined();
+    // …codex self-compacts (the default reviewer binding)…
+    recordContextUsage(run, 'reviewer', { usedTokens: 100_000, windowTokens: 258_400 });
+    expect.soft(contextCapFor(run, 'reviewer', false)).toBeUndefined();
+    // …an unknown window (no reading yet) is honest absence, not a guess…
+    expect.soft(contextCapFor(consultantRun, 'implementer', false)).toBeUndefined();
+    // …and the ephemeral consultant seeds fresh every turn, so even with a
+    // reading it accumulates nothing.
+    recordContextUsage(consultantRun, 'consultant', { usedTokens: 100_000, windowTokens: 1_000_000 });
+    expect.soft(contextCapFor(consultantRun, 'consultant', false)).toBeUndefined();
+  });
+
+  test('a blocking send threads the context cap into the worker turn; a /compact send does not', async ({ run }) => {
+    recordContextUsage(run, 'implementer', { usedTokens: 400_000, windowTokens: 1_000_000 });
+    saveRunState(run);
+    const implementer = new FakeWorker('claude');
+    const { call } = harness(run, { implementer });
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build the next slice' });
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact keep the model, drop the journey' });
+
+    expect.soft(implementer.calls[0]?.contextCapTokens).toBe(850_000);
+    expect.soft(implementer.calls[1]?.contextCapTokens).toBeUndefined();
+  });
+
+  test('a context-cut turn (aborted + exhausted) prescribes compact-then-resume, never a bare resume', async ({ run }) => {
+    const implementer = new FakeWorker('claude', [
+      { text: '', sessionId: 'sess-cut', aborted: true, contextExhausted: true },
+    ]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+
+    expect.soft(result.isError).toBeFalsy(); // a settled checkpoint
+    expect.soft(joined).toContain("cut at the session's context cap");
+    expect.soft(joined).toContain('/compact'); // compact first…
+    expect.soft(joined).toContain('then resume'); // …then continue
+    expect.soft(joined).not.toContain('Resume that session with a short continuation'); // never the bare time-cap advice
   });
 
   test('a context-overflow failure prescribes /compact, never "retry this same call" (the wedge’s futile-retry fix)', async ({

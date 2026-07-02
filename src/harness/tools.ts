@@ -6,8 +6,8 @@ import type { PhaseName } from '../phases.ts';
 import { providerFor } from '../providers/index.ts';
 import { BudgetCutoffError } from '../providers/types.ts';
 import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
-import { latestTranscriptUsageTokens } from '../context-guard.ts';
-import { countsReviewRound, orphanRecoveryFor, readOnlyFor, sessionIdFor, shouldResetAfterCompactAbort, workerRolesFor } from '../roles.ts';
+import { CONTEXT_EMERGENCY_PERCENT, latestTranscriptUsageTokens } from '../context-guard.ts';
+import { countsReviewRound, orphanRecoveryFor, readOnlyFor, sessionIdFor, sessionPolicyFor, shouldResetAfterCompactAbort, workerRolesFor } from '../roles.ts';
 import { getSnippet, renderSnippetLibrary, runtimeLibraryContext } from '../snippets.ts';
 import {
   appendNote,
@@ -237,6 +237,26 @@ export function isCompactBody(body: string): boolean {
 /** The per-turn timeout a body asks for: the short `/compact` cap, else none (the phase cap stands). */
 export function perTurnTimeoutFor(body: string): number | undefined {
   return isCompactBody(body) ? COMPACT_TIMEOUT_MS : undefined;
+}
+
+/**
+ * The context cap (tokens) a turn to this role carries — the emergency band of
+ * the role's last-known window — or undefined for "no context deadline". The
+ * gate is as narrow as the hazard: only a PERSISTENT claude-headless session
+ * accumulates toward "Prompt is too long" (codex auto-compacts, the interactive
+ * transport's TUI auto-compacts natively, the ephemeral consultant seeds fresh
+ * every turn), a `/compact` turn's whole job is running at high fill, and an
+ * unknown window (no reading yet — a fresh session's first turn) means honest
+ * absence, not a guessed cap.
+ */
+export function contextCapFor(state: RunState, role: WorkerRole, isCompactTurn: boolean): number | undefined {
+  if (isCompactTurn) return undefined;
+  const binding = bindingFor(state.bindings, role);
+  if (binding.provider !== 'claude' || binding.transport === 'interactive') return undefined;
+  if (sessionPolicyFor(role) !== 'persistent') return undefined;
+  const windowTokens = state.contextUsage?.[role]?.windowTokens;
+  if (!windowTokens) return undefined;
+  return Math.floor((windowTokens * CONTEXT_EMERGENCY_PERCENT) / 100);
 }
 
 // ── send_prompt's three lifecycle steps, as module-level functions ──
@@ -598,7 +618,9 @@ export function renderTurnResult(
       block(
         shouldResetAfterCompactAbort(role, meta.isCompactTurn === true, true)
           ? `(the /compact turn ran to its cap and was aborted — its session is un-compacted and bloated, so resuming it is the wrong move. duet has RESET the ${role} to a fresh session; re-anchor it by sending the recover-context snippet (a project/status overview + reread), NOT the original /compact or a resume. This is a recovery checkpoint, not a failure.)`
-          : `(the worker ran to its time cap and was aborted — but it saw your prompt and committed work may be on disk, in a resumable session. Resume that session with a short continuation to finish the remainder; do NOT re-send the original prompt (it would duplicate the conversation). This is a checkpoint, not a failure.)`,
+          : outcome.contextExhausted
+            ? `(the worker turn was cut at the session's context cap — it saw your prompt and its committed work is on disk, but the session is nearly full, so a bare resume would run straight back into the same ceiling. Send the ${role} a "/compact " body with your adapted compact instructions first (a compaction request still fits), then resume with a short continuation to finish the remainder. This is a scheduled maintenance stop, not a failure.)`
+            : `(the worker ran to its time cap and was aborted — but it saw your prompt and committed work may be on disk, in a resumable session. Resume that session with a short continuation to finish the remainder; do NOT re-send the original prompt (it would duplicate the conversation). This is a checkpoint, not a failure.)`,
       ),
     );
   }
@@ -1210,6 +1232,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           const stopHeartbeat = startHeartbeat({ state, log, blockingHost: true, ...(home !== undefined ? { home } : {}) }, { role, tag, startedAt });
           // settleTurn is kept INSIDE this try/catch (both arms) so a throw during
           // the merge renders as an infra failure exactly as a runTurn throw does.
+          const contextCapTokens = contextCapFor(state, role, isCompactTurn);
           try {
             const turn = await providerFor(providers, role).runTurn({
               prompt: body,
@@ -1217,6 +1240,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
               readOnly: readOnlyFor(role),
               cwd: state.cwd,
               ...(perTurnTimeoutMs !== undefined ? { timeoutMs: perTurnTimeoutMs } : {}),
+              ...(contextCapTokens !== undefined ? { contextCapTokens } : {}),
               // Stage this turn's id onto the active-turn hint the moment the
               // provider announces it, so the heartbeat poll (closed over the
               // same `state`) can locate the transcript from the turn's start.

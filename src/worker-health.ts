@@ -58,11 +58,13 @@ export const RETRY_WINDOW_MS = 120_000; // the orchestrator's approximate in-fli
 const TAXONOMY: ReadonlyArray<{ cls: ErrorClass; patterns: RegExp[] }> = [
   {
     // The Anthropic API's over-window rejection, as the CLI relays it ("Prompt is
-    // too long", sometimes with a `N tokens > M maximum` tail). Matched first:
-    // unambiguous, and misreading it as transient infra sent an orchestrator into
-    // two futile retries and a 10-hour park (the 20260701 wedge).
+    // too long", sometimes with a `N tokens > M maximum` tail), plus duet's own
+    // context-deadline cut (ContextDeadlineExceededError's "context-window cap"
+    // phrasing). Matched first: unambiguous, and misreading it as transient infra
+    // sent an orchestrator into two futile retries and a 10-hour park (the
+    // 20260701 wedge).
     cls: 'context-overflow',
-    patterns: [/prompt is too long/i],
+    patterns: [/prompt is too long/i, /context-window cap/i],
   },
   {
     cls: 'login-required',

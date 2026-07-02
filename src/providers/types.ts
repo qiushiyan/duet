@@ -125,6 +125,17 @@ export interface RunTurnOptions {
    */
   timeoutMs?: number;
   /**
+   * Cut the turn when the session's fill reaches this many tokens — the
+   * context-deadline sibling of the wall-clock cap. Opt-in and claude-headless
+   * only: absent ⇒ no context deadline, byte-for-byte today (the codex adapter
+   * ignores it by design — codex auto-compacts — and the harness never passes
+   * it for a `/compact` turn, whose whole job is running at high fill). The
+   * harness computes it as the emergency band of the role's last-known window;
+   * a cut settles as an aborted + context-exhausted checkpoint (compact, then
+   * resume), never an infra failure.
+   */
+  contextCapTokens?: number;
+  /**
    * Fired with this turn's provider session id as EARLY as the provider knows
    * it — before spawn (claude: a freshly minted id, or the resume id) or on the
    * first stream event (codex: `thread.started`). The harness stages it onto the

@@ -1,6 +1,6 @@
 /**
- * The wall-clock backstop for a worker turn — the load-bearing half of the
- * resilience work no CLI flag can cover.
+ * The per-turn deadlines for a worker turn — the wall-clock backstop (time) and
+ * its context-deadline sibling (window fill), sharing one race/drain core.
  *
  * execa's `timeout` and `AbortSignal.timeout` are MONOTONIC: an overnight
  * machine-sleep freezes their countdown with the process, so on wake a
@@ -77,6 +77,101 @@ export interface WallClockDeadlineArgs<T> {
 
 export function runWithWallClockDeadline<T>(args: WallClockDeadlineArgs<T>): Promise<T> {
   const now = args.now ?? Date.now;
+  const deadline = now() + args.capMs;
+  return raceCut({
+    run: args.run,
+    abort: args.abort,
+    // Re-check the deadline against REAL time each tick. After a suspend the
+    // timer fires late but `now()` has jumped, so this catches the overrun on
+    // the first post-wake tick.
+    shouldCut: () => now() >= deadline,
+    makeError: () => new WallClockExceededError(args.capMs),
+    ...(args.schedule ? { schedule: args.schedule } : {}),
+    ...(args.tickMs !== undefined ? { tickMs: args.tickMs } : {}),
+    ...(args.graceMs !== undefined ? { graceMs: args.graceMs } : {}),
+  });
+}
+
+/**
+ * A worker turn was cut at its context cap — the session's fill crossed the
+ * emergency band while the turn ran. Like WallClockExceededError, a SETTLED,
+ * resumable checkpoint, not generic infra — but the scarce resource here is the
+ * window, not time, so the prescribed recovery is compact-then-resume, never a
+ * bare resume. The message's "context-window cap" phrasing is load-bearing: it
+ * classifies as `context-overflow` (worker-health taxonomy), so even the
+ * never-accepted edge renders the compaction prescription, not retry-verbatim.
+ */
+export class ContextDeadlineExceededError extends Error {
+  readonly kind = 'context-deadline' as const;
+  constructor(usedTokens: number, limitTokens: number) {
+    super(
+      `the worker turn was cut at its context-window cap (${usedTokens} of the ${limitTokens}-token limit) before the session could overflow`,
+    );
+    this.name = 'ContextDeadlineExceededError';
+  }
+}
+
+export interface ContextDeadlineArgs<T> {
+  /** The in-flight turn promise raced against the fill. */
+  run: Promise<T>;
+  /** Kill the turn's underlying process — called at most once, when the cut fires. */
+  abort: () => void;
+  /**
+   * The current session fill in tokens, re-read each tick (a transcript tail
+   * read). `undefined` — no reading — never cuts: telemetry silence must not
+   * kill a healthy turn.
+   */
+  sample: () => number | undefined;
+  /** Cut when a sample reaches this many tokens (the emergency band of the window). */
+  limitTokens: number;
+  schedule?: (cb: () => void, ms: number) => () => void;
+  tickMs?: number;
+  graceMs?: number;
+}
+
+/**
+ * The context-deadline sibling of the wall-clock backstop: bounds a turn in
+ * WINDOW FILL rather than time, cutting before the session reaches "Prompt is
+ * too long" territory (past which no prompt — not even the recovery — is
+ * guaranteed to fit). The same race/drain machinery via `raceCut`, so the
+ * resumable-checkpoint discipline (never expose the rejection while the killed
+ * process may still be writing the session) is shared, not re-derived. Composes
+ * with the wall-clock deadline by wrapping its promise — whichever cuts first
+ * wins, and the other's rejection passes through.
+ */
+export function runWithContextDeadline<T>(args: ContextDeadlineArgs<T>): Promise<T> {
+  let lastSample = 0;
+  return raceCut({
+    run: args.run,
+    abort: args.abort,
+    shouldCut: () => {
+      const used = args.sample();
+      if (used === undefined) return false;
+      lastSample = used;
+      return used >= args.limitTokens;
+    },
+    makeError: () => new ContextDeadlineExceededError(lastSample, args.limitTokens),
+    ...(args.schedule ? { schedule: args.schedule } : {}),
+    ...(args.tickMs !== undefined ? { tickMs: args.tickMs } : {}),
+    ...(args.graceMs !== undefined ? { graceMs: args.graceMs } : {}),
+  });
+}
+
+/**
+ * The shared race core both deadlines are veneers over: run vs. a per-tick cut
+ * condition, with the abort + DRAIN discipline exactly once. Internal — the
+ * public seams are the two typed deadline functions; a third deadline kind
+ * earns its veneer here rather than re-deriving the drain.
+ */
+function raceCut<T>(args: {
+  run: Promise<T>;
+  abort: () => void;
+  shouldCut: () => boolean;
+  makeError: () => Error;
+  schedule?: (cb: () => void, ms: number) => () => void;
+  tickMs?: number;
+  graceMs?: number;
+}): Promise<T> {
   const schedule =
     args.schedule ??
     ((cb, ms) => {
@@ -85,7 +180,6 @@ export function runWithWallClockDeadline<T>(args: WallClockDeadlineArgs<T>): Pro
     });
   const tickMs = args.tickMs ?? WALL_CLOCK_TICK_MS;
   const graceMs = args.graceMs ?? WALL_CLOCK_DRAIN_GRACE_MS;
-  const deadline = now() + args.capMs;
 
   return new Promise<T>((resolve, reject) => {
     let settled = false;
@@ -100,26 +194,23 @@ export function runWithWallClockDeadline<T>(args: WallClockDeadlineArgs<T>): Pro
       conclude();
     };
     cancel = schedule(() => {
-      // Re-check the deadline against REAL time each tick. After a suspend the
-      // timer fires late but `now()` has jumped, so this catches the overrun on
-      // the first post-wake tick.
-      if (!settled && now() >= deadline) {
+      if (!settled && args.shouldCut()) {
         finish(() => {
           // An abort that itself throws must neither prevent the typed rejection
-          // (S5 classifies on it) nor escape this timer callback as an uncaught
-          // exception (try/finally would re-throw it after the reject). Swallow
-          // it — the kill is best-effort; the WallClockExceededError is what the
-          // caller is owed, exactly once.
+          // (the failure seam classifies on it) nor escape this timer callback as
+          // an uncaught exception (try/finally would re-throw it after the
+          // reject). Swallow it — the kill is best-effort; the typed error is
+          // what the caller is owed, exactly once.
           try {
             args.abort();
           } catch {
             // best-effort kill — the deadline still rejects with the typed error.
           }
-          // DRAIN, then reject. The rejection is a *resumable* checkpoint (S5),
-          // so don't expose it until the killed `run` has actually settled — else
-          // a fast resume could race the dying process/stream writing the same
-          // session. Whichever comes first — `run` settling (the child exited) or
-          // the grace cap (an unkillable turn) — reaps exactly once with the typed
+          // DRAIN, then reject. The rejection is a *resumable* checkpoint, so
+          // don't expose it until the killed `run` has actually settled — else
+          // a fast resume could race a dying writer on the same session.
+          // Whichever comes first — `run` settling (the child exited) or the
+          // grace cap (an unkillable turn) — reaps exactly once with the typed
           // error. `run`'s outcome is discarded: the deadline already won.
           let drained = false;
           let cancelGrace: () => void = () => {};
@@ -127,7 +218,7 @@ export function runWithWallClockDeadline<T>(args: WallClockDeadlineArgs<T>): Pro
             if (drained) return;
             drained = true;
             cancelGrace();
-            reject(new WallClockExceededError(args.capMs));
+            reject(args.makeError());
           };
           cancelGrace = schedule(reap, graceMs);
           args.run.then(reap, reap);

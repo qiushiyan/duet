@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { execa } from 'execa';
 import { z } from 'zod';
+import { latestTranscriptUsageTokens } from '../context-guard.ts';
 import { readTranscriptTailForSession } from '../sessions.ts';
 import { classifyError, transcriptShowsPromptAccepted } from '../worker-health.ts';
 import { BudgetCutoffError } from './types.ts';
-import { WallClockExceededError, runWithWallClockDeadline } from './wall-clock.ts';
+import { ContextDeadlineExceededError, WallClockExceededError, runWithContextDeadline, runWithWallClockDeadline } from './wall-clock.ts';
 import type { RunTurnOptions, WorkerProvider, WorkerTurn } from './types.ts';
 
 /**
@@ -308,21 +309,27 @@ export function recoverClaudeFailure(
       if (parseErr instanceof ClaudeTurnFailedError) throw parseErr;
     }
   }
-  // A timeout / wall-clock abort with no usable stdout envelope: was THIS turn's
-  // prompt accepted into the session? Locate the transcript by the minted id and
-  // ask whether a record landed at/after the turn start. Accepted ⇒ a resumable
-  // aborted checkpoint (resume, don't re-send); not accepted, or no transcript ⇒
-  // the worker never saw the prompt, so it stays an infra error (retry verbatim).
-  // The proof is per-turn (the turnStartedAt lower bound), never a whole-transcript
-  // scan — a persistent session holds prior turns' records.
-  const timedOut = (err as { timedOut?: unknown }).timedOut === true || err instanceof WallClockExceededError;
+  // A timeout / wall-clock / context-cap abort with no usable stdout envelope:
+  // was THIS turn's prompt accepted into the session? Locate the transcript by
+  // the minted id and ask whether a record landed at/after the turn start.
+  // Accepted ⇒ a resumable aborted checkpoint — a context cut additionally
+  // carries contextExhausted, so the render prescribes compact-then-resume
+  // rather than a bare resume (the window, not time, is what ran out). Not
+  // accepted, or no transcript ⇒ the worker never saw the prompt, so it stays an
+  // infra error (a context cut's message still classifies as context-overflow,
+  // so even that edge renders the compaction prescription, never retry-verbatim).
+  // The proof is per-turn (the turnStartedAt lower bound), never a
+  // whole-transcript scan — a persistent session holds prior turns' records.
+  const contextCut = err instanceof ContextDeadlineExceededError;
+  const timedOut = (err as { timedOut?: unknown }).timedOut === true || err instanceof WallClockExceededError || contextCut;
   if (timedOut) {
     const readTail = opts.readTail ?? ((id) => readTranscriptTailForSession('claude', id));
     const tail = readTail(opts.sessionId);
     if (tail && transcriptShowsPromptAccepted(tail.jsonl, opts.turnStartedAt)) {
-      return { text: '', sessionId: opts.sessionId, aborted: true };
+      return { text: '', sessionId: opts.sessionId, aborted: true, ...(contextCut ? { contextExhausted: true as const } : {}) };
     }
   }
+  if (contextCut) throw new Error(err.message); // pre-flight context cut — concise, classifies as overflow
   throw new Error(conciseExecaError(err));
 }
 
@@ -446,13 +453,36 @@ export class ClaudeWorker implements WorkerProvider {
       // mechanics and the no-suspend fast path; the wall-clock backstop bounds the
       // SAME cap in REAL time, so an overnight-suspended turn is killed promptly on
       // wake (the monotonic timer, frozen through the sleep, would not).
-      const { stdout } = await runWithWallClockDeadline({
+      let bounded: Promise<{ stdout: string }> = runWithWallClockDeadline({
         run: child,
         abort: () => {
           child.kill();
         },
         capMs: execaOpts.timeout,
       });
+      // The context deadline composes AROUND the wall-clock race: whichever cuts
+      // first kills the child; the other's rejection passes through untouched.
+      // The fill sample re-reads this turn's own transcript tail each tick —
+      // fail-soft: an unreadable tail samples undefined and never cuts.
+      if (opts.contextCapTokens !== undefined) {
+        const limitTokens = opts.contextCapTokens;
+        bounded = runWithContextDeadline({
+          run: bounded,
+          abort: () => {
+            child.kill();
+          },
+          sample: () => {
+            try {
+              const tail = readTranscriptTailForSession('claude', sessionId);
+              return tail ? latestTranscriptUsageTokens(tail.jsonl) : undefined;
+            } catch {
+              return undefined; // telemetry silence must not kill a healthy turn
+            }
+          },
+          limitTokens,
+        });
+      }
+      const { stdout } = await bounded;
       return parseClaudeTurn(stdout, opts.prompt);
     } catch (err) {
       // A budget cutoff exits non-zero, so execa throws BEFORE parseClaudeTurn
