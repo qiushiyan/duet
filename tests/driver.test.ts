@@ -102,9 +102,26 @@ describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)
   // still surface here. Each phase is built against a run of its own arc.
   test.for([
     ...phasesOf('full').map((p) => ['full', p.name] as const),
+    ...phasesOf('design').map((p) => ['design', p.name] as const),
     ...phasesOf('rir').map((p) => ['rir', p.name] as const),
   ])('%s builds a non-empty brief', ([workflow, phase], { projectDir }) => {
     expect(buildPhaseBrief(runOf(projectDir, workflow), phase).trim().length).toBeGreaterThan(0);
+  });
+
+  test('the design-arc briefs anchor on the design doc — no plan vocabulary reaches a design-arc worker prompt', ({ projectDir }) => {
+    const design = runOf(projectDir, 'design');
+    const designBrief = buildPhaseBrief(design, 'design');
+    expect.soft(designBrief).toContain('write-design');
+    expect.soft(designBrief).toContain('review-design');
+    // The design phase brief describes the one-document arc, never a plan step.
+    expect.soft(designBrief).not.toContain('start-plan');
+    const implBrief = buildPhaseBrief(design, 'implement');
+    // The build seeds from implement-design and commits the design doc — full's
+    // "commit the approved plan file" must not leak into this arc.
+    expect.soft(implBrief).toContain('implement-design');
+    expect.soft(implBrief).toContain('commit the approved design doc');
+    expect.soft(implBrief).not.toContain('plan file');
+    expect.soft(implBrief).not.toContain('the whole plan');
   });
 
   // The two load-bearing contracts of the shared openPr brief (full's finish,
@@ -114,7 +131,7 @@ describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)
   // — and the `Verification (pending)` checklist that carries the env-verify
   // reminder onto a PR opened after an auto-crossed Ship gate. (The old literal
   // tests pinned the surrounding prose and were brittle; these pin the contract.)
-  test.for([['full', 'finish'], ['rir', 'finish']] as const)(
+  test.for([['full', 'finish'], ['design', 'finish'], ['rir', 'finish']] as const)(
     '%s opens the PR idempotently and leads with the verification checklist',
     ([workflow, phase], { projectDir }) => {
       const brief = buildPhaseBrief(runOf(projectDir, workflow), phase);

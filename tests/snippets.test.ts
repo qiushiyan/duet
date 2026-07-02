@@ -140,12 +140,12 @@ describe('the snippet library', () => {
     // without re-analysis (the measured 7-minute reread was a conscientious
     // implementer re-deriving each wording suggestion). Pinned lightly — the
     // section name and the no-re-analysis license — not verbatim.
-    for (const key of ['review-spec', 'review-plan', 'review-spec-again', 'review-plan-again']) {
+    for (const key of ['review-spec', 'review-plan', 'review-design', 'review-spec-again', 'review-plan-again', 'review-design-again']) {
       const body = getSnippet(key)?.expand ?? '';
       expect.soft(body, `${key} carries the polish output contract`).toContain('Optional polish');
       expect.soft(body, `${key} demands exact replacements`).toMatch(/before → after/);
     }
-    for (const key of ['update-spec', 'update-plan', 'update-spec-again', 'update-plan-again']) {
+    for (const key of ['update-spec', 'update-plan', 'update-design', 'update-spec-again', 'update-plan-again', 'update-design-again']) {
       const body = getSnippet(key)?.expand ?? '';
       expect.soft(body, `${key} names the polish section`).toContain('Optional polish');
       expect.soft(body, `${key} licenses applying polish without re-analysis`).toMatch(/re-analysis/i);
@@ -265,6 +265,32 @@ describe('the snippet library', () => {
       expect.soft(s.expand.toLowerCase(), `snippet "${s.key}" names the consultant`).not.toContain('consultant');
       expect.soft(s.expand.toLowerCase(), `snippet "${s.key}" names "a third voice"`).not.toContain('third voice');
     }
+  });
+
+  test('the design arc snippets exist; the drafter and the build seed both carry the methodology citations', () => {
+    for (const key of ['write-design', 'review-design', 'update-design', 'review-design-again', 'update-design-again', 'implement-design']) {
+      const snippet = getSnippet(key);
+      expect.soft(snippet, `snippet "${key}"`).toBeDefined();
+      expect.soft(snippet?.expand.trim(), `snippet "${key}" body`).toBeTruthy();
+    }
+    // Load-bearing: tools.ts counts a review round by tag.startsWith('review').
+    expect.soft('review-design'.startsWith('review')).toBe(true);
+
+    // The arc that drops the plan must not drop the plan's discipline: the
+    // drafter cites the design + testing methodology (start-plan's set) and the
+    // build seed carries it into the AFK build (implement-direct's role). Pinned
+    // so a future edit can't silently strip the citations.
+    for (const key of ['write-design', 'implement-design']) {
+      const body = getSnippet(key)?.expand ?? '';
+      expect.soft(body, `${key} stopped citing the architecture methodology`).toContain('{{lessons_dir}}/codebase-design/deep-modules.md');
+      expect.soft(body, `${key} stopped citing the TDD methodology`).toContain('{{lessons_dir}}/testing/tdd-loop.md');
+    }
+
+    // The section-scoped altitude lens: the reviewer holds each tier to its own
+    // altitude, and the build's deferred details stay deferred.
+    const reviewBody = getSnippet('review-design')?.expand ?? '';
+    expect.soft(reviewBody, 'review-design reviews product sections at their own altitude').toMatch(/product sections/i);
+    expect.soft(reviewBody, 'review-design reviews technical sections at design altitude').toMatch(/technical sections/i);
   });
 
   test('the RIR arc snippets exist with non-empty bodies; review-direct keeps the review- prefix', () => {

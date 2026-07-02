@@ -1874,6 +1874,23 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     expect.soft(persisted.acceptanceContractDraft?.sessionId).toBeDefined();
   });
 
+  test('a design-arc contract turn records a PATH-LESS marker when spec_path is not yet known (late-author)', async ({
+    projectDir,
+    designConsultantRun,
+  }) => {
+    // The design draft flow authors in the same phase that writes the doc —
+    // spec_path lands only at advance_phase, after this turn settles. The marker
+    // still proves this-run authorship; the freeze derives the path at crossing.
+    const { call } = harness(designConsultantRun, { phase: 'design', consultant: new FakeWorker('claude') });
+
+    await call('send_prompt', { role: 'consultant', tag: 'consultant-contract', body: 'author the contract' });
+
+    const persisted = loadRunState(projectDir, designConsultantRun.runId);
+    expect.soft(persisted.acceptanceContractDraft).toBeDefined();
+    expect.soft(persisted.acceptanceContractDraft?.path).toBeUndefined();
+    expect.soft(persisted.acceptanceContractDraft?.sessionId).toBeDefined();
+  });
+
   test('a consultant turn at the verify phase stamps verifiedAt on the frozen contract (the impl-rail evidence)', async ({
     projectDir,
     consultantRun,
@@ -2153,6 +2170,47 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
 
     // Unbound → byte-for-byte clean.
     expect.soft(buildPhaseBrief(run, 'plan').toLowerCase()).not.toContain('consultant');
+  });
+
+  test('the design brief AUTHORS the contract LATE — after the review loop, before advance; unbound is clean', ({
+    designRun,
+    designConsultantRun,
+  }) => {
+    // The design arc authors after the loop converges (the runs-last pattern),
+    // seeded with the converged doc — the inverse of full's early placement.
+    // Draft flow (no specPath yet): the target path is described by convention.
+    const bound = buildPhaseBrief(designConsultantRun, 'design');
+    expect.soft(bound).toContain('Consultant checkpoint');
+    expect.soft(bound).toContain('consultant-contract');
+    expect.soft(bound).toContain('run this LAST');
+    expect.soft(bound).toContain('.acceptance.md'); // the naming convention, path unknown pre-draft
+    expect.soft(bound).toContain('NOT commit');
+    expect.soft(bound).toContain('human_decision');
+    const reviewLoopAt = bound.indexOf('review-design');
+    const authorAt = bound.indexOf('author the acceptance contract');
+    const advanceAt = bound.indexOf('call advance_phase');
+    expect.soft(reviewLoopAt).toBeGreaterThanOrEqual(0);
+    expect.soft(authorAt).toBeGreaterThan(reviewLoopAt);
+    expect.soft(advanceAt).toBeGreaterThan(authorAt);
+
+    // A --spec entry knows the doc's path, so the derived contract path is literal.
+    designConsultantRun.specPath = 'docs/specs/d.md';
+    mkdirSync(join(designConsultantRun.cwd, 'docs/specs'), { recursive: true });
+    writeFileSync(join(designConsultantRun.cwd, 'docs/specs/d.md'), '# design\n');
+    expect.soft(buildPhaseBrief(designConsultantRun, 'design')).toContain('docs/specs/d.acceptance.md');
+
+    // Unbound → byte-for-byte clean.
+    expect.soft(buildPhaseBrief(designRun, 'design').toLowerCase()).not.toContain('consultant');
+  });
+
+  test('the design implement brief VERIFIES the frozen contract when bound + frozen (full’s registry-driven tail)', ({
+    designConsultantRun,
+  }) => {
+    designConsultantRun.acceptanceContract = { path: 'docs/specs/d.acceptance.md', commit: 'abc123' };
+    const frozen = buildPhaseBrief(designConsultantRun, 'implement');
+    expect.soft(frozen).toContain('consultant-verify');
+    expect.soft(frozen).toContain('docs/specs/d.acceptance.md');
+    expect.soft(frozen).toContain('high human_decision');
   });
 });
 

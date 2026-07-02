@@ -232,13 +232,17 @@ export interface RunState {
   phaseSummaries: Partial<Record<PhaseName, { summary: string; artifacts: string[]; humanDecisions?: HumanDecision[] }>>;
   /**
    * Proof THIS run's consultant authored a contract — set in `settleTurn` when a
-   * consultant turn settles in the contract-author phase (full's plan), recording
-   * the derived `path`, the authoring `sessionId`, and `authoredAt`. It is the
-   * authorship evidence the freeze and the advance_phase rail require: a stale
-   * pre-existing contract file with no draft marker is NOT this run's contract and
-   * must not be frozen. ADDITIVE and consultant-only (absent otherwise).
+   * consultant turn settles in the contract-author phase (full's plan, the design
+   * arc's design), recording the derived `path`, the authoring `sessionId`, and
+   * `authoredAt`. It is the authorship evidence the freeze and the advance_phase
+   * rail require: a stale pre-existing contract file with no draft marker is NOT
+   * this run's contract and must not be frozen. `path` is absent when the primary
+   * artifact's path wasn't yet recorded at settle time (the design arc's draft
+   * flow authors LATE, in the same phase that writes the doc — spec_path lands
+   * only at advance_phase); the freeze then verifies the file at the path it
+   * derives at crossing time. ADDITIVE and consultant-only (absent otherwise).
    */
-  acceptanceContractDraft?: { path: string; sessionId: string; authoredAt: string };
+  acceptanceContractDraft?: { path?: string; sessionId: string; authoredAt: string };
   /**
    * The frozen acceptance contract (the optional consultant's contract feature,
    * Full arc) — set when the contract gate (plan) is crossed and this run's

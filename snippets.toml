@@ -171,17 +171,17 @@ expand = '''
 [[snippets]]
 key = "compact-for-impl"
 expand = '''
-/compact Transitioning from planning to implementation. The spec and the plan are both settled and committed as files — compact for a **focused implementation window**: keep what the slices build on, drop the journey that produced the plan.
+/compact Transitioning from design to implementation. The design is settled and committed on disk — the spec and plan files, or the single design doc — so compact for a **focused implementation window**: keep what the build turns on, drop the journey that produced the design.
 
 **Preserve:**
-- The committed spec and plan as the source of truth — the problem, the settled approach, the slice breakdown, and each slice's test cases and decisions.
-- The load-bearing architectural direction: module/function names, the composition shape, the coupling decision, and the invariants the slices must hold.
-- *Why* the plan is shaped this way — the decisions a slice has to honor — but not the alternatives that lost.
+- The committed design documents as the source of truth — the problem, the settled approach, the slice breakdown or module boundaries, and the test cases or standards the build must honor.
+- The load-bearing architectural direction: module/function names, the composition shape, the coupling decision, and the invariants the build must hold.
+- *Why* the design is shaped this way — the decisions the build has to honor — but not the alternatives that lost.
 
 **Drop or summarize:**
-- The spec-exploration journey: brainstormed approaches, cross-agent synthesis, tradeoff debates.
-- The spec and plan review rounds — their conclusions already live in the committed files.
-- Code reads and exploration that fed the spec and plan — you reread the touched files fresh before implementing each slice, so the reading process itself isn't needed.
+- The exploration journey: brainstormed approaches, cross-agent synthesis, tradeoff debates.
+- The review rounds — their conclusions already live in the committed files.
+- Code reads and exploration that fed the design — you reread the touched files fresh before implementing each slice, so the reading process itself isn't needed.
 '''
 
 [[snippets]]
@@ -626,6 +626,172 @@ Then the technical side at a very high level — the approach and the one or two
 
 This is CEO/CTO altitude: outcomes first, technology last. Drop any section that's empty. Tight prose beats exhaustive sections.'''
 
+# ── Design arc (frame → design → implement → finish) ────────────────────────
+# The middle workflow: ONE committed design document replaces the spec + plan
+# pair — product sections on top (spec altitude), technical sections below
+# (plan altitude minus per-case enumeration) — reviewed in one loop at a
+# section-scoped altitude. The build seeds from implement-design (the design
+# doc is the authority; the slicing is the implementer's). review-design keeps
+# the `review-` prefix — the review-round counter recognizes a round by it.
+
+[[snippets]]
+key = "write-design"
+expand = '''
+Now, write the design doc to the location the framing's conventions name (where design docs live is the project's call, not this template's). This one document carries the whole design — the build executes from it, and a human reads it later to understand the change — so **tight prose beats exhaustive sections**, and every section earns its place.
+
+## Read these first, then design
+Read each one and adapt it to this change — they're the bar for a good design, not optional background. If a path is missing, ask me rather than guessing.
+- `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
+- `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, the anti-patterns
+- `{{lessons_dir}}/testing/mocking-and-fixtures.md` — mock only at boundaries; `test.extend` fixtures
+- `{{lessons_dir}}/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
+
+When the design restructures an existing cluster or the interface is uncertain, also read `{{lessons_dir}}/codebase-design/deepening.md` and `{{lessons_dir}}/codebase-design/design-it-twice.md`.
+
+Ground problem and approach in actual code — read the relevant modules first if you haven't.
+
+## The document's shape
+The doc runs top-down, product to technical, each tier at its own altitude.
+
+**Product sections first — what and why.** Open with a leader-facing summary: what we're adding or fixing in product terms, the approach and its scope, and the boundary once it lands — what's fixed, what isn't, what's explicitly deferred (one-line why each). Then the goals, the user-facing behaviors, and the non-goals; distinguish current vs. desired — what's preserved vs. what's changing (a tree-style before/after often makes it crisp). Someone who reads only these sections should still know what they're getting and not getting.
+
+**Technical sections below — the shape of the build:**
+- **Module boundaries and seams:** which modules own the change, the interface each presents, and the coupling decision — an extension of an existing concept, or intentionally independent. Design deep modules: small interfaces, complexity concentrated behind them (the deletion test).
+- **The foundation decision (preparatory refactoring):** is the existing code a base this extends cleanly, or a structure that blocks the design? If it blocks, scope a *bounded* reshaping as the opening move — sized to this feature, not a module rewrite — and name what you're deliberately leaving alone.
+- **An architecture sketch:** how data and control flow through the changed system, in prose or a diagram — enough that the build starts oriented — with implementation anchors (modules, functions, files) attached to the flow, not as the main narrative.
+- **Test standards:** the behaviors that must be tested, and for each the strategy — through which interface, what gets faked at which boundary — plus the gotchas worth flagging. Name *what to test and how to think about testing it*.
+
+**Be concrete where you decide.** Vague verbs — "improve", "enhance", "polish", "streamline" — name a *direction*, not a *decision*; they quietly defer the real choice to the build. Say **what** changes: the specific behavior, state, or outcome that differs, and the rule or shape that produces it.
+
+## What the build decides later
+Leave these out — they're the build's to decide, and pinning them now would commit the design to details the code hasn't taught us yet: full code bodies, per-case test enumeration and fixtures, line-level edit plans, doc-update plans, and commit order. The design owes the *what* and the *shape*; the build owns the cases and the sequence.
+
+**Do not include any time/effort estimates** ("2 days", "~3 hours") — describe the work itself.
+
+If you have remaining product questions or major technical uncertainty, interview me before you write.'''
+
+[[snippets]]
+key = "review-design"
+expand = '''
+I've drafted a design doc — the one design document for this change (it replaces a separate spec and plan). Review critically — verify problem statements and intended solutions against the actual code.
+
+Background (skim as a lens, don't recite):
+- `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test
+- `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, when to mock
+
+The doc runs top-down — product sections (goals, behaviors, non-goals) above technical sections (module boundaries, seams, architecture sketch, test standards) — and each tier reviews at its own altitude:
+
+**Product sections — hold them to product altitude:**
+- Vagueness on behaviors the feature must define (data flow, ordering, failure modes, scope, edge cases, current vs. desired) → **bug, flag it**.
+- Module or test design pressed here → it lives in the doc's own technical sections; judge it there, not as a product-section gap.
+
+**Technical sections — hold them to design altitude:**
+- Module boundaries, seams, the architecture sketch, and the test strategy → **fair game; propose better** where a boundary is wrong, a module shallow, a seam misplaced, a test strategy weak, or the design over-built.
+- Vagueness on full code bodies, per-case test enumeration, fixtures, line-level edit plans, commit order → **intentional, don't ask for them**: the build decides those, and pressing the doc down to that depth re-grows the review rounds this single document exists to avoid.
+
+**Push hard on:**
+- Are we solving the right problem? Is the UX goal right?
+- Does the approach hold up: data flow, state, ordering, failure modes, performance, backward compat, migrations?
+- Doc ↔ code mismatches; cleaner alternative approaches.
+- **Whether the design deletes complexity or just rearranges it**, and whether the resulting modules are deep or shallow.
+- **Foundation & preparatory refactoring:** a feature bolted onto a structure that can't hold it (a missing prep step), or a cleanup disproportionate to the feature (scope creep) — flag either.
+- **Over-building** — defensive handling for states that could be made unrepresentable, speculative features or config nobody asked for, an abstraction pulled out too early. Flag these the way you'd flag a missing case.
+- **Test standards:** do the named behaviors cover the critical paths, and are the strategies at the right altitude (behavior through interfaces, mocking only at boundaries)?
+- Non-goals + open questions: anything in-scope that should defer? Anything missing from the uncertainty list?
+
+**Per point:**
+- Agree → add technical suggestions, caveats, or risks worth flagging.
+- Disagree → give reasons and a concrete alternative. If architectural, say so and propose the structural fix.
+
+Challenge assumptions and propose alternatives — don't default to politeness. Don't say "not specific enough" without naming the unanswered concept and the section that owes it.
+
+**End with an "Optional polish" section**, separate from the findings above: wording-level fixes where you can supply the exact replacement and the meaning doesn't change. Write each as location plus replacement (before → after), ready to apply verbatim. If an imprecision changes behavior, scope, or a testable claim, it's a finding, not polish; if you can't write the exact replacement, it isn't polish either — raise it as a finding or drop it. Delivered as concerns, wording points cost the author a reread of the whole document; delivered as ready replacements, they cost nothing.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "update-design"
+expand = '''
+Engineering team's review feedback on your design doc below. **For each point:**
+1. **Assess validity** — be honest, don't agree just to agree.
+2. **If valid:** update the design doc. You may propose a better solution than suggested — explain why.
+3. **If you disagree:** explain from first principles why the design is correct as-is.
+
+The feedback may end with an "Optional polish" section — exact before → after replacements, pre-checked to change no meaning. Apply them as given, or skip any you disagree with; they need no re-analysis, so spend the thinking on the findings above them.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "review-design-again"
+expand = '''
+Design doc updated per your review. Re-check — focus on **whether feedback was integrated or hand-waved**, and whether revisions introduced new issues.
+
+**For each previously-flagged point:**
+- Did the update address the concern, or hand-wave it?
+- Did it introduce a new problem (over-corrected, broke an unrelated section)?
+- Still wrong → restate concretely and propose the structural fix.
+
+Same section-scoped altitude as before — product sections at product altitude, technical sections at design altitude; don't demand code bodies, per-case test enumeration, or line-level plans. **New issues OK; don't relitigate settled points.**
+
+Wording-level points go in the same "Optional polish" section as before — exact before → after replacements only.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "update-design-again"
+expand = '''
+Round-2 reviewer feedback on the design doc below. Apply valid points and update. Disagreements: explain briefly, don't dwell — **this round is about converging**. Major disagreement needing my input → flag clearly and **stop** instead of pushing through. "Optional polish" items apply as given (or skip) — no re-analysis.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "implement-design"
+expand = '''
+Build the change from the committed design doc — it is the authority for what we're building and why: its product sections carry the goal and the boundaries, its technical sections the module shapes, seams, and test standards the build must honor. Execute the design; don't re-decide it. This prompt carries the *how*.
+
+## Read these first, then build
+Read each one and adapt it to this change — they're the bar, not optional background; don't go hunting them mid-build, and ask me for a path if one's missing.
+- `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
+- `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, red-green-refactor, the anti-patterns
+- `{{lessons_dir}}/testing/mocking-and-fixtures.md` — mock only at boundaries; `test.extend` fixtures
+- `{{lessons_dir}}/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
+
+## Before you write code
+- **Re-read the design doc** — the goals and non-goals bound the scope; the module boundaries and seams are the target shape.
+- **Re-read the code you're about to touch** — trace the real data/control flow and the existing patterns, so the change fits what's already there.
+
+## How to build it
+
+### Slicing
+The design names the shape but deliberately not the build order — the slicing is yours. Build in **vertical slices** — one meaningful unit at a time (a behavior plus the wiring that belongs with it), each independently committable, one slice per commit. Lean larger; group related behavior rather than splitting mechanical steps into their own commits. **Prefer a shape that deletes a concept** — a branch, mode, or helper layer disappears — over one that just rearranges it. If the design called for reshaping the foundation first (*make the change easy, then make the easy change*), do it as the opening slice — **behavior-preserving**, kept green (pin uncovered code with a characterization test first), and proportionate; a prep slice that balloons into a rewrite is the failure mode.
+
+### Right-size the code
+The default failure here is too much code, not too little — defensive branches for cases that can't occur, and abstractions invented before the pattern is real. Build against it:
+- **Make a bad state impossible to construct, don't guard against it.** Reach for a type, a narrow constructor, or an enum an invalid value can't inhabit, over runtime guards repeated at every call site. Validate untrusted input once at the boundary so everything downstream can trust it (*parse, don't validate*); where a state genuinely can't be made unrepresentable, validate at that **one** boundary. Let a real invariant violation fail loudly — not a fallback that hides the bug, or a local defense wherever it happened to surface.
+- **Prefer a little duplication over the wrong abstraction.** Pull out a shared abstraction only when the pattern is real (around the third occurrence) and doing so *concentrates* complexity instead of just moving it (the deletion test).
+- **Build only what the design settled** — no speculative features, config knobs, or extensibility seams it didn't ask for; each is maintenance forever.
+
+### Build on the right layer
+Where the design already settled a layer or dependency choice, follow it. Where a slice needs non-trivial, well-understood mechanical logic the design didn't settle — retries/backoff, concurrency limits, parsing, date/time math — decide deliberately between the platform's own primitives, a small specialized library, and writing it yourself. Hand-rolling a solved problem wastes effort; a new dependency is maintenance forever — take the lightest option that genuinely fits. Training data lags real releases, so ground the choice in what the stack offers *now*, not memory.
+- **Prefer current stable platform primitives when they cover the need** — runtimes keep absorbing what libraries used to own (in TypeScript, `Intl` handles most date/time and number formatting without `date-fns`; native `fetch`, `structuredClone`, and `AbortController` replaced their old library equivalents). Confirm what's stable now rather than reaching for a dependency from habit.
+- **Reach for a small, specialized library when it owns a genuinely tricky problem the platform doesn't** — retry/backoff and concurrency queues are the clear wins (e.g. `p-retry`, `p-queue`). Keep it specialized: a general-purpose giant pulled in for one function is its own cost.
+- **When you adopt one**, check the repo doesn't already depend on something that covers it, then **confirm its current API with Context7** and **web-search for best practices, pitfalls, the latest version, and breaking changes**, and match how nearby code already wires its dependencies.
+
+A dependency weighty enough to be an architecture decision in its own right is mine to weigh — flag it rather than committing the repo to it.
+
+### Tests
+The design's test standards name the behaviors that must be tested and the strategy for each — the specific cases are yours. Write each test against **real** behavior as you build its slice, not a batch up front against imagined shapes — behavior through the public interface, covering the critical paths and complex logic, not every edge case (skip UI tests unless asked). Apply red-green-refactor inside a slice when design is uncertain or behavior is subtle; test and code together is fine otherwise. Run them as you go and keep them green.
+
+If the design turns out wrong or underspecified once you're in the code, **stop and flag it** rather than guessing your way past it.'''
+
 # ── RIR arc (research → implement → review) ─────────────────────────────────
 # The lighter second workflow: independent cross-framing, then a direct build
 # with one writable review round. These snippets reference the research
@@ -813,15 +979,15 @@ $0'''
 [[snippets]]
 key = "consultant-contract"
 expand = '''
-Your job this turn is to author an acceptance contract for the change specified below: a short, frozen list of falsifiable assertions that define what success MEANS for it — the runtime behaviors that, if they silently drift from the spec, mean we shipped the wrong thing, and that the implementer's own tests would most plausibly miss.
+Your job this turn is to author an acceptance contract for the change specified below: a short, frozen list of falsifiable assertions that define what success MEANS for it — the runtime behaviors that, if they silently drift from the settled design, mean we shipped the wrong thing, and that the implementer's own tests would most plausibly miss.
 
-You are the on-call engineer who will be paged at 3am when this ships broken. You don't trust a green test suite: tests confirm the author's understanding of their own code, and you are here for the other gap — the behavior the product actually depends on, pinned independently, before any code exists. You are reading the spec ONLY; you cannot see the plan or the implementation, and that blindness is the asset — it is what keeps this a definition of success rather than a description of whatever got built.
+You are the on-call engineer who will be paged at 3am when this ships broken. You don't trust a green test suite: tests confirm the author's understanding of their own code, and you are here for the other gap — the behavior the product actually depends on, pinned independently, before any code exists. You are reading the settled design document ONLY — the ratified spec, or the converged design doc — and you cannot see any implementation; no code for this change exists yet. That independence is the asset: a fresh read with no build in sight is what keeps this a definition of success rather than a description of whatever gets built.
 
-Spend the whole contract on its reason to exist: assert only what is BOTH high-impact-if-wrong AND unlikely to be caught by the implementer's own tests. Their tests already cover "does my code do what I think"; the contract spends its budget on runtime behavior that can drift from the spec's intent while every obvious test still passes.
+Spend the whole contract on its reason to exist: assert only what is BOTH high-impact-if-wrong AND unlikely to be caught by the implementer's own tests. Their tests already cover "does my code do what I think"; the contract spends its budget on runtime behavior that can drift from the document's intent while every obvious test still passes.
 
 Work in two moves, in this order — the order is load-bearing.
 
-1. **Elicit the high-value behaviors — find them before you format them.** Scan the spec for where being wrong is both costly and quiet. Strongest signals, in rough priority: the product's core promise; trust and permission boundaries; irreversibility and data loss; state-machine invariants and illegal transitions; idempotency, retry, concurrency, partial failure; the contract with callers (CLI flags, exit codes, output/schema stability); the error and failure envelope. Three techniques to surface them:
+1. **Elicit the high-value behaviors — find them before you format them.** Scan the document for where being wrong is both costly and quiet. Strongest signals, in rough priority: the product's core promise; trust and permission boundaries; irreversibility and data loss; state-machine invariants and illegal transitions; idempotency, retry, concurrency, partial failure; the contract with callers (CLI flags, exit codes, output/schema stability); the error and failure envelope. Three techniques to surface them:
    - **Pre-mortem.** It is three months from now. This shipped and has been quietly wrong the whole time — no crash, no failing test. Write the post-mortem, then turn each cause into an assertion.
    - **Definition-of-wrong.** Don't list what it should do; list what would make it WRONG, not merely buggy.
    - **Red-team the tests.** Assume every obvious test passes. Describe an implementation that passes them all and still violates the intent — then write the assertion that closes that gap.
@@ -831,13 +997,13 @@ Work in two moves, in this order — the order is load-bearing.
    [A1] <When | While | If…then | Where | (ubiquitous, no keyword)> <trigger or condition>, the <system> SHALL <one observable response>.
      Verify by: <probe> → <exact expected observable>
 
-   Discipline: SHALL / SHALL NOT only; one observable per line; explicit negations where the absence is the point; stable IDs, never renumbered; self-contained lines (no cross-references); binary pass/fail, no holistic score. Ban the quality-adjectives — "works", "correctly", "gracefully", "robust", "efficient" — they are unfalsifiable, so name the observable instead. Concreteness tracks the spec: where the spec already fixes the surface (a flag, an exit code, a state field, a log line), make `Verify by:` concrete against it; where the spec defers to implementation, keep the probe behavioral ("the run RESUMES, not restarts"). You say WHAT to observe; the verifier resolves HOW in the built system — that division is what keeps the contract independent of the code yet still falsifiable.
+   Discipline: SHALL / SHALL NOT only; one observable per line; explicit negations where the absence is the point; stable IDs, never renumbered; self-contained lines (no cross-references); binary pass/fail, no holistic score. Ban the quality-adjectives — "works", "correctly", "gracefully", "robust", "efficient" — they are unfalsifiable, so name the observable instead. Concreteness tracks the document: where it already fixes the surface (a flag, an exit code, a state field, a log line), make `Verify by:` concrete against it; where it defers to implementation, keep the probe behavioral ("the run RESUMES, not restarts"). You say WHAT to observe; the verifier resolves HOW in the built system — that division is what keeps the contract independent of the code yet still falsifiable.
 
-Cap the contract to its altitude: a small fix earns 3–5 assertions, a normal feature 8–12. If you want more, the contract is at the wrong altitude — raise it. Do not restate the spec as assertions, do not assert the obvious happy path the tests already own, and do not demand detail the spec intentionally defers.
+Cap the contract to its altitude: a small fix earns 3–5 assertions, a normal feature 8–12. If you want more, the contract is at the wrong altitude — raise it. Do not restate the document as assertions, do not assert the obvious happy path the tests already own, and do not demand detail the document intentionally defers.
 
-Write the contract to the path the orchestrator names, and do NOT commit it — duet freezes it at the plan gate, where the human ratifies it. Reproduce the full contract in your response as well, so the gate packet can carry it.
+Write the contract to the path the orchestrator names, and do NOT commit it — duet freezes it when the human ratifies the design at its gate. Reproduce the full contract in your response as well, so the gate packet can carry it.
 
-The spec to author against:
+The document to author against:
 
 ---
 

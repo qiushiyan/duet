@@ -217,6 +217,32 @@ A plan whose first slice defines a typed contract every later slice produces or 
 Driving a three-slice plan as "do slice 1, hold; slice 2 next turn" with no structural reason. A turn boundary forced by the budget or time cap is fine; a planned hold is not — it spends an orchestrator round-trip and a slow worker turn re-establishing the context the single pass would have kept.
 </example>`;
 
+const DESIGN_EXAMPLES = `## Design phase examples
+
+This phase's call is holding each reviewer point to its section's altitude — the doc's product sections review like a spec, its technical sections like a design, and the build's details stay deferred. Apply the section the point lands in, not the point's wording.
+<example name="a product gap is a real gap">
+The reviewer notes the doc never says what happens when the input is empty — a behavior the feature must define. That is a gap in the product sections: route it to the implementer to resolve in the doc, because the technical sections and the build both build on the answer.
+</example>
+<example name="module design reviews at design altitude">
+The reviewer flags a module boundary that leaves two callers reimplementing the same rule — a seam in the wrong place. Fair game: the technical sections own module boundaries, so route it as a design change to make, not a nitpick to note.
+</example>
+<example type="avoid" name="pressing the doc down to build depth">
+The reviewer asks the doc to enumerate the test cases per behavior and sketch the helper bodies. Those are the build's to decide — the doc owes behaviors, strategies, and gotchas, not cases and code. Pressing for them re-grows the extra review rounds this run type exists to delete; note they are deferred and move on.
+</example>`;
+
+const DESIGN_IMPL_EXAMPLES = `## Implementation phase examples
+
+This phase's call is sizing the build — one pass, or one midpoint. The design doc fixes the shape, not the slices, so apply the signal (structural dependency in what's being built), not a count you don't have.
+<example name="independent pieces → one pass">
+The design touches three modules — a helper, a route, a link — none depending on another's internals. One implement-design pass: the implementer slices and commits as it goes, and a mid-review would protect nothing. Review once, at the handoff.
+</example>
+<example name="foundation-first design → one midpoint">
+The design centers on a typed contract every later piece produces or consumes. Even a modest build warrants one checkpoint here — a wrong contract compounds through everything built on it. Have the implementer pause after the foundational piece lands, then midpoint-status → review-midpoint → respond-midpoint; it folds the guidance into the rest and continues to the handoff. One pause, not per piece.
+</example>
+<example type="avoid" name="chunking a small build">
+Driving a small build as "do the first module, hold; the next module next turn" with no structural reason. A turn boundary forced by the budget or time cap is fine; a planned hold is not — it spends an orchestrator round-trip and a slow worker turn re-establishing the context the single pass would have kept.
+</example>`;
+
 const RESEARCH_EXAMPLES = `## Research phase examples
 
 This phase's call is turning two analyses into one direction the build runs on — apply the signal (the stronger spine plus the other's best insight), not a surface compromise.
@@ -329,21 +355,34 @@ Consultant checkpoint (the consultant is bound for this run): before you advance
 }
 
 /**
- * The acceptance-contract AUTHOR injection (Full's plan). Placed EARLY — right
- * after the spec commit and before any plan drafting — so a compliant orchestrator
- * dispatches it before its own session has seen the plan: the consultant's
- * blindness rests on spec-only seeding AND on the orchestrator not yet holding plan
- * context when it composes the prompt. The consultant writes (never commits) the
- * file; duet freezes it at the plan-gate crossing. Empty unless a consultant is
- * bound AND a spec path is known (the contract location derives from it).
+ * The acceptance-contract AUTHOR injection, shared by every arc that authors a
+ * contract (contractAuthorPhaseOf — full's plan, the design arc's design). The
+ * mechanical spine is arc-invariant: the live-checkpoint gate, the path derived
+ * from the spec slot, write-never-commit, the freeze at the gate crossing, the
+ * missing-contract high, and the advance rail that enforces it. WHEN the
+ * dispatch happens and WHAT seeds the consultant are the arc's calls — full
+ * authors EARLY (right after the spec commit, before any plan exists, blind to
+ * the technical approach), the design arc authors LATE (after the design loop
+ * converges, seeded with the near-final doc, blind only to the code) — so each
+ * arc's phase brief passes its own placement prose. Empty unless a consultant
+ * is bound. The contract's committed location derives from the primary
+ * artifact's path: a literal path when the artifact predates the brief (full's
+ * plan brief, a --spec design entry), the naming convention when the artifact
+ * is written mid-phase (the design arc's draft flow — spec_path lands only at
+ * advance_phase, after the contract is authored).
  */
-function consultantContractStep(state: RunState): string {
-  const snippet = consultantSnippetFor(workflowOf(state), 'plan');
-  if (!checkpointLive(state, 'plan') || !snippet || !state.specPath) return '';
-  const path = acceptanceContractPathForSpec(state.specPath);
+function consultantContractStep(state: RunState, placement: { when: string; seed: string }): string {
+  const workflow = workflowOf(state);
+  const authorPhase = contractAuthorPhaseOf(workflow);
+  if (!authorPhase) return '';
+  const snippet = consultantSnippetFor(workflow, authorPhase);
+  if (!checkpointLive(state, authorPhase) || !snippet) return '';
+  const path = state.specPath
+    ? acceptanceContractPathForSpec(state.specPath)
+    : "the settled document's own path with its extension replaced by .acceptance.md (docs/specs/foo.md → docs/specs/foo.acceptance.md)";
   return `
 
-Consultant checkpoint — author the acceptance contract (the consultant is bound for this run): do this NOW — immediately after the spec commit and BEFORE you draft or review the plan — so the consultant authors blind to the plan and the code. Send it a ${snippet} prompt as its own independent dispatch (never folded into a plan prompt); it runs concurrently, so do not wait for it before starting the plan loop. It authors a short, frozen list of falsifiable behavioral assertions pinning what success MEANS: the runtime behavior that would drift from the ratified spec in ways the implementer's own tests would miss. Seed it with the committed spec ONLY (${state.specPath}); never put any plan or implementation detail into its prompt — that blindness is what makes the contract independent. Have it write the contract to ${path} and NOT commit it (duet freezes it when you cross the plan gate). The consultant is ephemeral and never counts a review round. At advance_phase, list ${path} among the artifacts so the human ratifies the contract by approving the plan; if the consultant could not author one, record a high human_decision ("acceptance contract not authored — proceeding freezes no target"). The plan gate will not advance without an authored contract or that high.`;
+Consultant checkpoint — author the acceptance contract (the consultant is bound for this run): ${placement.when} Send it a ${snippet} prompt as its own independent dispatch, never folded into another worker's prompt. It authors a short, frozen list of falsifiable behavioral assertions pinning what success MEANS: the runtime behavior that would drift from the settled design in ways the implementer's own tests would miss. ${placement.seed} Have it write the contract to ${path} and NOT commit it (duet freezes it when you cross the ${authorPhase} gate). The consultant is ephemeral and never counts a review round. At advance_phase, list the contract file among the artifacts so the human ratifies it by approving the ${authorPhase}; if the consultant could not author one, record a high human_decision ("acceptance contract not authored — proceeding freezes no target"). The ${authorPhase} gate will not advance without an authored contract or that high.`;
 }
 
 /**
@@ -466,7 +505,10 @@ ${approvalClause(
     'The commit-spec gate was pre-authorized at run start and auto-crossed — the spec stands approved as converged.',
   )} Run the PLAN phase:
 ${attendancePosture(state, 'plan')}
-1. Have the implementer commit the approved spec file (${specRef}) with a conventional message, as its own commit.${consultantContractStep(state)}
+1. Have the implementer commit the approved spec file (${specRef}) with a conventional message, as its own commit.${consultantContractStep(state, {
+    when: 'do this NOW — immediately after the spec commit and BEFORE you draft or review the plan — so the consultant authors blind to the plan and the code; it runs concurrently, so do not wait for it before starting the plan loop.',
+    seed: `Seed it with the committed spec ONLY (${state.specPath}); never put any plan or implementation detail into its prompt — that blindness is what makes the contract independent.`,
+  })}
 2. Decide where the plan file lives: the framing names the project's plan location (path or directory convention). The plan must be a file in the repo — implementation may compact the implementer's context, and the plan file is what later turns re-anchor on. If the framing doesn't name a plan location, ask_human for one before drafting.
 3. Send the implementer a planning prompt based on the start-plan snippet. The implementer writes the plan to the file and reports it.
 4. Run the plan review loop: review-plan to the reviewer (point it at the plan file's path as well as the content), update-plan to the implementer, -again variants for later rounds. Plans are reviewable at a finer altitude than specs — test cases, fixtures, and line-level references are fair game; only full code bodies are deferred.
@@ -479,27 +521,124 @@ ${PLAN_EXAMPLES}
 </task>`;
 }
 
+/**
+ * The design arc's contract placement — LATE: full authors early (before any
+ * plan exists) to keep the consultant blind to the technical approach, but the
+ * design arc has no product-only artifact to seed from and no phase between its
+ * gate and the build, so it authors after the loop converges (the same
+ * runs-last pattern verify uses at implement) and gives up that one blindness.
+ * Kept: blind to the code (nothing is built), the fresh session, and — because
+ * the design gate is the arc's one attended stop by default — a contract the
+ * human actually ratifies.
+ */
+const DESIGN_CONTRACT_PLACEMENT = {
+  when: 'run this LAST — after the design review loop has converged and the doc is final, immediately before your advance_phase — so the contract pins the exact design the human ratifies at the gate. Wait for its turn to settle before you advance.',
+  seed: 'Seed it with the converged design doc ONLY — the document (or its path), never the review-loop traffic or any build talk. It sees the settled design and no code (nothing is built yet), reading fresh in its own session; that independence is what makes the contract a check on the build rather than an echo of it.',
+};
+
+/**
+ * The design arc's artifact phase — ONE committed design doc between framing
+ * and the build, reviewed in one section-scoped loop, ratified at the gate
+ * that is also the interactive→headless handoff. Two variants like full's
+ * spec: a --spec entry reviews the provided draft (cold session — documents +
+ * branch policy included); the post-frame path drafts from the approved
+ * direction (warm session — the framing is already in context).
+ */
+export function designPhaseEntryPrompt(state: RunState, roundCap: number): string {
+  if (!state.specPath) return designDraftEntryPrompt(state, roundCap);
+  return `${documentsBlock(state)}
+
+<task>
+Run the DESIGN review loop on the draft design doc above, then advance to the design gate. This run produces ONE committed design document between the framing and the build — product goals, behaviors, and non-goals on top; module boundaries, seams, an architecture sketch, and test standards below; there is no separate spec or plan.
+${branchPolicyParagraph(state)}${attendancePosture(state, 'design')}
+The shape of the loop:
+1. Read the snippet library (list_snippets) — the review-design / update-design snippets (and their -again variants for round 2) are the templates for this loop.
+2. Send the reviewer a review-design prompt wrapping the current doc. The reviewer can read the repo directly, so point it at ${state.specPath} and related code — name the path as well as quoting the content. The review is section-scoped: product sections at product altitude, technical sections at design altitude — the lens is in the template; keep it intact.
+3. Route the reviewer's feedback to the implementer with an update-design prompt. The implementer should apply accepted changes to ${state.specPath} directly (it has write access) and report what it changed versus rejected and why.
+4. Judge convergence. Run another round with the -again variants when substantive points remain open; stop when what's left is minor. The backstop cap for this phase is ${roundCap} review rounds — this run type premises fast convergence, so one round is the norm and the cap should never bind.${consultantContractStep(state, DESIGN_CONTRACT_PLACEMENT)}
+5. When converged, call advance_phase with a summary of what the reviewer flagged, what changed, and any rejections with their rationale. Approving this gate hands the run off to AFK implementation, so the summary should give the human confidence the design is buildable end to end.
+
+Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
+
+${DESIGN_EXAMPLES}
+</task>`;
+}
+
+function designDraftEntryPrompt(state: RunState, roundCap: number): string {
+  return `<task>
+${approvalClause(
+    state,
+    'frame',
+    'The human approved the direction at the Direction gate.',
+    'The Direction gate was pre-authorized at run start and auto-crossed — the synthesized direction stands approved as recorded in its packet.',
+  )} Draft the design doc, then run its review loop to the design gate. This run produces ONE committed design document between the framing and the build — product goals, behaviors, and non-goals on top; module boundaries, seams, an architecture sketch, and test standards below; there is no separate spec or plan.
+${attendancePosture(state, 'design')}
+The shape of the phase:
+1. Decide where the design doc lives — the framing names the project's spec/design location. If it doesn't, ask_human for one before drafting.
+2. Send the implementer a write-design prompt carrying the approved direction; it writes the design doc and reports the path and content.
+3. Run the review loop: review-design to the reviewer (point it at the file's path as well as the content), update-design to the implementer, -again variants for round 2. The review is section-scoped — product sections at product altitude, technical sections at design altitude; the lens is in the template, keep it intact. The backstop cap is ${roundCap} review rounds — this run type premises fast convergence, so one round is the norm and the cap should never bind.${consultantContractStep(state, DESIGN_CONTRACT_PLACEMENT)}
+4. When converged, call advance_phase with the summary — what the reviewer flagged, what changed, rejections with their rationale — and with spec_path set to the design doc's repo-relative path (the harness records it for the later phases). Approving this gate hands the run off to AFK implementation, so the summary should give the human confidence the design is buildable end to end.
+
+Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
+
+${DESIGN_EXAMPLES}
+</task>`;
+}
+
+/**
+ * The AFK-build step builders shared by full's and the design arc's implement
+ * briefs. Each takes the arc's own anchor phrasing (what the run committed —
+ * full: the spec and plan; design: the one design doc) so the prose stays
+ * accurate per arc while the mechanics — when to compact, how to recover an
+ * aborted /compact, the scratch-dir and budget gotchas, the midpoint judgment,
+ * the review tail — live once.
+ */
+
+// First compaction — the design→implementation boundary. The implementer
+// carried the whole pre-build arc in one session; that journey is now settled
+// in committed files, so reset the window before the long slice phase.
+// Deliberately placed here and not between the earlier artifact phases:
+// designing and exploration share one substrate (understanding the code to
+// design against it), so cutting between them only forces a reread; the
+// committed artifacts carry the design across this seam, and the slices reread
+// code fresh anyway.
+function resetForImplStep(claudeImplementer: boolean, arc: { journey: string; anchors: string }): string {
+  return claudeImplementer
+    ? `This is the run's first compaction. The implementer still holds ${arc.journey} in one session, but the settled design already lives in ${arc.anchors} — so reset the window before the long slice phase. Send it a prompt whose body is literally "/compact " followed by your adapted compact-for-impl instructions, then a reread-context turn pointing at ${arc.anchors} plus the code the first slice touches. It enters the slices anchored on those artifacts rather than the path that produced them, with headroom before the slice work grows the context again. If a /compact send comes back saying it was aborted and the session reset (a hung compaction its watchdog killed at a short cap), the result tells you the recovery: the next implementer turn already starts on a fresh session, so send recover-context — a status overview plus a reread — to re-anchor it, rather than resending the /compact or resuming a session that no longer holds the work.`
+    : `Re-anchor the implementer on the artifacts before the first slice. It runs on codex, which compacts itself as it fills (so no /compact from you), but a reread-context turn pointing at ${arc.anchors} plus the code the first slice touches re-grounds it on the settled design before the build work begins — the same design→implementation reset, minus the explicit compaction.`;
+}
+
+// Second compaction — the build→review boundary. Deferred to its existing
+// "before the handoff" placement (a run-steer wanted it after the handoff,
+// before respond-review; that adjustment is a separate pass).
+function reviewCompactionStep(claudeImplementer: boolean, anchors: string): string {
+  return claudeImplementer
+    ? `A second compaction is yours to time, and the context footer on each worker result is the instrument — time it by the reading, not by feel: a build phase's long turns can grow a session hundreds of thousands of tokens each, so once the implementer's fill crosses 75% (the footer flags it "compaction due"), run the compaction at the next slice boundary rather than deferring it to the handoff. The natural moment is after the last slice, before the handoff — earlier whenever the gauge says so. The mechanic is the same /compact + reread-context as step 2, now with your adapted compact-for-review instructions — this one drops the build journey while the load-bearing model and test state carry into review.`
+    : `Codex still manages its own context here, so the second compaction needs nothing from you. Your lever is anchoring: before the handoff (or whenever the implementer seems to have lost the thread), a reread-context turn pointing at ${anchors} re-grounds it on the artifacts.`;
+}
+
+// The scope/scratch/budget guardrails riding the single-pass build step —
+// identical in both arcs' briefs, parameterized only by the run's scratch dir.
+function buildPassGuardrails(runId: string): string {
+  return `Never descope or thin tests to fit a turn: a fresh prompt carries a fresh budget ceiling, so trimming scope for budget is a product decision that needs work-content reasons and an honest line in the Ship packet. Have the implementer put ephemeral verification harnesses (throwaway tsconfigs, probe scripts) in this run's scratch dir, .duet/runs/${runId}/scratch/, and leave them there — it's gitignored and torn down with the run, so nothing rides the worktree as an untracked stray and there's no cleanup step. Everything else under .duet/ is this run's own live state and logs; the implementer must never delete .duet/ (or anything under .duet/runs/) or write outside that scratch dir, because removing the run's state strands it mid-build. (Gotcha: a worker can't watch its own budget — a turn that hits the per-turn cap or time limit is cut off mechanically, surfacing as a failed or short response, not a graceful "I'm low" report. Its committed slices are on disk, so just resume that session with a short continue prompt for the rest; that's resumption, not a content failure, so don't re-send the original prompt or insert a review between those turns.)`;
+}
+
+// The one midpoint judgment — arc-invariant: the signal is structural
+// dependency and real size, whichever document fixed the shape.
+const MIDPOINT_STEP = `Insert a midpoint checkpoint only when the implementation is genuinely large — more than roughly six slices is a rough signal, but judge by the real size and structural risk, not the count. Its whole value is catching a foundational problem while many slices still remain for the correction to save; a small or moderate build has too little left to pay for the extra turns, so skip it and run straight to the handoff. When you do run it, run it exactly once: have the implementer stop at a sensible point partway (around the first third to half), then midpoint-status → review-midpoint → respond-midpoint. The reviewer weights foundational problems highest — they compound across every remaining slice — and treats unreached slices as intentionally undone, not missing. The implementer then triages the points into fix-now / fold-into-the-remaining-slices / disagree, applies the fix-now items, and continues to the end — folding the rest of the guidance into the remaining slices as it goes. It does not pause again; the next stop is the handoff.`;
+
+// The shared review-and-ship tail (steps 6–8): handoff + review loop, docs
+// reconcile as the last build step, then the CEO summary leading the packet.
+// `deviationsFrom` names the settled document the packet reports drift against.
+function implReviewTail(state: RunState, roundCap: number, deviationsFrom: string): string {
+  return `6. When all slices are in: implementation-handoff from the implementer, then the review loop — review-implementation to the reviewer, respond-review to the implementer, -again variants for later rounds, fix commits as they're accepted. The backstop cap for this phase is ${roundCap} review rounds; converge well before it.
+7. When the review loop has converged, reconcile the docs with what shipped — docs are part of the work the Ship gate reviews now, not a later step, so they run here on the finished, reviewed code. Send the implementer the reconcile-docs prompt. Your one decision is the doc method, by precedence: if the framing names a doc-update skill or document, name it in the prompt — relay the framing's path or skill faithfully and treat it as authoritative; the implementer locates and follows it, so you needn't (and can't) verify it exists. If the framing names none, send the snippet's default unchanged — it has the implementer find the project's own doc skill, then reconcile by hand if there is none. Never substitute your own survey for a method the framing named — that drops the human's explicit instruction. The implementer commits the docs; they ride the branch into the PR that FINISH opens (there is no docs gate — the human reviews them in the Ship packet and again in the PR). A doc-scope product call it surfaces — deleting a documented concept, rewriting a design claim, pruning a superseded doc — is yours to ask_human (it pauses the run).
+8. Last, after the docs are committed: send the implementer ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review history (rounds run, points raised, resolved, disputed), the docs reconciled, deviations from the ${deviationsFrom}, and the test state. The human returns from hours away and decides to ship — code and docs together — from this packet alone, so it must carry everything.${consultantVerifyStep(state)}`;
+}
+
 export function implPhaseEntryPrompt(state: RunState, roundCap: number): string {
   const claudeImplementer = state.bindings.implementer.provider === 'claude';
-
-  // First compaction — the plan→implementation boundary. The implementer
-  // carried the whole planning arc (spec exploration, spec + plan review
-  // rounds) in one session; that journey is now settled in two committed
-  // files, so reset the window before the long slice phase. Deliberately
-  // placed here and not at spec→plan: planning and spec exploration share one
-  // substrate (understanding the code to design against it), so cutting
-  // between them only forces a reread; the plan file is what carries the
-  // design across this seam, and the slices reread code fresh anyway.
-  const resetForImplStep = claudeImplementer
-    ? `This is the run's first compaction. The implementer still holds the whole planning arc (spec exploration, both review loops) in one session, but the committed spec and plan already carry that design forward — so reset the window before the long slice phase. Send it a prompt whose body is literally "/compact " followed by your adapted compact-for-impl instructions, then a reread-context turn pointing at the committed spec and plan plus the code the first slice touches. It enters the slices anchored on those artifacts rather than the path that produced them, with headroom before the slice work grows the context again. If a /compact send comes back saying it was aborted and the session reset (a hung compaction its watchdog killed at a short cap), the result tells you the recovery: the next implementer turn already starts on a fresh session, so send recover-context — a status overview plus a reread — to re-anchor it, rather than resending the /compact or resuming a session that no longer holds the work.`
-    : `Re-anchor the implementer on the artifacts before the first slice. It runs on codex, which compacts itself as it fills (so no /compact from you), but a reread-context turn pointing at the committed spec and plan plus the code the first slice touches re-grounds it on the settled design before the build work begins — the same plan→implementation reset, minus the explicit compaction.`;
-
-  // Second compaction — the build→review boundary. Deferred to its existing
-  // "before the handoff" placement (a run-steer wanted it after the handoff,
-  // before respond-review; that adjustment is a separate pass).
-  const reviewCompactionStep = claudeImplementer
-    ? `A second compaction is yours to time, and the context footer on each worker result is the instrument — time it by the reading, not by feel: a build phase's long turns can grow a session hundreds of thousands of tokens each, so once the implementer's fill crosses 75% (the footer flags it "compaction due"), run the compaction at the next slice boundary rather than deferring it to the handoff. The natural moment is after the last slice, before the handoff — earlier whenever the gauge says so. The mechanic is the same /compact + reread-context as step 2, now with your adapted compact-for-review instructions — this one drops the build journey while the load-bearing model and test state carry into review.`
-    : `Codex still manages its own context here, so the second compaction needs nothing from you. Your lever is anchoring: before the handoff (or whenever the implementer seems to have lost the thread), a reread-context turn pointing at the plan file and the spec re-grounds it on the artifacts.`;
+  const anchors = { journey: 'the whole planning arc (spec exploration, both review loops)', anchors: 'the committed spec and plan' };
 
   return `<task>
 ${approvalClause(
@@ -512,17 +651,49 @@ ${attendancePosture(state, 'implement')}
 The arc:
 
 1. Have the implementer commit the approved plan file with a conventional message, as its own commit. It wrote the plan and still holds it, so keep this prompt short — don't restate the plan back to it.
-2. Before the first slice: ${resetForImplStep}
-3. Drive the implementation as a single pass, not a slice-by-slice loop with reviews between. Send the implementer one prompt to implement the whole plan — every slice, end to end — one commit per slice with that slice's tests per the plan's verification story. The plan already fixes the slice order and verification, so the implementer executes it straight through; a review or a deliberate hold between slices burns a slow worker turn re-covering ground the post-implementation review (step 6) covers anyway. Never descope or thin tests to fit a turn: a fresh prompt carries a fresh budget ceiling, so trimming scope for budget is a product decision that needs work-content reasons and an honest line in the Ship packet. Have the implementer put ephemeral verification harnesses (throwaway tsconfigs, probe scripts) in this run's scratch dir, .duet/runs/${state.runId}/scratch/, and leave them there — it's gitignored and torn down with the run, so nothing rides the worktree as an untracked stray and there's no cleanup step. Everything else under .duet/ is this run's own live state and logs; the implementer must never delete .duet/ (or anything under .duet/runs/) or write outside that scratch dir, because removing the run's state strands it mid-build. (Gotcha: a worker can't watch its own budget — a turn that hits the per-turn cap or time limit is cut off mechanically, surfacing as a failed or short response, not a graceful "I'm low" report. Its committed slices are on disk, so just resume that session with a short continue prompt for the rest; that's resumption, not a content failure, so don't re-send the original prompt or insert a review between those turns.)
-4. Insert a midpoint checkpoint only when the implementation is genuinely large — more than roughly six slices is a rough signal, but judge by the real size and structural risk, not the count. Its whole value is catching a foundational problem while many slices still remain for the correction to save; a small or moderate plan has too little left to pay for the extra turns, so skip it and run straight to the handoff. When you do run it, run it exactly once: have the implementer stop at a sensible point partway (around the first third to half), then midpoint-status → review-midpoint → respond-midpoint. The reviewer weights foundational problems highest — they compound across every remaining slice — and treats unreached slices as intentionally undone, not missing. The implementer then triages the points into fix-now / fold-into-the-remaining-slices / disagree, applies the fix-now items, and continues to the end — folding the rest of the guidance into the remaining slices as it goes. It does not pause again; the next stop is the handoff.
-5. ${reviewCompactionStep}
-6. When all slices are in: implementation-handoff from the implementer, then the review loop — review-implementation to the reviewer, respond-review to the implementer, -again variants for later rounds, fix commits as they're accepted. The backstop cap for this phase is ${roundCap} review rounds; converge well before it.
-7. When the review loop has converged, reconcile the docs with what shipped — docs are part of the work the Ship gate reviews now, not a later step, so they run here on the finished, reviewed code. Send the implementer the reconcile-docs prompt. Your one decision is the doc method, by precedence: if the framing names a doc-update skill or document, name it in the prompt — relay the framing's path or skill faithfully and treat it as authoritative; the implementer locates and follows it, so you needn't (and can't) verify it exists. If the framing names none, send the snippet's default unchanged — it has the implementer find the project's own doc skill, then reconcile by hand if there is none. Never substitute your own survey for a method the framing named — that drops the human's explicit instruction. The implementer commits the docs; they ride the branch into the PR that FINISH opens (there is no docs gate — the human reviews them in the Ship packet and again in the PR). A doc-scope product call it surfaces — deleting a documented concept, rewriting a design claim, pruning a superseded doc — is yours to ask_human (it pauses the run).
-8. Last, after the docs are committed: send the implementer ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review history (rounds run, points raised, resolved, disputed), the docs reconciled, deviations from the plan, and the test state. The human returns from hours away and decides to ship — code and docs together — from this packet alone, so it must carry everything.${consultantVerifyStep(state)}
+2. Before the first slice: ${resetForImplStep(claudeImplementer, anchors)}
+3. Drive the implementation as a single pass, not a slice-by-slice loop with reviews between. Send the implementer one prompt to implement the whole plan — every slice, end to end — one commit per slice with that slice's tests per the plan's verification story. The plan already fixes the slice order and verification, so the implementer executes it straight through; a review or a deliberate hold between slices burns a slow worker turn re-covering ground the post-implementation review (step 6) covers anyway. ${buildPassGuardrails(state.runId)}
+4. ${MIDPOINT_STEP}
+5. ${reviewCompactionStep(claudeImplementer, 'the plan file and the spec')}
+${implReviewTail(state, roundCap, 'plan')}
 
 Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
 
 ${IMPL_EXAMPLES}
+</task>`;
+}
+
+/**
+ * The design arc's AFK implement brief — full's build discipline anchored on
+ * the ONE committed design doc: the doc is the authority for what and why, the
+ * implement-design snippet carries the how (the implementer slices the work
+ * itself; the doc fixes shape and test standards, not build order). No "plan"
+ * vocabulary reaches a design-arc worker — the arc has none.
+ */
+export function designImplementPhaseEntryPrompt(state: RunState, roundCap: number): string {
+  const claudeImplementer = state.bindings.implementer.provider === 'claude';
+  const anchors = { journey: 'the whole design arc (the framing analyses and the design review loop)', anchors: 'the committed design doc' };
+
+  return `<task>
+${approvalClause(
+    state,
+    'design',
+    'The human approved the design doc and walked away —',
+    'The design gate was pre-authorized at run start and auto-crossed; the human is away —',
+  )} this is the AFK IMPLEMENTATION phase. You drive it end to end; ask_human still works but now queues the question and pauses the whole run until the human returns, so a flag is a real stop, not a quick check-in. Make each one self-contained, and let everything that can wait for the Ship gate wait.
+${attendancePosture(state, 'implement')}
+The arc:
+
+1. Have the implementer commit the approved design doc with a conventional message, as its own commit. It wrote the doc and still holds it, so keep this prompt short — don't restate the design back to it.
+2. Before the first slice: ${resetForImplStep(claudeImplementer, anchors)}
+3. Drive the implementation as a single pass, not a piece-by-piece loop with reviews between. Send the implementer an implement-design prompt: it builds the whole change from the committed design doc — the doc fixes the shape and the test standards; the slicing and sequencing are the implementer's own, vertical slices with a commit per slice and that slice's tests per the doc's standards. A review or a deliberate hold between slices burns a slow worker turn re-covering ground the post-implementation review (step 6) covers anyway. ${buildPassGuardrails(state.runId)}
+4. ${MIDPOINT_STEP} With no slice list fixed up front, read the size from the design doc's scope and from how the implementer slices it as the build starts.
+5. ${reviewCompactionStep(claudeImplementer, 'the design doc')}
+${implReviewTail(state, roundCap, 'design doc')}
+
+Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
+
+${DESIGN_IMPL_EXAMPLES}
 </task>`;
 }
 
@@ -662,6 +833,12 @@ const phaseBriefBuilders: Record<WorkflowName, Partial<Record<PhaseName, PhaseBr
     spec: specPhaseEntryPrompt,
     plan: planPhaseEntryPrompt,
     implement: implPhaseEntryPrompt,
+    finish: openPrPhaseEntryPrompt,
+  },
+  design: {
+    frame: framePhaseEntryPrompt,
+    design: designPhaseEntryPrompt,
+    implement: designImplementPhaseEntryPrompt,
     finish: openPrPhaseEntryPrompt,
   },
   rir: {

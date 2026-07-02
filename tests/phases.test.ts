@@ -199,13 +199,13 @@ describe('the RIR workflow', () => {
     expect.soft(implement.roundCap).toBe(1);
   });
 
-  test('both arcs’ finish is the same PR-only finishing-tail shape — docs already reconciled at Ship', () => {
-    // Both arcs' finish converged: same gate, same no-review-loop discipline, same
+  test('every arc’s finish is the same PR-only finishing-tail shape — docs already reconciled at Ship', () => {
+    // The arcs' finish converged: same gate, same no-review-loop discipline, same
     // caps, same snippet set. Docs moved OUT of finish into the implement tail, so
     // finish is now PR-only (pr-description → open PR), with compact-for-cleanup
     // reachable for the rare bloated case. They differ only by the prior gate that
     // approves into them; openPrPhaseEntryPrompt is shared.
-    for (const p of [phaseSpec('full', 'finish'), phaseSpec('rir', 'finish')]) {
+    for (const p of [phaseSpec('full', 'finish'), phaseSpec('design', 'finish'), phaseSpec('rir', 'finish')]) {
       expect.soft(p.gate?.state).toBe('openPrGate');
       expect.soft(p.reviewLoop).toBe(false);
       expect.soft(p.roundCap).toBe(2);
@@ -235,6 +235,112 @@ describe('the RIR workflow', () => {
     expect.soft(snippetsOf('implement')).toEqual(['implement-direct', 'handoff-direct', 'review-direct', 'apply-review', 'reconcile-docs']);
     // finish is PR-only now (docs already on the branch from implement).
     expect.soft(snippetsOf('finish')).toEqual(['pr-description', 'compact-for-cleanup']);
+  });
+});
+
+describe('the design workflow (the middle arc — one design doc between framing and the build)', () => {
+  // A literal pin (not self-derived), like full's: frame → design → implement → finish.
+  test('phasesOf("design") is the four-phase arc in order', () => {
+    expect(phasesOf('design').map((p) => p.name)).toEqual(['frame', 'design', 'implement', 'finish']);
+  });
+
+  test('all four phases are gates; shared gate-state names resolve within the workflow', () => {
+    expect.soft(gatePhasesOf('design')).toEqual(['frame', 'design', 'implement', 'finish']);
+    expect.soft(phaseOfGateState('design', 'directionGate')).toBe('frame');
+    expect.soft(phaseOfGateState('design', 'designGate')).toBe('design');
+    expect.soft(phaseOfGateState('design', 'shipGate')).toBe('implement');
+    expect.soft(phaseOfGateState('design', 'openPrGate')).toBe('finish');
+    // Full-only gate states do not resolve inside the design arc.
+    expect.soft(phaseOfGateState('design', 'commitSpecGate')).toBeUndefined();
+    expect.soft(phaseOfGateState('design', 'planApprovalGate')).toBeUndefined();
+  });
+
+  test('the design phase is ONE review loop at cap 2 — the arc premises fast convergence', () => {
+    const design = phaseSpec('design', 'design');
+    expect.soft(design.reviewLoop).toBe(true);
+    expect.soft(design.roundCap).toBe(2); // not full's 3: the observed spec/plan loops never used 3
+    expect.soft(design.artifactLabel).toBe('design doc');
+    expect.soft(design.snippets).toEqual([
+      'write-design',
+      'review-design',
+      'update-design',
+      'review-design-again',
+      'update-design-again',
+    ]);
+  });
+
+  test('implement reuses full’s spec with implement-design as the build seed (not rir’s implement-direct)', () => {
+    const implement = phaseSpec('design', 'implement');
+    const full = phaseSpec('full', 'implement');
+    // The one substitution: implement-design seeds the build (the committed design
+    // doc is the authority); everything else — midpoint, compactions, the review
+    // loop, docs-reconcile-last, ceo-summary — is full's implement.
+    expect.soft(implement.snippets).toEqual(['compact-for-impl', 'implement-design', ...full.snippets.slice(1)]);
+    expect.soft(implement.snippets).not.toContain('implement-direct'); // that body assumes no design artifact exists
+    expect.soft(implement.roundCap).toBe(full.roundCap);
+    expect.soft(implement.gate.state).toBe('shipGate');
+    expect.soft(implement.workerTurnTimeoutMs).toBe(90 * 60_000);
+    // reconcile-docs still runs after the review loop, before the ship packet.
+    expect.soft(implement.snippets.indexOf('reconcile-docs')).toBeGreaterThan(implement.snippets.indexOf('respond-review-again'));
+    expect.soft(implement.snippets.indexOf('reconcile-docs')).toBeLessThan(implement.snippets.indexOf('ceo-summary'));
+  });
+
+  test('finish is byte-for-byte full’s finish (the shared PR-only finishing tail)', () => {
+    expect(phaseSpec('design', 'finish')).toEqual(phaseSpec('full', 'finish'));
+  });
+
+  test('entry: --spec skips to the design loop (the flag generalizes to "a draft of the primary artifact")', () => {
+    expect(WORKFLOWS.design.entry).toEqual({ firstPhase: 'frame', specSkipsTo: 'design' });
+  });
+
+  test('the design gate is the interactive→headless handoff', () => {
+    expect.soft(WORKFLOWS.design.handoffGate).toBe('design');
+    expect.soft(handoffWatchLabel('design')).toBe('design approved — AFK implement');
+  });
+
+  test('isPostHandoffPhase splits at the design gate — the impl-model swap kicks in at the AFK build', () => {
+    expect.soft(isPostHandoffPhase('design', 'frame')).toBe(false);
+    expect.soft(isPostHandoffPhase('design', 'design')).toBe(false); // the handoff gate itself is NOT after itself
+    expect.soft(isPostHandoffPhase('design', 'implement')).toBe(true);
+    expect.soft(isPostHandoffPhase('design', 'finish')).toBe(true);
+  });
+
+  test('the one-interruption posture: a new run materializes gatesAt = ["design"]', () => {
+    expect.soft(WORKFLOWS.design.defaultPreAuthorized).toEqual(['frame', 'implement', 'finish']);
+    expect.soft(WORKFLOWS.design.forceAttend).toEqual([]);
+    expect.soft(WORKFLOWS.design.presets.afk).toEqual([]);
+    // The materialized default: attend the design gate only — read one document,
+    // tap once, walk away. (The severity hold still converts a `high` at the
+    // auto-crossed Direction gate into an attended stop — pinned in lifecycle tests.)
+    expect.soft(defaultPosture(gatePhasesOf('design'), WORKFLOWS.design.defaultPreAuthorized)).toEqual(['design']);
+  });
+
+  test('consultant checkpoints: frame → contract → verify — no challenge anywhere (a stance, not an accident)', () => {
+    expect.soft(phaseSpec('design', 'frame').consultantCheckpoint).toBe('frame');
+    expect.soft(phaseSpec('design', 'design').consultantCheckpoint).toBe('contract'); // LATE-authored: after the loop converges
+    expect.soft(phaseSpec('design', 'implement').consultantCheckpoint).toBe('verify');
+    expect.soft(phaseSpec('design', 'finish').consultantCheckpoint).toBeUndefined();
+    // The arc exists for work where the owner trusts the direction after framing:
+    // no holding bet-audit at any phase, so a gateless design run drops nothing extra.
+    const modes = phasesOf('design').map((p) => p.consultantCheckpoint);
+    expect.soft(modes).not.toContain('specGate');
+    expect.soft(modes).not.toContain('implGate');
+  });
+
+  test('contractAuthorPhaseOf("design") is the design phase — the design gate is the freeze gate', () => {
+    expect.soft(contractAuthorPhaseOf('design')).toBe('design');
+    expect.soft(consultantSnippetFor('design', 'design')).toBe('consultant-contract');
+    expect.soft(consultantSnippetFor('design', 'implement')).toBe('consultant-verify');
+    expect.soft(workflowHasConsultantBackstop('design')).toBe(true);
+  });
+
+  test('gateless narrows nothing on this arc (no challenge to drop): frame + contract + verify survive', () => {
+    expect.soft([...consultantSnippetsForWorkflow('design')].sort()).toEqual(
+      ['consultant-contract', 'consultant-frame', 'consultant-verify'].sort(),
+    );
+    expect.soft([...consultantSnippetsForWorkflow('design', { gateless: true })].sort()).toEqual(
+      ['consultant-contract', 'consultant-frame', 'consultant-verify'].sort(),
+    );
   });
 });
 
@@ -292,16 +398,18 @@ describe('consultant checkpoints (registry data per arc)', () => {
 });
 
 describe('the AFK build caps (S3 — wall-clock-bounded per-turn timeouts)', () => {
-  test('both arcs’ build phases carry the 90-min wall-clock cap', () => {
+  test('every arc’s build phase carries the 90-min wall-clock cap', () => {
     // 90 min = 3× the longest healthy build turn (29.5 min) measured across the
     // corpus — the high end of the 2–3× band; a hit is a resumable checkpoint.
     expect.soft(phaseSpec('full', 'implement').workerTurnTimeoutMs).toBe(90 * 60_000);
+    expect.soft(phaseSpec('design', 'implement').workerTurnTimeoutMs).toBe(90 * 60_000);
     expect.soft(phaseSpec('rir', 'implement').workerTurnTimeoutMs).toBe(90 * 60_000);
   });
 
   test('the planning and finishing phases keep the 30-min cap (their longest healthy turns ≈17 min)', () => {
     for (const [workflow, phase] of [
       ['full', 'frame'], ['full', 'spec'], ['full', 'plan'], ['full', 'finish'],
+      ['design', 'frame'], ['design', 'design'], ['design', 'finish'],
       ['rir', 'research'], ['rir', 'finish'],
     ] as const) {
       expect.soft(phaseSpec(workflow, phase).workerTurnTimeoutMs).toBe(30 * 60_000);

@@ -25,13 +25,16 @@
  *
  * The arcs (docs/automation-design.md §"Phases and gates"):
  *
- *   full:  frame → Direction → spec → Commit-spec → plan → Plan-approval
- *          (walk away) → implement (AFK; build → review → reconcile docs) → Ship
- *          → finish (open the PR) → Open-PR → done
- *   rir:   research → Direction (walk away) → implement (AFK; build → review →
- *          reconcile docs) → Ship → finish (open the PR) → Open-PR → done
+ *   full:   frame → Direction → spec → Commit-spec → plan → Plan-approval
+ *           (walk away) → implement (AFK; build → review → reconcile docs) → Ship
+ *           → finish (open the PR) → Open-PR → done
+ *   design: frame → Direction → design → Design (walk away) → implement (AFK;
+ *           build → review → reconcile docs) → Ship → finish (open the PR) →
+ *           Open-PR → done — one committed design doc replaces spec + plan
+ *   rir:    research → Direction (walk away) → implement (AFK; build → review →
+ *           reconcile docs) → Ship → finish (open the PR) → Open-PR → done
  *
- * Both arcs share the `implement` and `finish` phase names — legal because phase
+ * The arcs share the `implement` and `finish` phase names — legal because phase
  * identity is workflow-scoped (see below); their specs still differ per arc.
  */
 
@@ -305,6 +308,138 @@ export const WORKFLOWS = {
     // defaultPreAuthorized must stay disjoint (validateRegistry guards it at load).
     forceAttend: [],
     defaultPreAuthorized: ['plan', 'implement', 'finish'],
+  },
+  design: {
+    // The middle arc (docs/specs/2026-07-02-design-arc.md): for serious work on
+    // a trusted frontier-model implementer, ONE committed design document —
+    // product sections on top (spec altitude), technical sections below (plan
+    // altitude minus enumeration) — replaces full's spec + plan pair. One review
+    // loop, one attended gate by default, then full's AFK build and finishing
+    // tail reused as registry data.
+    name: 'design',
+    displayName: 'Design (frame → design → implement → ship → PR)',
+    phases: [
+      {
+        // Identical in substance to full's frame — only the arc that follows
+        // differs (the synthesized direction lands on one design doc, not a spec).
+        name: 'frame',
+        snippets: ['think-holistic', 'compare-notes'],
+        gate: {
+          state: 'directionGate',
+          heading: 'DIRECTION gate — the synthesized direction',
+          ready: 'Direction gate — synthesized direction ready',
+          hint: null,
+        },
+        artifactLabel: 'direction analysis',
+        reviewLoop: false,
+        roundCap: 2,
+        orchestratorBudgetUsd: 15,
+        workerBudgetUsd: 10,
+        workerTurnTimeoutMs: 30 * 60_000,
+        consultantCheckpoint: 'frame',
+      },
+      {
+        // The arc's one artifact phase. roundCap 2, not full's 3: the arc's
+        // premise is fast convergence (the observed spec/plan loops never
+        // needed 3), and the section-scoped review lens keeps the loop from
+        // re-growing plan-depth rounds. Its gate is the handoff AND the
+        // ratification — the arc's one attended stop by default.
+        name: 'design',
+        snippets: ['write-design', 'review-design', 'update-design', 'review-design-again', 'update-design-again'],
+        gate: {
+          state: 'designGate',
+          heading: "DESIGN gate — the orchestrator's summary",
+          ready: 'Design gate — design doc ready for review',
+          hint: '(approving hands off to AFK implementation — the design doc is the single design artifact; there is no separate spec or plan)',
+        },
+        artifactLabel: 'design doc',
+        reviewLoop: true,
+        roundCap: 2,
+        orchestratorBudgetUsd: 15,
+        workerBudgetUsd: 10,
+        workerTurnTimeoutMs: 30 * 60_000,
+        // The acceptance-contract AUTHOR checkpoint — LATE-authored on this arc:
+        // dispatched after the design loop converges, as the final step before
+        // advance (the runs-last pattern verify already uses), seeded with the
+        // near-final design doc. Given up: blindness to the technical approach
+        // (the merged artifact contains it). Kept: blindness to the code, the
+        // fresh session, author-never-commits, and the whole verify chain at
+        // implement. The design gate is the freeze gate (contractAuthorPhaseOf
+        // resolves here), and as the arc's one attended stop by default the
+        // contract is human-ratified by default — stronger than full's overnight
+        // posture, whose freeze happens at an auto-crossed plan gate.
+        consultantCheckpoint: 'contract',
+      },
+      {
+        // Full's implement spec reused — same review loop (cap 3), midpoint
+        // judgment, compactions, docs-reconcile-last, CEO summary, verify
+        // checkpoint, 90-min wall-clock cap. One substitution: the build seed is
+        // the implement-design snippet (the committed design doc is the build's
+        // authority for what and why) rather than full's plan-driven custom
+        // prompt. NOT rir's implement-direct — that body assumes no design
+        // artifact exists.
+        name: 'implement',
+        snippets: [
+          'compact-for-impl',
+          'implement-design',
+          'midpoint-status',
+          'review-midpoint',
+          'respond-midpoint',
+          'compact-for-review',
+          'implementation-handoff',
+          'review-implementation',
+          'respond-review',
+          'review-implementation-again',
+          'respond-review-again',
+          'reconcile-docs',
+          'ceo-summary',
+        ],
+        gate: {
+          state: 'shipGate',
+          heading: 'SHIP gate — the orchestrator’s packet (CEO summary first)',
+          ready: 'Ship gate — implementation packet ready',
+          hint: '(verify in your environment before deciding — migrations, smoke tests; docs are reconciled here too, so approving enters FINISH = open the PR)',
+        },
+        artifactLabel: 'implementation',
+        reviewLoop: true,
+        roundCap: 3,
+        orchestratorBudgetUsd: 30,
+        workerBudgetUsd: 25,
+        workerTurnTimeoutMs: 90 * 60_000,
+        consultantCheckpoint: 'verify',
+      },
+      {
+        // Byte-for-byte full's finish — the shared PR-only finishing tail.
+        name: 'finish',
+        snippets: ['pr-description', 'compact-for-cleanup'],
+        gate: {
+          state: 'openPrGate',
+          heading: 'OPEN-PR gate — docs reconciled, PR open',
+          ready: 'Open-PR gate — PR open, ready for your review',
+          hint: '(the PR is already open and auto-crosses to done by default; list `finish` in gates_at for a post-open review stop — approve marks it done, reject amends the open PR. The merge is always yours.)',
+        },
+        artifactLabel: 'PR',
+        reviewLoop: false,
+        roundCap: 2,
+        orchestratorBudgetUsd: 15,
+        workerBudgetUsd: 15,
+        workerTurnTimeoutMs: 30 * 60_000,
+      },
+    ],
+    // --spec enters the design loop with the draft as the starting document —
+    // the flag's meaning generalizes to "a draft of the primary artifact".
+    entry: { firstPhase: 'frame', specSkipsTo: 'design' },
+    // The design gate is the interactive→headless handoff: the interactive arc
+    // runs FRAME → DESIGN; plan-approval's role (freeze + walk-away) lives here.
+    handoffGate: 'design',
+    presets: { afk: [] },
+    // The one-interruption posture is the arc's product promise: a new run
+    // materializes gatesAt = ['design'] — the Direction gate auto-crosses, the
+    // human reads one document, taps once, and walks away. The severity hold
+    // still converts a `high` at the auto-crossed Direction gate into an
+    // attended stop, so contentious directions still stop the run.
+    forceAttend: [],
+    defaultPreAuthorized: ['frame', 'implement', 'finish'],
   },
   rir: {
     name: 'rir',

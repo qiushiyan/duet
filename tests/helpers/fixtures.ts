@@ -125,6 +125,10 @@ export interface Fixtures {
   rirRun: RunState;
   /** A consultant-bound run on the rir arc (for arc-scoped brief/render tests). */
   rirConsultantRun: RunState;
+  /** A framing-only run on the design arc (for arc-scoped brief/render tests). */
+  designRun: RunState;
+  /** A consultant-bound run on the design arc (for arc-scoped brief/render tests). */
+  designConsultantRun: RunState;
 }
 
 export const test = base.extend<Fixtures>({
@@ -150,5 +154,11 @@ export const test = base.extend<Fixtures>({
   },
   rirConsultantRun: async ({ projectDir }, use) => {
     await use(createRun({ cwd: projectDir, bindings: consultantBindings, workflow: 'rir', framing: 'test framing' }));
+  },
+  designRun: async ({ projectDir }, use) => {
+    await use(createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'design', framing: 'test framing' }));
+  },
+  designConsultantRun: async ({ projectDir }, use) => {
+    await use(createRun({ cwd: projectDir, bindings: consultantBindings, workflow: 'design', framing: 'test framing' }));
   },
 });

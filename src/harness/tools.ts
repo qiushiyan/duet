@@ -524,10 +524,15 @@ export function settleTurn(
     // An aborted consultant turn did NOT complete its checkpoint — set no
     // draft/verifiedAt (the freeze + verify rails must see a real completion, not
     // a turn cut off at its cap).
-    if (!aborted && checkpointMode === 'contract' && fresh.specPath) {
+    if (!aborted && checkpointMode === 'contract') {
       // A consultant turn settled at the contract checkpoint — this run authored.
+      // The derived path rides along when the primary artifact is already
+      // recorded (full authors at plan, after the spec landed); a late-author
+      // arc (design's draft flow) settles this turn BEFORE advance_phase records
+      // spec_path, so the marker is authorship evidence alone and the freeze
+      // derives the path at crossing time.
       fresh.acceptanceContractDraft = {
-        path: acceptanceContractPathForSpec(fresh.specPath),
+        ...(fresh.specPath ? { path: acceptanceContractPathForSpec(fresh.specPath) } : {}),
         sessionId: turn.sessionId,
         authoredAt: new Date().toISOString(),
       };
@@ -1012,7 +1017,7 @@ export const contractCheckpointRail: Rail<TerminalInput> = ({ humanDecisions }, 
   const hasHigh = (humanDecisions ?? []).some((d) => d.severity === 'high');
   if (ctx.state.acceptanceContractDraft || hasHigh) return null;
   return refuse(
-    'A consultant is bound, so this phase owes its acceptance contract before it advances: send the consultant a consultant-contract turn (it authors the contract, blind to the plan), then advance. If it genuinely could not author one, record a high human_decision ("acceptance contract not authored — proceeding freezes no target") so the gate stops for the human rather than shipping with no frozen target.',
+    'A consultant is bound, so this phase owes its acceptance contract before it advances: send the consultant a consultant-contract turn (it authors the contract from the settled design document, seeing no code), then advance. If it genuinely could not author one, record a high human_decision ("acceptance contract not authored — proceeding freezes no target") so the gate stops for the human rather than shipping with no frozen target.',
   );
 };
 
