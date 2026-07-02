@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, onTestFinished, vi } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
@@ -139,6 +140,20 @@ describe('the orchestrator system prompt is arc-neutral', () => {
     // Full's discipline is not weakened — review-*/update-*/respond-*/-again still taught.
     expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('update-*');
     expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('-again');
+  });
+});
+
+describe('the fuel-gauge contract lives in the durable prompt (compaction-proof home)', () => {
+  test('the system prompt teaches the bands, the mechanic, and the codex exclusion once', () => {
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('fuel gauge');
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('From 75%');
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('At 85%');
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('"/compact "');
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('codex-bound workers compact themselves');
+    // The interactive identity carries the same contract for its host.
+    const identity = readFileSync(new URL('../prompts/orchestrator-identity.md', import.meta.url), 'utf8');
+    expect.soft(identity).toContain('fuel gauge');
+    expect.soft(identity).toContain('From 75%');
   });
 });
 

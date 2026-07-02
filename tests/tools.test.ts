@@ -614,6 +614,28 @@ describe('send_prompt', () => {
     expect.soft(joined).not.toContain('Resume that session with a short continuation'); // never the bare time-cap advice
   });
 
+  test('the footer carries a band marker for in-scope roles — glanceable state, no repeated procedure', async ({ run }) => {
+    // caution band on the implementer (claude, persistent): the fill gets the
+    // marker; a codex reviewer at a higher fill gets the bare number (it
+    // compacts itself, so pressure language would be noise).
+    const implementer = new FakeWorker('claude', [
+      { text: 'built it', sessionId: 's1', context: { usedTokens: 780_000, windowTokens: 1_000_000 } },
+    ]);
+    const reviewer = new FakeWorker('codex', [
+      { text: 'reviewed', sessionId: 'r1', context: { usedTokens: 250_000, windowTokens: 258_400 } },
+    ]);
+    const { call } = harness(run, { implementer, reviewer });
+
+    const built = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build' });
+    const builtText = built.content.map((c) => (c as { text: string }).text).join('\n');
+    expect.soft(builtText).toContain('context 78% — compaction due');
+
+    const reviewed = await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'review' });
+    const reviewedText = reviewed.content.map((c) => (c as { text: string }).text).join('\n');
+    expect.soft(reviewedText).toContain('context 97%');
+    expect.soft(reviewedText).not.toContain('compaction due');
+  });
+
   test('the emergency → compact → resume sequence: refused, compacted, then the send goes through', async ({ run }) => {
     // The whole recovery loop through the real handler: a near-full session
     // refuses the work send, the /compact passes and clears the reading, and

@@ -243,20 +243,28 @@ export function perTurnTimeoutFor(body: string): number | undefined {
 }
 
 /**
+ * Whether the context-pressure policy covers this role at all — the ONE scope
+ * gate its consumers share (the context deadline via contextCapFor, the
+ * send-side contextPressureRail, and the footer's band marker), so they can
+ * never disagree about who is in scope. The gate is as narrow as the hazard:
+ * only a PERSISTENT claude-headless session accumulates toward "Prompt is too
+ * long" — codex auto-compacts, the interactive transport's TUI auto-compacts
+ * natively, and the ephemeral consultant seeds fresh every turn.
+ */
+export function contextPressureApplies(state: RunState, role: WorkerRole): boolean {
+  const binding = bindingFor(state.bindings, role);
+  return binding.provider === 'claude' && binding.transport !== 'interactive' && sessionPolicyFor(role) === 'persistent';
+}
+
+/**
  * The context cap (tokens) a turn to this role carries — the emergency band of
- * the role's last-known window — or undefined for "no context deadline". The
- * gate is as narrow as the hazard: only a PERSISTENT claude-headless session
- * accumulates toward "Prompt is too long" (codex auto-compacts, the interactive
- * transport's TUI auto-compacts natively, the ephemeral consultant seeds fresh
- * every turn), a `/compact` turn's whole job is running at high fill, and an
- * unknown window (no reading yet — a fresh session's first turn) means honest
- * absence, not a guessed cap.
+ * the role's last-known window — or undefined for "no context deadline": a role
+ * outside the pressure policy, a `/compact` turn (its whole job is running at
+ * high fill), or an unknown window (no reading yet — a fresh session's first
+ * turn), which means honest absence, not a guessed cap.
  */
 export function contextCapFor(state: RunState, role: WorkerRole, isCompactTurn: boolean): number | undefined {
-  if (isCompactTurn) return undefined;
-  const binding = bindingFor(state.bindings, role);
-  if (binding.provider !== 'claude' || binding.transport === 'interactive') return undefined;
-  if (sessionPolicyFor(role) !== 'persistent') return undefined;
+  if (isCompactTurn || !contextPressureApplies(state, role)) return undefined;
   const windowTokens = state.contextUsage?.[role]?.windowTokens;
   if (!windowTokens) return undefined;
   return Math.floor((windowTokens * CONTEXT_EMERGENCY_PERCENT) / 100);
@@ -652,10 +660,14 @@ export function renderTurnResult(
   // F5: a compact per-turn footer — this role's context fill, the cumulative
   // worker cost, and the round vs cap. Both hosts flow through here (blocking
   // send_prompt and check_turns via the dispatcher's collect), so one edit
-  // covers both.
+  // covers both. In-scope roles get a band marker on the fill — glanceable
+  // per-call STATE, not repeated procedure (the mechanic lives in the durable
+  // prompt; the moment-precise steering in the rail's refusal).
   const ctxUsage = state.contextUsage?.[role];
+  const band = ctxUsage && contextPressureApplies(state, role) ? contextBand(contextSafetyPercent(state, role)) : 'ok';
+  const bandMark = band === 'emergency' ? ' — compact before the next send' : band === 'caution' ? ' — compaction due' : '';
   const footer = [
-    ...(ctxUsage ? [`context ${contextPercent(ctxUsage)}%`] : []),
+    ...(ctxUsage ? [`context ${contextPercent(ctxUsage)}%${bandMark}`] : []),
     footerWorkerCost(state.costs),
     `round ${state.rounds[phase] ?? 0}/${cap}`,
   ].join(' · ');
@@ -961,10 +973,7 @@ export const warnOnceTemplateRail: Rail<SendInput> = ({ role, tag }, ctx) => {
  * auto-compacts, the ephemeral consultant seeds fresh.
  */
 export const contextPressureRail: Rail<SendInput> = ({ role, isCompactTurn }, ctx) => {
-  if (isCompactTurn === true) return null;
-  const binding = bindingFor(ctx.state.bindings, role);
-  if (binding.provider !== 'claude' || binding.transport === 'interactive') return null;
-  if (sessionPolicyFor(role) !== 'persistent') return null;
+  if (isCompactTurn === true || !contextPressureApplies(ctx.state, role)) return null;
   const percent = contextSafetyPercent(ctx.state, role);
   const band = contextBand(percent);
   if (band === 'ok') return null;
