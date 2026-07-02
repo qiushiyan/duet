@@ -855,6 +855,25 @@ export function recordContextUsage(state: RunState, voice: Voice, usage: Context
 }
 
 /**
+ * The MID-TURN sampler's write path: `recordContextUsage` through the `mutate`
+ * funnel. The sampler runs off a state object captured at dispatch and holds it
+ * for a whole worker turn — a whole-object save from that snapshot would revert
+ * everything a concurrent dispatch persisted since (the sibling role's
+ * pending/active records — the same cross-role clobber `markTurnActive` names).
+ * Unlike `markTurnActive` there is no single entry to close over: the high-water
+ * mark must be judged against each copy's own previous reading, so the callback
+ * re-derives per application (only the cosmetic `at` stamp differs). Settle-time
+ * callers keep calling `recordContextUsage` directly — settle batches it into
+ * its own fresh-load transaction.
+ */
+export function sampleContextUsage(state: RunState, voice: Voice, usage: ContextUsage): void {
+  mutate(state, (s) => {
+    recordContextUsage(s, voice, usage);
+    return true;
+  });
+}
+
+/**
  * Append a context intervention to the ledger (the caller owns the save, like
  * every handler-side mutation). Capture the reading fields BEFORE the
  * intervention clears them — `contextEventReading` is the companion read.

@@ -26,6 +26,7 @@ import {
   recordContextEvent,
   recordContextUsage,
   recordTurnSessionId,
+  sampleContextUsage,
   saveRunState,
   workflowOf,
 } from '../run-store.ts';
@@ -356,8 +357,11 @@ export function startHeartbeat(
       // spot (the 20260701 wedge grew 17% → 98% inside ONE turn with zero
       // readings). The window half comes from the last settled reading — no
       // reading yet means honest silence, not a guess. Change-detected and
-      // fail-soft like the activity line; recordContextUsage carries the
-      // high-water mark the pressure guards act on.
+      // fail-soft like the activity line. The write rides the mutate funnel
+      // (sampleContextUsage): this state object was captured at dispatch and a
+      // whole-object save from it would revert a sibling role's concurrent
+      // dispatch records — the funnel re-applies to this copy, so the 5-min
+      // heartbeat line above stays fresh too.
       if (tail.schema === 'claude') {
         const windowTokens = state.contextUsage?.[role]?.windowTokens;
         const usedTokens = windowTokens ? latestTranscriptUsageTokens(tail.jsonl) : undefined;
@@ -365,8 +369,7 @@ export function startHeartbeat(
           const percent = contextPercent({ usedTokens, windowTokens });
           if (percent !== lastSampledPercent) {
             lastSampledPercent = percent;
-            recordContextUsage(state, role, { usedTokens, windowTokens });
-            saveRunState(state);
+            sampleContextUsage(state, role, { usedTokens, windowTokens });
           }
         }
       }

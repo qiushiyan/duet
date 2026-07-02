@@ -1265,6 +1265,56 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
     await pending;
   });
 
+  test('a sampler tick never clobbers a sibling role dispatched after its capture (the mutate funnel)', async ({
+    run,
+    projectDir,
+    onTestFinished,
+  }) => {
+    // The interactive-host race the sampler must survive: its heartbeat holds a
+    // state snapshot loaded at dispatch, and the OTHER role's dispatch lands its
+    // pending/active records on disk after that capture. A whole-object save
+    // from the snapshot would erase them — check_turns and phase-exit would
+    // lose an in-flight turn.
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const home = join(projectDir, 'home');
+    recordContextUsage(run, 'implementer', { usedTokens: 170_000, windowTokens: 1_000_000 });
+    saveRunState(run);
+    plantClaudeTranscript(
+      home,
+      'impl-1',
+      jsonl({ type: 'assistant', message: { usage: { input_tokens: 400_000, output_tokens: 500 } } }),
+    );
+
+    let finishImpl!: (t: { text: string; sessionId: string }) => void;
+    const slow = new FakeWorker('claude');
+    slow.runTurn = (opts) => {
+      opts.onSessionId?.('impl-1');
+      return new Promise((r) => (finishImpl = r));
+    };
+    const reviewer = new DeferredWorker('codex');
+    const { call } = harness(run, { implementer: slow, reviewer, home, async: true });
+
+    // Implementer first — its heartbeat captures the state as of now — then the
+    // reviewer, whose records post-date the capture.
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build the keystone' });
+    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review it' });
+
+    await vi.advanceTimersByTimeAsync(30_000); // the implementer's first sampler tick (always a change)
+
+    const persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.contextUsage?.implementer?.usedTokens).toBe(400_500); // the reading landed…
+    expect.soft(persisted.pendingTurns?.reviewer).toBeDefined(); // …and the sibling's dispatch records survived
+    expect.soft(persisted.activeTurns?.reviewer).toBeDefined();
+
+    finishImpl({ text: 'done', sessionId: 'impl-1' });
+    reviewer.resolve({ sessionId: 'rev-1' });
+    await vi.advanceTimersByTimeAsync(0); // drain the background settles
+    await call('check_turns');
+  });
+
   test('before the provider announces the turn id, the heartbeat stays elapsed-only', async ({ run, onTestFinished }) => {
     vi.useFakeTimers();
     onTestFinished(() => {
