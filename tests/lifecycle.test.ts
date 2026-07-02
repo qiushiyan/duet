@@ -897,6 +897,20 @@ describe('enterAfk — the mid-session AFK handoff (#1)', () => {
     await expect.soft(enterAfk(run, [])).rejects.toThrow(/not orchestrated interactively/);
   });
 
+  test('a bare afk RECORDS its gate crossing in the morning ledger; --gateless (the explicit full-send) does not', async ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    // The forensics gap: `duet afk` crossed the parked gate without a ledger
+    // entry, so the morning review of a handed-off run under-counted by one.
+    // Bare afk is a NON-explicit crossing (the class the severity hold guards
+    // and this ledger exists for) → recorded; --gateless is the explicit
+    // substitute → not ledgered, like an explicit --approve.
+    const parked = atFrameGate(projectDir, interactiveRun);
+    await enterAfk(parked, []);
+    expect.soft(loadRunState(projectDir, interactiveRun.runId).autoApprovals?.map((a) => a.gate)).toEqual(['directionGate']);
+  });
+
   test('the posture survives a co-staged approval rider (the stale-save guard)', async ({ projectDir, interactiveRun }) => {
     const parked = atFrameGate(projectDir, interactiveRun);
     // The hazard: setGatesAt then a whole-state save (a staged rider) must not
@@ -996,6 +1010,7 @@ describe('the severity hold — a high human decision withholds a NON-EXPLICIT c
     await enterAfk(parked, [], { gateless: true }); // an explicit full-send crosses the high, like --approve
     const after = loadRunState(projectDir, interactiveRun.runId);
     expect.soft(after.gateless).toBe(true); // the consultant axis persisted for the headless tail
+    expect.soft(after.autoApprovals).toBeUndefined(); // explicit crossings are never ledgered
     expect.soft(after.gatesAt).toEqual([]); // attend nothing downstream
     expect.soft(after.orchestrationHost).toBeUndefined(); // handed off to headless
     expect.soft(probeRunPosition(after)).not.toEqual({ kind: 'gate', phase: 'frame' }); // frame crossed

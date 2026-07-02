@@ -10,6 +10,7 @@ import {
   acceptanceContractPathForSpec,
   contractAuthorPhaseOf,
   entryOf,
+  gateOf,
   gatePhasesOf,
   phaseOfGateState,
   phaseSpec,
@@ -750,6 +751,18 @@ export async function enterAfk(
   // Persist the gateless flag so the headless tail runs the consultant as a
   // backstop only (the consultant axis; posture, the other axis, is `gatesAt`).
   if (opts.gateless) fresh.gateless = true;
+  // A bare afk's crossing of THIS gate is a non-explicit crossing — the same
+  // class the severity hold guards and the morning ledger exists for — so
+  // record it like any pre-authorized auto-cross (it was the ledger's missing
+  // first entry: a run handed off with `duet afk` under-counted by one).
+  // `--gateless` is the explicit full-send substitute and, like an explicit
+  // --approve, is not ledgered.
+  if (!opts.gateless) {
+    const gateState = gateOf(workflowOf(state), position.phase).state;
+    if (fresh.autoApprovals?.at(-1)?.gate !== gateState) {
+      (fresh.autoApprovals ??= []).push({ gate: gateState, at: new Date().toISOString() });
+    }
+  }
   saveRunState(fresh);
   Object.assign(state, fresh);
   const gates = gatePhasesOf(workflowOf(state));

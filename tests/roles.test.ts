@@ -37,11 +37,15 @@ describe('role policy helpers', () => {
     expect.soft(readOnlyFor('consultant')).toBe(true);
   });
 
-  test('countsReviewRound: only the reviewer on a review* tag', () => {
+  test('countsReviewRound: only the reviewer on a review* tag; the midpoint checkpoint is exempt', () => {
     expect.soft(countsReviewRound('reviewer', 'review-spec')).toBe(true);
     expect.soft(countsReviewRound('reviewer', 'custom')).toBe(false);
     expect.soft(countsReviewRound('consultant', 'review-spec')).toBe(false); // additive, never substitutive
     expect.soft(countsReviewRound('implementer', 'review-spec')).toBe(false);
+    // One-shot mid-build guidance, not a loop round — it must not burn the cap
+    // the post-implementation review loop budgets on.
+    expect.soft(countsReviewRound('reviewer', 'review-midpoint')).toBe(false);
+    expect.soft(countsReviewRound('reviewer', 'review-implementation')).toBe(true);
   });
 
   test('sessionIdFor: persistent roles resume; the ephemeral consultant never does', ({ run }) => {

@@ -280,10 +280,17 @@ This phase's exit gate is pre-authorized: the human granted approval at run star
 /**
  * How the previous phase's gate was crossed — the entry prompts open by
  * naming the approval, and "the human approved X" must not be claimed when
- * the gate was pre-authorized and auto-crossed.
+ * the gate was pre-authorized and auto-crossed. The converse lie matters too:
+ * a pre-authorized gate a `high` HELD becomes an attended stop the human
+ * decides explicitly, so posture (gateAttended) alone can't say how the
+ * crossing happened. The auto-approvals ledger records the crossings that
+ * actually happened without the human — narrate "auto-crossed" only from it.
  */
 function approvalClause(state: RunState, gatePhase: GatePhase, attended: string, preAuthorized: string): string {
-  return gateAttended(state, gatePhase) ? attended : preAuthorized;
+  if (gateAttended(state, gatePhase)) return attended;
+  const gateState = phaseSpec(workflowOf(state), gatePhase).gate.state;
+  const autoCrossed = (state.autoApprovals ?? []).some((a) => a.gate === gateState);
+  return autoCrossed ? preAuthorized : attended;
 }
 
 /**

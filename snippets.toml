@@ -399,7 +399,7 @@ Mid-point review feedback below. **Triage first — no code changes yet.** For e
 
 **Test fallout** — where a finding reveals a test gap in a completed slice, fix it alongside the now-problems; where it reshapes an upcoming slice, fold the test change into that slice's plan.
 
-Then summarize the updated plan: what you'll fix now, then the remaining slices in order. **Stop at the triage — don't change code until you're told to proceed.**
+Then summarize the updated plan — what you'll fix now, then the remaining slices in order — and continue: apply the fix-now items and carry the build to the end, folding the folded points into their slices as you reach them. The next pause is the finished-work handoff; a major disagreement that genuinely needs my input is the one reason to stop instead.
 
 ---
 

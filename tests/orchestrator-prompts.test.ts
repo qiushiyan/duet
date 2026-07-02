@@ -73,6 +73,32 @@ describe('the scratch guardrail keeps a worker out of the live run state', () =>
   });
 });
 
+// The entry brief opens by naming how the previous gate was crossed. Posture
+// alone can't say: a pre-authorized gate a `high` HELD becomes an attended stop
+// the human decides explicitly, so "auto-crossed" is narrated only from the
+// auto-approvals ledger (the record of crossings that actually happened without
+// the human) — the forensics fix for a held gate narrated as auto-crossed.
+describe('the approval clause narrates from the ledger, not the posture', () => {
+  test('a pre-authorized gate narrates auto-crossed only when it actually auto-crossed', ({ projectDir }) => {
+    const run = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, framing: 'x' });
+    run.gatesAt = ['frame', 'spec']; // the overnight posture — plan pre-authorized
+
+    // Held-then-approved: no ledger entry for the plan gate → the human decided it.
+    expect.soft(implPhaseEntryPrompt(run, 3)).toContain('The human approved the plan');
+
+    // The same posture with the crossing in the ledger → honest auto-cross narration.
+    run.autoApprovals = [{ gate: 'planApprovalGate', at: '2026-07-01T00:00:00.000Z' }];
+    expect.soft(implPhaseEntryPrompt(run, 3)).toContain('pre-authorized at run start and auto-crossed');
+  });
+
+  test('an attended gate always narrates the human approval, ledger or not', ({ projectDir }) => {
+    const run = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, framing: 'x' });
+    run.gatesAt = ['frame', 'spec', 'plan'];
+    run.autoApprovals = [{ gate: 'directionGate', at: '2026-07-01T00:00:00.000Z' }];
+    expect(implPhaseEntryPrompt(run, 3)).toContain('The human approved the plan');
+  });
+});
+
 // Universal (attended + gateless): a verify failure routes to the implementer for
 // a bounded fix → re-verify loop, holding the gate only for an assertion that
 // stays broken — the conscious softening of "a failed assertion always holds".

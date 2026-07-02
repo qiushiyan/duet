@@ -130,6 +130,38 @@ describe('buildStats — the pure parse core', () => {
     expect.soft(model.tags).toEqual([]); // the open turn contributes no duration
     expect.soft(model.notes.join('\n')).toContain('implementer: 1 turn(s) still open');
   });
+
+  plain('a gate crossing with no logged entry infers its window from the previous crossing (interactive phases attribute)', () => {
+    // An interactively-orchestrated stretch voice-logs the advance_phase closes
+    // but no harness-prompt opens (the interactive host serves briefs via
+    // get_task). The phases are sequential, so each close bounds the next
+    // phase's inferred window — worker turns attribute instead of orphaning
+    // (the 70b2/ec57 forensics: 15–16 turns fell outside every window).
+    const runStart = Date.parse(at(0));
+    const orchestrator = [
+      line(at(10), 'advance_phase (frame)'), // no open — inferred window: runStart → :10
+      line(at(30), 'advance_phase (spec)'), // no open — inferred window: :10 → :30
+      line(at(31), '◀ harness prompt (phase=plan)'), // headless from here — a real window
+      line(at(40), 'advance_phase (plan)'),
+    ].join('\n');
+    const implementer = [
+      line(at(2), '◀ prompt (tag=think-holistic, from orchestrator)'),
+      line(at(6), '▶ response (session s1)'),
+      line(at(12), '◀ prompt (tag=write-spec, from orchestrator)'),
+      line(at(20), '▶ response (session s1)'),
+    ].join('\n');
+
+    const model = buildStats('run-9', orchestrator, [{ role: 'implementer', log: implementer }], FULL_ORDER, undefined, runStart);
+    expect.soft(model.phases.map((p) => ({ phase: p.phase, turns: p.turns }))).toEqual([
+      { phase: 'frame', turns: 1 },
+      { phase: 'spec', turns: 1 },
+      { phase: 'plan', turns: 0 },
+    ]);
+    // The first inferred window floors at the run's creation, not the epoch.
+    expect.soft(model.phases[0]?.windowMs).toBe(10 * 60_000);
+    expect.soft(model.notes.join('\n')).toContain('inferred from gate crossings');
+    expect.soft(model.notes.join('\n')).not.toContain('outside any phase window');
+  });
 });
 
 describe('buildStats — the implementer-model label', () => {

@@ -46,13 +46,6 @@ Role–provider decoupling makes orchestrator-on-codex a legal configuration, bu
 
 The bridge is the host-neutral kernel served over stdio MCP (`duet _mcp`) — the same server a codex orchestrator would connect to; the harness-side half exists. Two codex-specific unknowns gate it: **pause/resume at a tool call** (codex has no `canUseTool` callback, and what `codex exec resume` does with a turn ended mid-tool-call is unknown — the hard part), and **tool-call faithfulness** under codex's MCP client. It stays deliberately unbuilt because nobody has wanted the configuration — the interface allows it, no one pays for it. If wanted: a half-day spike mirroring the claude substrate spike, against the same tools.
 
-## Deferred small defects (forensics)
-
-Not design questions — two real, small implementation defects surfaced while tracing an AFK run, kept here only so the prune of their origin spec doesn't lose them. Independent of any feature; fix when convenient.
-
-- **Resume-brief narration of a held gate.** The orchestrator's resume brief can narrate a gate that was *held* (a `high` withheld its auto-cross) as "auto-crossed" — the narration doesn't distinguish the held case from the crossed one (observed in an overnight run's `orchestrator.log`).
-- **`autoApprovals` omits the first gate.** The "while you were away" auto-cross ledger doesn't record the frame/Direction gate, so a morning review of a fully pre-authorized run under-counts by one.
-
 ## Settled, still watched
 
 Resolved by decision, kept only for a live revisit trigger; the substance lives in the named design doc.
