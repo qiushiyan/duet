@@ -2,7 +2,7 @@
 
 **A semi-AFK orchestrator for a two-agent AI coding workflow — one agent implements, another reviews, and an LLM routes between them while you stay the editor-in-chief.**
 
-If you already run two coding agents in parallel — one writing specs/plans/code, one critiquing them — and spend your day copy-pasting between them and nudging each along, that's the workflow duet automates. A read-only **orchestrator** drives the hand-offs — it picks the right prompt, routes each agent's output to the other, and decides when a review loop has converged — and pauses at **human gates** that no agent can cross. You approve the direction and the spec, walk away, and come back to an opened pull request or a well-formed question waiting for you.
+If you already run two coding agents in parallel — one writing specs/plans/code, one critiquing them — and spend your day copy-pasting between them and nudging each along, that's the workflow duet automates. A read-only **orchestrator** drives the hand-offs — it picks the right prompt, routes each agent's output to the other, and decides when a review loop has converged — and pauses at **human gates** that no agent can cross. You approve the early decisions, walk away, and come back to an opened pull request or a well-formed question waiting for you.
 
 It's a personal tool, built for one developer's workflow across their own projects, and published in case the shape is useful to you — not a polished product. Expect rough edges.
 
@@ -16,21 +16,32 @@ Three roles. The two **workers** can each run on either provider (`claude` or `c
 | **Implementer** | Writes specs, plans, code, the PR | `claude` (Opus) |
 | **Reviewer** | Critiques each artifact (review-only) | `codex` |
 
-A run moves through an arc you pick at the start (`--workflow`). Each `→` is a phase the agents work through; each **GATE** is a stop where the run waits for you:
+A run moves through an **arc** you pick at the start (`--workflow`) — three of them, by how much ceremony the work deserves. Each `→` is a phase the agents work through; each **GATE** is a stop where the run waits for you:
 
 ```
-full  frame → DIRECTION → spec → COMMIT-SPEC → plan → PLAN (walk away)
-        → implement (AFK, often hours; build → review → reconcile docs) → SHIP → finish (open the PR) → OPEN-PR → done
+full    frame → DIRECTION → spec → COMMIT-SPEC → plan → PLAN (walk away)
+          → implement (AFK, often hours) → SHIP → finish (open the PR) → OPEN-PR → done
 
-rir   research → DIRECTION (walk away) → implement (AFK; build → review → reconcile docs) → SHIP
-        → finish (open the PR) → OPEN-PR → done
+design  frame → DIRECTION (auto-crosses) → design → DESIGN (your one stop — then walk away)
+          → implement (AFK) → SHIP → finish (open the PR) → OPEN-PR → done
+
+rir     research → DIRECTION (walk away) → implement (AFK) → SHIP
+          → finish (open the PR) → OPEN-PR → done
 ```
 
-**full** is the thorough arc — settle the design on paper, end in a pull request. **rir** (Research → Implement → Review) is lighter: the research decisions are the design, so it skips spec and plan. Use full for epic-shaped work, rir for small, well-understood changes. Both arcs share the same `implement` and `finish` phases and end in a PR.
+- **full** — the thorough arc: a spec and a plan, each drafted and reviewed on paper before any code. Pick it for unfamiliar or risky work, where the product spec and the technical plan each deserve their own review.
+- **design** — the middle arc: one committed **design doc** replaces the spec + plan pair — product goals and behaviors on top, module boundaries and test standards below — reviewed in a single loop. Pick it for serious work on an implementer model you trust: by default you read one document, tap once, and walk away.
+- **rir** — the fast arc: no documents at all; the research decisions are the design. Pick it for small, well-understood changes.
 
-The gates are enforced in code (an XState statechart), not a prompt the orchestrator could be talked out of. Between stops a detached background process drives the phase; nothing runs while a run is parked, and you get a desktop notification at every stop. Docs are reconciled as the last step of `implement` (so the **SHIP** gate reviews code and docs together) and ride the branch into the PR; the `finish` phase then just writes the description and opens the PR. The final **OPEN-PR** gate sits *after* the open. On full it auto-crosses to done under the default `overnight` posture; on rir it auto-crosses only under `--gates-at afk` — a bare rir run attends all of its gates. To stop for a post-open review of the opened PR, attend that gate — list `finish` in `--gates-at` (rejecting there amends the open PR in place). A pre-authorized gate auto-crosses only on a clean packet: a `high` human-decision in the packet holds it for you instead, and an `ask_human` question stops the run under any posture. The merge is always yours.
+Every arc shares the same AFK implementation phase and ends by opening a real pull request.
 
-Each phase runs a handful of prompt templates — **snippets** — that carry the workflow's conventions. The implementer drafts each artifact from one — [`write-spec`](docs/snippets.md#write-spec) in spec, [`start-plan`](docs/snippets.md#start-plan) in plan, [`implement-direct`](docs/snippets.md#implement-direct) on the lighter rir arc — and the reviewer critiques through altitude-tuned lenses like [`review-spec`](docs/snippets.md#review-spec) and [`review-plan`](docs/snippets.md#review-plan). The snippets are the substance of the workflow, and the part you can reshape to your own methodology — see [Customizing the snippets](#customizing-the-snippets), or the full [snippet reference](docs/snippets.md).
+The gates are enforced in code (a statechart), not by a prompt an agent could be talked out of. Between stops a detached background process drives the phase; nothing runs while a run is parked, and you get a desktop notification at every stop. Three things worth knowing about how a run ends:
+
+- Docs are reconciled as the last step of implementation, so the **SHIP** gate reviews code and docs together; `finish` just writes the description and opens the PR.
+- The **OPEN-PR** gate sits *after* the PR opens. Under the hands-off defaults it auto-crosses to done; to stop and review the opened PR, list `finish` in `--gates-at` (rejecting there amends the PR in place). A bare rir run still attends all of its gates.
+- A pre-authorized gate auto-crosses only on a clean packet: a `high`-severity decision in it holds the run for you instead, and an `ask_human` question stops the run under any posture. The merge is always yours.
+
+Each phase runs a handful of prompt templates — **snippets** — that carry the workflow's conventions. The implementer drafts each artifact from one — [`write-spec`](docs/snippets.md#write-spec) in spec, [`start-plan`](docs/snippets.md#start-plan) in plan, [`write-design`](docs/snippets.md#the-design-arc-snippets) on the design arc, [`implement-direct`](docs/snippets.md#implement-direct) on rir — and the reviewer critiques through altitude-tuned lenses like [`review-spec`](docs/snippets.md#review-spec) and [`review-design`](docs/snippets.md#the-design-arc-snippets). The snippets are the substance of the workflow, and the part you can reshape to your own methodology — see [Customizing the snippets](#customizing-the-snippets), or the full [snippet reference](docs/snippets.md).
 
 ## What it is — and isn't
 
@@ -73,8 +84,8 @@ The smoothest way to run duet is to let a Claude Code session sharpen your probl
    ```bash
    duet new --interactive --framing .duet/<your-framing>.md
    ```
-   Your own Claude Code session becomes the orchestrator: you approve the direction (and, on the full arc, the spec and plan) right in the chat.
-4. **Walk away.** The interactive session hands the run off to a background driver at the handoff gate — plan approval (full) or the Direction gate (rir) — and it implements semi-AFK, often for an hour or more. Under the default `overnight` posture (full) it then auto-crosses the Ship gate and opens the PR, so you return to an opened pull request (with the Ship packet — a CEO-style summary — recorded for your morning review) — or a well-formed question waiting for you. The rir `afk` posture is the same shape. Prefer to verify the build before it ships? Attend the Ship gate (`--gates-at skip-plan` on full).
+   Your own Claude Code session becomes the orchestrator: you act at the early gates right in the chat — the spec and plan on full, the design doc on design, the direction on rir.
+4. **Walk away.** At the arc's handoff gate — plan approval (full), the Design gate (design), or Direction (rir) — the session hands the run to a background driver, which implements semi-AFK, often for an hour or more. Under the hands-off defaults it then crosses the Ship gate and opens the PR, so you return to an opened pull request (with a CEO-style summary recorded for your morning review) — or a well-formed question waiting for you. Prefer to verify the build before it ships? Attend the Ship gate (`--gates-at skip-plan` on full).
 
 > **Prefer the terminal?** Skip `--interactive` and run a headless framing turn instead — `duet new` opens your editor on a framing draft, then the orchestrator runs in the background and you act at each gate with `duet continue`.
 
@@ -83,15 +94,16 @@ Common ways to start a run:
 ```bash
 duet new                       # editor on a framing draft (issue, context, scope)
 duet new --template bug        # seed the draft from .duet/templates/bug.md
-duet new --spec spec.md        # start from a spec you already wrote (full arc)
-duet new --workflow rir        # the lighter arc (add --gates-at afk to run unattended → PR open)
-duet new --gates-at skip-plan  # default is hands-off after the spec; this returns you at the Ship gate
+duet new --spec spec.md        # start from a draft you already wrote (full: a spec; design: a design doc)
+duet new --workflow design     # the one-doc middle arc — one attended gate by default
+duet new --workflow rir        # the fast arc (add --gates-at afk to run unattended → PR open)
+duet new --gates-at skip-plan  # full's default is hands-off after the spec; this returns you at the Ship gate
 duet new --budget default      # opt in to per-turn cost caps (off by default)
 duet new --gateless            # walk away from the START — every gate pre-authorized; with a consultant bound, its bet-audits are off but its framing read and the contract/verify backstop remain; still stoppable by ask_human / a correctness hold (conflicts with --interactive)
 duet new --retry-infra 2       # tune the bounded infra auto-retry budget (default 3 for new runs; 0 disables)
 ```
 
-full's default posture is `overnight` — you approve the spec, then walk away for the rest (plan, Ship, and the Open-PR gate all auto-cross). `--gates-at` names the *complete* set of gates you attend, not a delta: `--gates-at finish` attends **only** the Open-PR gate — even Direction and Commit-spec then auto-cross; to keep the usual stops *and* add a post-open review of the opened PR, list them all.
+Each arc has a sensible hands-off default: **full** is `overnight` — approve the spec, then walk away (plan, Ship, and the Open-PR gate all auto-cross); **design** attends only its Design gate — one interruption for the whole run; **rir** attends all three of its gates unless you say `afk`. `--gates-at` names the *complete* set of gates you attend, not a delta: `--gates-at finish` attends **only** the Open-PR gate — everything else auto-crosses; to keep the usual stops *and* add a post-open review, list them all.
 
 ## Everyday commands
 
@@ -146,7 +158,7 @@ provider = "codex"          # no model key — your ~/.codex/config.toml governs
 
 That's the only config duet has — role-to-provider bindings plus billing posture (`transport`, `budget`), nothing else. Project knowledge never lives here; it goes in the framing.
 
-- **Consultant (optional, off by default).** Add `[roles.consultant]`, or pass `--consultant <provider[:model]>` per run, for a second, read-only reviewer that questions the *bet* (assumptions, product fit) rather than the build — ideally on a different model family from your reviewer, which is the point. `--no-consultant` disables a configured one for a single run. On the full arc it also authors an **acceptance contract** — a short, frozen list of falsifiable assertions of what success means, written blind to the plan, which you ratify at the plan gate and a fresh session verifies against the built system before the Ship gate. A failed assertion routes to the implementer to fix and re-verify first, holding the gate for you only if it stays broken after a bounded loop — you see a summary of what self-healed, not every fix.
+- **Consultant (optional, off by default).** Add `[roles.consultant]`, or pass `--consultant <provider[:model]>` per run, for a second, read-only reviewer that questions the *bet* (assumptions, product fit) rather than the build — ideally on a different model family from your reviewer, which is the point. `--no-consultant` disables a configured one for a single run. On the full and design arcs it also authors an **acceptance contract** — a short, frozen list of falsifiable assertions of what success means, written before any code — which you ratify at the last gate before the build and a fresh session verifies against the built system before the Ship gate. A failed assertion routes to the implementer to fix and re-verify first, holding the gate for you only if it stays broken after a bounded loop — you see a summary of what self-healed, not every fix.
 - **Interactive implementer transport (advanced, experimental).** Add `transport = "interactive"` under `[roles.implementer]` to drive the interactive `claude` TUI instead of headless `claude -p`, so its turns bill your flat subscription quota rather than the metered credit pool. tmux-driven, implementer-only, pending one live-auth check — see [`docs/interactive-transport.md`](docs/interactive-transport.md).
 
 ## Customizing the snippets
@@ -197,7 +209,20 @@ Two Claude Code skills ship with duet (installed with `npx skills add` above): *
 
 ## Development & status
 
-**Status.** Early and personal, but the whole workflow is now live-verified end to end: both the **full** and **rir** arcs, the headless and interactive orchestrator hosts, the optional **consultant** and its full-arc **acceptance contract** (a frozen list of falsifiable success assertions, authored blind to the plan and verified against the built system, with a failed assertion self-healing through the implementer before it holds), the **gateless** walk-away-from-the-start posture, run supervision (`duet doctor`, default-on infra retry), the shared **`finish` phase** both arcs use — the PR-only finishing tail reached after docs reconcile at the `implement` tail (open-then-review, PR auto-open by default, `overnight` as full's default posture) — and the `duet stats` verb have all run on real work. A few pieces are built but not yet proven on real work: the experimental **interactive-Claude implementer transport** (bill the implementer's turns to your flat subscription quota), green over fakes but still pending its single live-auth check — see [`docs/interactive-transport.md`](docs/interactive-transport.md); **warm-starting the interactive orchestrator from an existing session** (`--resume-session` — resume the discussion you framed in as the orchestrator, so it keeps that context), green over the launcher seam but pending a live run; and the **AFK-resilience hardening** that keeps an overnight run alive across a stalled stream, a machine-sleep, a hung compaction, or a worker session overflowing its context window (a forced stream watchdog, a wall-clock timeout backstop, compaction recovery, and the context-pressure guards — fill metering, 75/85 bands, an automatic salvage ladder) — test-verified at the seams, its context readers probed against real transcripts, with the induced-failure probes (a deliberately stalled stream, a real suspend, a first overnight run on the guards) still a manual environment check. Codex-as-orchestrator remains deliberately unbuilt. Expect rough edges — the open *design* questions and their evidence live in [`docs/open-questions.md`](docs/open-questions.md).
+**Status.** Early and personal. Live-verified end to end, on real work:
+
+- the **full** and **rir** arcs, on both orchestrator hosts (headless and interactive)
+- the optional **consultant** and the **acceptance contract** (frozen success assertions, verified against the built system, self-healing through the implementer before they hold a gate)
+- the **gateless** walk-away posture, run supervision (`duet doctor`, default-on infra retry), the shared PR-only **`finish`** tail, and `duet stats`
+
+Built and test-verified, awaiting a first live run:
+
+- the **design arc** — the one-doc middle arc above
+- the experimental **interactive-Claude implementer transport** (bill the implementer's turns to your flat subscription quota) — pending one live-auth check; see [`docs/interactive-transport.md`](docs/interactive-transport.md)
+- **warm-starting** the interactive orchestrator from an existing session (`--resume-session`)
+- the **AFK-resilience hardening** (stream watchdog, wall-clock caps, compaction recovery, context-pressure guards) — test-verified at the seams and probed against real transcripts; the induced-failure checks (a stalled stream, a real suspend) are still manual
+
+Codex-as-orchestrator is deliberately unbuilt. Expect rough edges — the open *design* questions and their evidence live in [`docs/open-questions.md`](docs/open-questions.md).
 
 No build step in dev — Node 24 runs the TypeScript directly:
 

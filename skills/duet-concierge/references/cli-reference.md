@@ -177,7 +177,7 @@ A markdown file: an optional `---`-fenced frontmatter block holding only fixed m
 - Environment-only actions (migrations, deploys): flag the human — never attempt.
 
 # Docs
-<for reconciling docs at the end of the implement phase (both arcs — docs are
+<for reconciling docs at the end of the implement phase (every arc — docs are
  reconciled as the last build step, before the Ship gate): a docs-update skill if
  one exists, else where docs live and what a change like this should update>
 ```

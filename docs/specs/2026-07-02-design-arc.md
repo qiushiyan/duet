@@ -2,7 +2,7 @@
 
 - **Date:** 2026-07-02
 - **Branch:** `feat/design-arc`
-- **Status:** drafted — pending owner review; implementation follows the review
+- **Status:** shipped (2026-07-03) — implemented and distilled into `docs/automation-design.md`; this file stays as the dated proposal record
 - **Scope:** a third workflow arc (registry + machine coverage + snippets + phase briefs + skill surfaces), plus the review-loop polish revision that lands with it. Design-doc updates are deferred to implementation (§"Deferred doc updates"). A set of small, evidence-backed fixes rides the same branch (§"Ride-along fixes") but is not part of this design.
 
 ## Summary

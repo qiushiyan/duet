@@ -12,7 +12,7 @@ This document abstracts the workflow into a model an orchestrator can implement,
 
 ## The phases
 
-Three top-level phases; the previously nine-phase machine survives as nested steps. Gates (──) are states where no agent runs and only human events transition; `ask_human` flags can interrupt any phase.
+Three top-level phases; the previously nine-phase machine survives as nested steps. Gates (──) are states where no agent runs and only human events transition; `ask_human` flags can interrupt any phase. The diagram below is the **full** arc — the protocol at its most complete; duet maps the same protocol onto two lighter arcs (`docs/automation-design.md` §"Phases and gates"): **design** merges SPEC and PLAN into one DESIGN stage — a single committed doc, product sections reviewed at spec altitude and technical sections at plan-altitude-minus-enumeration — and **rir** drops the documents entirely (the research decisions are the design).
 
 ```
 PLANNING (attended — orchestrator drives, human acts at gates and flags)
@@ -34,11 +34,11 @@ IMPLEMENTATION (AFK — flags queue, process exits on them)
   HANDOFF            implementation-handoff
   REVIEW ⇄ respond/fix rounds          loop exit: orchestrator judgment,
                                        hard backstop caps in the harness
+  RECONCILE_DOCS     reconcile-docs; one pass — update and commit, the last build step (Ship reviews code + docs)
   CEO-SUMMARY        implementer drafts; last act of the phase
     ── Ship gate ──                     ← auto-crosses by default (overnight); attended (skip-plan) → human returns, verifies (migrations, smoke tests), reads packet
 
-FINAL REVIEW (one phase, finish — unattended by default)
-  RECONCILE_DOCS     reconcile-docs; one pass — update and commit, no gate
+FINAL REVIEW (one phase, finish — unattended by default; PR-only)
   PR_DESCRIPTION     implementer drafts for the PR body
   OPEN               gh pr create
     ── Open-PR gate ──                  ← after the open: the PR is already open. Auto-crosses to done by default; gates_at: finish adds a post-open review stop
@@ -98,8 +98,8 @@ Evidence for the move: the user repeatedly makes a free-form "CEO-reframe" reque
 ## What each phase produces
 
 - **PLANNING** → a committed spec file (path per project convention, e.g. `docs/superpowers/specs/YYYY-MM-DD-<slug>.md` **(observed)**) and an approved plan file (path named by the framing; a repo file rather than in-conversation, because implementation-phase compaction re-anchors on it — the orchestrator flags the human if the framing names no plan location).
-- **IMPLEMENTATION** → commits (one per slice, plus review-fix commits), the implementation handoff, the review history, and the CEO summary.
-- **FINAL REVIEW** (`finish`) → reconciled-and-committed docs, the PR description, a pushed branch, and an opened **draft** PR.
+- **IMPLEMENTATION** → commits (one per slice, plus review-fix commits), the implementation handoff, the review history, reconciled-and-committed docs, and the CEO summary.
+- **FINAL REVIEW** (`finish`) → the PR description, a pushed branch, and an opened, mergeable PR (its body leads with a `Verification (pending)` checklist).
 
 ## Loop semantics
 
