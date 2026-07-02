@@ -6,7 +6,7 @@ import type { PhaseName } from '../phases.ts';
 import { providerFor } from '../providers/index.ts';
 import { BudgetCutoffError } from '../providers/types.ts';
 import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
-import { CONTEXT_CAUTION_PERCENT, CONTEXT_EMERGENCY_PERCENT, contextBand, latestTranscriptUsageTokens } from '../context-guard.ts';
+import { CONTEXT_CAUTION_PERCENT, CONTEXT_EMERGENCY_PERCENT, contextBand, latestTranscriptUsageTokens, salvageCompactInstructions } from '../context-guard.ts';
 import { countsReviewRound, orphanRecoveryFor, readOnlyFor, sessionIdFor, sessionPolicyFor, shouldResetAfterCompactAbort, workerRolesFor } from '../roles.ts';
 import { getSnippet, renderSnippetLibrary, runtimeLibraryContext } from '../snippets.ts';
 import {
@@ -1087,6 +1087,72 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     log,
   };
 
+  // ── The salvage ladder (headless blocking host only — the interactive host
+  // has a live orchestrator to run the compact itself, the same human-present
+  // split as infra auto-retry). When a send bounces off the context ceiling,
+  // the session is wedged: no orchestrator-authored compact can be composed and
+  // delivered faster than the harness can act, and overnight nobody is watching
+  // (the 20260701 wedge parked 10 hours for exactly this mechanical recovery).
+  // The rungs: (1) one automatic salvage /compact with generic seeded
+  // instructions — recovery mechanics, not editorial (context-guard.ts); (2) if
+  // the salvage failed, was cut, or the session overflows AGAIN this phase (the
+  // compact floor itself is too high — the thrash guard), reset the session and
+  // prescribe recover-context. Every rung ends in a next action; none loops. ──
+  const salvagedRoles = new Set<WorkerRole>();
+  const resetWedgedSession = (role: WorkerRole): void => {
+    const fresh = loadRunState(state.cwd, state.runId);
+    delete fresh.workerSessions[role];
+    clearContextUsage(fresh, role);
+    saveRunState(fresh);
+    Object.assign(state, fresh);
+    log(`[send_prompt] ⚠ ${role} session reset — wedged past its context ceiling; the next send seeds fresh`);
+    appendVoiceLog(state, role, `⚠ session reset — wedged past its context ceiling; the next send seeds fresh`);
+  };
+  const salvageLadder = async (
+    role: WorkerRole,
+    outcome: WorkerTurn | Error,
+    runTurn: (role: WorkerRole, turn: { tag: string; body: string; isCompactTurn: boolean; timeoutMs?: number }) => Promise<WorkerTurn | Error>,
+  ): Promise<CallToolResult | undefined> => {
+    if (!(outcome instanceof Error) || outcome instanceof BudgetCutoffError) return undefined;
+    if (classifyError(outcome.message) !== 'context-overflow') return undefined;
+    const binding = bindingFor(state.bindings, role);
+    if (binding.provider !== 'claude' || binding.transport === 'interactive') return undefined;
+    if (sessionPolicyFor(role) !== 'persistent') return undefined;
+    // No session ⇒ nothing to compact — the prompt itself was over-window; the
+    // plain overflow prescription (renderTurnResult) is the honest answer.
+    if (!state.workerSessions[role]) return undefined;
+    if (salvagedRoles.has(role)) {
+      // Overflowed again after a salvage this phase: the compact floor is too
+      // high for this session — compacting harder would thrash, so reset.
+      resetWedgedSession(role);
+      return error(
+        block(
+          `The ${role} worker's session hit its context-window ceiling again after an automatic salvage compaction — its compact floor is too high to keep working in. duet has RESET the ${role} to a fresh session; re-anchor it with the recover-context snippet (a status overview plus a reread of the committed artifacts), not a resume or a re-send.`,
+        ),
+      );
+    }
+    salvagedRoles.add(role);
+    log(`[send_prompt] ⚠ ${role} session wedged at its context ceiling — running an automatic salvage /compact`);
+    const body = `/compact ${salvageCompactInstructions({ phase, ...(state.specPath ? { specPath: state.specPath } : {}), ...(state.branch ? { branch: state.branch } : {}) })}`;
+    const salvage = await runTurn(role, { tag: 'salvage-compact', body, isCompactTurn: true, timeoutMs: COMPACT_TIMEOUT_MS });
+    if (!(salvage instanceof Error) && salvage.aborted !== true) {
+      return error(
+        block(
+          `The ${role} worker's session hit its context-window ceiling — your prompt was rejected before the worker saw it. duet ran an automatic salvage compaction on the session and it succeeded, so the session takes prompts again: re-send this same prompt now. (The salvage used generic keep-the-work instructions; prefer your own adapted compact-for-* at natural boundaries, where you choose what survives.)`,
+        ),
+      );
+    }
+    // A salvage /compact that was CUT at its cap already reset the session in
+    // settle (shouldResetAfterCompactAbort); a salvage that failed outright is
+    // reset here. Either way the session is gone and recover-context re-anchors.
+    if (salvage instanceof Error) resetWedgedSession(role);
+    return error(
+      block(
+        `The ${role} worker's session hit its context-window ceiling, and the automatic salvage compaction ${salvage instanceof Error ? `also failed (${salvage.message})` : 'was cut at its cap'} — the session was beyond compacting. duet has RESET the ${role} to a fresh session; re-anchor it with the recover-context snippet (a status overview plus a reread of the committed artifacts), not a resume or a re-send.`,
+      ),
+    );
+  };
+
   // send_prompt's role surface is the run's BOUND worker roles: the consultant
   // is an enum value (and named in the role/description copy) ONLY when bound, so
   // an un-enabled run's tool schema is byte-for-byte today's and the orchestrator
@@ -1271,47 +1337,59 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         // CONCURRENTLY (Promise.all) so a fan-out never serializes two minutes-long
         // turns — the regression the readOnlyHint scheduler hint fixed for parallel
         // single-role calls. settleTurn merges against fresh disk, so concurrent
-        // cross-role settles don't clobber each other.
-        const runBlockingTurn = async (role: WorkerRole): Promise<WorkerTurn | Error> => {
-          const isReviewRound = isReviewRoundFor(role);
+        // cross-role settles don't clobber each other. Parameterized by turn (not
+        // closed over the args) so the salvage ladder below can dispatch its own
+        // recovery /compact through the same settle machinery.
+        const runBlockingTurn = async (
+          role: WorkerRole,
+          turn: { tag: string; body: string; isCompactTurn: boolean; timeoutMs?: number },
+        ): Promise<WorkerTurn | Error> => {
+          const isReviewRound = countsReviewRound(role, turn.tag);
           turnsInFlight.add(role);
-          markTurnActive(state, role, tag);
+          markTurnActive(state, role, turn.tag);
           const startedAt = Date.now();
-          const stopHeartbeat = startHeartbeat({ state, log, blockingHost: true, ...(home !== undefined ? { home } : {}) }, { role, tag, startedAt });
+          const stopHeartbeat = startHeartbeat({ state, log, blockingHost: true, ...(home !== undefined ? { home } : {}) }, { role, tag: turn.tag, startedAt });
           // settleTurn is kept INSIDE this try/catch (both arms) so a throw during
           // the merge renders as an infra failure exactly as a runTurn throw does.
-          const contextCapTokens = contextCapFor(state, role, isCompactTurn);
+          const contextCapTokens = contextCapFor(state, role, turn.isCompactTurn);
           try {
-            const turn = await providerFor(providers, role).runTurn({
-              prompt: body,
+            const outcome = await providerFor(providers, role).runTurn({
+              prompt: turn.body,
               sessionId: sessionIdFor(state, role),
               readOnly: readOnlyFor(role),
               cwd: state.cwd,
-              ...(perTurnTimeoutMs !== undefined ? { timeoutMs: perTurnTimeoutMs } : {}),
+              ...(turn.timeoutMs !== undefined ? { timeoutMs: turn.timeoutMs } : {}),
               ...(contextCapTokens !== undefined ? { contextCapTokens } : {}),
               // Stage this turn's id onto the active-turn hint the moment the
               // provider announces it, so the heartbeat poll (closed over the
               // same `state`) can locate the transcript from the turn's start.
               onSessionId: stageSessionId(state, role, log),
             });
-            settleTurn({ state, phase, providers, log }, { role, tag, isReviewRound, isCompactTurn }, turn);
-            return turn;
+            settleTurn({ state, phase, providers, log }, { role, tag: turn.tag, isReviewRound, isCompactTurn: turn.isCompactTurn }, outcome);
+            return outcome;
           } catch (err) {
             const outcome = err instanceof Error ? err : new Error(String(err));
-            settleTurn({ state, phase, providers, log }, { role, tag, isReviewRound, isCompactTurn }, outcome);
+            settleTurn({ state, phase, providers, log }, { role, tag: turn.tag, isReviewRound, isCompactTurn: turn.isCompactTurn }, outcome);
             return outcome;
           } finally {
             turnsInFlight.delete(role);
             stopHeartbeat();
           }
         };
-        const settled = await Promise.all(roles.map(async (role) => ({ role, outcome: await runBlockingTurn(role) })));
+        const sendArgs = { tag, body, isCompactTurn, ...(perTurnTimeoutMs !== undefined ? { timeoutMs: perTurnTimeoutMs } : {}) };
+        const settled = await Promise.all(roles.map(async (role) => ({ role, outcome: await runBlockingTurn(role, sendArgs) })));
         // Render AFTER every settle so each role's footer/near-cap nudge reflects
         // the final round/cost state (settleTurn re-syncs `state` on each commit).
-        const rendered = settled.map(({ role, outcome }) => ({
-          role,
-          result: renderTurnResult({ state, phase }, { role, isReviewRound: isReviewRoundFor(role), cap, isCompactTurn }, outcome),
-        }));
+        // The salvage ladder may replace a wedged role's render with its own
+        // recovery result; it awaits a compact turn, hence the sequential loop.
+        const rendered: Array<{ role: WorkerRole; result: CallToolResult }> = [];
+        for (const { role, outcome } of settled) {
+          const salvaged = await salvageLadder(role, outcome, runBlockingTurn);
+          rendered.push({
+            role,
+            result: salvaged ?? renderTurnResult({ state, phase }, { role, isReviewRound: isReviewRoundFor(role), cap, isCompactTurn }, outcome),
+          });
+        }
         return rendered.length === 1 ? rendered[0]!.result : combineFanoutResults(rendered);
       },
       // CLI quirk, load-bearing: readOnlyHint here is a CONCURRENCY HINT, not

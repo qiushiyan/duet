@@ -641,7 +641,9 @@ describe('send_prompt', () => {
     // The pre-flight overflow shape from the 20260701 wedge: every send bounces
     // with "Prompt is too long". The old generic envelope said "retry this same
     // send_prompt call once" — deterministically futile — and the orchestrator
-    // obeyed it into a 10-hour park.
+    // obeyed it into a 10-hour park. (No prior session here, so the salvage
+    // ladder stays out — the prompt itself was over-window — and the
+    // prescription renders.)
     const implementer = new FakeWorker('claude', [
       new Error('claude worker turn failed (success): Prompt is too long'),
     ]);
@@ -655,6 +657,94 @@ describe('send_prompt', () => {
     expect.soft(joined).toContain('recover-context'); // the fallback if the compact itself fails
     expect.soft(joined).not.toContain('Retry this same send_prompt call'); // never the transient-infra advice
     expect.soft(joined).not.toContain('not a content problem');
+  });
+
+  test('the salvage ladder: a wedged session gets one automatic /compact, then "re-send this same prompt"', async ({
+    projectDir,
+    run,
+  }) => {
+    run.workerSessions = { implementer: 'sess-wedged' };
+    saveRunState(run);
+    const implementer = new FakeWorker('claude', [
+      new Error('claude worker turn failed (success): Prompt is too long'),
+      { text: 'compacted', sessionId: 'sess-wedged' },
+    ]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue the keystone' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+
+    expect.soft(result.isError).toBe(true); // the SEND failed — but recovery already ran
+    expect.soft(joined).toContain('salvage compaction');
+    expect.soft(joined).toContain('re-send this same prompt');
+    // The salvage turn itself: a /compact with the generic seeded instructions
+    // and the short compact cap, into the same session.
+    expect.soft(implementer.calls[1]?.prompt).toMatch(/^\/compact /);
+    expect.soft(implementer.calls[1]?.prompt).toContain('automatic recovery step');
+    expect.soft(implementer.calls[1]?.timeoutMs).toBe(COMPACT_TIMEOUT_MS);
+    expect.soft(implementer.calls[1]?.sessionId).toBe('sess-wedged');
+    // The compact settle cleared the reading — the pressure rail stands down.
+    expect.soft(loadRunState(projectDir, run.runId).contextUsage?.implementer).toBeUndefined();
+  });
+
+  test('the salvage ladder: a salvage that also fails resets the session and prescribes recover-context', async ({
+    projectDir,
+    run,
+  }) => {
+    run.workerSessions = { implementer: 'sess-wedged' };
+    saveRunState(run);
+    const implementer = new FakeWorker('claude', [
+      new Error('claude worker turn failed (success): Prompt is too long'),
+      new Error('claude worker turn failed (success): Prompt is too long'), // the compact bounces too
+    ]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+
+    expect.soft(joined).toContain('RESET the implementer');
+    expect.soft(joined).toContain('recover-context');
+    expect.soft(joined).not.toContain('re-send this same prompt'); // a fresh session must be re-anchored, not re-sent
+    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer).toBeUndefined();
+  });
+
+  test('the salvage ladder thrash guard: a second overflow after a salvage goes straight to reset, no compact loop', async ({
+    projectDir,
+    run,
+  }) => {
+    run.workerSessions = { implementer: 'sess-wedged' };
+    saveRunState(run);
+    const implementer = new FakeWorker('claude', [
+      new Error('claude worker turn failed (success): Prompt is too long'),
+      { text: 'compacted', sessionId: 'sess-wedged' }, // the salvage succeeds…
+      new Error('claude worker turn failed (success): Prompt is too long'), // …but the floor is too high
+    ]);
+    const { call } = harness(run, { implementer });
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+    const second = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+    const joined = second.content.map((c) => (c as { text: string }).text).join('\n');
+
+    expect.soft(joined).toContain('again after an automatic salvage compaction');
+    expect.soft(joined).toContain('recover-context');
+    expect.soft(implementer.calls.length).toBe(3); // no second salvage /compact was dispatched
+    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer).toBeUndefined();
+  });
+
+  test('the salvage ladder: a salvage /compact cut at its cap rides the existing reset and names it', async ({
+    projectDir,
+    run,
+  }) => {
+    run.workerSessions = { implementer: 'sess-wedged' };
+    saveRunState(run);
+    const implementer = new FakeWorker('claude', [
+      new Error('claude worker turn failed (success): Prompt is too long'),
+      { aborted: true, sessionId: 'sess-wedged' }, // the salvage compact hits its 8-min cap
+    ]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+
+    expect.soft(joined).toContain('cut at its cap');
+    expect.soft(joined).toContain('recover-context');
+    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer).toBeUndefined(); // settle's compact-abort reset
   });
 
   test('an interrupted turn AT the context ceiling prescribes compact-first, not a short continuation', async ({

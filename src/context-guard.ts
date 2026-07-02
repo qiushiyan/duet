@@ -46,6 +46,28 @@ export function contextBand(safetyPercent: number | undefined): ContextBand {
 }
 
 /**
+ * The generic instructions for a SALVAGE `/compact` — the automatic recovery
+ * duet runs itself when a session is already rejecting prompts, so no
+ * orchestrator-authored compaction can reach it. Deliberately mechanical:
+ * proactive compaction stays orchestrator-authored (choosing what survives is
+ * editorial), but a wedged session has no editorial choice left — only
+ * salvage-vs-reset, and a generic compact is the less destructive rung. Seeded
+ * with the run's FACTS only (phase, committed artifact paths, branch), never
+ * direction or opinion.
+ */
+export function salvageCompactInstructions(facts: { phase: string; specPath?: string; branch?: string }): string {
+  const spec = facts.specPath ? ` The committed spec at ${facts.specPath} survives on disk — cite it rather than restating it.` : '';
+  const branch = facts.branch ? ` The working branch is ${facts.branch}.` : '';
+  return (
+    `This session hit its context-window ceiling mid-work, and this compaction is an automatic recovery step — its instructions are generic. ` +
+    `Preserve what continuing the work needs: the current task and its exact in-progress state (files mid-edit, the next intended step), ` +
+    `every decision already made with its reason, and the concrete repo facts in use (paths, commands, test state). ` +
+    `Drop the exploration journey, superseded drafts, and old tool output.` +
+    `${spec}${branch} The current workflow phase is ${facts.phase}.`
+  );
+}
+
+/**
  * The latest request's token total from a CLAUDE transcript tail — the
  * mid-turn half of the context reading, parsed with the same honesty rule as
  * the settle-time extractor (`claudeContextUsage`): the last assistant record
