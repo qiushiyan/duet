@@ -24,7 +24,7 @@ import type { ErrorClass } from './worker-health.ts';
  * breaking change to the shipped skill (and fails the pinned-keys test).
  */
 
-/** Whether a workflow's arc ends by opening a PR — true when a phase carries the Open-PR gate (both arcs do: full's `finish`, rir's `publish`). */
+/** Whether a workflow's arc ends by opening a PR — true when a phase carries the Open-PR gate (both arcs do: full's `finish`, rir's `finish`). */
 function opensPr(workflow: WorkflowName): boolean {
   return phasesOf(workflow).some((p) => p.gate?.state === 'openPrGate');
 }
@@ -47,7 +47,7 @@ export function describeStop(state: RunState, done: boolean): string {
     return `question queued: ${state.pendingQuestion.question}`;
   }
   const gatePhase = phaseOfGateState(workflowOf(state), machineState);
-  if (gatePhase) return gateOf(gatePhase).ready;
+  if (gatePhase) return gateOf(workflowOf(state), gatePhase).ready;
   return `stopped at ${machineState}`;
 }
 
@@ -68,13 +68,13 @@ const continueCommand = {
  * is legal (a live or crashed phase). Quiescent stops have their own
  * channel, and the copy names it — gates stay explicit.
  */
-export function steerRefusal(position: RunPosition, runId: string): string | undefined {
+export function steerRefusal(workflow: WorkflowName, position: RunPosition, runId: string): string | undefined {
   switch (position.kind) {
     case 'running':
     case 'crashed':
       return undefined;
     case 'gate': {
-      const gate = gateOf(position.phase);
+      const gate = gateOf(workflow, position.phase);
       return (
         `the run is waiting at the ${gate.state} — steering here is the gate decision itself: ` +
         `${continueCommand.approve(runId)}, or ${continueCommand.reject(runId)} (your feedback reaches the orchestrator verbatim).`
@@ -209,7 +209,7 @@ function stopModel(state: RunState, position: RunPosition): StopModel {
     case 'interactive':
       return position;
     case 'gate': {
-      const gate = gateOf(position.phase);
+      const gate = gateOf(workflowOf(state), position.phase);
       const packet = state.phaseSummaries[position.phase];
       return {
         kind: 'gate',

@@ -121,6 +121,10 @@ export interface Fixtures {
   interactiveRun: RunState;
   /** A framing-only run with a consultant bound (the opt-in second reviewer). */
   consultantRun: RunState;
+  /** A framing-only run on the rir arc (for arc-scoped brief/render tests). */
+  rirRun: RunState;
+  /** A consultant-bound run on the rir arc (for arc-scoped brief/render tests). */
+  rirConsultantRun: RunState;
 }
 
 export const test = base.extend<Fixtures>({
@@ -140,5 +144,11 @@ export const test = base.extend<Fixtures>({
   },
   consultantRun: async ({ projectDir }, use) => {
     await use(createRun({ cwd: projectDir, bindings: consultantBindings, framing: 'test framing' }));
+  },
+  rirRun: async ({ projectDir }, use) => {
+    await use(createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'test framing' }));
+  },
+  rirConsultantRun: async ({ projectDir }, use) => {
+    await use(createRun({ cwd: projectDir, bindings: consultantBindings, workflow: 'rir', framing: 'test framing' }));
   },
 });

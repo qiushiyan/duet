@@ -16,9 +16,11 @@ import {
   researchPhaseEntryPrompt,
   specPhaseEntryPrompt,
 } from '../src/harness/orchestrator-prompts.ts';
-import { PHASE } from '../src/phases.ts';
-import type { PhaseName } from '../src/phases.ts';
-import { budgetFor, loadRunState, saveRunState } from '../src/run-store.ts';
+import { DEFAULT_BINDINGS } from '../src/config.ts';
+import { phaseSpec, phasesOf } from '../src/phases.ts';
+import type { WorkflowName } from '../src/phases.ts';
+import { budgetFor, createRun, loadRunState, saveRunState } from '../src/run-store.ts';
+import type { RunState } from '../src/run-store.ts';
 import { listPendingSteers, stageSteer } from '../src/steer-store.ts';
 import { test } from './helpers/fixtures.ts';
 
@@ -74,25 +76,35 @@ const quiesce = (cwd: string, runId: string): void => {
   saveRunState(s);
 };
 
+// A run of a given arc — buildPhaseBrief resolves each phase's cap against the
+// run's own workflow (phase identity is workflow-scoped), so a brief must be
+// built against a run of that phase's arc.
+const runOf = (cwd: string, workflow: WorkflowName): RunState =>
+  createRun({ cwd, bindings: DEFAULT_BINDINGS, framing: 'test framing', workflow });
+
 describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)', () => {
-  test('returns each phase’s entry prompt with the phase table’s round cap', ({ run }) => {
+  test('returns each phase’s entry prompt with the phase table’s round cap', ({ run, projectDir }) => {
     // The extraction is a pure move: the headless basePrompt and the interactive
     // get_task both build the brief here, dispatching the right *PhaseEntryPrompt
     // with the right cap. A wrong-phase or wrong-cap dispatch would break this.
-    expect.soft(buildPhaseBrief(run, 'frame')).toBe(framePhaseEntryPrompt(run, PHASE.frame.roundCap));
-    expect.soft(buildPhaseBrief(run, 'spec')).toBe(specPhaseEntryPrompt(run, PHASE.spec.roundCap));
-    expect.soft(buildPhaseBrief(run, 'plan')).toBe(planPhaseEntryPrompt(run, PHASE.plan.roundCap));
-    expect.soft(buildPhaseBrief(run, 'finish')).toBe(openPrPhaseEntryPrompt(run, PHASE.finish.roundCap, 'finish'));
-    expect.soft(buildPhaseBrief(run, 'research')).toBe(researchPhaseEntryPrompt(run, PHASE.research.roundCap));
-    expect.soft(buildPhaseBrief(run, 'implement')).toBe(implementPhaseEntryPrompt(run, PHASE.implement.roundCap));
-    expect.soft(buildPhaseBrief(run, 'publish')).toBe(openPrPhaseEntryPrompt(run, PHASE.publish.roundCap, 'publish'));
+    const rir = runOf(projectDir, 'rir');
+    expect.soft(buildPhaseBrief(run, 'frame')).toBe(framePhaseEntryPrompt(run, phaseSpec('full', 'frame').roundCap));
+    expect.soft(buildPhaseBrief(run, 'spec')).toBe(specPhaseEntryPrompt(run, phaseSpec('full', 'spec').roundCap));
+    expect.soft(buildPhaseBrief(run, 'plan')).toBe(planPhaseEntryPrompt(run, phaseSpec('full', 'plan').roundCap));
+    expect.soft(buildPhaseBrief(run, 'finish')).toBe(openPrPhaseEntryPrompt(run, phaseSpec('full', 'finish').roundCap, 'finish'));
+    expect.soft(buildPhaseBrief(rir, 'research')).toBe(researchPhaseEntryPrompt(rir, phaseSpec('rir', 'research').roundCap));
+    expect.soft(buildPhaseBrief(rir, 'implement')).toBe(implementPhaseEntryPrompt(rir, phaseSpec('rir', 'implement').roundCap));
+    expect.soft(buildPhaseBrief(rir, 'finish')).toBe(openPrPhaseEntryPrompt(rir, phaseSpec('rir', 'finish').roundCap, 'finish'));
   });
 
   // Belt-and-braces for the exhaustive `satisfies Record<PhaseName, …>` — the
   // compiler is the real guard, but a phase with a stub/throwing builder would
-  // still surface here.
-  test.for(Object.keys(PHASE) as PhaseName[])('%s builds a non-empty brief', (phase, { run }) => {
-    expect(buildPhaseBrief(run, phase).trim().length).toBeGreaterThan(0);
+  // still surface here. Each phase is built against a run of its own arc.
+  test.for([
+    ...phasesOf('full').map((p) => ['full', p.name] as const),
+    ...phasesOf('rir').map((p) => ['rir', p.name] as const),
+  ])('%s builds a non-empty brief', ([workflow, phase], { projectDir }) => {
+    expect(buildPhaseBrief(runOf(projectDir, workflow), phase).trim().length).toBeGreaterThan(0);
   });
 
   // The two load-bearing contracts of the shared openPr brief (full's finish,
@@ -102,10 +114,10 @@ describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)
   // — and the `Verification (pending)` checklist that carries the env-verify
   // reminder onto a PR opened after an auto-crossed Ship gate. (The old literal
   // tests pinned the surrounding prose and were brittle; these pin the contract.)
-  test.for(['finish', 'publish'] as const)(
+  test.for([['full', 'finish'], ['rir', 'finish']] as const)(
     '%s opens the PR idempotently and leads with the verification checklist',
-    (phase, { run }) => {
-      const brief = buildPhaseBrief(run, phase);
+    ([workflow, phase], { projectDir }) => {
+      const brief = buildPhaseBrief(runOf(projectDir, workflow), phase);
       expect.soft(brief).toMatch(/gh pr (view|list)/); // existence check first
       expect.soft(brief).toContain('gh pr create'); // then open
       expect.soft(brief).toContain('Verification (pending)');
@@ -121,11 +133,14 @@ describe('feedbackResumePrompt — the human feedback reaches the worker', () =>
   // the prompt reads at runtime (reviewLoop, roundCap, gate.state), so a reword
   // can't silently flip it; the prose itself is deliberately not re-pinned here —
   // that re-pinning was the brittleness the old literal tests carried.
-  test.for(['spec', 'plan', 'impl', 'finish', 'research', 'implement', 'publish'] as const)(
+  test.for([
+    ['full', 'spec'], ['full', 'plan'], ['full', 'implement'], ['full', 'finish'],
+    ['rir', 'research'], ['rir', 'implement'], ['rir', 'finish'],
+  ] as const)(
     '%s carries the human feedback verbatim',
-    (phase) => {
+    ([workflow, phase]) => {
       const feedback = 'the 404 path is swallowed — surface it instead';
-      expect(feedbackResumePrompt(phase, feedback)).toContain(feedback);
+      expect(feedbackResumePrompt(workflow, phase, feedback)).toContain(feedback);
     },
   );
 });
@@ -817,10 +832,12 @@ describe('prompt selection and session continuity', () => {
 });
 
 describe('provider-agnostic onboarding — workers get document paths, not slash commands (F9)', () => {
-  test('the onboarding entry prompts name a path and never instruct slash-command expansion', ({ run }) => {
-    const frame = framePhaseEntryPrompt(run, PHASE.frame.roundCap);
-    const research = researchPhaseEntryPrompt(run, PHASE.research.roundCap);
-    const finish = openPrPhaseEntryPrompt(run, PHASE.finish.roundCap, 'finish');
+  test('the onboarding entry prompts name a path and never instruct slash-command expansion', ({ run, projectDir }) => {
+    // research is a rir phase — build it against a rir run (the brief resolves its
+    // consultant snippet against the run's own arc).
+    const frame = framePhaseEntryPrompt(run, phaseSpec('full', 'frame').roundCap);
+    const research = researchPhaseEntryPrompt(runOf(projectDir, 'rir'), phaseSpec('rir', 'research').roundCap);
+    const finish = openPrPhaseEntryPrompt(run, phaseSpec('full', 'finish').roundCap, 'finish');
 
     for (const p of [frame, research, finish]) {
       expect.soft(p).not.toContain('CLI expands it'); // the now-wrong slash-command instruction is gone
@@ -830,13 +847,18 @@ describe('provider-agnostic onboarding — workers get document paths, not slash
     expect.soft(frame).toContain('document PATHS');
     expect.soft(frame).toMatch(/incomplete[\s\S]*ask_human/);
     expect.soft(research).toContain('document PATHS');
-    // finish: the reconcile-docs step relays the framing's named doc method (path
-    // or skill) faithfully rather than a self-invented one — provider-agnostic by
-    // staying with what the framing named (the 4912afe reconcile rewrite reframed
-    // the old "never a slash command" guard this way) — and a doc-scope product
-    // call still surfaces via ask_human.
-    expect.soft(finish).toContain('path or skill faithfully');
-    expect.soft(finish).toMatch(/doc-scope product call[\s\S]*ask_human/);
+    // implement (both arcs): the reconcile-docs step — which moved here from the
+    // finishing phase — relays the framing's named doc method (path or skill)
+    // faithfully rather than a self-invented one, provider-agnostic by staying with
+    // what the framing named, and a doc-scope product call still surfaces via
+    // ask_human. finish is now PR-only and no longer carries this text.
+    const fullImplement = buildPhaseBrief(run, 'implement');
+    const rirImplement = buildPhaseBrief(runOf(projectDir, 'rir'), 'implement');
+    for (const impl of [fullImplement, rirImplement]) {
+      expect.soft(impl).toContain('path or skill faithfully');
+      expect.soft(impl).toMatch(/doc-scope product call[\s\S]*ask_human/);
+    }
+    expect.soft(finish).not.toContain('reconcile-docs'); // docs reconciled at Ship, not here
   });
 });
 

@@ -1,7 +1,7 @@
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { execa } from 'execa';
 import { z } from 'zod';
-import { PHASE, acceptanceContractPathForSpec } from '../phases.ts';
+import { phaseSpec, acceptanceContractPathForSpec } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
 import { providerFor } from '../providers/index.ts';
 import { BudgetCutoffError } from '../providers/types.ts';
@@ -519,7 +519,7 @@ export function settleTurn(
   // consultant ran the checkpoint, which the freeze and the advance_phase rails
   // require (so guarantee 2 holds mechanically, not by prompt compliance). Keyed on
   // the registry checkpoint mode, so only full's plan/impl ever set it.
-  const checkpointMode = PHASE[phase].consultantCheckpoint;
+  const checkpointMode = phaseSpec(workflowOf(state), phase).consultantCheckpoint;
   if (role === 'consultant') {
     // An aborted consultant turn did NOT complete its checkpoint — set no
     // draft/verifiedAt (the freeze + verify rails must see a real completion, not
@@ -999,7 +999,7 @@ export const contextPressureRail: Rail<SendInput> = ({ role, isCompactTurn }, ct
 
 /** A review-loop phase can't advance with zero rounds — there is nothing to gate on. */
 export const reviewLoopRail: Rail<TerminalInput> = (_input, ctx) =>
-  PHASE[ctx.phase].reviewLoop && (ctx.state.rounds[ctx.phase] ?? 0) === 0
+  phaseSpec(workflowOf(ctx.state), ctx.phase).reviewLoop && (ctx.state.rounds[ctx.phase] ?? 0) === 0
     ? refuse(
         'No review round has run in this phase yet, so there is nothing for the human to gate on. Run the review loop first (send the reviewer a review-* prompt); advance_phase is for after the loop converges.',
       )
@@ -1008,7 +1008,7 @@ export const reviewLoopRail: Rail<TerminalInput> = (_input, ctx) =>
 /** The acceptance contract can't be SILENTLY skipped (guarantee 2, mechanically).
  *  The escape hatch is a `high` human_decision, which itself holds the AFK crossing. */
 export const contractCheckpointRail: Rail<TerminalInput> = ({ humanDecisions }, ctx) => {
-  if (!ctx.state.bindings.consultant || PHASE[ctx.phase].consultantCheckpoint !== 'contract') return null;
+  if (!ctx.state.bindings.consultant || phaseSpec(workflowOf(ctx.state), ctx.phase).consultantCheckpoint !== 'contract') return null;
   const hasHigh = (humanDecisions ?? []).some((d) => d.severity === 'high');
   if (ctx.state.acceptanceContractDraft || hasHigh) return null;
   return refuse(
@@ -1018,7 +1018,7 @@ export const contractCheckpointRail: Rail<TerminalInput> = ({ humanDecisions }, 
 
 /** A frozen contract must be verified before advancing — same `high` escape hatch. */
 export const verifyCheckpointRail: Rail<TerminalInput> = ({ humanDecisions }, ctx) => {
-  if (!ctx.state.bindings.consultant || PHASE[ctx.phase].consultantCheckpoint !== 'verify') return null;
+  if (!ctx.state.bindings.consultant || phaseSpec(workflowOf(ctx.state), ctx.phase).consultantCheckpoint !== 'verify') return null;
   const hasHigh = (humanDecisions ?? []).some((d) => d.severity === 'high');
   if (!ctx.state.acceptanceContract || ctx.state.acceptanceContract.verifiedAt || hasHigh) return null;
   return refuse(
@@ -1066,7 +1066,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       case 'answer':
         return answerResumePrompt(msg.text);
       case 'feedback':
-        return feedbackResumePrompt(phase, msg.text);
+        return feedbackResumePrompt(workflowOf(state), phase, msg.text);
     }
   };
   // When this phase's terminal marker is set, get_task is the one surface the
@@ -1102,7 +1102,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   const ctx: RailCtx = {
     state,
     phase,
-    cap: PHASE[phase].roundCap,
+    cap: phaseSpec(workflowOf(state), phase).roundCap,
     asyncHost: dispatcher !== undefined,
     inFlight: (role) => (dispatcher ? dispatcher.statusOf(role) !== undefined : turnsInFlight.has(role)),
     orphanedOnDisk: (role) => dispatcher !== undefined && Boolean(state.pendingTurns?.[role]),
@@ -1308,7 +1308,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             'role was an empty array — name at least one worker to send to (a single role, or several to fan the same body to each).',
           );
         }
-        const cap = PHASE[phase].roundCap;
+        const cap = phaseSpec(workflowOf(state), phase).roundCap;
         const isReviewRoundFor = (role: WorkerRole): boolean => countsReviewRound(role, tag);
 
         // Validate EVERY target before dispatching ANY — the first refusal returns

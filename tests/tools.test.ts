@@ -34,9 +34,9 @@ import { createTurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import type { TurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import { BudgetCutoffError } from '../src/providers/types.ts';
 import type { WorkerRole } from '../src/providers/types.ts';
-import { PHASE } from '../src/phases.ts';
+import { phaseSpec } from '../src/phases.ts';
 import type { PhaseName } from '../src/phases.ts';
-import { contextSafetyPercent, createRun, loadRunState, markPendingTurn, recordContextUsage, runDirOf, saveRunState, stageHumanInput } from '../src/run-store.ts';
+import { contextSafetyPercent, createRun, loadRunState, markPendingTurn, recordContextUsage, runDirOf, saveRunState, stageHumanInput, workflowOf } from '../src/run-store.ts';
 import { listPendingSteers, stageSteer } from '../src/steer-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
@@ -81,7 +81,7 @@ function harness(run: RunState, opts: HarnessOpts = {}) {
     ? createTurnDispatcher({
         state: run,
         phase,
-        cap: PHASE[phase].roundCap,
+        cap: phaseSpec(workflowOf(run), phase).roundCap,
         providers,
         log,
         ...(opts.home !== undefined ? { home: opts.home } : {}),
@@ -244,7 +244,7 @@ describe('rails (the #1-deep internal-seam surface)', () => {
     ).toBeNull();
 
     consultantRun.acceptanceContract = { path: 'x', commit: 'abc' };
-    const verify = verifyCheckpointRail({ verb: 'advance the phase' }, railCtx(consultantRun, { phase: 'impl' }));
+    const verify = verifyCheckpointRail({ verb: 'advance the phase' }, railCtx(consultantRun, { phase: 'implement' }));
     expect(verify?.isError).toBe(true);
     expect(text(verify!)).toContain('has not been verified');
   });
@@ -1880,7 +1880,7 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
   }) => {
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc' };
     saveRunState(consultantRun);
-    const { call } = harness(consultantRun, { phase: 'impl', consultant: new FakeWorker('claude') });
+    const { call } = harness(consultantRun, { phase: 'implement', consultant: new FakeWorker('claude') });
 
     await call('send_prompt', { role: 'consultant', tag: 'consultant-verify', body: 'verify the contract' });
 
@@ -1899,7 +1899,7 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     // window). Closing it structurally, not by trusting the orchestrator to re-verify.
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc', verifiedAt: 'now' };
     saveRunState(consultantRun);
-    const { call } = harness(consultantRun, { phase: 'impl', implementer: new FakeWorker('claude') });
+    const { call } = harness(consultantRun, { phase: 'implement', implementer: new FakeWorker('claude') });
 
     await call('send_prompt', { role: 'implementer', tag: 'respond-review', body: 'fix the failing assertion' });
 
@@ -1907,7 +1907,7 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     expect.soft(persisted.acceptanceContract?.verifiedAt).toBeUndefined(); // stale verify dropped by the fix
     expect.soft(persisted.acceptanceContract?.commit).toBe('abc'); // the freeze record survives
     // With verifiedAt gone and no high, the rail refuses advance until a fresh verify re-stamps it.
-    const verify = verifyCheckpointRail({ verb: 'advance the phase' }, railCtx(persisted, { phase: 'impl' }));
+    const verify = verifyCheckpointRail({ verb: 'advance the phase' }, railCtx(persisted, { phase: 'implement' }));
     expect.soft(verify).not.toBeNull();
   });
 
@@ -1917,7 +1917,7 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
   }) => {
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc', verifiedAt: 'now' };
     saveRunState(consultantRun);
-    const { call } = harness(consultantRun, { phase: 'impl', reviewer: new FakeWorker('codex') });
+    const { call } = harness(consultantRun, { phase: 'implement', reviewer: new FakeWorker('codex') });
 
     await call('send_prompt', { role: 'reviewer', tag: 'review-implementation', body: 'look again' });
 
@@ -2076,14 +2076,14 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
     expect.soft(unbound).toContain('["implementer", "reviewer"]');
   });
 
-  test('the RIR research brief takes the same conditional shape', ({ run, consultantRun }) => {
-    const bound = buildPhaseBrief(consultantRun, 'research');
+  test('the RIR research brief takes the same conditional shape', ({ rirRun, rirConsultantRun }) => {
+    const bound = buildPhaseBrief(rirConsultantRun, 'research');
     expect.soft(bound).toContain('one fan-out call');
     expect.soft(bound).toContain('consultant-frame'); // research maps to the frame checkpoint mode
     expect.soft(bound).toContain('separate send');
     expect.soft(bound).toContain('anonymized peers');
 
-    const unbound = buildPhaseBrief(run, 'research');
+    const unbound = buildPhaseBrief(rirRun, 'research');
     expect.soft(unbound.toLowerCase()).not.toContain('consultant');
     expect.soft(unbound).toContain('one fan-out call');
   });
@@ -2107,7 +2107,7 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
     // Bound + a frozen contract on state → the verify step points at the contract,
     // names consultant-verify, and routes a failed assertion to a high.
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc123' };
-    const frozen = buildPhaseBrief(consultantRun, 'impl');
+    const frozen = buildPhaseBrief(consultantRun, 'implement');
     expect.soft(frozen).toContain('Consultant checkpoint');
     expect.soft(frozen).toContain('consultant-verify');
     expect.soft(frozen).toContain('docs/specs/x.acceptance.md');
@@ -2116,12 +2116,12 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
 
     // Bound + no frozen contract → a noted skip, never silent, never a fallback audit.
     delete consultantRun.acceptanceContract;
-    const unfrozen = buildPhaseBrief(consultantRun, 'impl');
+    const unfrozen = buildPhaseBrief(consultantRun, 'implement');
     expect.soft(unfrozen).toContain('Consultant checkpoint');
     expect.soft(unfrozen).toContain('no frozen acceptance contract');
 
     // Unbound → byte-for-byte clean.
-    expect.soft(buildPhaseBrief(run, 'impl').toLowerCase()).not.toContain('consultant');
+    expect.soft(buildPhaseBrief(run, 'implement').toLowerCase()).not.toContain('consultant');
   });
 
   test('the plan brief AUTHORS the contract when bound (write-not-commit, spec-only, missing→high); unbound is clean', ({
@@ -2162,7 +2162,7 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
 // buildPhaseBrief helper. The send_prompt schema/identity guarantees are above.
 describe('acceptance contract at the tool altitude (get_task + list_snippets)', () => {
   test('unbound: get_task for plan and impl carries no contract or consultant text', async ({ run }) => {
-    for (const phase of ['plan', 'impl'] as const) {
+    for (const phase of ['plan', 'implement'] as const) {
       const { call } = harness(run, { phase });
       const brief = text(await call('get_task')).toLowerCase();
       expect.soft(brief, `${phase} brief`).not.toContain('consultant');
@@ -2186,7 +2186,7 @@ describe('acceptance contract at the tool altitude (get_task + list_snippets)', 
   test('bound: get_task for impl VERIFIES the frozen contract through the tool', async ({ consultantRun }) => {
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'deadbeef' };
     saveRunState(consultantRun);
-    const { call } = harness(consultantRun, { phase: 'impl', consultant: new FakeWorker('claude') });
+    const { call } = harness(consultantRun, { phase: 'implement', consultant: new FakeWorker('claude') });
 
     const brief = text(await call('get_task'));
 
@@ -2199,7 +2199,7 @@ describe('acceptance contract at the tool altitude (get_task + list_snippets)', 
     const consultant = new FakeWorker('claude');
     const atPlan = text(await harness(consultantRun, { phase: 'plan', consultant }).call('list_snippets'));
     expect.soft(atPlan).toContain('<snippet key="consultant-contract">');
-    const atImpl = text(await harness(consultantRun, { phase: 'impl', consultant }).call('list_snippets'));
+    const atImpl = text(await harness(consultantRun, { phase: 'implement', consultant }).call('list_snippets'));
     expect.soft(atImpl).toContain('<snippet key="consultant-verify">');
   });
 });
@@ -2275,18 +2275,18 @@ describe('advance_phase acceptance-contract rail (Full + consultant)', () => {
   });
 
   test('impl REFUSES when a frozen contract was not verified (no verifiedAt) and no high', async ({ consultantRun }) => {
-    consultantRun.rounds.impl = 1;
+    consultantRun.rounds.implement = 1;
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc' };
-    const { call } = harness(consultantRun, { phase: 'impl', consultant: new FakeWorker('claude') });
+    const { call } = harness(consultantRun, { phase: 'implement', consultant: new FakeWorker('claude') });
     const res = await call('advance_phase', advance);
     expect.soft(res.isError).toBe(true);
     expect.soft(text(res)).toContain('not been verified');
   });
 
   test('impl ADVANCES once verification ran (verifiedAt stamped)', async ({ consultantRun }) => {
-    consultantRun.rounds.impl = 1;
+    consultantRun.rounds.implement = 1;
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc', verifiedAt: 'now' };
-    const { call } = harness(consultantRun, { phase: 'impl', consultant: new FakeWorker('claude') });
+    const { call } = harness(consultantRun, { phase: 'implement', consultant: new FakeWorker('claude') });
     const res = await call('advance_phase', advance);
     expect.soft(res.isError).toBeFalsy();
   });
@@ -2294,8 +2294,8 @@ describe('advance_phase acceptance-contract rail (Full + consultant)', () => {
   test('impl with NO frozen contract is the noted-skip case — no verify rail (the absence was a high at plan)', async ({
     consultantRun,
   }) => {
-    consultantRun.rounds.impl = 1; // no acceptanceContract on state
-    const { call } = harness(consultantRun, { phase: 'impl', consultant: new FakeWorker('claude') });
+    consultantRun.rounds.implement = 1; // no acceptanceContract on state
+    const { call } = harness(consultantRun, { phase: 'implement', consultant: new FakeWorker('claude') });
     const res = await call('advance_phase', advance);
     expect.soft(res.isError).toBeFalsy();
   });

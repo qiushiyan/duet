@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'smol-toml';
 import { z } from 'zod';
-import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, GATELESS_CONSULTANT_SNIPPETS, consultantSnippetsForWorkflow, phaseSnippetsFor, phasesOf, workflowOfPhase } from './phases.ts';
+import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, GATELESS_CONSULTANT_SNIPPETS, consultantSnippetsForWorkflow, phaseSnippetsFor, phasesOf } from './phases.ts';
 import type { PhaseName, WorkflowName } from './phases.ts';
 
 /**
@@ -293,7 +293,11 @@ export function renderSnippetLibrary(opts: SnippetRenderOpts = {}): string {
   // array, so the override layering is invisible past this line.
   const library: Snippet[] = opts.libraryContext ? loadEffectiveSnippets(opts.libraryContext) : loadSnippets();
   if (opts.all || !opts.phase) return renderFlat(library, opts.sentTo, opts.all, consultantBound, opts.workflow, gateless);
-  return renderForPhase(library, opts.phase, opts.workflow ?? workflowOfPhase(opts.phase), opts.sentTo, consultantBound, gateless);
+  // A phase-scoped render needs the arc: phase names are workflow-scoped, so the
+  // phase alone can't resolve its templates. The one boundary check (parse, don't
+  // validate) — the real caller (list_snippets) always supplies workflowOf(state).
+  if (!opts.workflow) throw new Error('renderSnippetLibrary: a phase-scoped render needs the run workflow — phase names are workflow-scoped');
+  return renderForPhase(library, opts.phase, opts.workflow, opts.sentTo, consultantBound, gateless);
 }
 
 function snippetBlock(s: Snippet, sentTo?: Record<string, string[]>): string {
@@ -347,7 +351,7 @@ function renderForPhase(
   // Each phase's ENABLED snippets — the always-on base plus its consultant
   // checkpoint snippet only when bound, so the consultant snippet shows in its
   // owning phase and nowhere else, and an unbound run never sees it.
-  const snippetsOf = (name: PhaseName): readonly string[] => phaseSnippetsFor(name, { consultant: consultantBound, gateless });
+  const snippetsOf = (name: PhaseName): readonly string[] => phaseSnippetsFor(workflow, name, { consultant: consultantBound, gateless });
   const current = snippetsOf(phase);
   const lines: string[] = [
     `<snippet_library phase="${phase}">`,

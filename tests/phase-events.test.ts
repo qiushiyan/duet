@@ -15,7 +15,7 @@ describe('markerToEvent (phase-guarded terminal channel)', () => {
 
   test('a marker whose phase does not match the running phase is stale — null', () => {
     expect(markerToEvent({ phase: 'frame', kind: 'advance' }, 'spec')).toBeNull();
-    expect(markerToEvent({ phase: 'plan', kind: 'flag' }, 'impl')).toBeNull();
+    expect(markerToEvent({ phase: 'plan', kind: 'flag' }, 'implement')).toBeNull();
   });
 
   test('an absent marker is null (the normal continue/crash path writes none)', () => {
