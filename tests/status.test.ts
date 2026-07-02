@@ -195,6 +195,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
       'awayRetries',
       'branch',
       'context',
+      'contextEvents',
       'costs',
       'createdAt',
       'gatesAt',
@@ -484,6 +485,20 @@ describe('renderStatus', () => {
     // The lean brief (what the concierge reads remotely) projects the per-class tally.
     const brief = renderBrief(buildBrief(buildStatusModel(run, { kind: 'gate', phase: 'impl' }, [])));
     expect.soft(brief).toContain('auto-retried: network ×2, server ×1');
+  });
+
+  test('the while-you-were-away section lists context interventions with a per-kind tally, and the brief projects them', ({ run }) => {
+    run.machineState = 'shipGate';
+    run.contextEvents = [
+      { kind: 'cutoff', role: 'implementer', at: '2026-07-02T03:50:00.000Z', preTokens: 870_000, windowTokens: 1_000_000 },
+      { kind: 'salvage-compact', role: 'implementer', at: '2026-07-02T03:55:00.000Z', preTokens: 900_000, windowTokens: 1_000_000 },
+    ];
+    const out = render(run, { kind: 'gate', phase: 'impl' });
+    expect.soft(out).toContain('while you were away — context interventions: 2 (cutoff ×1, salvage-compact ×1):');
+    expect.soft(out).toContain(`◔ implementer cutoff at 87%  ${localStamp('2026-07-02T03:50:00.000Z')}`);
+
+    const brief = renderBrief(buildBrief(buildStatusModel(run, { kind: 'gate', phase: 'impl' }, [])));
+    expect.soft(brief).toContain('context: cutoff ×1, salvage-compact ×1');
   });
 
   test('a completed run shows the final summary and queued snippet proposals', ({ run }) => {

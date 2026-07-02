@@ -53,6 +53,22 @@ export interface HumanDecision {
 }
 
 /**
+ * One context intervention on a worker session (the `contextEvents` ledger).
+ * `compact` / `salvage-compact` kept the session (compacted in place);
+ * `session-reset` replaced it (the next send seeds fresh); `cutoff` is a turn
+ * cut at the context deadline. The in-place vs fresh distinction matters for
+ * auditability: a reset breaks manual `--resume` continuity, a compact does not.
+ */
+export interface ContextEvent {
+  kind: 'cutoff' | 'compact' | 'salvage-compact' | 'session-reset';
+  role: WorkerRole;
+  at: string;
+  /** The safety reading (tokens) just before the intervention, when one existed. */
+  preTokens?: number;
+  windowTokens?: number;
+}
+
+/**
  * Human input staged by the CLI for the next driver invocation to consume.
  * `answer` resolves a queued question; `feedback` rides a gate rejection
  * back into the same phase; `approval` is a rider on a gate approval —
@@ -131,6 +147,17 @@ export interface RunState {
    * class + phase is the "is my environment degrading / am I churning" signal.
    */
   autoRetries?: Array<{ phase: PhaseName; errorClass: ErrorClass; attempt: number; at: string }>;
+  /**
+   * Context interventions on worker sessions, for the morning review — the
+   * third "while you were away" ledger beside autoApprovals/autoRetries.
+   * Recorded, never silent: a compaction (in place — the session survives), a
+   * context-deadline cutoff, an automatic salvage compact, and a session reset
+   * (a fresh session — resume history gone) are distinct kinds, so the review
+   * can tell maintenance from escalation and a degrading session shows up as a
+   * pattern instead of churning invisibly. `preTokens`/`windowTokens` carry the
+   * fill just before the intervention where a reading existed.
+   */
+  contextEvents?: ContextEvent[];
   /**
    * The gateless posture (docs/automation-design.md §"Gate pre-authorization"):
    * a run the owner walks away from start to finish. Set by `--gateless` /
@@ -825,6 +852,26 @@ export function recordContextUsage(state: RunState, voice: Voice, usage: Context
   const dir = join(ensureRunDir(state.cwd, state.runId), 'context');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, voice), `${contextPercent(usage)}%\n`);
+}
+
+/**
+ * Append a context intervention to the ledger (the caller owns the save, like
+ * every handler-side mutation). Capture the reading fields BEFORE the
+ * intervention clears them — `contextEventReading` is the companion read.
+ */
+export function recordContextEvent(state: RunState, event: Omit<ContextEvent, 'at'>): void {
+  (state.contextEvents ??= []).push({ ...event, at: new Date().toISOString() });
+}
+
+/**
+ * The pre-intervention fill fields for a context event, from the voice's
+ * current reading (the safety percent's token form) — empty when no reading
+ * exists, so an event never carries a guessed number.
+ */
+export function contextEventReading(state: RunState, voice: Voice): { preTokens?: number; windowTokens?: number } {
+  const usage = state.contextUsage?.[voice];
+  if (!usage) return {};
+  return { preTokens: Math.max(usage.usedTokens, usage.highWaterTokens ?? 0), windowTokens: usage.windowTokens };
 }
 
 /**

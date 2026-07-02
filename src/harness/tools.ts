@@ -16,12 +16,14 @@ import {
   clearPendingTurn,
   clearTurnActive,
   consumeHumanInput,
+  contextEventReading,
   contextPercent,
   contextSafetyPercent,
   fmtTokens,
   gateAttended,
   loadRunState,
   markTurnActive,
+  recordContextEvent,
   recordContextUsage,
   recordTurnSessionId,
   saveRunState,
@@ -488,9 +490,20 @@ export function settleTurn(
   // pre-compact conversation), not the post-compact window — recording it would
   // pin the high-water at the very size the compact just removed. So a completed
   // compact (and a session reset, whose fresh session starts near-empty) clears
-  // the reading and lets the next turn re-establish it honestly.
-  if ((meta.isCompactTurn === true && !aborted) || compactReset) clearContextUsage(fresh, role);
-  else if (turn.context) recordContextUsage(fresh, role, turn.context);
+  // the reading and lets the next turn re-establish it honestly. Each lands in
+  // the contextEvents ledger first (pre-fill captured before the clear), as does
+  // a context-deadline cutoff — interventions are recorded, never silent.
+  if ((meta.isCompactTurn === true && !aborted) || compactReset) {
+    recordContextEvent(fresh, {
+      kind: compactReset ? 'session-reset' : tag === 'salvage-compact' ? 'salvage-compact' : 'compact',
+      role,
+      ...contextEventReading(fresh, role),
+    });
+    clearContextUsage(fresh, role);
+  } else if (turn.context) recordContextUsage(fresh, role, turn.context);
+  if (aborted && turn.contextExhausted) {
+    recordContextEvent(fresh, { kind: 'cutoff', role, ...contextEventReading(fresh, role) });
+  }
   // Acceptance-contract authorship/verification evidence — durable proof THIS run's
   // consultant ran the checkpoint, which the freeze and the advance_phase rails
   // require (so guarantee 2 holds mechanically, not by prompt compliance). Keyed on
@@ -1102,6 +1115,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   const resetWedgedSession = (role: WorkerRole): void => {
     const fresh = loadRunState(state.cwd, state.runId);
     delete fresh.workerSessions[role];
+    recordContextEvent(fresh, { kind: 'session-reset', role, ...contextEventReading(fresh, role) });
     clearContextUsage(fresh, role);
     saveRunState(fresh);
     Object.assign(state, fresh);

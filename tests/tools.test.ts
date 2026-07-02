@@ -659,6 +659,49 @@ describe('send_prompt', () => {
     expect.soft(joined).not.toContain('not a content problem');
   });
 
+  test('context interventions land in the ledger: compact, cutoff, salvage, reset — each with its pre-fill', async ({
+    projectDir,
+    run,
+  }) => {
+    // One run through the intervention kinds, asserting the durable ledger the
+    // morning review reads (status's third while-you-were-away section).
+    recordContextUsage(run, 'implementer', { usedTokens: 410_000, windowTokens: 1_000_000 });
+    run.workerSessions = { implementer: 'sess-1' };
+    saveRunState(run);
+    const implementer = new FakeWorker('claude', [
+      { text: 'compacted', sessionId: 'sess-1' }, // an orchestrator-authored /compact
+      { text: '', sessionId: 'sess-1', aborted: true, contextExhausted: true }, // a context-deadline cutoff
+    ]);
+    const { call } = harness(run, { implementer });
+    await call('send_prompt', { role: 'implementer', tag: 'compact-for-impl', body: '/compact keep the plan' });
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build' });
+
+    const events = loadRunState(projectDir, run.runId).contextEvents ?? [];
+    expect.soft(events.map((e) => e.kind)).toEqual(['compact', 'cutoff']);
+    expect.soft(events[0]?.role).toBe('implementer');
+    expect.soft(events[0]?.preTokens).toBe(410_000); // captured before the clear
+    expect.soft(events[0]?.windowTokens).toBe(1_000_000);
+  });
+
+  test('the salvage ladder writes its own ledger entries: salvage-compact, and session-reset on escalation', async ({
+    projectDir,
+    run,
+  }) => {
+    run.workerSessions = { implementer: 'sess-wedged' };
+    saveRunState(run);
+    const implementer = new FakeWorker('claude', [
+      new Error('claude worker turn failed (success): Prompt is too long'),
+      { text: 'compacted', sessionId: 'sess-wedged' }, // the salvage succeeds
+      new Error('claude worker turn failed (success): Prompt is too long'), // then the floor proves too high
+    ]);
+    const { call } = harness(run, { implementer });
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+
+    const kinds = (loadRunState(projectDir, run.runId).contextEvents ?? []).map((e) => e.kind);
+    expect(kinds).toEqual(['salvage-compact', 'session-reset']);
+  });
+
   test('the salvage ladder: a wedged session gets one automatic /compact, then "re-send this same prompt"', async ({
     projectDir,
     run,
