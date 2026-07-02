@@ -8,6 +8,7 @@ import {
   COMPACT_TIMEOUT_MS,
   block,
   contextCapFor,
+  contextPressureRail,
   contractCheckpointRail,
   createPhaseTools,
   error,
@@ -254,11 +255,51 @@ describe('rails (the #1-deep internal-seam surface)', () => {
       railCtx(run, { inFlight: () => true, orphanedOnDisk: () => true }),
       sameRoleInFlightRail,
       orphanRail,
+      contextPressureRail,
       reviewCapRail,
       warnOnceTemplateRail,
     );
     expect(text(r!)).toContain('already in flight');
     expect(text(r!)).not.toContain('orphaned');
+  });
+
+  test('contextPressureRail: emergency hard-refuses a non-compact send; a /compact body always passes', ({ run }) => {
+    recordContextUsage(run, 'implementer', { usedTokens: 870_000, windowTokens: 1_000_000 });
+    const r = contextPressureRail({ role: 'implementer', tag: 'custom', isReviewRound: false }, railCtx(run));
+    expect.soft(r?.isError).toBe(true);
+    expect.soft(text(r!)).toContain('87% of its context window');
+    expect.soft(text(r!)).toContain('/compact');
+    // The named recovery passes the rail — and a repeat non-compact send is
+    // still refused (no warn-once at emergency: there is no legitimate override).
+    expect.soft(contextPressureRail({ role: 'implementer', tag: 'custom', isReviewRound: false, isCompactTurn: true }, railCtx(run))).toBeNull();
+    expect.soft(contextPressureRail({ role: 'implementer', tag: 'custom', isReviewRound: false }, railCtx(run))?.isError).toBe(true);
+  });
+
+  test('contextPressureRail: caution warns once per role per phase, then judgment overrides', ({ run }) => {
+    recordContextUsage(run, 'implementer', { usedTokens: 780_000, windowTokens: 1_000_000 });
+    const warned = new Set<string>();
+    const first = contextPressureRail({ role: 'implementer', tag: 'custom', isReviewRound: false }, railCtx(run, { resendWarned: warned }));
+    expect.soft(first?.isError).toBe(true);
+    expect.soft(text(first!)).toContain('Compaction is due');
+    expect.soft(contextPressureRail({ role: 'implementer', tag: 'custom', isReviewRound: false }, railCtx(run, { resendWarned: warned }))).toBeNull();
+  });
+
+  test('contextPressureRail: the high-water mark trips it even when the LAST reading looks low', ({ run }) => {
+    // The wedge shape: the death-turn's settle recorded nothing (garbage was
+    // rejected), so the last reading is stale-low — but the mid-turn sampler's
+    // high-water survived. Safety reads the mark, not the display number.
+    recordContextUsage(run, 'implementer', { usedTokens: 900_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'implementer', { usedTokens: 300_000, windowTokens: 1_000_000 });
+    const r = contextPressureRail({ role: 'implementer', tag: 'custom', isReviewRound: false }, railCtx(run));
+    expect.soft(r?.isError).toBe(true);
+    expect.soft(text(r!)).toContain('90%');
+  });
+
+  test('contextPressureRail: codex and the ephemeral consultant are structurally out of scope', ({ run, consultantRun }) => {
+    recordContextUsage(run, 'reviewer', { usedTokens: 250_000, windowTokens: 258_400 }); // codex at 97%
+    expect.soft(contextPressureRail({ role: 'reviewer', tag: 'custom', isReviewRound: false }, railCtx(run))).toBeNull();
+    recordContextUsage(consultantRun, 'consultant', { usedTokens: 950_000, windowTokens: 1_000_000 });
+    expect.soft(contextPressureRail({ role: 'consultant', tag: 'custom', isReviewRound: false }, railCtx(consultantRun))).toBeNull();
   });
 });
 
@@ -571,6 +612,27 @@ describe('send_prompt', () => {
     expect.soft(joined).toContain('/compact'); // compact first…
     expect.soft(joined).toContain('then resume'); // …then continue
     expect.soft(joined).not.toContain('Resume that session with a short continuation'); // never the bare time-cap advice
+  });
+
+  test('the emergency → compact → resume sequence: refused, compacted, then the send goes through', async ({ run }) => {
+    // The whole recovery loop through the real handler: a near-full session
+    // refuses the work send, the /compact passes and clears the reading, and
+    // the re-sent work prompt then dispatches normally.
+    recordContextUsage(run, 'implementer', { usedTokens: 870_000, windowTokens: 1_000_000 });
+    saveRunState(run);
+    const implementer = new FakeWorker('claude');
+    const { call } = harness(run, { implementer });
+
+    const refused = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'keep building' });
+    expect.soft(refused.isError).toBe(true);
+    expect.soft(implementer.calls.length).toBe(0); // nothing dispatched
+
+    const compacted = await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact keep the model' });
+    expect.soft(compacted.isError).toBeFalsy();
+
+    const resumed = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'keep building' });
+    expect.soft(resumed.isError).toBeFalsy(); // the reading cleared with the compact — the rail stands down
+    expect.soft(implementer.calls.length).toBe(2);
   });
 
   test('a context-overflow failure prescribes /compact, never "retry this same call" (the wedge’s futile-retry fix)', async ({

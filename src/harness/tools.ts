@@ -6,7 +6,7 @@ import type { PhaseName } from '../phases.ts';
 import { providerFor } from '../providers/index.ts';
 import { BudgetCutoffError } from '../providers/types.ts';
 import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
-import { CONTEXT_EMERGENCY_PERCENT, latestTranscriptUsageTokens } from '../context-guard.ts';
+import { CONTEXT_CAUTION_PERCENT, CONTEXT_EMERGENCY_PERCENT, contextBand, latestTranscriptUsageTokens } from '../context-guard.ts';
 import { countsReviewRound, orphanRecoveryFor, readOnlyFor, sessionIdFor, sessionPolicyFor, shouldResetAfterCompactAbort, workerRolesFor } from '../roles.ts';
 import { getSnippet, renderSnippetLibrary, runtimeLibraryContext } from '../snippets.ts';
 import {
@@ -17,6 +17,7 @@ import {
   clearTurnActive,
   consumeHumanInput,
   contextPercent,
+  contextSafetyPercent,
   fmtTokens,
   gateAttended,
   loadRunState,
@@ -824,6 +825,8 @@ export interface SendInput {
   role: WorkerRole;
   tag: string;
   isReviewRound: boolean;
+  /** The body is a literal `/compact` — the one send context pressure must always let through. */
+  isCompactTurn?: boolean;
 }
 
 /** A terminal-tool rail's input — the verb names the caller (for the recovery copy),
@@ -923,6 +926,47 @@ export const warnOnceTemplateRail: Rail<SendInput> = ({ role, tag }, ctx) => {
     `You already sent ${tag} to the ${role} this phase, and that session still holds its instructions — a full re-send makes the worker restart the exercise instead of continuing it, and spends a minutes-long turn re-covering ground. Send the delta instead: ${
       hasAgain ? `the ${again} variant, or ` : ''
     }a short follow-up that references the established frame and states only what changed. If the full template is genuinely warranted (the human re-scoped the problem, or the prior turn was lost), repeat this exact call and it will go through.`,
+  );
+};
+
+/**
+ * Context pressure on a persistent claude session (the 20260701 wedge's send-side
+ * guard). Reads the SAFETY percent (the high-water since the last compact — the
+ * mid-turn sampler keeps it honest through long turns) and acts by band:
+ *
+ *  - emergency (≥85%): a non-compact send is refused outright — not warn-once,
+ *    because there is no legitimate override: the session deterministically
+ *    cannot take a long turn, and past ~100% the API rejects the send anyway.
+ *    A `/compact` body always passes (it is the named recovery), and a
+ *    completed compact clears the reading, so the rail stands down after it.
+ *  - caution (75–85%): one steering refusal per role per phase (the warn-once
+ *    discipline — judgment keeps the override by repeating the call), naming
+ *    that compaction is due and cheaper now than later.
+ *
+ * Scoped exactly like the context deadline (contextCapFor): claude-persistent-
+ * headless only — codex auto-compacts, the interactive transport's TUI
+ * auto-compacts, the ephemeral consultant seeds fresh.
+ */
+export const contextPressureRail: Rail<SendInput> = ({ role, isCompactTurn }, ctx) => {
+  if (isCompactTurn === true) return null;
+  const binding = bindingFor(ctx.state.bindings, role);
+  if (binding.provider !== 'claude' || binding.transport === 'interactive') return null;
+  if (sessionPolicyFor(role) !== 'persistent') return null;
+  const percent = contextSafetyPercent(ctx.state, role);
+  const band = contextBand(percent);
+  if (band === 'ok') return null;
+  if (band === 'emergency') {
+    return refuse(
+      `The ${role}'s session is at ${percent}% of its context window — past ${CONTEXT_EMERGENCY_PERCENT}% a normal send is likely to bounce off "Prompt is too long", and a working turn would certainly hit it. Compact before anything else: send the ${role} a body that is literally "/compact " followed by your adapted compact instructions (a /compact body passes this check), then re-send this prompt into the freshly compacted session.`,
+    );
+  }
+  // Caution: warn once per role per phase, on the same warned-set the template
+  // economy uses (the `@` in the key keeps it disjoint from snippet tags).
+  const warnKey = `${role}:@context-caution`;
+  if (ctx.resendWarned.has(warnKey)) return null;
+  ctx.resendWarned.add(warnKey);
+  return refuse(
+    `Before this send: the ${role}'s session is at ${percent}% of its context window (${CONTEXT_CAUTION_PERCENT}% is the caution line). Compaction is due — it is cheaper and preserves more headroom now than closer to the ceiling, and the next long turn could reach the ceiling mid-work. Send the ${role} a "/compact " body with your adapted compact instructions at the next natural pause; if this prompt genuinely can't wait (the worker is mid-thought and the send is small), repeat this exact call and it will go through.`,
   );
 };
 
@@ -1179,13 +1223,17 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         // before a single turn launches (a half-dispatched fan-out would strand
         // turns). The order is LOAD-BEARING: sameRoleInFlightRail MUST precede
         // orphanRail, because a live running turn also has a disk pending record,
-        // so checking orphan first would misclassify it as an orphan.
+        // so checking orphan first would misclassify it as an orphan; and
+        // contextPressureRail precedes the round/template rails, because a
+        // near-full session dominates loop-economy concerns (compact first,
+        // whatever the send was).
         for (const role of roles) {
           const refusal = firstRefusal(
-            { role, tag, isReviewRound: isReviewRoundFor(role) },
+            { role, tag, isReviewRound: isReviewRoundFor(role), isCompactTurn },
             ctx,
             sameRoleInFlightRail,
             orphanRail,
+            contextPressureRail,
             reviewCapRail,
             warnOnceTemplateRail,
           );
