@@ -74,19 +74,19 @@ describe('buildStats — the pure parse core', () => {
 
   plain('a flag-then-resume keeps the first open as one window', () => {
     const orchestrator = [
-      line(at(0), '◀ harness prompt (phase=impl)'),
+      line(at(0), '◀ harness prompt (phase=implement)'),
       // ask_human flags at :02; the answer resumes and re-logs the header at :15
-      line(at(15), '◀ harness prompt (phase=impl)'),
-      line(at(20), 'advance_phase (impl)'),
+      line(at(15), '◀ harness prompt (phase=implement)'),
+      line(at(20), 'advance_phase (implement)'),
     ].join('\n');
 
     const model = buildStats('run-3', orchestrator, [], FULL_ORDER);
     // One window from the first open (:00) to the advance (:20) — 20m.
-    expect.soft(model.phases).toEqual([{ phase: 'impl', windowMs: 20 * 60_000, workerMs: 0, turns: 0 }]);
+    expect.soft(model.phases).toEqual([{ phase: 'implement', windowMs: 20 * 60_000, workerMs: 0, turns: 0 }]);
   });
 
   plain('a budget-stop or turn-failure terminal line ends a worker turn', () => {
-    const orchestrator = [line(at(0), '◀ harness prompt (phase=impl)'), line(at(50), 'advance_phase (impl)')].join('\n');
+    const orchestrator = [line(at(0), '◀ harness prompt (phase=implement)'), line(at(50), 'advance_phase (implement)')].join('\n');
     const implementer = [
       line(at(1), '◀ prompt (tag=implement-direct, from orchestrator)'),
       line(at(40), '◼ budget-control stop: per-turn cap reached'), // a capped turn still counts (39m)
@@ -94,7 +94,7 @@ describe('buildStats — the pure parse core', () => {
 
     const model = buildStats('run-4', orchestrator, [{ role: 'implementer', log: implementer }], FULL_ORDER);
     expect.soft(model.tags).toEqual([{ tag: 'implement-direct', totalMs: 39 * 60_000, turns: 1 }]);
-    expect.soft(model.phases[0]).toMatchObject({ phase: 'impl', workerMs: 39 * 60_000, turns: 1 });
+    expect.soft(model.phases[0]).toMatchObject({ phase: 'implement', workerMs: 39 * 60_000, turns: 1 });
   });
 
   plain('a missing orchestrator log degrades to a note, no phases', () => {
@@ -122,7 +122,7 @@ describe('buildStats — the pure parse core', () => {
   });
 
   plain('a worker prompt with no terminal line is noted as still-open, not dropped', () => {
-    const orchestrator = [line(at(0), '◀ harness prompt (phase=impl)'), line(at(50), 'advance_phase (impl)')].join('\n');
+    const orchestrator = [line(at(0), '◀ harness prompt (phase=implement)'), line(at(50), 'advance_phase (implement)')].join('\n');
     // A prompt with no ▶ response / stop / failure after it — an in-flight turn.
     const implementer = [line(at(1), '◀ prompt (tag=implement-direct, from orchestrator)'), 'body, then the log ends mid-turn'].join('\n');
 
@@ -134,13 +134,13 @@ describe('buildStats — the pure parse core', () => {
 
 describe('buildStats — the implementer-model label', () => {
   plain('attaches the resolved implementer model per phase when a labeler is supplied', () => {
-    const orchestrator = [line(at(0), '◀ harness prompt (phase=impl)'), line(at(5), 'advance_phase (impl)')].join('\n');
-    const model = buildStats('run-lbl', orchestrator, [], FULL_ORDER, (phase) => (phase === 'impl' ? 'claude-sonnet-5' : undefined));
-    expect.soft(model.phases[0]).toMatchObject({ phase: 'impl', implementerModel: 'claude-sonnet-5' });
+    const orchestrator = [line(at(0), '◀ harness prompt (phase=implement)'), line(at(5), 'advance_phase (implement)')].join('\n');
+    const model = buildStats('run-lbl', orchestrator, [], FULL_ORDER, (phase) => (phase === 'implement' ? 'claude-sonnet-5' : undefined));
+    expect.soft(model.phases[0]).toMatchObject({ phase: 'implement', implementerModel: 'claude-sonnet-5' });
   });
 
   plain('no labeler ⇒ no implementerModel field (byte-for-byte the aggregate rows)', () => {
-    const orchestrator = [line(at(0), '◀ harness prompt (phase=impl)'), line(at(5), 'advance_phase (impl)')].join('\n');
+    const orchestrator = [line(at(0), '◀ harness prompt (phase=implement)'), line(at(5), 'advance_phase (implement)')].join('\n');
     const model = buildStats('run-nolbl', orchestrator, [], FULL_ORDER);
     expect.soft(model.phases[0]).not.toHaveProperty('implementerModel');
   });
@@ -171,20 +171,20 @@ describe('buildStatsModel — the fs composer over real appendVoiceLog output', 
     };
     appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=plan)', 'brief');
     appendVoiceLog(run, 'orchestrator', 'advance_phase (plan)', 'ok');
-    appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=impl)', 'brief');
-    appendVoiceLog(run, 'orchestrator', 'advance_phase (impl)', 'ok');
+    appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=implement)', 'brief');
+    appendVoiceLog(run, 'orchestrator', 'advance_phase (implement)', 'ok');
 
     const byPhase = Object.fromEntries(buildStatsModel(run).phases.map((p) => [p.phase, p.implementerModel]));
     expect.soft(byPhase['plan']).toBe('claude-opus-4-8'); // planning ran on the base model
-    expect.soft(byPhase['impl']).toBe('claude-sonnet-5'); // the build ran on the impl model
+    expect.soft(byPhase['implement']).toBe('claude-sonnet-5'); // the build ran on the impl model
   });
 
   test('a codex implementer labels its phases "codex" — it has no model to resolve', ({ run }) => {
     run.bindings.implementer = { provider: 'codex' };
-    appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=impl)', 'brief');
-    appendVoiceLog(run, 'orchestrator', 'advance_phase (impl)', 'ok');
+    appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=implement)', 'brief');
+    appendVoiceLog(run, 'orchestrator', 'advance_phase (implement)', 'ok');
 
     const byPhase = Object.fromEntries(buildStatsModel(run).phases.map((p) => [p.phase, p.implementerModel]));
-    expect.soft(byPhase['impl']).toBe('codex');
+    expect.soft(byPhase['implement']).toBe('codex');
   });
 });

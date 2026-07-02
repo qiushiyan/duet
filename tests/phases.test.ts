@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
   GATELESS_CONSULTANT_SNIPPETS,
-  PHASE,
   WORKFLOWS,
   acceptanceContractPathForSpec,
   consultantCheckpointLive,
@@ -16,6 +15,7 @@ import {
   isPostHandoffPhase,
   phaseOfGateState,
   phaseSnippetsFor,
+  phaseSpec,
   phasesOf,
   validateRegistry,
   workflowHasConsultantBackstop,
@@ -63,9 +63,17 @@ describe('validateRegistry', () => {
   test.for<{ name: string; registry: Record<string, WorkflowSpecInput>; throws: RegExp | null }>([
     { name: 'a good registry passes', registry: { w: workflow() }, throws: null },
     {
-      name: 'a phase name shared across two workflows throws',
+      // Workflow-scoped phase identity: both arcs may name their build phase
+      // "implement" and their finish phase "finish", so a name shared ACROSS
+      // workflows is legal and intended, not a collision.
+      name: 'a phase name shared across two workflows is legal (workflow-scoped identity)',
       registry: { w1: workflow(), w2: workflow({ name: 'w2' }) },
-      throws: /phase name "a" appears in both/,
+      throws: null,
+    },
+    {
+      name: 'a phase name duplicated WITHIN one workflow throws',
+      registry: { w: workflow({ phases: [phase('a', 'aGate'), phase('a', 'a2Gate')] }) },
+      throws: /has two phases named "a"/,
     },
     {
       name: 'two gates sharing a state within one workflow throws',
@@ -118,12 +126,12 @@ describe('defaultPosture — the materialized default gate posture', () => {
     expect(defaultPosture(gatePhasesOf('full'), [])).toBeUndefined();
   });
 
-  test("full's default exclusion ['plan','impl','finish'] resolves to ['frame','spec'] (the overnight posture)", () => {
-    expect(defaultPosture(gatePhasesOf('full'), ['plan', 'impl', 'finish'])).toEqual(['frame', 'spec']);
+  test("full's default exclusion ['plan','implement','finish'] resolves to ['frame','spec'] (the overnight posture)", () => {
+    expect(defaultPosture(gatePhasesOf('full'), ['plan', 'implement', 'finish'])).toEqual(['frame', 'spec']);
   });
 
   test('a single-element exclusion drops only that gate, order preserved', () => {
-    expect(defaultPosture(gatePhasesOf('full'), ['finish'])).toEqual(['frame', 'spec', 'plan', 'impl']);
+    expect(defaultPosture(gatePhasesOf('full'), ['finish'])).toEqual(['frame', 'spec', 'plan', 'implement']);
   });
 });
 
@@ -135,51 +143,52 @@ describe("the Full workflow derives today's arc", () => {
       'frame',
       'spec',
       'plan',
-      'impl',
+      'implement',
       'finish',
     ]);
   });
 
   test('gatePhasesOf("full") is every phase — finish carries the Open-PR gate, none are gate-less', () => {
-    expect(gatePhasesOf('full')).toEqual(['frame', 'spec', 'plan', 'impl', 'finish']);
+    expect(gatePhasesOf('full')).toEqual(['frame', 'spec', 'plan', 'implement', 'finish']);
   });
 
   test('full pre-authorizes plan, impl, and finish by default (the overnight posture) and force-attends nothing', () => {
     expect.soft(WORKFLOWS.full.forceAttend).toEqual([]); // an open PR is reversible (the human owns the merge; a reject amends it)
-    expect.soft(WORKFLOWS.full.defaultPreAuthorized).toEqual(['plan', 'impl', 'finish']); // disjoint from forceAttend (validateRegistry guards it)
+    expect.soft(WORKFLOWS.full.defaultPreAuthorized).toEqual(['plan', 'implement', 'finish']); // disjoint from forceAttend (validateRegistry guards it)
   });
 
-  test('PHASE indexes every phase across all workflows, flat', () => {
-    expect(Object.keys(PHASE).sort()).toEqual(
-      ['frame', 'impl', 'implement', 'finish', 'plan', 'publish', 'research', 'spec'].sort(),
-    );
-    expect(PHASE['impl'].gate?.state).toBe('shipGate');
-    expect(PHASE['finish'].gate?.state).toBe('openPrGate'); // open-then-review in one phase
+  test('phaseSpec resolves a phase within its workflow, and throws for a foreign one', () => {
+    expect(phaseSpec('full', 'implement').gate?.state).toBe('shipGate');
+    expect(phaseSpec('full', 'finish').gate?.state).toBe('openPrGate'); // open-then-review in one phase
+    // Workflow-scoped: a lookup naming a phase the arc doesn't own fails loud
+    // rather than silently resolving a foreign arc's phase (the old flat PHASE map
+    // would have collapsed a shared name to one arbitrary entry).
+    expect(() => phaseSpec('rir', 'plan')).toThrow(/not part of the "rir" workflow/);
   });
 
   test('phaseOfGateState resolves within the workflow, undefined otherwise', () => {
-    expect(phaseOfGateState('full', 'shipGate')).toBe('impl');
+    expect(phaseOfGateState('full', 'shipGate')).toBe('implement');
     expect(phaseOfGateState('full', 'directionGate')).toBe('frame');
     expect(phaseOfGateState('full', 'nopeGate')).toBeUndefined();
   });
 
   test('gateOf returns the gate spec for a gate phase', () => {
-    expect(gateOf('finish').state).toBe('openPrGate');
+    expect(gateOf('full', 'finish').state).toBe('openPrGate');
   });
 });
 
 describe('the RIR workflow', () => {
-  test('phasesOf("rir") is research → implement → publish', () => {
-    expect(phasesOf('rir').map((p) => p.name)).toEqual(['research', 'implement', 'publish']);
+  test('phasesOf("rir") is research → implement → finish', () => {
+    expect(phasesOf('rir').map((p) => p.name)).toEqual(['research', 'implement', 'finish']);
   });
 
   test('all three RIR phases are gates; reused gate-state names resolve within the workflow', () => {
-    expect(gatePhasesOf('rir')).toEqual(['research', 'implement', 'publish']);
+    expect(gatePhasesOf('rir')).toEqual(['research', 'implement', 'finish']);
     expect(phaseOfGateState('rir', 'directionGate')).toBe('research');
     expect(phaseOfGateState('rir', 'shipGate')).toBe('implement');
     // openPrGate is reused from Full (resolution is workflow-scoped) — in RIR it
-    // maps to the publish phase, the finishing tail that opens the PR.
-    expect(phaseOfGateState('rir', 'openPrGate')).toBe('publish');
+    // maps to the finish phase, the finishing tail that opens the PR.
+    expect(phaseOfGateState('rir', 'openPrGate')).toBe('finish');
     // A Full-only gate state still does not resolve inside RIR.
     expect(phaseOfGateState('rir', 'commitSpecGate')).toBeUndefined();
   });
@@ -190,50 +199,61 @@ describe('the RIR workflow', () => {
     expect.soft(implement.roundCap).toBe(1);
   });
 
-  test('publish and full’s finish are the same finishing-tail shape — both open the PR via the shared brief', () => {
-    // The full→real-PR change converged the two: same gate, same no-review-loop
-    // discipline, same caps, same snippet set. They differ only by name (their gate
-    // tokens) and the prior gate that approves into them; openPrPhaseEntryPrompt is
-    // shared. No draft/real PR-mode flag remains — deleting it from PhaseSpec makes
-    // any `.draftPr` read a compile error, so the type system is the regression
-    // guard. We assert the shape, not the entry prose.
-    for (const p of [PHASE['finish'], PHASE['publish']]) {
+  test('both arcs’ finish is the same PR-only finishing-tail shape — docs already reconciled at Ship', () => {
+    // Both arcs' finish converged: same gate, same no-review-loop discipline, same
+    // caps, same snippet set. Docs moved OUT of finish into the implement tail, so
+    // finish is now PR-only (pr-description → open PR), with compact-for-cleanup
+    // reachable for the rare bloated case. They differ only by the prior gate that
+    // approves into them; openPrPhaseEntryPrompt is shared.
+    for (const p of [phaseSpec('full', 'finish'), phaseSpec('rir', 'finish')]) {
       expect.soft(p.gate?.state).toBe('openPrGate');
       expect.soft(p.reviewLoop).toBe(false);
       expect.soft(p.roundCap).toBe(2);
       expect.soft(p.artifactLabel).toBe('PR');
-      expect.soft(p.snippets).toEqual(['reconcile-docs', 'pr-description', 'compact-for-cleanup']);
+      expect.soft(p.snippets).toEqual(['pr-description', 'compact-for-cleanup']);
+      expect.soft(p.snippets).not.toContain('reconcile-docs'); // docs reconcile at implement now
     }
   });
 
-  test('the rir snippet assignments encode the build spine and the docs→publish move', () => {
+  test('full implement reconciles docs as the last build step, before the ship packet (Ship reviews code + docs)', () => {
+    const implement = phaseSpec('full', 'implement').snippets;
+    // reconcile-docs sits after the review loop and immediately before ceo-summary,
+    // so the Ship packet covers docs and finish is left the mechanical PR open. It
+    // also precedes the consultant verify (which runs last), keeping the
+    // verification of the exact shipped state.
+    expect.soft(implement).toContain('reconcile-docs');
+    expect.soft(implement.indexOf('reconcile-docs')).toBeLessThan(implement.indexOf('ceo-summary'));
+    expect.soft(implement.indexOf('reconcile-docs')).toBeGreaterThan(implement.indexOf('respond-review-again'));
+  });
+
+  test('the rir snippet assignments encode the build spine with docs at the implement tail', () => {
     const snippetsOf = (name: string) => phasesOf('rir').find((p) => p.name === name)!.snippets;
     // research synthesizes the direction (this arc drafts no spec).
     expect.soft(snippetsOf('research')).toEqual(['think-holistic', 'compare-notes']);
     // the build spine, in order — handoff orients the reviewer before the review
-    // round; reconcile-docs is absent here, having moved to publish.
-    expect.soft(snippetsOf('implement')).toEqual(['implement-direct', 'handoff-direct', 'review-direct', 'apply-review']);
-    // publish reconciles docs (they ride the PR now) and writes the description.
-    expect.soft(snippetsOf('publish')).toEqual(['reconcile-docs', 'pr-description', 'compact-for-cleanup']);
+    // round, then reconcile-docs is the last build step (docs reviewed at Ship).
+    expect.soft(snippetsOf('implement')).toEqual(['implement-direct', 'handoff-direct', 'review-direct', 'apply-review', 'reconcile-docs']);
+    // finish is PR-only now (docs already on the branch from implement).
+    expect.soft(snippetsOf('finish')).toEqual(['pr-description', 'compact-for-cleanup']);
   });
 });
 
 describe('consultant checkpoints (registry data per arc)', () => {
   test('Full maps frame/specGate onto frame/spec, and the acceptance-contract pair onto plan/impl', () => {
-    expect.soft(PHASE['frame'].consultantCheckpoint).toBe('frame');
-    expect.soft(PHASE['spec'].consultantCheckpoint).toBe('specGate');
+    expect.soft(phaseSpec('full', 'frame').consultantCheckpoint).toBe('frame');
+    expect.soft(phaseSpec('full', 'spec').consultantCheckpoint).toBe('specGate');
     // The acceptance contract: plan AUTHORS it, impl VERIFIES it (the latter
     // supplants the open-ended implGate audit Full's impl used to carry).
-    expect.soft(PHASE['plan'].consultantCheckpoint).toBe('contract');
-    expect.soft(PHASE['impl'].consultantCheckpoint).toBe('verify');
+    expect.soft(phaseSpec('full', 'plan').consultantCheckpoint).toBe('contract');
+    expect.soft(phaseSpec('full', 'implement').consultantCheckpoint).toBe('verify');
     // Phases without a checkpoint carry none.
-    expect.soft(PHASE['finish'].consultantCheckpoint).toBeUndefined();
+    expect.soft(phaseSpec('full', 'finish').consultantCheckpoint).toBeUndefined();
   });
 
   test('RIR consultant modes: frame@research, implGate@implement, publish carries none; NO contract/verify/specGate', () => {
-    expect.soft(PHASE['research'].consultantCheckpoint).toBe('frame');
-    expect.soft(PHASE['implement'].consultantCheckpoint).toBe('implGate');
-    expect.soft(PHASE['publish'].consultantCheckpoint).toBeUndefined();
+    expect.soft(phaseSpec('rir', 'research').consultantCheckpoint).toBe('frame');
+    expect.soft(phaseSpec('rir', 'implement').consultantCheckpoint).toBe('implGate');
+    expect.soft(phaseSpec('rir', 'finish').consultantCheckpoint).toBeUndefined();
     const rirModes = phasesOf('rir').map((p) => p.consultantCheckpoint);
     // RIR authors no contract (no plan phase), so it never verifies one — implGate
     // stays the open-ended bet audit; it is not globally re-pointed to verify.
@@ -243,13 +263,13 @@ describe('consultant checkpoints (registry data per arc)', () => {
   });
 
   test('each checkpoint resolves to its (non-review-prefixed) snippet', () => {
-    expect.soft(consultantSnippetFor('frame')).toBe('consultant-frame');
-    expect.soft(consultantSnippetFor('spec')).toBe('consultant-spec');
-    expect.soft(consultantSnippetFor('plan')).toBe('consultant-contract');
-    expect.soft(consultantSnippetFor('impl')).toBe('consultant-verify');
-    expect.soft(consultantSnippetFor('research')).toBe('consultant-frame');
-    expect.soft(consultantSnippetFor('implement')).toBe('consultant-impl');
-    expect.soft(consultantSnippetFor('finish')).toBeUndefined(); // a non-checkpoint phase
+    expect.soft(consultantSnippetFor('full', 'frame')).toBe('consultant-frame');
+    expect.soft(consultantSnippetFor('full', 'spec')).toBe('consultant-spec');
+    expect.soft(consultantSnippetFor('full', 'plan')).toBe('consultant-contract');
+    expect.soft(consultantSnippetFor('full', 'implement')).toBe('consultant-verify');
+    expect.soft(consultantSnippetFor('rir', 'research')).toBe('consultant-frame');
+    expect.soft(consultantSnippetFor('rir', 'implement')).toBe('consultant-impl');
+    expect.soft(consultantSnippetFor('full', 'finish')).toBeUndefined(); // a non-checkpoint phase
     // The consultant snippets are phase-bound to their checkpoint phases and
     // never carry the review- prefix (which countsReviewRound keys on).
     for (const snippet of ['consultant-frame', 'consultant-spec', 'consultant-impl', 'consultant-contract', 'consultant-verify']) {
@@ -275,13 +295,16 @@ describe('the AFK build caps (S3 — wall-clock-bounded per-turn timeouts)', () 
   test('both arcs’ build phases carry the 90-min wall-clock cap', () => {
     // 90 min = 3× the longest healthy build turn (29.5 min) measured across the
     // corpus — the high end of the 2–3× band; a hit is a resumable checkpoint.
-    expect.soft(PHASE['impl'].workerTurnTimeoutMs).toBe(90 * 60_000);
-    expect.soft(PHASE['implement'].workerTurnTimeoutMs).toBe(90 * 60_000);
+    expect.soft(phaseSpec('full', 'implement').workerTurnTimeoutMs).toBe(90 * 60_000);
+    expect.soft(phaseSpec('rir', 'implement').workerTurnTimeoutMs).toBe(90 * 60_000);
   });
 
   test('the planning and finishing phases keep the 30-min cap (their longest healthy turns ≈17 min)', () => {
-    for (const phase of ['frame', 'spec', 'plan', 'finish', 'research', 'publish'] as const) {
-      expect.soft(PHASE[phase].workerTurnTimeoutMs).toBe(30 * 60_000);
+    for (const [workflow, phase] of [
+      ['full', 'frame'], ['full', 'spec'], ['full', 'plan'], ['full', 'finish'],
+      ['rir', 'research'], ['rir', 'finish'],
+    ] as const) {
+      expect.soft(phaseSpec(workflow, phase).workerTurnTimeoutMs).toBe(30 * 60_000);
     }
   });
 });
@@ -289,26 +312,26 @@ describe('the AFK build caps (S3 — wall-clock-bounded per-turn timeouts)', () 
 describe('gateless drops the consultant bet-audit, keeping the generative frame + backstop (registry helpers)', () => {
   test('isBackstopCheckpoint: only the contract author and the verify are correctness backstops', () => {
     // The backstop (correctness) checkpoints.
-    expect.soft(isBackstopCheckpoint('plan')).toBe(true); // contract author
-    expect.soft(isBackstopCheckpoint('impl')).toBe(true); // verify
+    expect.soft(isBackstopCheckpoint('full', 'plan')).toBe(true); // contract author
+    expect.soft(isBackstopCheckpoint('full', 'implement')).toBe(true); // verify
     // Not backstops: the generative frame and the bet-audit challenges. (frame still
     // survives gateless as a generative checkpoint — see consultantCheckpointLive.)
-    expect.soft(isBackstopCheckpoint('frame')).toBe(false); // generative frame analysis
-    expect.soft(isBackstopCheckpoint('spec')).toBe(false); // specGate bet audit
-    expect.soft(isBackstopCheckpoint('implement')).toBe(false); // rir implGate bet audit
-    expect.soft(isBackstopCheckpoint('finish')).toBe(false); // no checkpoint at all
+    expect.soft(isBackstopCheckpoint('full', 'frame')).toBe(false); // generative frame analysis
+    expect.soft(isBackstopCheckpoint('full', 'spec')).toBe(false); // specGate bet audit
+    expect.soft(isBackstopCheckpoint('rir', 'implement')).toBe(false); // rir implGate bet audit
+    expect.soft(isBackstopCheckpoint('full', 'finish')).toBe(false); // no checkpoint at all
   });
 
   test('phaseSnippetsFor: gateless drops the bet-audit snippet but keeps the generative frame and the backstop', () => {
     // spec carries the specGate bet audit — gateless omits it; the base list stays.
-    expect.soft(phaseSnippetsFor('spec', { consultant: true })).toContain('consultant-spec');
-    expect.soft(phaseSnippetsFor('spec', { consultant: true, gateless: true })).not.toContain('consultant-spec');
+    expect.soft(phaseSnippetsFor('full', 'spec', { consultant: true })).toContain('consultant-spec');
+    expect.soft(phaseSnippetsFor('full', 'spec', { consultant: true, gateless: true })).not.toContain('consultant-spec');
     // frame carries the generative third-opinion — gateless keeps it (non-holding).
-    expect.soft(phaseSnippetsFor('frame', { consultant: true, gateless: true })).toContain('consultant-frame');
+    expect.soft(phaseSnippetsFor('full', 'frame', { consultant: true, gateless: true })).toContain('consultant-frame');
     // impl carries the verify backstop — gateless keeps it.
-    expect.soft(phaseSnippetsFor('impl', { consultant: true, gateless: true })).toContain('consultant-verify');
+    expect.soft(phaseSnippetsFor('full', 'implement', { consultant: true, gateless: true })).toContain('consultant-verify');
     // Unbound is unchanged either way (default-off).
-    expect.soft(phaseSnippetsFor('frame', { consultant: false, gateless: true })).not.toContain('consultant-frame');
+    expect.soft(phaseSnippetsFor('full', 'frame', { consultant: false, gateless: true })).not.toContain('consultant-frame');
   });
 
   test('consultantSnippetsForWorkflow: gateless exposes the generative frame + the backstop per arc', () => {
@@ -325,20 +348,20 @@ describe('gateless drops the consultant bet-audit, keeping the generative frame 
 
   test('consultantCheckpointLive: the single gateless predicate both surfaces derive from', () => {
     // Unbound is always false — the default-off floor.
-    expect.soft(consultantCheckpointLive('spec', { consultant: false })).toBe(false);
-    expect.soft(consultantCheckpointLive('impl', { consultant: false, gateless: true })).toBe(false);
+    expect.soft(consultantCheckpointLive('full', 'spec', { consultant: false })).toBe(false);
+    expect.soft(consultantCheckpointLive('full', 'implement', { consultant: false, gateless: true })).toBe(false);
     // A bet-audit challenge: bound and not gateless; gateless drops it.
-    expect.soft(consultantCheckpointLive('spec', { consultant: true })).toBe(true);
-    expect.soft(consultantCheckpointLive('spec', { consultant: true, gateless: true })).toBe(false);
-    expect.soft(consultantCheckpointLive('implement', { consultant: true, gateless: true })).toBe(false); // rir implGate
+    expect.soft(consultantCheckpointLive('full', 'spec', { consultant: true })).toBe(true);
+    expect.soft(consultantCheckpointLive('full', 'spec', { consultant: true, gateless: true })).toBe(false);
+    expect.soft(consultantCheckpointLive('rir', 'implement', { consultant: true, gateless: true })).toBe(false); // rir implGate
     // The generative frame: bound, gateless-independent (non-holding, so it survives).
-    expect.soft(consultantCheckpointLive('frame', { consultant: true, gateless: true })).toBe(true); // full framing
-    expect.soft(consultantCheckpointLive('research', { consultant: true, gateless: true })).toBe(true); // rir framing
+    expect.soft(consultantCheckpointLive('full', 'frame', { consultant: true, gateless: true })).toBe(true); // full framing
+    expect.soft(consultantCheckpointLive('rir', 'research', { consultant: true, gateless: true })).toBe(true); // rir framing
     // A backstop checkpoint: bound, gateless-independent.
-    expect.soft(consultantCheckpointLive('plan', { consultant: true, gateless: true })).toBe(true); // contract
-    expect.soft(consultantCheckpointLive('impl', { consultant: true, gateless: true })).toBe(true); // verify
+    expect.soft(consultantCheckpointLive('full', 'plan', { consultant: true, gateless: true })).toBe(true); // contract
+    expect.soft(consultantCheckpointLive('full', 'implement', { consultant: true, gateless: true })).toBe(true); // verify
     // A phase with no checkpoint is never live.
-    expect.soft(consultantCheckpointLive('finish', { consultant: true })).toBe(false);
+    expect.soft(consultantCheckpointLive('full', 'finish', { consultant: true })).toBe(false);
   });
 
   test('workflowHasConsultantBackstop: full has the contract+verify backstop, rir has none', () => {
@@ -353,9 +376,9 @@ describe('gateless drops the consultant bet-audit, keeping the generative frame 
 
     // The defining difference from --gateless: afk runs with gateless OFF, so BOTH
     // the holding bet-audit challenge AND the correctness backstop stay live.
-    expect.soft(consultantCheckpointLive('spec', { consultant: true, gateless: false })).toBe(true); // challenge kept
-    expect.soft(consultantCheckpointLive('plan', { consultant: true, gateless: false })).toBe(true); // contract backstop
-    expect.soft(consultantCheckpointLive('impl', { consultant: true, gateless: false })).toBe(true); // verify backstop
+    expect.soft(consultantCheckpointLive('full', 'spec', { consultant: true, gateless: false })).toBe(true); // challenge kept
+    expect.soft(consultantCheckpointLive('full', 'plan', { consultant: true, gateless: false })).toBe(true); // contract backstop
+    expect.soft(consultantCheckpointLive('full', 'implement', { consultant: true, gateless: false })).toBe(true); // verify backstop
     // (Whereas gateless drops only the holding challenge — pinned in the gateless test above.)
   });
 
@@ -369,8 +392,8 @@ describe('gateless drops the consultant bet-audit, keeping the generative frame 
 describe('handoffWatchLabel — the interactive→headless handoff hint, per arc', () => {
   // The label is derived from the registry (handoff gate + next phase), not
   // hardcoded — so a RIR handoff reads "research approved", never "plan approved".
-  test('full hands off at the plan gate into impl', () => {
-    expect(handoffWatchLabel('full')).toBe('plan approved — AFK impl');
+  test('full hands off at the plan gate into implement', () => {
+    expect(handoffWatchLabel('full')).toBe('plan approved — AFK implement');
   });
 
   test('rir hands off at the Direction (research) gate into implement', () => {
@@ -383,19 +406,19 @@ describe('isPostHandoffPhase — the "doing" set strictly after the handoff gate
   // and INCLUDING the handoff gate are pre-handoff; the build + finishing tail are
   // post-handoff — this is the boundary the per-phase implementer-model swap keys on.
   test('full: planning phases (through the plan handoff gate) are pre-handoff', () => {
-    expect.soft(isPostHandoffPhase('frame')).toBe(false);
-    expect.soft(isPostHandoffPhase('spec')).toBe(false);
-    expect.soft(isPostHandoffPhase('plan')).toBe(false); // the handoff gate itself is NOT after itself
+    expect.soft(isPostHandoffPhase('full', 'frame')).toBe(false);
+    expect.soft(isPostHandoffPhase('full', 'spec')).toBe(false);
+    expect.soft(isPostHandoffPhase('full', 'plan')).toBe(false); // the handoff gate itself is NOT after itself
   });
 
   test('full: the build and finishing tail are post-handoff', () => {
-    expect.soft(isPostHandoffPhase('impl')).toBe(true);
-    expect.soft(isPostHandoffPhase('finish')).toBe(true);
+    expect.soft(isPostHandoffPhase('full', 'implement')).toBe(true);
+    expect.soft(isPostHandoffPhase('full', 'finish')).toBe(true);
   });
 
   test('rir: research (the handoff gate) is pre-handoff; implement and publish are post', () => {
-    expect.soft(isPostHandoffPhase('research')).toBe(false);
-    expect.soft(isPostHandoffPhase('implement')).toBe(true);
-    expect.soft(isPostHandoffPhase('publish')).toBe(true);
+    expect.soft(isPostHandoffPhase('rir', 'research')).toBe(false);
+    expect.soft(isPostHandoffPhase('rir', 'implement')).toBe(true);
+    expect.soft(isPostHandoffPhase('rir', 'finish')).toBe(true);
   });
 });

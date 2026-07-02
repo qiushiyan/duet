@@ -7,6 +7,8 @@ import { CONSULTANT_IDENTITY_CLAUSE, ORCHESTRATOR_SYSTEM_PROMPT, buildPhaseBrief
 import {
   COMPACT_TIMEOUT_MS,
   block,
+  contextCapFor,
+  contextPressureRail,
   contractCheckpointRail,
   createPhaseTools,
   error,
@@ -32,9 +34,9 @@ import { createTurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import type { TurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import { BudgetCutoffError } from '../src/providers/types.ts';
 import type { WorkerRole } from '../src/providers/types.ts';
-import { PHASE } from '../src/phases.ts';
+import { phaseSpec } from '../src/phases.ts';
 import type { PhaseName } from '../src/phases.ts';
-import { createRun, loadRunState, markPendingTurn, runDirOf, saveRunState, stageHumanInput } from '../src/run-store.ts';
+import { contextSafetyPercent, createRun, loadRunState, markPendingTurn, recordContextUsage, runDirOf, saveRunState, stageHumanInput, workflowOf } from '../src/run-store.ts';
 import { listPendingSteers, stageSteer } from '../src/steer-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
@@ -79,7 +81,7 @@ function harness(run: RunState, opts: HarnessOpts = {}) {
     ? createTurnDispatcher({
         state: run,
         phase,
-        cap: PHASE[phase].roundCap,
+        cap: phaseSpec(workflowOf(run), phase).roundCap,
         providers,
         log,
         ...(opts.home !== undefined ? { home: opts.home } : {}),
@@ -242,7 +244,7 @@ describe('rails (the #1-deep internal-seam surface)', () => {
     ).toBeNull();
 
     consultantRun.acceptanceContract = { path: 'x', commit: 'abc' };
-    const verify = verifyCheckpointRail({ verb: 'advance the phase' }, railCtx(consultantRun, { phase: 'impl' }));
+    const verify = verifyCheckpointRail({ verb: 'advance the phase' }, railCtx(consultantRun, { phase: 'implement' }));
     expect(verify?.isError).toBe(true);
     expect(text(verify!)).toContain('has not been verified');
   });
@@ -253,11 +255,51 @@ describe('rails (the #1-deep internal-seam surface)', () => {
       railCtx(run, { inFlight: () => true, orphanedOnDisk: () => true }),
       sameRoleInFlightRail,
       orphanRail,
+      contextPressureRail,
       reviewCapRail,
       warnOnceTemplateRail,
     );
     expect(text(r!)).toContain('already in flight');
     expect(text(r!)).not.toContain('orphaned');
+  });
+
+  test('contextPressureRail: emergency hard-refuses a non-compact send; a /compact body always passes', ({ run }) => {
+    recordContextUsage(run, 'implementer', { usedTokens: 870_000, windowTokens: 1_000_000 });
+    const r = contextPressureRail({ role: 'implementer', tag: 'custom', isReviewRound: false }, railCtx(run));
+    expect.soft(r?.isError).toBe(true);
+    expect.soft(text(r!)).toContain('87% of its context window');
+    expect.soft(text(r!)).toContain('/compact');
+    // The named recovery passes the rail — and a repeat non-compact send is
+    // still refused (no warn-once at emergency: there is no legitimate override).
+    expect.soft(contextPressureRail({ role: 'implementer', tag: 'custom', isReviewRound: false, isCompactTurn: true }, railCtx(run))).toBeNull();
+    expect.soft(contextPressureRail({ role: 'implementer', tag: 'custom', isReviewRound: false }, railCtx(run))?.isError).toBe(true);
+  });
+
+  test('contextPressureRail: caution warns once per role per phase, then judgment overrides', ({ run }) => {
+    recordContextUsage(run, 'implementer', { usedTokens: 780_000, windowTokens: 1_000_000 });
+    const warned = new Set<string>();
+    const first = contextPressureRail({ role: 'implementer', tag: 'custom', isReviewRound: false }, railCtx(run, { resendWarned: warned }));
+    expect.soft(first?.isError).toBe(true);
+    expect.soft(text(first!)).toContain('Compaction is due');
+    expect.soft(contextPressureRail({ role: 'implementer', tag: 'custom', isReviewRound: false }, railCtx(run, { resendWarned: warned }))).toBeNull();
+  });
+
+  test('contextPressureRail: the high-water mark trips it even when the LAST reading looks low', ({ run }) => {
+    // The wedge shape: the death-turn's settle recorded nothing (garbage was
+    // rejected), so the last reading is stale-low — but the mid-turn sampler's
+    // high-water survived. Safety reads the mark, not the display number.
+    recordContextUsage(run, 'implementer', { usedTokens: 900_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'implementer', { usedTokens: 300_000, windowTokens: 1_000_000 });
+    const r = contextPressureRail({ role: 'implementer', tag: 'custom', isReviewRound: false }, railCtx(run));
+    expect.soft(r?.isError).toBe(true);
+    expect.soft(text(r!)).toContain('90%');
+  });
+
+  test('contextPressureRail: codex and the ephemeral consultant are structurally out of scope', ({ run, consultantRun }) => {
+    recordContextUsage(run, 'reviewer', { usedTokens: 250_000, windowTokens: 258_400 }); // codex at 97%
+    expect.soft(contextPressureRail({ role: 'reviewer', tag: 'custom', isReviewRound: false }, railCtx(run))).toBeNull();
+    recordContextUsage(consultantRun, 'consultant', { usedTokens: 950_000, windowTokens: 1_000_000 });
+    expect.soft(contextPressureRail({ role: 'consultant', tag: 'custom', isReviewRound: false }, railCtx(consultantRun))).toBeNull();
   });
 });
 
@@ -526,6 +568,304 @@ describe('send_prompt', () => {
     const after = loadRunState(projectDir, run.runId);
     expect.soft(after.workerSessions.implementer).toBeUndefined(); // the bloated session was reset
     expect.soft(after.sentSnippets?.spec?.implementer ?? []).not.toContain('compact-for-impl'); // …so nothing is marked sent to it
+  });
+
+  test('contextCapFor: the emergency band of the known window, only where the hazard exists', ({ run, consultantRun }) => {
+    // A persistent claude role with a known window gets the cap…
+    recordContextUsage(run, 'implementer', { usedTokens: 170_000, windowTokens: 1_000_000 });
+    expect.soft(contextCapFor(run, 'implementer', false)).toBe(850_000);
+    // …a /compact turn never does (its whole job is running at high fill)…
+    expect.soft(contextCapFor(run, 'implementer', true)).toBeUndefined();
+    // …codex self-compacts (the default reviewer binding)…
+    recordContextUsage(run, 'reviewer', { usedTokens: 100_000, windowTokens: 258_400 });
+    expect.soft(contextCapFor(run, 'reviewer', false)).toBeUndefined();
+    // …an unknown window (no reading yet) is honest absence, not a guess…
+    expect.soft(contextCapFor(consultantRun, 'implementer', false)).toBeUndefined();
+    // …and the ephemeral consultant seeds fresh every turn, so even with a
+    // reading it accumulates nothing.
+    recordContextUsage(consultantRun, 'consultant', { usedTokens: 100_000, windowTokens: 1_000_000 });
+    expect.soft(contextCapFor(consultantRun, 'consultant', false)).toBeUndefined();
+  });
+
+  test('a blocking send threads the context cap into the worker turn; a /compact send does not', async ({ run }) => {
+    recordContextUsage(run, 'implementer', { usedTokens: 400_000, windowTokens: 1_000_000 });
+    saveRunState(run);
+    const implementer = new FakeWorker('claude');
+    const { call } = harness(run, { implementer });
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build the next slice' });
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact keep the model, drop the journey' });
+
+    expect.soft(implementer.calls[0]?.contextCapTokens).toBe(850_000);
+    expect.soft(implementer.calls[1]?.contextCapTokens).toBeUndefined();
+  });
+
+  test('a context-cut turn (aborted + exhausted) prescribes compact-then-resume, never a bare resume', async ({ run }) => {
+    const implementer = new FakeWorker('claude', [
+      { text: '', sessionId: 'sess-cut', aborted: true, contextExhausted: true },
+    ]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+
+    expect.soft(result.isError).toBeFalsy(); // a settled checkpoint
+    expect.soft(joined).toContain("cut at the session's context cap");
+    expect.soft(joined).toContain('/compact'); // compact first…
+    expect.soft(joined).toContain('then resume'); // …then continue
+    expect.soft(joined).not.toContain('Resume that session with a short continuation'); // never the bare time-cap advice
+  });
+
+  test('the footer carries a band marker for in-scope roles — glanceable state, no repeated procedure', async ({ run }) => {
+    // caution band on the implementer (claude, persistent): the fill gets the
+    // marker; a codex reviewer at a higher fill gets the bare number (it
+    // compacts itself, so pressure language would be noise).
+    const implementer = new FakeWorker('claude', [
+      { text: 'built it', sessionId: 's1', context: { usedTokens: 780_000, windowTokens: 1_000_000 } },
+    ]);
+    const reviewer = new FakeWorker('codex', [
+      { text: 'reviewed', sessionId: 'r1', context: { usedTokens: 250_000, windowTokens: 258_400 } },
+    ]);
+    const { call } = harness(run, { implementer, reviewer });
+
+    const built = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build' });
+    const builtText = built.content.map((c) => (c as { text: string }).text).join('\n');
+    expect.soft(builtText).toContain('context 78% — compaction due');
+
+    const reviewed = await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'review' });
+    const reviewedText = reviewed.content.map((c) => (c as { text: string }).text).join('\n');
+    expect.soft(reviewedText).toContain('context 97%');
+    expect.soft(reviewedText).not.toContain('compaction due');
+  });
+
+  test('the emergency → compact → resume sequence: refused, compacted, then the send goes through', async ({ run }) => {
+    // The whole recovery loop through the real handler: a near-full session
+    // refuses the work send, the /compact passes and clears the reading, and
+    // the re-sent work prompt then dispatches normally.
+    recordContextUsage(run, 'implementer', { usedTokens: 870_000, windowTokens: 1_000_000 });
+    saveRunState(run);
+    const implementer = new FakeWorker('claude');
+    const { call } = harness(run, { implementer });
+
+    const refused = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'keep building' });
+    expect.soft(refused.isError).toBe(true);
+    expect.soft(implementer.calls.length).toBe(0); // nothing dispatched
+
+    const compacted = await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact keep the model' });
+    expect.soft(compacted.isError).toBeFalsy();
+
+    const resumed = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'keep building' });
+    expect.soft(resumed.isError).toBeFalsy(); // the reading cleared with the compact — the rail stands down
+    expect.soft(implementer.calls.length).toBe(2);
+  });
+
+  test('a context-overflow failure prescribes /compact, never "retry this same call" (the wedge’s futile-retry fix)', async ({
+    run,
+  }) => {
+    // The pre-flight overflow shape from the 20260701 wedge: every send bounces
+    // with "Prompt is too long". The old generic envelope said "retry this same
+    // send_prompt call once" — deterministically futile — and the orchestrator
+    // obeyed it into a 10-hour park. (No prior session here, so the salvage
+    // ladder stays out — the prompt itself was over-window — and the
+    // prescription renders.)
+    const implementer = new FakeWorker('claude', [
+      new Error('claude worker turn failed (success): Prompt is too long'),
+    ]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue the keystone' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+
+    expect.soft(result.isError).toBe(true);
+    expect.soft(joined).toContain('over its context window');
+    expect.soft(joined).toContain('/compact'); // the prescribed recovery
+    expect.soft(joined).toContain('recover-context'); // the fallback if the compact itself fails
+    expect.soft(joined).not.toContain('Retry this same send_prompt call'); // never the transient-infra advice
+    expect.soft(joined).not.toContain('not a content problem');
+  });
+
+  test('context interventions land in the ledger: compact, cutoff, salvage, reset — each with its pre-fill', async ({
+    projectDir,
+    run,
+  }) => {
+    // One run through the intervention kinds, asserting the durable ledger the
+    // morning review reads (status's third while-you-were-away section).
+    recordContextUsage(run, 'implementer', { usedTokens: 410_000, windowTokens: 1_000_000 });
+    run.workerSessions = { implementer: 'sess-1' };
+    saveRunState(run);
+    const implementer = new FakeWorker('claude', [
+      { text: 'compacted', sessionId: 'sess-1' }, // an orchestrator-authored /compact
+      { text: '', sessionId: 'sess-1', aborted: true, contextExhausted: true }, // a context-deadline cutoff
+    ]);
+    const { call } = harness(run, { implementer });
+    await call('send_prompt', { role: 'implementer', tag: 'compact-for-impl', body: '/compact keep the plan' });
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build' });
+
+    const events = loadRunState(projectDir, run.runId).contextEvents ?? [];
+    expect.soft(events.map((e) => e.kind)).toEqual(['compact', 'cutoff']);
+    expect.soft(events[0]?.role).toBe('implementer');
+    expect.soft(events[0]?.preTokens).toBe(410_000); // captured before the clear
+    expect.soft(events[0]?.windowTokens).toBe(1_000_000);
+  });
+
+  test('the salvage ladder writes its own ledger entries: salvage-compact, and session-reset on escalation', async ({
+    projectDir,
+    run,
+  }) => {
+    run.workerSessions = { implementer: 'sess-wedged' };
+    saveRunState(run);
+    const implementer = new FakeWorker('claude', [
+      new Error('claude worker turn failed (success): Prompt is too long'),
+      { text: 'compacted', sessionId: 'sess-wedged' }, // the salvage succeeds
+      new Error('claude worker turn failed (success): Prompt is too long'), // then the floor proves too high
+    ]);
+    const { call } = harness(run, { implementer });
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+
+    const kinds = (loadRunState(projectDir, run.runId).contextEvents ?? []).map((e) => e.kind);
+    expect(kinds).toEqual(['salvage-compact', 'session-reset']);
+  });
+
+  test('the salvage ladder: a wedged session gets one automatic /compact, then "re-send this same prompt"', async ({
+    projectDir,
+    run,
+  }) => {
+    run.workerSessions = { implementer: 'sess-wedged' };
+    saveRunState(run);
+    const implementer = new FakeWorker('claude', [
+      new Error('claude worker turn failed (success): Prompt is too long'),
+      { text: 'compacted', sessionId: 'sess-wedged' },
+    ]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue the keystone' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+
+    expect.soft(result.isError).toBe(true); // the SEND failed — but recovery already ran
+    expect.soft(joined).toContain('salvage compaction');
+    expect.soft(joined).toContain('re-send this same prompt');
+    // The salvage turn itself: a /compact with the generic seeded instructions
+    // and the short compact cap, into the same session.
+    expect.soft(implementer.calls[1]?.prompt).toMatch(/^\/compact /);
+    expect.soft(implementer.calls[1]?.prompt).toContain('automatic recovery step');
+    expect.soft(implementer.calls[1]?.timeoutMs).toBe(COMPACT_TIMEOUT_MS);
+    expect.soft(implementer.calls[1]?.sessionId).toBe('sess-wedged');
+    // The compact settle cleared the reading — the pressure rail stands down.
+    expect.soft(loadRunState(projectDir, run.runId).contextUsage?.implementer).toBeUndefined();
+  });
+
+  test('the salvage ladder: a salvage that also fails resets the session and prescribes recover-context', async ({
+    projectDir,
+    run,
+  }) => {
+    run.workerSessions = { implementer: 'sess-wedged' };
+    saveRunState(run);
+    const implementer = new FakeWorker('claude', [
+      new Error('claude worker turn failed (success): Prompt is too long'),
+      new Error('claude worker turn failed (success): Prompt is too long'), // the compact bounces too
+    ]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+
+    expect.soft(joined).toContain('RESET the implementer');
+    expect.soft(joined).toContain('recover-context');
+    expect.soft(joined).not.toContain('re-send this same prompt'); // a fresh session must be re-anchored, not re-sent
+    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer).toBeUndefined();
+  });
+
+  test('the salvage ladder thrash guard: a second overflow after a salvage goes straight to reset, no compact loop', async ({
+    projectDir,
+    run,
+  }) => {
+    run.workerSessions = { implementer: 'sess-wedged' };
+    saveRunState(run);
+    const implementer = new FakeWorker('claude', [
+      new Error('claude worker turn failed (success): Prompt is too long'),
+      { text: 'compacted', sessionId: 'sess-wedged' }, // the salvage succeeds…
+      new Error('claude worker turn failed (success): Prompt is too long'), // …but the floor is too high
+    ]);
+    const { call } = harness(run, { implementer });
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+    const second = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+    const joined = second.content.map((c) => (c as { text: string }).text).join('\n');
+
+    expect.soft(joined).toContain('again after an automatic salvage compaction');
+    expect.soft(joined).toContain('recover-context');
+    expect.soft(implementer.calls.length).toBe(3); // no second salvage /compact was dispatched
+    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer).toBeUndefined();
+  });
+
+  test('the salvage ladder: a salvage /compact cut at its cap rides the existing reset and names it', async ({
+    projectDir,
+    run,
+  }) => {
+    run.workerSessions = { implementer: 'sess-wedged' };
+    saveRunState(run);
+    const implementer = new FakeWorker('claude', [
+      new Error('claude worker turn failed (success): Prompt is too long'),
+      { aborted: true, sessionId: 'sess-wedged' }, // the salvage compact hits its 8-min cap
+    ]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+
+    expect.soft(joined).toContain('cut at its cap');
+    expect.soft(joined).toContain('recover-context');
+    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer).toBeUndefined(); // settle's compact-abort reset
+  });
+
+  test('an interrupted turn AT the context ceiling prescribes compact-first, not a short continuation', async ({
+    run,
+  }) => {
+    // Overflow evidence dominates the generic mid-response prescription: a
+    // continuation into a ceiling-full session bounces off the same ceiling.
+    const implementer = new FakeWorker('claude', [
+      { text: 'partial keystone work', sessionId: 'sess-wedge', interrupted: true, contextExhausted: true },
+    ]);
+    const { call } = harness(run, { implementer });
+    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+
+    expect.soft(result.isError).toBeFalsy(); // a settled checkpoint, not an error
+    expect.soft(joined).toContain('partial keystone work'); // the real work is delivered
+    expect.soft(joined).toContain('context-window ceiling');
+    expect.soft(joined).toContain('/compact'); // compact first…
+    expect.soft(joined).toContain('then resume'); // …then the continuation
+    expect.soft(joined).not.toContain('Send it a short continuation'); // never the bare-continuation advice
+  });
+
+  test('a completed /compact clears the role’s context reading — post-compact fill is unknown until the next turn', async ({
+    projectDir,
+    run,
+  }) => {
+    // The compact turn's own usage reflects the summarization REQUEST (the whole
+    // pre-compact conversation) — recording it would pin the high-water at the
+    // very size the compact just removed. The reading clears instead; the next
+    // honest turn re-establishes it.
+    recordContextUsage(run, 'implementer', { usedTokens: 410_000, windowTokens: 1_000_000 });
+    saveRunState(run);
+    const implementer = new FakeWorker('claude', [
+      { sessionId: 'sess-1', context: { usedTokens: 405_000, windowTokens: 1_000_000 } },
+    ]);
+    const { call } = harness(run, { implementer });
+    await call('send_prompt', { role: 'implementer', tag: 'compact-for-impl', body: '/compact keep the plan, drop the journey' });
+
+    const after = loadRunState(projectDir, run.runId);
+    expect.soft(after.contextUsage?.implementer).toBeUndefined();
+    expect.soft(existsSync(join(runDirOf(projectDir, run.runId), 'context', 'implementer'))).toBe(false);
+  });
+
+  test('an aborted /compact’s session reset clears the context reading with the session', async ({
+    projectDir,
+    run,
+  }) => {
+    recordContextUsage(run, 'implementer', { usedTokens: 978_000, windowTokens: 1_000_000 });
+    saveRunState(run);
+    const implementer = new FakeWorker('claude', [{ aborted: true, sessionId: 'sess-compact' }]);
+    const { call } = harness(run, { implementer });
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact drop the journey' });
+
+    const after = loadRunState(projectDir, run.runId);
+    expect.soft(after.workerSessions.implementer).toBeUndefined(); // the reset (existing behavior)
+    expect.soft(after.contextUsage?.implementer).toBeUndefined(); // the fresh session starts near-empty
   });
 
   test('S7 / Finding-2: an aborted /compact resets the PERSISTENT reviewer too, and the copy names the reviewer (not the implementer)', async ({
@@ -848,6 +1188,131 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
 
     finish({ text: 'done', sessionId: 'impl-1' });
     await pending;
+  });
+
+  test('the 30s tick samples the session fill mid-turn — high-water climbs, the heartbeat carries it', async ({ run, projectDir, onTestFinished }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const home = join(projectDir, 'home');
+    // The window half comes from the last settled reading; the growing usage
+    // comes from the transcript the turn is writing.
+    recordContextUsage(run, 'implementer', { usedTokens: 170_000, windowTokens: 1_000_000 });
+    saveRunState(run);
+    plantClaudeTranscript(
+      home,
+      'impl-1',
+      jsonl({ type: 'assistant', message: { usage: { input_tokens: 400_000, output_tokens: 500 } } }),
+    );
+
+    let finish!: (t: { text: string; sessionId: string }) => void;
+    const slow = new FakeWorker('claude');
+    slow.runTurn = (opts) => {
+      opts.onSessionId?.('impl-1');
+      return new Promise((r) => (finish = r));
+    };
+    const { call, lines } = harness(run, { implementer: slow, home });
+    const pending = call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build the keystone' });
+
+    await vi.advanceTimersByTimeAsync(30_000); // one sampler tick
+    let persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.contextUsage?.implementer?.usedTokens).toBe(400_500);
+
+    // The turn keeps growing; the transcript's latest request is bigger.
+    plantClaudeTranscript(
+      home,
+      'impl-1',
+      jsonl(
+        { type: 'assistant', message: { usage: { input_tokens: 400_000, output_tokens: 500 } } },
+        { type: 'assistant', message: { usage: { input_tokens: 900_000, cache_read_input_tokens: 60_000, output_tokens: 400 } } },
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(30_000);
+    persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.contextUsage?.implementer?.usedTokens).toBe(960_400);
+    expect.soft(contextSafetyPercent(persisted, 'implementer')).toBe(96);
+
+    await vi.advanceTimersByTimeAsync(4 * 60_000); // reach the 5-minute heartbeat
+    const hb = lines.find((l) => l.includes('⏳ implementer turn running — 5m elapsed'));
+    expect.soft(hb).toContain('· context 96%'); // the heartbeat carries the live fill
+
+    finish({ text: 'done', sessionId: 'impl-1' });
+    await pending;
+  });
+
+  test('the sampler stays silent without a known window (no prior reading) — honest silence, not a guess', async ({ run, projectDir, onTestFinished }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const home = join(projectDir, 'home');
+    plantClaudeTranscript(home, 'impl-1', jsonl({ type: 'assistant', message: { usage: { input_tokens: 500_000 } } }));
+
+    let finish!: (t: { text: string; sessionId: string }) => void;
+    const slow = new FakeWorker('claude');
+    slow.runTurn = (opts) => {
+      opts.onSessionId?.('impl-1');
+      return new Promise((r) => (finish = r));
+    };
+    const { call } = harness(run, { implementer: slow, home });
+    const pending = call('send_prompt', { role: 'implementer', tag: 'custom', body: 'first ever turn' });
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect.soft(loadRunState(projectDir, run.runId).contextUsage?.implementer).toBeUndefined();
+
+    finish({ text: 'done', sessionId: 'impl-1' });
+    await pending;
+  });
+
+  test('a sampler tick never clobbers a sibling role dispatched after its capture (the mutate funnel)', async ({
+    run,
+    projectDir,
+    onTestFinished,
+  }) => {
+    // The interactive-host race the sampler must survive: its heartbeat holds a
+    // state snapshot loaded at dispatch, and the OTHER role's dispatch lands its
+    // pending/active records on disk after that capture. A whole-object save
+    // from the snapshot would erase them — check_turns and phase-exit would
+    // lose an in-flight turn.
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const home = join(projectDir, 'home');
+    recordContextUsage(run, 'implementer', { usedTokens: 170_000, windowTokens: 1_000_000 });
+    saveRunState(run);
+    plantClaudeTranscript(
+      home,
+      'impl-1',
+      jsonl({ type: 'assistant', message: { usage: { input_tokens: 400_000, output_tokens: 500 } } }),
+    );
+
+    let finishImpl!: (t: { text: string; sessionId: string }) => void;
+    const slow = new FakeWorker('claude');
+    slow.runTurn = (opts) => {
+      opts.onSessionId?.('impl-1');
+      return new Promise((r) => (finishImpl = r));
+    };
+    const reviewer = new DeferredWorker('codex');
+    const { call } = harness(run, { implementer: slow, reviewer, home, async: true });
+
+    // Implementer first — its heartbeat captures the state as of now — then the
+    // reviewer, whose records post-date the capture.
+    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build the keystone' });
+    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review it' });
+
+    await vi.advanceTimersByTimeAsync(30_000); // the implementer's first sampler tick (always a change)
+
+    const persisted = loadRunState(projectDir, run.runId);
+    expect.soft(persisted.contextUsage?.implementer?.usedTokens).toBe(400_500); // the reading landed…
+    expect.soft(persisted.pendingTurns?.reviewer).toBeDefined(); // …and the sibling's dispatch records survived
+    expect.soft(persisted.activeTurns?.reviewer).toBeDefined();
+
+    finishImpl({ text: 'done', sessionId: 'impl-1' });
+    reviewer.resolve({ sessionId: 'rev-1' });
+    await vi.advanceTimersByTimeAsync(0); // drain the background settles
+    await call('check_turns');
   });
 
   test('before the provider announces the turn id, the heartbeat stays elapsed-only', async ({ run, onTestFinished }) => {
@@ -1415,7 +1880,7 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
   }) => {
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc' };
     saveRunState(consultantRun);
-    const { call } = harness(consultantRun, { phase: 'impl', consultant: new FakeWorker('claude') });
+    const { call } = harness(consultantRun, { phase: 'implement', consultant: new FakeWorker('claude') });
 
     await call('send_prompt', { role: 'consultant', tag: 'consultant-verify', body: 'verify the contract' });
 
@@ -1434,7 +1899,7 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     // window). Closing it structurally, not by trusting the orchestrator to re-verify.
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc', verifiedAt: 'now' };
     saveRunState(consultantRun);
-    const { call } = harness(consultantRun, { phase: 'impl', implementer: new FakeWorker('claude') });
+    const { call } = harness(consultantRun, { phase: 'implement', implementer: new FakeWorker('claude') });
 
     await call('send_prompt', { role: 'implementer', tag: 'respond-review', body: 'fix the failing assertion' });
 
@@ -1442,7 +1907,7 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     expect.soft(persisted.acceptanceContract?.verifiedAt).toBeUndefined(); // stale verify dropped by the fix
     expect.soft(persisted.acceptanceContract?.commit).toBe('abc'); // the freeze record survives
     // With verifiedAt gone and no high, the rail refuses advance until a fresh verify re-stamps it.
-    const verify = verifyCheckpointRail({ verb: 'advance the phase' }, railCtx(persisted, { phase: 'impl' }));
+    const verify = verifyCheckpointRail({ verb: 'advance the phase' }, railCtx(persisted, { phase: 'implement' }));
     expect.soft(verify).not.toBeNull();
   });
 
@@ -1452,7 +1917,7 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
   }) => {
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc', verifiedAt: 'now' };
     saveRunState(consultantRun);
-    const { call } = harness(consultantRun, { phase: 'impl', reviewer: new FakeWorker('codex') });
+    const { call } = harness(consultantRun, { phase: 'implement', reviewer: new FakeWorker('codex') });
 
     await call('send_prompt', { role: 'reviewer', tag: 'review-implementation', body: 'look again' });
 
@@ -1611,14 +2076,14 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
     expect.soft(unbound).toContain('["implementer", "reviewer"]');
   });
 
-  test('the RIR research brief takes the same conditional shape', ({ run, consultantRun }) => {
-    const bound = buildPhaseBrief(consultantRun, 'research');
+  test('the RIR research brief takes the same conditional shape', ({ rirRun, rirConsultantRun }) => {
+    const bound = buildPhaseBrief(rirConsultantRun, 'research');
     expect.soft(bound).toContain('one fan-out call');
     expect.soft(bound).toContain('consultant-frame'); // research maps to the frame checkpoint mode
     expect.soft(bound).toContain('separate send');
     expect.soft(bound).toContain('anonymized peers');
 
-    const unbound = buildPhaseBrief(run, 'research');
+    const unbound = buildPhaseBrief(rirRun, 'research');
     expect.soft(unbound.toLowerCase()).not.toContain('consultant');
     expect.soft(unbound).toContain('one fan-out call');
   });
@@ -1642,7 +2107,7 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
     // Bound + a frozen contract on state → the verify step points at the contract,
     // names consultant-verify, and routes a failed assertion to a high.
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc123' };
-    const frozen = buildPhaseBrief(consultantRun, 'impl');
+    const frozen = buildPhaseBrief(consultantRun, 'implement');
     expect.soft(frozen).toContain('Consultant checkpoint');
     expect.soft(frozen).toContain('consultant-verify');
     expect.soft(frozen).toContain('docs/specs/x.acceptance.md');
@@ -1651,12 +2116,12 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
 
     // Bound + no frozen contract → a noted skip, never silent, never a fallback audit.
     delete consultantRun.acceptanceContract;
-    const unfrozen = buildPhaseBrief(consultantRun, 'impl');
+    const unfrozen = buildPhaseBrief(consultantRun, 'implement');
     expect.soft(unfrozen).toContain('Consultant checkpoint');
     expect.soft(unfrozen).toContain('no frozen acceptance contract');
 
     // Unbound → byte-for-byte clean.
-    expect.soft(buildPhaseBrief(run, 'impl').toLowerCase()).not.toContain('consultant');
+    expect.soft(buildPhaseBrief(run, 'implement').toLowerCase()).not.toContain('consultant');
   });
 
   test('the plan brief AUTHORS the contract when bound (write-not-commit, spec-only, missing→high); unbound is clean', ({
@@ -1697,7 +2162,7 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
 // buildPhaseBrief helper. The send_prompt schema/identity guarantees are above.
 describe('acceptance contract at the tool altitude (get_task + list_snippets)', () => {
   test('unbound: get_task for plan and impl carries no contract or consultant text', async ({ run }) => {
-    for (const phase of ['plan', 'impl'] as const) {
+    for (const phase of ['plan', 'implement'] as const) {
       const { call } = harness(run, { phase });
       const brief = text(await call('get_task')).toLowerCase();
       expect.soft(brief, `${phase} brief`).not.toContain('consultant');
@@ -1721,7 +2186,7 @@ describe('acceptance contract at the tool altitude (get_task + list_snippets)', 
   test('bound: get_task for impl VERIFIES the frozen contract through the tool', async ({ consultantRun }) => {
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'deadbeef' };
     saveRunState(consultantRun);
-    const { call } = harness(consultantRun, { phase: 'impl', consultant: new FakeWorker('claude') });
+    const { call } = harness(consultantRun, { phase: 'implement', consultant: new FakeWorker('claude') });
 
     const brief = text(await call('get_task'));
 
@@ -1734,7 +2199,7 @@ describe('acceptance contract at the tool altitude (get_task + list_snippets)', 
     const consultant = new FakeWorker('claude');
     const atPlan = text(await harness(consultantRun, { phase: 'plan', consultant }).call('list_snippets'));
     expect.soft(atPlan).toContain('<snippet key="consultant-contract">');
-    const atImpl = text(await harness(consultantRun, { phase: 'impl', consultant }).call('list_snippets'));
+    const atImpl = text(await harness(consultantRun, { phase: 'implement', consultant }).call('list_snippets'));
     expect.soft(atImpl).toContain('<snippet key="consultant-verify">');
   });
 });
@@ -1810,18 +2275,18 @@ describe('advance_phase acceptance-contract rail (Full + consultant)', () => {
   });
 
   test('impl REFUSES when a frozen contract was not verified (no verifiedAt) and no high', async ({ consultantRun }) => {
-    consultantRun.rounds.impl = 1;
+    consultantRun.rounds.implement = 1;
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc' };
-    const { call } = harness(consultantRun, { phase: 'impl', consultant: new FakeWorker('claude') });
+    const { call } = harness(consultantRun, { phase: 'implement', consultant: new FakeWorker('claude') });
     const res = await call('advance_phase', advance);
     expect.soft(res.isError).toBe(true);
     expect.soft(text(res)).toContain('not been verified');
   });
 
   test('impl ADVANCES once verification ran (verifiedAt stamped)', async ({ consultantRun }) => {
-    consultantRun.rounds.impl = 1;
+    consultantRun.rounds.implement = 1;
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc', verifiedAt: 'now' };
-    const { call } = harness(consultantRun, { phase: 'impl', consultant: new FakeWorker('claude') });
+    const { call } = harness(consultantRun, { phase: 'implement', consultant: new FakeWorker('claude') });
     const res = await call('advance_phase', advance);
     expect.soft(res.isError).toBeFalsy();
   });
@@ -1829,8 +2294,8 @@ describe('advance_phase acceptance-contract rail (Full + consultant)', () => {
   test('impl with NO frozen contract is the noted-skip case — no verify rail (the absence was a high at plan)', async ({
     consultantRun,
   }) => {
-    consultantRun.rounds.impl = 1; // no acceptanceContract on state
-    const { call } = harness(consultantRun, { phase: 'impl', consultant: new FakeWorker('claude') });
+    consultantRun.rounds.implement = 1; // no acceptanceContract on state
+    const { call } = harness(consultantRun, { phase: 'implement', consultant: new FakeWorker('claude') });
     const res = await call('advance_phase', advance);
     expect.soft(res.isError).toBeFalsy();
   });

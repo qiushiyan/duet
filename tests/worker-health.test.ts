@@ -61,6 +61,8 @@ describe('transcriptShowsPromptAccepted (S5 — the per-turn acceptance proof)',
 
 describe('classifyError — first-match-wins taxonomy', () => {
   test.for<[string, ErrorClass]>([
+    ['claude worker turn failed (success): Prompt is too long', 'context-overflow'],
+    ['prompt is too long: 1013202 tokens > 1000000 maximum', 'context-overflow'],
     ['API Error: 403 Request not allowed. Please run /login', 'login-required'],
     ['Invalid API key · please check', 'login-required'],
     ['Your credit balance is too low to continue', 'quota-billing'],
@@ -276,7 +278,7 @@ describe('currentTerminalError — the live error shared with the crashed verdic
 
 describe('retryDecision — the one retry policy (#5, pure)', () => {
   const transient: ErrorClass[] = ['network', 'server', 'rate-limit'];
-  const neverRetried: ErrorClass[] = ['login-required', 'quota-billing', 'dns', 'unknown'];
+  const neverRetried: ErrorClass[] = ['context-overflow', 'login-required', 'quota-billing', 'dns', 'unknown'];
 
   test('default-off (retryInfra 0) flags every class, never retries', () => {
     for (const cls of [...transient, 'auth', ...neverRetried] as ErrorClass[]) {
@@ -293,7 +295,7 @@ describe('retryDecision — the one retry policy (#5, pure)', () => {
     }
   });
 
-  test.for<ErrorClass>(['login-required', 'quota-billing', 'dns', 'unknown'])('a non-transient %s flags even with budget', (cls) => {
+  test.for<ErrorClass>(['context-overflow', 'login-required', 'quota-billing', 'dns', 'unknown'])('a non-transient %s flags even with budget', (cls) => {
     expect(retryDecision(cls, undefined, 5)).toEqual({ action: 'flag', errorClass: cls });
   });
 

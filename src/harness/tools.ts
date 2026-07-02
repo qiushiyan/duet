@@ -1,26 +1,32 @@
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { execa } from 'execa';
 import { z } from 'zod';
-import { PHASE, acceptanceContractPathForSpec } from '../phases.ts';
+import { phaseSpec, acceptanceContractPathForSpec } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
 import { providerFor } from '../providers/index.ts';
 import { BudgetCutoffError } from '../providers/types.ts';
 import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
-import { countsReviewRound, orphanRecoveryFor, readOnlyFor, sessionIdFor, shouldResetAfterCompactAbort, workerRolesFor } from '../roles.ts';
+import { CONTEXT_CAUTION_PERCENT, CONTEXT_EMERGENCY_PERCENT, contextBand, latestTranscriptUsageTokens, salvageCompactInstructions } from '../context-guard.ts';
+import { countsReviewRound, orphanRecoveryFor, readOnlyFor, sessionIdFor, sessionPolicyFor, shouldResetAfterCompactAbort, workerRolesFor } from '../roles.ts';
 import { getSnippet, renderSnippetLibrary, runtimeLibraryContext } from '../snippets.ts';
 import {
   appendNote,
   appendVoiceLog,
+  clearContextUsage,
   clearPendingTurn,
   clearTurnActive,
   consumeHumanInput,
+  contextEventReading,
   contextPercent,
+  contextSafetyPercent,
   fmtTokens,
   gateAttended,
   loadRunState,
   markTurnActive,
+  recordContextEvent,
   recordContextUsage,
   recordTurnSessionId,
+  sampleContextUsage,
   saveRunState,
   workflowOf,
 } from '../run-store.ts';
@@ -29,7 +35,7 @@ import { listPendingSteers, markSteersDelivered } from '../steer-store.ts';
 import { bindingFor } from '../config.ts';
 import { readTranscriptTailAtPath, readTranscriptTailForSession } from '../sessions.ts';
 import type { TurnDispatcher } from './turn-dispatcher.ts';
-import { formatAge, probeRole } from '../worker-health.ts';
+import { classifyError, formatAge, probeRole } from '../worker-health.ts';
 import { activityLine, latestActivity, repoRelative } from '../worker-activity.ts';
 import {
   answerResumePrompt,
@@ -237,6 +243,34 @@ export function perTurnTimeoutFor(body: string): number | undefined {
   return isCompactBody(body) ? COMPACT_TIMEOUT_MS : undefined;
 }
 
+/**
+ * Whether the context-pressure policy covers this role at all — the ONE scope
+ * gate its consumers share (the context deadline via contextCapFor, the
+ * send-side contextPressureRail, and the footer's band marker), so they can
+ * never disagree about who is in scope. The gate is as narrow as the hazard:
+ * only a PERSISTENT claude-headless session accumulates toward "Prompt is too
+ * long" — codex auto-compacts, the interactive transport's TUI auto-compacts
+ * natively, and the ephemeral consultant seeds fresh every turn.
+ */
+export function contextPressureApplies(state: RunState, role: WorkerRole): boolean {
+  const binding = bindingFor(state.bindings, role);
+  return binding.provider === 'claude' && binding.transport !== 'interactive' && sessionPolicyFor(role) === 'persistent';
+}
+
+/**
+ * The context cap (tokens) a turn to this role carries — the emergency band of
+ * the role's last-known window — or undefined for "no context deadline": a role
+ * outside the pressure policy, a `/compact` turn (its whole job is running at
+ * high fill), or an unknown window (no reading yet — a fresh session's first
+ * turn), which means honest absence, not a guessed cap.
+ */
+export function contextCapFor(state: RunState, role: WorkerRole, isCompactTurn: boolean): number | undefined {
+  if (isCompactTurn || !contextPressureApplies(state, role)) return undefined;
+  const windowTokens = state.contextUsage?.[role]?.windowTokens;
+  if (!windowTokens) return undefined;
+  return Math.floor((windowTokens * CONTEXT_EMERGENCY_PERCENT) / 100);
+}
+
 // ── send_prompt's three lifecycle steps, as module-level functions ──
 // One blocking call on the headless host runs them in immediate succession
 // (startHeartbeat → await runTurn → settleTurn → renderTurnResult); the
@@ -277,8 +311,12 @@ export function startHeartbeat(
   const heartbeat = setInterval(() => {
     const mins = Math.round((Date.now() - startedAt) / 60_000);
     const health = heartbeatHealth(state, role, startedAt, Date.now(), home);
-    log(`[send_prompt] ⏳ ${role} turn running — ${mins}m elapsed (tag=${tag})${health}`);
-    appendVoiceLog(state, role, `⏳ turn running — ${mins}m elapsed (tag=${tag})${health}`);
+    // The live fill the 30s sampler below keeps fresh — so a 30-minute quiet
+    // turn's heartbeat says how full the session is, not just that it is alive.
+    const usage = state.contextUsage?.[role];
+    const fill = usage ? ` · context ${contextPercent(usage)}%` : '';
+    log(`[send_prompt] ⏳ ${role} turn running — ${mins}m elapsed (tag=${tag})${health}${fill}`);
+    appendVoiceLog(state, role, `⏳ turn running — ${mins}m elapsed (tag=${tag})${health}${fill}`);
     // Control-plane mirror onto the orchestrator pane — ONLY on the headless
     // host (blockingHost), where the orchestrator is an in-process Agent SDK
     // session blocked inside `await runTurn` while this turn runs, so its pane
@@ -292,6 +330,7 @@ export function startHeartbeat(
     if (blockingHost) appendVoiceLog(state, 'orchestrator', `⏳ awaiting ${role} — ${mins}m`);
   }, 5 * 60_000);
   let lastActivityId: string | undefined;
+  let lastSampledPercent: number | undefined;
   // Cache the located transcript path/schema after the first successful read so
   // the 30s poll does not re-scan the sessions dir every tick (codex's locate is
   // a recursive readdir). KEYED BY the session id it was located for: the in-flight
@@ -312,6 +351,28 @@ export function startHeartbeat(
         located = tail ? { sessionId, path: tail.path, schema: tail.schema } : undefined;
       }
       if (!tail) return;
+      // MID-TURN context sampling (claude only — codex auto-compacts): the same
+      // tail the activity line reads also carries the latest request's usage, so
+      // a long turn's fill is live telemetry rather than a turn-boundary blind
+      // spot (the 20260701 wedge grew 17% → 98% inside ONE turn with zero
+      // readings). The window half comes from the last settled reading — no
+      // reading yet means honest silence, not a guess. Change-detected and
+      // fail-soft like the activity line. The write rides the mutate funnel
+      // (sampleContextUsage): this state object was captured at dispatch and a
+      // whole-object save from it would revert a sibling role's concurrent
+      // dispatch records — the funnel re-applies to this copy, so the 5-min
+      // heartbeat line above stays fresh too.
+      if (tail.schema === 'claude') {
+        const windowTokens = state.contextUsage?.[role]?.windowTokens;
+        const usedTokens = windowTokens ? latestTranscriptUsageTokens(tail.jsonl) : undefined;
+        if (windowTokens && usedTokens !== undefined) {
+          const percent = contextPercent({ usedTokens, windowTokens });
+          if (percent !== lastSampledPercent) {
+            lastSampledPercent = percent;
+            sampleContextUsage(state, role, { usedTokens, windowTokens });
+          }
+        }
+      }
       const act = latestActivity(tail.jsonl, tail.schema);
       if (!act || act.id === lastActivityId) return; // nothing new since the last tick
       lastActivityId = act.id;
@@ -436,12 +497,29 @@ export function settleTurn(
     fresh.costs.codexTokens.input += turn.tokens.input;
     fresh.costs.codexTokens.output += turn.tokens.output;
   }
-  if (turn.context) recordContextUsage(fresh, role, turn.context);
+  // A compact turn's own usage reflects the summarization REQUEST (the whole
+  // pre-compact conversation), not the post-compact window — recording it would
+  // pin the high-water at the very size the compact just removed. So a completed
+  // compact (and a session reset, whose fresh session starts near-empty) clears
+  // the reading and lets the next turn re-establish it honestly. Each lands in
+  // the contextEvents ledger first (pre-fill captured before the clear), as does
+  // a context-deadline cutoff — interventions are recorded, never silent.
+  if ((meta.isCompactTurn === true && !aborted) || compactReset) {
+    recordContextEvent(fresh, {
+      kind: compactReset ? 'session-reset' : tag === 'salvage-compact' ? 'salvage-compact' : 'compact',
+      role,
+      ...contextEventReading(fresh, role),
+    });
+    clearContextUsage(fresh, role);
+  } else if (turn.context) recordContextUsage(fresh, role, turn.context);
+  if (aborted && turn.contextExhausted) {
+    recordContextEvent(fresh, { kind: 'cutoff', role, ...contextEventReading(fresh, role) });
+  }
   // Acceptance-contract authorship/verification evidence — durable proof THIS run's
   // consultant ran the checkpoint, which the freeze and the advance_phase rails
   // require (so guarantee 2 holds mechanically, not by prompt compliance). Keyed on
   // the registry checkpoint mode, so only full's plan/impl ever set it.
-  const checkpointMode = PHASE[phase].consultantCheckpoint;
+  const checkpointMode = phaseSpec(workflowOf(state), phase).consultantCheckpoint;
   if (role === 'consultant') {
     // An aborted consultant turn did NOT complete its checkpoint — set no
     // draft/verifiedAt (the freeze + verify rails must see a real completion, not
@@ -510,6 +588,17 @@ export function renderTurnResult(
     );
   }
   if (outcome instanceof Error) {
+    // Context overflow is the one DETERMINISTIC failure: the session no longer
+    // fits its window, so "retry the identical call" — the right advice for
+    // transient infra — is guaranteed futile here (the 20260701 wedge retried
+    // twice and parked 10 hours). The recovery is compaction, prescribed instead.
+    if (classifyError(outcome.message) === 'context-overflow') {
+      return error(
+        block(
+          `The ${role} worker's session is over its context window (${outcome.message}) — the send was rejected before the worker saw it, and re-sending can never fit: this is a deterministic limit, not transient infrastructure. Compact the session first: send the ${role} a body that is literally "/compact " followed by your adapted compact instructions (a compaction request still fits — it adds no new content), then re-send this prompt. If the /compact itself fails, its result will say the session was reset and prescribe recover-context.`,
+        ),
+      );
+    }
     return error(
       block(
         `The ${role} worker's turn failed at the infrastructure layer (${outcome.message}). The worker never saw your prompt, so this is not a content problem. Retry this same send_prompt call once; if the retry also fails, stop routing and report the failure to the human via ask_human instead of continuing the round.`,
@@ -529,11 +618,15 @@ export function renderTurnResult(
   // A mid-response interruption (a connection drop after real generation) also
   // settled — the partial work above is committed to a resumable session. The
   // recovery is a short continuation, NOT a re-send: re-sending the original
-  // prompt would restart work the worker already partly did.
+  // prompt would restart work the worker already partly did. Overflow evidence
+  // dominates that prescription: when the interruption WAS the context ceiling,
+  // a continuation bounces off the same ceiling, so compaction comes first.
   if (outcome.interrupted) {
     content.push(
       block(
-        `(the connection dropped mid-response — the worker's partial work above is committed to its session, which is resumable. Send it a short continuation to finish from where it stopped; do not re-send the original prompt. This is a checkpoint, not a failure.)`,
+        outcome.contextExhausted
+          ? `(the turn ended at the session's context-window ceiling — the partial work above is committed and the session is intact, but any further prompt would bounce off the same ceiling. Send the ${role} a "/compact " body with your adapted compact instructions first (a compaction request still fits — it adds no new content), then resume with a short continuation. This is a checkpoint, not a failure.)`
+          : `(the connection dropped mid-response — the worker's partial work above is committed to its session, which is resumable. Send it a short continuation to finish from where it stopped; do not re-send the original prompt. This is a checkpoint, not a failure.)`,
       ),
     );
   }
@@ -550,7 +643,9 @@ export function renderTurnResult(
       block(
         shouldResetAfterCompactAbort(role, meta.isCompactTurn === true, true)
           ? `(the /compact turn ran to its cap and was aborted — its session is un-compacted and bloated, so resuming it is the wrong move. duet has RESET the ${role} to a fresh session; re-anchor it by sending the recover-context snippet (a project/status overview + reread), NOT the original /compact or a resume. This is a recovery checkpoint, not a failure.)`
-          : `(the worker ran to its time cap and was aborted — but it saw your prompt and committed work may be on disk, in a resumable session. Resume that session with a short continuation to finish the remainder; do NOT re-send the original prompt (it would duplicate the conversation). This is a checkpoint, not a failure.)`,
+          : outcome.contextExhausted
+            ? `(the worker turn was cut at the session's context cap — it saw your prompt and committed work may be on disk, but the session is nearly full, so a bare resume would run straight back into the same ceiling. Send the ${role} a "/compact " body with your adapted compact instructions first (a compaction request still fits), then resume with a short continuation to finish the remainder. This is a scheduled maintenance stop, not a failure.)`
+            : `(the worker ran to its time cap and was aborted — but it saw your prompt and committed work may be on disk, in a resumable session. Resume that session with a short continuation to finish the remainder; do NOT re-send the original prompt (it would duplicate the conversation). This is a checkpoint, not a failure.)`,
       ),
     );
   }
@@ -568,10 +663,14 @@ export function renderTurnResult(
   // F5: a compact per-turn footer — this role's context fill, the cumulative
   // worker cost, and the round vs cap. Both hosts flow through here (blocking
   // send_prompt and check_turns via the dispatcher's collect), so one edit
-  // covers both.
+  // covers both. In-scope roles get a band marker on the fill — glanceable
+  // per-call STATE, not repeated procedure (the mechanic lives in the durable
+  // prompt; the moment-precise steering in the rail's refusal).
   const ctxUsage = state.contextUsage?.[role];
+  const band = ctxUsage && contextPressureApplies(state, role) ? contextBand(contextSafetyPercent(state, role)) : 'ok';
+  const bandMark = band === 'emergency' ? ' — compact before the next send' : band === 'caution' ? ' — compaction due' : '';
   const footer = [
-    ...(ctxUsage ? [`context ${contextPercent(ctxUsage)}%`] : []),
+    ...(ctxUsage ? [`context ${contextPercent(ctxUsage)}%${bandMark}`] : []),
     footerWorkerCost(state.costs),
     `round ${state.rounds[phase] ?? 0}/${cap}`,
   ].join(' · ');
@@ -754,6 +853,8 @@ export interface SendInput {
   role: WorkerRole;
   tag: string;
   isReviewRound: boolean;
+  /** The body is a literal `/compact` — the one send context pressure must always let through. */
+  isCompactTurn?: boolean;
 }
 
 /** A terminal-tool rail's input — the verb names the caller (for the recovery copy),
@@ -856,11 +957,49 @@ export const warnOnceTemplateRail: Rail<SendInput> = ({ role, tag }, ctx) => {
   );
 };
 
+/**
+ * Context pressure on a persistent claude session (the 20260701 wedge's send-side
+ * guard). Reads the SAFETY percent (the high-water since the last compact — the
+ * mid-turn sampler keeps it honest through long turns) and acts by band:
+ *
+ *  - emergency (≥85%): a non-compact send is refused outright — not warn-once,
+ *    because there is no legitimate override: the session deterministically
+ *    cannot take a long turn, and past ~100% the API rejects the send anyway.
+ *    A `/compact` body always passes (it is the named recovery), and a
+ *    completed compact clears the reading, so the rail stands down after it.
+ *  - caution (75–85%): one steering refusal per role per phase (the warn-once
+ *    discipline — judgment keeps the override by repeating the call), naming
+ *    that compaction is due and cheaper now than later.
+ *
+ * Scoped exactly like the context deadline (contextCapFor): claude-persistent-
+ * headless only — codex auto-compacts, the interactive transport's TUI
+ * auto-compacts, the ephemeral consultant seeds fresh.
+ */
+export const contextPressureRail: Rail<SendInput> = ({ role, isCompactTurn }, ctx) => {
+  if (isCompactTurn === true || !contextPressureApplies(ctx.state, role)) return null;
+  const percent = contextSafetyPercent(ctx.state, role);
+  const band = contextBand(percent);
+  if (band === 'ok') return null;
+  if (band === 'emergency') {
+    return refuse(
+      `The ${role}'s session is at ${percent}% of its context window — past ${CONTEXT_EMERGENCY_PERCENT}% there is no headroom left for a working turn: one more could carry the session over its window mid-work and wedge it. Compact before anything else: send the ${role} a body that is literally "/compact " followed by your adapted compact instructions (a /compact body passes this check), then re-send this prompt into the freshly compacted session.`,
+    );
+  }
+  // Caution: warn once per role per phase, on the same warned-set the template
+  // economy uses (the `@` in the key keeps it disjoint from snippet tags).
+  const warnKey = `${role}:@context-caution`;
+  if (ctx.resendWarned.has(warnKey)) return null;
+  ctx.resendWarned.add(warnKey);
+  return refuse(
+    `The ${role}'s session is at ${percent}% of its context window, past the ${CONTEXT_CAUTION_PERCENT}% caution line. Compaction is due — it is cheaper and preserves more headroom now than closer to the ceiling, and the next long turn could reach the ceiling mid-work. Send the ${role} a "/compact " body with your adapted compact instructions at the next natural pause; if this prompt genuinely can't wait (the worker is mid-thought and the send is small), repeat this exact call and it will go through.`,
+  );
+};
+
 // ── advance_phase's own rails (after the shared terminal group). ──
 
 /** A review-loop phase can't advance with zero rounds — there is nothing to gate on. */
 export const reviewLoopRail: Rail<TerminalInput> = (_input, ctx) =>
-  PHASE[ctx.phase].reviewLoop && (ctx.state.rounds[ctx.phase] ?? 0) === 0
+  phaseSpec(workflowOf(ctx.state), ctx.phase).reviewLoop && (ctx.state.rounds[ctx.phase] ?? 0) === 0
     ? refuse(
         'No review round has run in this phase yet, so there is nothing for the human to gate on. Run the review loop first (send the reviewer a review-* prompt); advance_phase is for after the loop converges.',
       )
@@ -869,7 +1008,7 @@ export const reviewLoopRail: Rail<TerminalInput> = (_input, ctx) =>
 /** The acceptance contract can't be SILENTLY skipped (guarantee 2, mechanically).
  *  The escape hatch is a `high` human_decision, which itself holds the AFK crossing. */
 export const contractCheckpointRail: Rail<TerminalInput> = ({ humanDecisions }, ctx) => {
-  if (!ctx.state.bindings.consultant || PHASE[ctx.phase].consultantCheckpoint !== 'contract') return null;
+  if (!ctx.state.bindings.consultant || phaseSpec(workflowOf(ctx.state), ctx.phase).consultantCheckpoint !== 'contract') return null;
   const hasHigh = (humanDecisions ?? []).some((d) => d.severity === 'high');
   if (ctx.state.acceptanceContractDraft || hasHigh) return null;
   return refuse(
@@ -879,7 +1018,7 @@ export const contractCheckpointRail: Rail<TerminalInput> = ({ humanDecisions }, 
 
 /** A frozen contract must be verified before advancing — same `high` escape hatch. */
 export const verifyCheckpointRail: Rail<TerminalInput> = ({ humanDecisions }, ctx) => {
-  if (!ctx.state.bindings.consultant || PHASE[ctx.phase].consultantCheckpoint !== 'verify') return null;
+  if (!ctx.state.bindings.consultant || phaseSpec(workflowOf(ctx.state), ctx.phase).consultantCheckpoint !== 'verify') return null;
   const hasHigh = (humanDecisions ?? []).some((d) => d.severity === 'high');
   if (!ctx.state.acceptanceContract || ctx.state.acceptanceContract.verifiedAt || hasHigh) return null;
   return refuse(
@@ -927,7 +1066,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       case 'answer':
         return answerResumePrompt(msg.text);
       case 'feedback':
-        return feedbackResumePrompt(phase, msg.text);
+        return feedbackResumePrompt(workflowOf(state), phase, msg.text);
     }
   };
   // When this phase's terminal marker is set, get_task is the one surface the
@@ -963,7 +1102,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   const ctx: RailCtx = {
     state,
     phase,
-    cap: PHASE[phase].roundCap,
+    cap: phaseSpec(workflowOf(state), phase).roundCap,
     asyncHost: dispatcher !== undefined,
     inFlight: (role) => (dispatcher ? dispatcher.statusOf(role) !== undefined : turnsInFlight.has(role)),
     orphanedOnDisk: (role) => dispatcher !== undefined && Boolean(state.pendingTurns?.[role]),
@@ -971,6 +1110,73 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     resendWarned,
     clearOrphan: (role) => clearPendingTurn(state, role),
     log,
+  };
+
+  // ── The salvage ladder (headless blocking host only — the interactive host
+  // has a live orchestrator to run the compact itself, the same human-present
+  // split as infra auto-retry). When a send bounces off the context ceiling,
+  // the session is wedged: no orchestrator-authored compact can be composed and
+  // delivered faster than the harness can act, and overnight nobody is watching
+  // (the 20260701 wedge parked 10 hours for exactly this mechanical recovery).
+  // The rungs: (1) one automatic salvage /compact with generic seeded
+  // instructions — recovery mechanics, not editorial (context-guard.ts); (2) if
+  // the salvage failed, was cut, or the session overflows AGAIN this phase (the
+  // compact floor itself is too high — the thrash guard), reset the session and
+  // prescribe recover-context. Every rung ends in a next action; none loops. ──
+  const salvagedRoles = new Set<WorkerRole>();
+  const resetWedgedSession = (role: WorkerRole): void => {
+    const fresh = loadRunState(state.cwd, state.runId);
+    delete fresh.workerSessions[role];
+    recordContextEvent(fresh, { kind: 'session-reset', role, ...contextEventReading(fresh, role) });
+    clearContextUsage(fresh, role);
+    saveRunState(fresh);
+    Object.assign(state, fresh);
+    log(`[send_prompt] ⚠ ${role} session reset — wedged past its context ceiling; the next send seeds fresh`);
+    appendVoiceLog(state, role, `⚠ session reset — wedged past its context ceiling; the next send seeds fresh`);
+  };
+  const salvageLadder = async (
+    role: WorkerRole,
+    outcome: WorkerTurn | Error,
+    runTurn: (role: WorkerRole, turn: { tag: string; body: string; isCompactTurn: boolean; timeoutMs?: number }) => Promise<WorkerTurn | Error>,
+  ): Promise<CallToolResult | undefined> => {
+    if (!(outcome instanceof Error) || outcome instanceof BudgetCutoffError) return undefined;
+    if (classifyError(outcome.message) !== 'context-overflow') return undefined;
+    const binding = bindingFor(state.bindings, role);
+    if (binding.provider !== 'claude' || binding.transport === 'interactive') return undefined;
+    if (sessionPolicyFor(role) !== 'persistent') return undefined;
+    // No session ⇒ nothing to compact — the prompt itself was over-window; the
+    // plain overflow prescription (renderTurnResult) is the honest answer.
+    if (!state.workerSessions[role]) return undefined;
+    if (salvagedRoles.has(role)) {
+      // Overflowed again after a salvage this phase: the compact floor is too
+      // high for this session — compacting harder would thrash, so reset.
+      resetWedgedSession(role);
+      return error(
+        block(
+          `The ${role} worker's session hit its context-window ceiling again after an automatic salvage compaction — even freshly compacted it stays too full to work in. duet has RESET the ${role} to a fresh session; re-anchor it with the recover-context snippet (a status overview plus a reread of the committed artifacts), not a resume or a re-send.`,
+        ),
+      );
+    }
+    salvagedRoles.add(role);
+    log(`[send_prompt] ⚠ ${role} session wedged at its context ceiling — running an automatic salvage /compact`);
+    const body = `/compact ${salvageCompactInstructions({ phase, ...(state.specPath ? { specPath: state.specPath } : {}), ...(state.branch ? { branch: state.branch } : {}) })}`;
+    const salvage = await runTurn(role, { tag: 'salvage-compact', body, isCompactTurn: true, timeoutMs: COMPACT_TIMEOUT_MS });
+    if (!(salvage instanceof Error) && salvage.aborted !== true) {
+      return error(
+        block(
+          `The ${role} worker's session hit its context-window ceiling — your prompt was rejected before the worker saw it. duet ran an automatic salvage compaction on the session and it succeeded, so the session takes prompts again: re-send this same prompt now. (The salvage used generic keep-the-work instructions; prefer your own adapted compact-for-* at natural boundaries, where you choose what survives.)`,
+        ),
+      );
+    }
+    // A salvage /compact that was CUT at its cap already reset the session in
+    // settle (shouldResetAfterCompactAbort); a salvage that failed outright is
+    // reset here. Either way the session is gone and recover-context re-anchors.
+    if (salvage instanceof Error) resetWedgedSession(role);
+    return error(
+      block(
+        `The ${role} worker's session hit its context-window ceiling, and the automatic salvage compaction ${salvage instanceof Error ? `also failed (${salvage.message})` : 'was cut at its cap'} — the session was beyond compacting. duet has RESET the ${role} to a fresh session; re-anchor it with the recover-context snippet (a status overview plus a reread of the committed artifacts), not a resume or a re-send.`,
+      ),
+    );
   };
 
   // send_prompt's role surface is the run's BOUND worker roles: the consultant
@@ -1102,20 +1308,24 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             'role was an empty array — name at least one worker to send to (a single role, or several to fan the same body to each).',
           );
         }
-        const cap = PHASE[phase].roundCap;
+        const cap = phaseSpec(workflowOf(state), phase).roundCap;
         const isReviewRoundFor = (role: WorkerRole): boolean => countsReviewRound(role, tag);
 
         // Validate EVERY target before dispatching ANY — the first refusal returns
         // before a single turn launches (a half-dispatched fan-out would strand
         // turns). The order is LOAD-BEARING: sameRoleInFlightRail MUST precede
         // orphanRail, because a live running turn also has a disk pending record,
-        // so checking orphan first would misclassify it as an orphan.
+        // so checking orphan first would misclassify it as an orphan; and
+        // contextPressureRail precedes the round/template rails, because a
+        // near-full session dominates loop-economy concerns (compact first,
+        // whatever the send was).
         for (const role of roles) {
           const refusal = firstRefusal(
-            { role, tag, isReviewRound: isReviewRoundFor(role) },
+            { role, tag, isReviewRound: isReviewRoundFor(role), isCompactTurn },
             ctx,
             sameRoleInFlightRail,
             orphanRail,
+            contextPressureRail,
             reviewCapRail,
             warnOnceTemplateRail,
           );
@@ -1153,45 +1363,59 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         // CONCURRENTLY (Promise.all) so a fan-out never serializes two minutes-long
         // turns — the regression the readOnlyHint scheduler hint fixed for parallel
         // single-role calls. settleTurn merges against fresh disk, so concurrent
-        // cross-role settles don't clobber each other.
-        const runBlockingTurn = async (role: WorkerRole): Promise<WorkerTurn | Error> => {
-          const isReviewRound = isReviewRoundFor(role);
+        // cross-role settles don't clobber each other. Parameterized by turn (not
+        // closed over the args) so the salvage ladder below can dispatch its own
+        // recovery /compact through the same settle machinery.
+        const runBlockingTurn = async (
+          role: WorkerRole,
+          turn: { tag: string; body: string; isCompactTurn: boolean; timeoutMs?: number },
+        ): Promise<WorkerTurn | Error> => {
+          const isReviewRound = countsReviewRound(role, turn.tag);
           turnsInFlight.add(role);
-          markTurnActive(state, role, tag);
+          markTurnActive(state, role, turn.tag);
           const startedAt = Date.now();
-          const stopHeartbeat = startHeartbeat({ state, log, blockingHost: true, ...(home !== undefined ? { home } : {}) }, { role, tag, startedAt });
+          const stopHeartbeat = startHeartbeat({ state, log, blockingHost: true, ...(home !== undefined ? { home } : {}) }, { role, tag: turn.tag, startedAt });
           // settleTurn is kept INSIDE this try/catch (both arms) so a throw during
           // the merge renders as an infra failure exactly as a runTurn throw does.
+          const contextCapTokens = contextCapFor(state, role, turn.isCompactTurn);
           try {
-            const turn = await providerFor(providers, role).runTurn({
-              prompt: body,
+            const outcome = await providerFor(providers, role).runTurn({
+              prompt: turn.body,
               sessionId: sessionIdFor(state, role),
               readOnly: readOnlyFor(role),
               cwd: state.cwd,
-              ...(perTurnTimeoutMs !== undefined ? { timeoutMs: perTurnTimeoutMs } : {}),
+              ...(turn.timeoutMs !== undefined ? { timeoutMs: turn.timeoutMs } : {}),
+              ...(contextCapTokens !== undefined ? { contextCapTokens } : {}),
               // Stage this turn's id onto the active-turn hint the moment the
               // provider announces it, so the heartbeat poll (closed over the
               // same `state`) can locate the transcript from the turn's start.
               onSessionId: stageSessionId(state, role, log),
             });
-            settleTurn({ state, phase, providers, log }, { role, tag, isReviewRound, isCompactTurn }, turn);
-            return turn;
+            settleTurn({ state, phase, providers, log }, { role, tag: turn.tag, isReviewRound, isCompactTurn: turn.isCompactTurn }, outcome);
+            return outcome;
           } catch (err) {
             const outcome = err instanceof Error ? err : new Error(String(err));
-            settleTurn({ state, phase, providers, log }, { role, tag, isReviewRound, isCompactTurn }, outcome);
+            settleTurn({ state, phase, providers, log }, { role, tag: turn.tag, isReviewRound, isCompactTurn: turn.isCompactTurn }, outcome);
             return outcome;
           } finally {
             turnsInFlight.delete(role);
             stopHeartbeat();
           }
         };
-        const settled = await Promise.all(roles.map(async (role) => ({ role, outcome: await runBlockingTurn(role) })));
+        const sendArgs = { tag, body, isCompactTurn, ...(perTurnTimeoutMs !== undefined ? { timeoutMs: perTurnTimeoutMs } : {}) };
+        const settled = await Promise.all(roles.map(async (role) => ({ role, outcome: await runBlockingTurn(role, sendArgs) })));
         // Render AFTER every settle so each role's footer/near-cap nudge reflects
         // the final round/cost state (settleTurn re-syncs `state` on each commit).
-        const rendered = settled.map(({ role, outcome }) => ({
-          role,
-          result: renderTurnResult({ state, phase }, { role, isReviewRound: isReviewRoundFor(role), cap, isCompactTurn }, outcome),
-        }));
+        // The salvage ladder may replace a wedged role's render with its own
+        // recovery result; it awaits a compact turn, hence the sequential loop.
+        const rendered: Array<{ role: WorkerRole; result: CallToolResult }> = [];
+        for (const { role, outcome } of settled) {
+          const salvaged = await salvageLadder(role, outcome, runBlockingTurn);
+          rendered.push({
+            role,
+            result: salvaged ?? renderTurnResult({ state, phase }, { role, isReviewRound: isReviewRoundFor(role), cap, isCompactTurn }, outcome),
+          });
+        }
         return rendered.length === 1 ? rendered[0]!.result : combineFanoutResults(rendered);
       },
       // CLI quirk, load-bearing: readOnlyHint here is a CONCURRENCY HINT, not

@@ -716,7 +716,7 @@ $0'''
 # consultant-contract / consultant-verify are the acceptance-contract pair (Full
 # arc): the consultant AUTHORS a frozen, falsifiable definition of success at the
 # plan phase (blind to the plan/code), and a fresh session VERIFIES it against the
-# built system at the impl phase. The contract's job is to catch runtime drift
+# built system at the implement phase. The contract's job is to catch runtime drift
 # from the ratified spec that the implementer's own tests would miss — not to
 # re-judge "the right thing" in the abstract.
 

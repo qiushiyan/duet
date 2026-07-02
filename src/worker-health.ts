@@ -27,10 +27,15 @@
 export type Schema = 'claude' | 'codex';
 
 /**
- * Error classes in FIRST-MATCH-WINS order (login/quota before bare-auth before
- * transient) — the order is the classifier, so it must not be reordered.
+ * Error classes in FIRST-MATCH-WINS order (context-overflow and login/quota
+ * before bare-auth before transient) — the order is the classifier, so it must
+ * not be reordered. `context-overflow` is the one DETERMINISTIC class: the
+ * session's conversation no longer fits its context window, so an identical
+ * retry can never succeed — recovery is compaction (or a session reset), never
+ * a resend, and it is never auto-retried.
  */
 export type ErrorClass =
+  | 'context-overflow'
   | 'login-required'
   | 'quota-billing'
   | 'auth'
@@ -51,6 +56,16 @@ export const RECENT_ERROR_MS = 180_000; // a terminal error newer than this ⇒ 
 export const RETRY_WINDOW_MS = 120_000; // the orchestrator's approximate in-flight/recency window (doctor.ts)
 
 const TAXONOMY: ReadonlyArray<{ cls: ErrorClass; patterns: RegExp[] }> = [
+  {
+    // The Anthropic API's over-window rejection, as the CLI relays it ("Prompt is
+    // too long", sometimes with a `N tokens > M maximum` tail), plus duet's own
+    // context-deadline cut (ContextDeadlineExceededError's "context-window cap"
+    // phrasing). Matched first: unambiguous, and misreading it as transient infra
+    // sent an orchestrator into two futile retries and a 10-hour park (the
+    // 20260701 wedge).
+    cls: 'context-overflow',
+    patterns: [/prompt is too long/i, /context-window cap/i],
+  },
   {
     cls: 'login-required',
     patterns: [/Please run \/login/, /Invalid API key/, /OAuth token (?:has )?expired/, /\btoken expired\b/],
@@ -123,7 +138,8 @@ function backoffMs(attempt: number): number {
  *  - network / server / rate-limit ⇒ retry (always-recoverable transient set).
  *  - auth ⇒ retry exactly ONCE: a first auth retries; a second CONSECUTIVE auth
  *    is persistent ⇒ flag as `login-required`, never retried even with budget.
- *  - login-required / quota-billing / dns / unknown ⇒ flag (never auto-retried).
+ *  - context-overflow / login-required / quota-billing / dns / unknown ⇒ flag
+ *    (never auto-retried — overflow is deterministic: a retry can never fit).
  */
 export function retryDecision(errorClass: ErrorClass, retryState: RetryState | undefined, retryInfra: number): RetryDecision {
   const attempts = retryState?.attempts ?? 0;

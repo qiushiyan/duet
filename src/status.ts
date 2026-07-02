@@ -4,7 +4,7 @@ import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
 import type { WorkerRole } from './providers/types.ts';
 import { voicesFor, workerRolesFor } from './roles.ts';
 import { contextPercent, fmtTokens, workflowOf } from './run-store.ts';
-import type { HumanDecision, RunState, Voice } from './run-store.ts';
+import type { ContextEvent, HumanDecision, RunState, Voice } from './run-store.ts';
 import type { Steer } from './steer-store.ts';
 import { resolveSessions } from './sessions.ts';
 import type { SessionRef } from './sessions.ts';
@@ -24,7 +24,7 @@ import type { ErrorClass } from './worker-health.ts';
  * breaking change to the shipped skill (and fails the pinned-keys test).
  */
 
-/** Whether a workflow's arc ends by opening a PR — true when a phase carries the Open-PR gate (both arcs do: full's `finish`, rir's `publish`). */
+/** Whether a workflow's arc ends by opening a PR — true when a phase carries the Open-PR gate (both arcs do: full's `finish`, rir's `finish`). */
 function opensPr(workflow: WorkflowName): boolean {
   return phasesOf(workflow).some((p) => p.gate?.state === 'openPrGate');
 }
@@ -47,7 +47,7 @@ export function describeStop(state: RunState, done: boolean): string {
     return `question queued: ${state.pendingQuestion.question}`;
   }
   const gatePhase = phaseOfGateState(workflowOf(state), machineState);
-  if (gatePhase) return gateOf(gatePhase).ready;
+  if (gatePhase) return gateOf(workflowOf(state), gatePhase).ready;
   return `stopped at ${machineState}`;
 }
 
@@ -68,13 +68,13 @@ const continueCommand = {
  * is legal (a live or crashed phase). Quiescent stops have their own
  * channel, and the copy names it — gates stay explicit.
  */
-export function steerRefusal(position: RunPosition, runId: string): string | undefined {
+export function steerRefusal(workflow: WorkflowName, position: RunPosition, runId: string): string | undefined {
   switch (position.kind) {
     case 'running':
     case 'crashed':
       return undefined;
     case 'gate': {
-      const gate = gateOf(position.phase);
+      const gate = gateOf(workflow, position.phase);
       return (
         `the run is waiting at the ${gate.state} — steering here is the gate decision itself: ` +
         `${continueCommand.approve(runId)}, or ${continueCommand.reject(runId)} (your feedback reaches the orchestrator verbatim).`
@@ -141,6 +141,8 @@ export interface StatusModel {
   autoApprovals: Array<{ gate: string; at: string; headline: string }>;
   /** Infra failures auto-retried while away (#4b) — a sibling of autoApprovals, not gate-shaped. */
   awayRetries: Array<{ phase: PhaseName; errorClass: ErrorClass; attempt: number; at: string }>;
+  /** Context interventions while away (compactions, cutoffs, session resets) — the third away-ledger. */
+  contextEvents: ContextEvent[];
   rounds: Array<{ phase: PhaseName; used: number; cap: number }>;
   costs: RunState['costs'];
   /** Context-window fill per voice, captured at turn boundaries (a hint; stale after manual takeover). */
@@ -174,6 +176,7 @@ export function buildStatusModel(state: RunState, position: RunPosition, pending
     ...(state.gatesAt ? { gatesAt: state.gatesAt } : {}),
     autoApprovals: (state.autoApprovals ?? []).map((a) => ({ ...a, headline: packetHeadline(state, a.gate) })),
     awayRetries: state.autoRetries ?? [],
+    contextEvents: state.contextEvents ?? [],
     rounds: phasesOf(workflow)
       .filter((p) => (state.rounds[p.name] ?? 0) > 0 || p.reviewLoop)
       .map((p) => ({ phase: p.name, used: state.rounds[p.name] ?? 0, cap: p.roundCap })),
@@ -206,7 +209,7 @@ function stopModel(state: RunState, position: RunPosition): StopModel {
     case 'interactive':
       return position;
     case 'gate': {
-      const gate = gateOf(position.phase);
+      const gate = gateOf(workflowOf(state), position.phase);
       const packet = state.phaseSummaries[position.phase];
       return {
         kind: 'gate',
@@ -317,6 +320,22 @@ function summarizeRetriesByClass(retries: ReadonlyArray<{ errorClass: ErrorClass
   return [...counts].map(([cls, n]) => `${cls} ×${n}`).join(', ');
 }
 
+/** Per-kind tally for the context-interventions ledger ("salvage-compact ×1, cutoff ×2"). */
+function summarizeContextEvents(events: ReadonlyArray<ContextEvent>): string {
+  const counts = new Map<ContextEvent['kind'], number>();
+  for (const e of events) counts.set(e.kind, (counts.get(e.kind) ?? 0) + 1);
+  return [...counts].map(([kind, n]) => `${kind} ×${n}`).join(', ');
+}
+
+/** One ledger line: kind, role, the pre-intervention fill when known, local stamp. */
+function contextEventLine(e: ContextEvent): string {
+  const fill =
+    e.preTokens !== undefined && e.windowTokens
+      ? ` at ${contextPercent({ usedTokens: e.preTokens, windowTokens: e.windowTokens })}%`
+      : '';
+  return `  ◔ ${e.role} ${e.kind}${fill}  ${fmtStamp(e.at)}`;
+}
+
 export function renderStatus(model: StatusModel): string {
   const lines: string[] = [];
   lines.push(`\n━━━ duet run ${model.runId} ━━━`);
@@ -397,6 +416,13 @@ export function renderStatus(model: StatusModel): string {
     lines.push(`\nwhile you were away — infra auto-retries: ${model.awayRetries.length} (${summarizeRetriesByClass(model.awayRetries)}):`);
     for (const r of model.awayRetries) {
       lines.push(`  ↻ ${r.phase} ${r.errorClass} (attempt ${r.attempt})  ${fmtStamp(r.at)}`);
+    }
+  }
+
+  if (model.contextEvents.length > 0) {
+    lines.push(`\nwhile you were away — context interventions: ${model.contextEvents.length} (${summarizeContextEvents(model.contextEvents)}):`);
+    for (const e of model.contextEvents) {
+      lines.push(contextEventLine(e));
     }
   }
 
@@ -502,6 +528,8 @@ export interface BriefModel {
   autoApprovals: Array<{ gate: string; at: string; headline: string }>;
   /** Infra auto-retries while away (#4b) — surfaced as a per-class tally in the brief. */
   awayRetries: Array<{ phase: PhaseName; errorClass: ErrorClass; attempt: number; at: string }>;
+  /** Context interventions while away — surfaced as a per-kind tally in the brief. */
+  contextEvents: ContextEvent[];
   humanDecisions?: HumanDecision[];
   /**
    * Interactive-host worker turns in flight or settled-uncollected — narrowed
@@ -560,6 +588,7 @@ export function buildBrief(model: StatusModel): BriefModel {
     pendingSteers: model.pendingSteers.length,
     autoApprovals: model.autoApprovals,
     awayRetries: model.awayRetries,
+    contextEvents: model.contextEvents,
     ...(stop.kind === 'gate' && stop.packet?.humanDecisions ? { humanDecisions: stop.packet.humanDecisions } : {}),
     ...(model.pendingTurns && model.pendingTurns.length > 0
       ? { pendingTurns: model.pendingTurns.map(({ role, tag, status }) => ({ role, tag, status })) }
@@ -583,6 +612,7 @@ export function renderBrief(brief: BriefModel): string {
   }
   if (brief.autoApprovals.length > 0) lines.push(`auto-approved: ${brief.autoApprovals.map((a) => a.gate).join(', ')}`);
   if (brief.awayRetries.length > 0) lines.push(`auto-retried: ${summarizeRetriesByClass(brief.awayRetries)}`);
+  if (brief.contextEvents.length > 0) lines.push(`context: ${summarizeContextEvents(brief.contextEvents)}`);
   if (brief.nextCommand) lines.push(`next: ${brief.nextCommand}`);
   return lines.join('\n');
 }

@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import type { Snapshot } from 'xstate';
 import { bindingFor } from './config.ts';
 import type { RoleBinding, RoleBindings } from './config.ts';
-import { PHASE, WORKFLOWS, defaultPosture, defaultPreAuthorizedOf, gatePhasesOf } from './phases.ts';
+import { WORKFLOWS, defaultPosture, defaultPreAuthorizedOf, gatePhasesOf, phaseSpec } from './phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
 import type { ContextUsage, WorkerRole } from './providers/types.ts';
 import { workerRolesFor } from './roles.ts';
@@ -50,6 +50,22 @@ export type Voice = 'orchestrator' | 'implementer' | 'reviewer' | 'consultant';
 export interface HumanDecision {
   title: string;
   severity: 'low' | 'high';
+}
+
+/**
+ * One context intervention on a worker session (the `contextEvents` ledger).
+ * `compact` / `salvage-compact` kept the session (compacted in place);
+ * `session-reset` replaced it (the next send seeds fresh); `cutoff` is a turn
+ * cut at the context deadline. The in-place vs fresh distinction matters for
+ * auditability: a reset breaks manual `--resume` continuity, a compact does not.
+ */
+export interface ContextEvent {
+  kind: 'cutoff' | 'compact' | 'salvage-compact' | 'session-reset';
+  role: WorkerRole;
+  at: string;
+  /** The safety reading (tokens) just before the intervention, when one existed. */
+  preTokens?: number;
+  windowTokens?: number;
 }
 
 /**
@@ -131,6 +147,17 @@ export interface RunState {
    * class + phase is the "is my environment degrading / am I churning" signal.
    */
   autoRetries?: Array<{ phase: PhaseName; errorClass: ErrorClass; attempt: number; at: string }>;
+  /**
+   * Context interventions on worker sessions, for the morning review — the
+   * third "while you were away" ledger beside autoApprovals/autoRetries.
+   * Recorded, never silent: a compaction (in place — the session survives), a
+   * context-deadline cutoff, an automatic salvage compact, and a session reset
+   * (a fresh session — resume history gone) are distinct kinds, so the review
+   * can tell maintenance from escalation and a degrading session shows up as a
+   * pattern instead of churning invisibly. `preTokens`/`windowTokens` carry the
+   * fill just before the intervention where a reading existed.
+   */
+  contextEvents?: ContextEvent[];
   /**
    * The gateless posture (docs/automation-design.md §"Gate pre-authorization"):
    * a run the owner walks away from start to finish. Set by `--gateless` /
@@ -324,9 +351,14 @@ export interface RunState {
    * Context-window fill per voice, captured at turn boundaries (claude roles
    * report it in-band; codex from its rollout tail). A hint like everything
    * here — stale after manual takeover turns, refreshed on the next driven
-   * turn.
+   * turn. `usedTokens` is the LAST honest reading (what displays render);
+   * `highWaterTokens`, when present, is the max since this voice's last
+   * compact/session reset — the safety reading (`contextSafetyPercent`) the
+   * context-pressure guards act on, so a later lower reading (cache expiry
+   * shrinking a request, codex auto-compacting) never relaxes a guard
+   * mid-growth. Absent ⇒ usedTokens IS the high-water.
    */
-  contextUsage?: Partial<Record<Voice, ContextUsage & { at: string }>>;
+  contextUsage?: Partial<Record<Voice, ContextUsage & { at: string; highWaterTokens?: number }>>;
   snippetProposals: Array<{ snippetKey: string; proposedBody: string; rationale: string; at: string }>;
   lastActivity?: string;
 }
@@ -362,20 +394,21 @@ export function highDecisionsAt(state: RunState, gatePhase: GatePhase): HumanDec
 /**
  * The effective per-turn budget caps for a phase — the one source every worker-
  * and orchestrator-construction site reads, replacing direct
- * `PHASE[phase].*BudgetUsd` reads. A cap is a number, or `undefined` when off.
+ * `phaseSpec(...).*BudgetUsd` reads. A cap is a number, or `undefined` when off.
  * The opt-in knob (#3a) is `state.budget`: absent ⇒ OFF (both caps undefined,
  * the maintainer's default), else the per-phase profile scaled by the frozen
  * multiplier. Lives beside gateAttended: both resolve run-state policy against
- * the phase registry.
+ * the phase registry (workflow-scoped — the caps are read against the run's arc).
  */
 export function budgetFor(
   state: RunState,
   phase: PhaseName,
 ): { worker: number | undefined; orchestrator: number | undefined } {
   if (state.budget === undefined) return { worker: undefined, orchestrator: undefined };
+  const spec = phaseSpec(workflowOf(state), phase);
   return {
-    worker: PHASE[phase].workerBudgetUsd * state.budget,
-    orchestrator: PHASE[phase].orchestratorBudgetUsd * state.budget,
+    worker: spec.workerBudgetUsd * state.budget,
+    orchestrator: spec.orchestratorBudgetUsd * state.budget,
   };
 }
 
@@ -797,12 +830,94 @@ export function fmtTokens(n: number): string {
  * the save, as with every handler-side mutation) and refreshes the plain-text
  * sidecar `context/<voice>` ("41%") that the tmux pane titles re-read at
  * their refresh interval — a `cat` per interval, no JSON parsing at view time.
+ *
+ * Alongside the last reading it carries the high-water mark forward: the max
+ * `usedTokens` since the voice's last compact/reset, kept because a session's
+ * fill can legitimately read LOWER on a later turn without any compaction and a
+ * safety guard must not relax on that. A window change (a mid-run model swap)
+ * makes token comparison meaningless, so it restarts the mark. Compacts and
+ * session resets clear the whole record via `clearContextUsage` instead — a
+ * post-compact fill is unknown until the next turn reports it.
  */
 export function recordContextUsage(state: RunState, voice: Voice, usage: ContextUsage): void {
-  (state.contextUsage ??= {})[voice] = { ...usage, at: new Date().toISOString() };
+  const prev = state.contextUsage?.[voice];
+  const highWater =
+    prev && prev.windowTokens === usage.windowTokens
+      ? Math.max(prev.highWaterTokens ?? prev.usedTokens, usage.usedTokens)
+      : usage.usedTokens;
+  (state.contextUsage ??= {})[voice] = {
+    ...usage,
+    at: new Date().toISOString(),
+    ...(highWater > usage.usedTokens ? { highWaterTokens: highWater } : {}),
+  };
   const dir = join(ensureRunDir(state.cwd, state.runId), 'context');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, voice), `${contextPercent(usage)}%\n`);
+}
+
+/**
+ * The MID-TURN sampler's write path: `recordContextUsage` through the `mutate`
+ * funnel. The sampler runs off a state object captured at dispatch and holds it
+ * for a whole worker turn — a whole-object save from that snapshot would revert
+ * everything a concurrent dispatch persisted since (the sibling role's
+ * pending/active records — the same cross-role clobber `markTurnActive` names).
+ * Unlike `markTurnActive` there is no single entry to close over: the high-water
+ * mark must be judged against each copy's own previous reading, so the callback
+ * re-derives per application (only the cosmetic `at` stamp differs). Settle-time
+ * callers keep calling `recordContextUsage` directly — settle batches it into
+ * its own fresh-load transaction.
+ */
+export function sampleContextUsage(state: RunState, voice: Voice, usage: ContextUsage): void {
+  mutate(state, (s) => {
+    recordContextUsage(s, voice, usage);
+    return true;
+  });
+}
+
+/**
+ * Append a context intervention to the ledger (the caller owns the save, like
+ * every handler-side mutation). Capture the reading fields BEFORE the
+ * intervention clears them — `contextEventReading` is the companion read.
+ */
+export function recordContextEvent(state: RunState, event: Omit<ContextEvent, 'at'>): void {
+  (state.contextEvents ??= []).push({ ...event, at: new Date().toISOString() });
+}
+
+/**
+ * The pre-intervention fill fields for a context event, from the voice's
+ * current reading (the safety percent's token form) — empty when no reading
+ * exists, so an event never carries a guessed number.
+ */
+export function contextEventReading(state: RunState, voice: Voice): { preTokens?: number; windowTokens?: number } {
+  const usage = state.contextUsage?.[voice];
+  if (!usage) return {};
+  return { preTokens: Math.max(usage.usedTokens, usage.highWaterTokens ?? 0), windowTokens: usage.windowTokens };
+}
+
+/**
+ * Drop a voice's context reading — after a successful `/compact` (the fill is
+ * unknown until the next turn's honest reading re-establishes it) or a session
+ * reset (a fresh session starts near-empty). Clearing rather than guessing keeps
+ * the safety reading honest: `contextSafetyPercent` returns undefined and the
+ * pressure guards stand down until real telemetry returns. The sidecar file is
+ * removed too, so the pane shows nothing rather than a stale pre-compact number.
+ */
+export function clearContextUsage(state: RunState, voice: Voice): void {
+  if (state.contextUsage?.[voice]) delete state.contextUsage[voice];
+  rmSync(join(runDirOf(state.cwd, state.runId), 'context', voice), { force: true });
+}
+
+/**
+ * The SAFETY reading of a voice's context fill: whole percent of the window at
+ * the high-water mark since its last compact/reset (falling back to the last
+ * reading when the mark is absent), or undefined when no reading exists. This —
+ * never the display percent — is what the context-pressure guards consult, so a
+ * turn that grew the session and then reported a lower number still trips them.
+ */
+export function contextSafetyPercent(state: RunState, voice: Voice): number | undefined {
+  const usage = state.contextUsage?.[voice];
+  if (!usage) return undefined;
+  return contextPercent({ usedTokens: Math.max(usage.usedTokens, usage.highWaterTokens ?? 0), windowTokens: usage.windowTokens });
 }
 
 /**

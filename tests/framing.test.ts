@@ -20,7 +20,7 @@ describe('parseGatesAt', () => {
     { input: 'frame,spec', expected: ['frame', 'spec'] },
     { input: 'frame spec  plan', expected: ['frame', 'spec', 'plan'] },
     { input: 'overnight', expected: ['frame', 'spec'] },
-    { input: 'skip-plan', expected: ['frame', 'spec', 'impl'] },
+    { input: 'skip-plan', expected: ['frame', 'spec', 'implement'] },
     { input: 'finish', expected: ['finish'] }, // finish (Open-PR) is attended only when explicitly listed (opt-in)
     { input: 'frame,frame,spec', expected: ['frame', 'spec'] },
   ])('"$input" → $expected (no finish auto-appended; finish is opt-in now)', ({ input, expected }) => {
@@ -28,7 +28,7 @@ describe('parseGatesAt', () => {
   });
 
   plain('an unknown phase fails with the full vocabulary', () => {
-    expect(() => parseGatesAt('frame,ship')).toThrow(/"ship" is not a gate-bearing phase.*frame, spec, plan, impl, finish/);
+    expect(() => parseGatesAt('frame,ship')).toThrow(/"ship" is not a gate-bearing phase.*frame, spec, plan, implement, finish/);
   });
 
   plain('an empty list fails with how to fix it', () => {
@@ -328,8 +328,8 @@ describe('resolveRunInputs', () => {
     expect.soft(fromFrontmatter.framingRaw).toContain('gates_at: overnight');
     expect.soft(fromFrontmatter.gatesAt).toEqual(['frame', 'spec']);
 
-    const flagWins = await resolveRunInputs(projectDir, { framing: 'brief.md', gatesAt: 'impl', spec: 'docs/draft.md' });
-    expect.soft(flagWins.gatesAt).toEqual(['impl']);
+    const flagWins = await resolveRunInputs(projectDir, { framing: 'brief.md', gatesAt: 'implement', spec: 'docs/draft.md' });
+    expect.soft(flagWins.gatesAt).toEqual(['implement']);
     expect.soft(flagWins.specPath).toBe('docs/draft.md');
   });
 

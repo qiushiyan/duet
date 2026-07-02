@@ -67,6 +67,16 @@ export interface WorkerTurn {
    * verbatim), never an aborted WorkerTurn.
    */
   aborted?: true;
+  /**
+   * The turn ended because the session hit its context-window ceiling (claude
+   * only — codex auto-compacts). It qualifies whatever checkpoint flag rides
+   * beside it: an `interrupted` turn whose failure was the window is NOT
+   * "resumable with a short continuation" — any further prompt into the session
+   * bounces off the same ceiling, so the recovery is a `/compact` first (which
+   * still fits: a compaction request carries no new content), then resume.
+   * Overflow evidence dominates the generic continuation prescription.
+   */
+  contextExhausted?: true;
 }
 
 /**
@@ -114,6 +124,17 @@ export interface RunTurnOptions {
    * conversion lands separately), never this option's concern.
    */
   timeoutMs?: number;
+  /**
+   * Cut the turn when the session's fill reaches this many tokens — the
+   * context-deadline sibling of the wall-clock cap. Opt-in and claude-headless
+   * only: absent ⇒ no context deadline, byte-for-byte today (the codex adapter
+   * ignores it by design — codex auto-compacts — and the harness never passes
+   * it for a `/compact` turn, whose whole job is running at high fill). The
+   * harness computes it as the emergency band of the role's last-known window;
+   * a cut settles as an aborted + context-exhausted checkpoint (compact, then
+   * resume), never an infra failure.
+   */
+  contextCapTokens?: number;
   /**
    * Fired with this turn's provider session id as EARLY as the provider knows
    * it — before spawn (claude: a freshly minted id, or the resume id) or on the

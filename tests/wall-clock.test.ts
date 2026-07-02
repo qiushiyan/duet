@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import { WALL_CLOCK_TICK_MS, WallClockExceededError, runWithWallClockDeadline } from '../src/providers/wall-clock.ts';
+import { ContextDeadlineExceededError, WALL_CLOCK_TICK_MS, WallClockExceededError, runWithContextDeadline, runWithWallClockDeadline } from '../src/providers/wall-clock.ts';
 import { FakeWorker } from './helpers/fixtures.ts';
 
 /**
@@ -199,5 +199,87 @@ describe('runWithWallClockDeadline (S3 — the wall-clock backstop)', () => {
   test('a FakeWorker can model an overrun by scripting a WallClockExceededError', async () => {
     const worker = new FakeWorker('claude', [new WallClockExceededError(90 * 60_000)]);
     await expect(worker.runTurn({ prompt: 'build it' })).rejects.toBeInstanceOf(WallClockExceededError);
+  });
+});
+describe('runWithContextDeadline (the window-fill sibling of the wall-clock backstop)', () => {
+  test('a run that resolves before the fill reaches the limit yields its value; abort never called', async () => {
+    const clock = fakeClock();
+    const abort = vi.fn();
+    const result = await runWithContextDeadline({
+      run: Promise.resolve('done'),
+      abort,
+      sample: () => 500_000,
+      limitTokens: 850_000,
+      schedule: clock.schedule,
+    });
+    expect.soft(result).toBe('done');
+    expect.soft(abort).not.toHaveBeenCalled();
+    expect.soft(clock.cancelled).toBe(true);
+  });
+
+  test('a sample at/over the limit cuts the turn: abort once, DRAIN, then the typed rejection', async () => {
+    const clock = fakeClock();
+    let killed: (() => void) | undefined;
+    const run = new Promise<string>((_, reject) => {
+      killed = () => reject(new Error('killed'));
+    });
+    const abort = vi.fn(() => killed?.());
+    let fill = 400_000;
+    const promise = runWithContextDeadline({
+      run,
+      abort,
+      sample: () => fill,
+      limitTokens: 850_000,
+      schedule: clock.schedule,
+    });
+    const assertion = expect(promise).rejects.toBeInstanceOf(ContextDeadlineExceededError);
+    clock.fireTick(); // below the limit — no cut
+    expect.soft(abort).not.toHaveBeenCalled();
+    fill = 870_000;
+    clock.fireTick(); // the fill crossed the emergency line
+    await assertion; // rejects only after the killed run settled (the drain)
+    expect.soft(abort).toHaveBeenCalledTimes(1);
+  });
+
+  test('an undefined sample (telemetry silence) never cuts a healthy turn', async () => {
+    const clock = fakeClock();
+    const abort = vi.fn();
+    let finish!: (v: string) => void;
+    const promise = runWithContextDeadline({
+      run: new Promise<string>((r) => (finish = r)),
+      abort,
+      sample: () => undefined,
+      limitTokens: 850_000,
+      schedule: clock.schedule,
+    });
+    clock.fireTick();
+    clock.fireTick();
+    expect.soft(abort).not.toHaveBeenCalled();
+    finish('done');
+    await expect(promise).resolves.toBe('done');
+  });
+
+  test('an unkillable run still rejects at the drain grace, exactly once', async () => {
+    const clock = fakeClock();
+    const abort = vi.fn();
+    const promise = runWithContextDeadline({
+      run: new Promise<string>(() => {}),
+      abort,
+      sample: () => 900_000,
+      limitTokens: 850_000,
+      schedule: clock.schedule,
+    });
+    const assertion = expect(promise).rejects.toBeInstanceOf(ContextDeadlineExceededError);
+    clock.fireTick(); // cut → abort + drain begins
+    clock.fireGrace(); // the run never settles → the grace cap rejects anyway
+    await assertion;
+    expect.soft(abort).toHaveBeenCalledTimes(1);
+  });
+
+  test('the error names the fill and classifies as context-overflow territory ("context-window cap")', () => {
+    const err = new ContextDeadlineExceededError(870_000, 850_000);
+    expect.soft(err.kind).toBe('context-deadline');
+    expect.soft(err.message).toContain('context-window cap');
+    expect.soft(err.message).toContain('870000');
   });
 });

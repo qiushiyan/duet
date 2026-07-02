@@ -13,7 +13,7 @@ import {
   settlePendingTurn,
 } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
-import { renderTurnResult, settleTurn, stageSessionId, startHeartbeat } from './tools.ts';
+import { contextCapFor, renderTurnResult, settleTurn, stageSessionId, startHeartbeat } from './tools.ts';
 
 /**
  * The interactive host's pending-turn engine — what makes send_prompt async.
@@ -213,6 +213,9 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
         // into a safe terminal state (failSafe) instead of an unhandled rejection
         // plus a record stranded `running`. stopHeartbeat rides a finally so the
         // 5-minute interval can never leak, on any exit.
+        // The context deadline, gated exactly as on the blocking host (one
+        // helper, two call sites): claude-persistent-headless, never a /compact.
+        const contextCapTokens = contextCapFor(fresh, role, isCompactTurn === true);
         Promise.resolve()
           .then(() =>
             providerFor(providers, role).runTurn({
@@ -221,6 +224,7 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
               readOnly: readOnlyFor(role),
               cwd: fresh.cwd,
               ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+              ...(contextCapTokens !== undefined ? { contextCapTokens } : {}),
               // Stage this turn's id onto `fresh` — the same copy startHeartbeat
               // closed over above — so the poll locates the transcript mid-turn.
               onSessionId: stageSessionId(fresh, role, log),

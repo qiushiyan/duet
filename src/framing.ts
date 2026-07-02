@@ -51,9 +51,9 @@ export const TEMPLATES_DIR = join(".duet", "templates");
 export const FRAMING_TEMPLATE = `---
 # Machine-parsed options (fixed values the harness acts on; judgment-weighed
 # detail belongs in the prose below). Uncomment to use.
-# workflow: full          — full (default): frame → spec → plan → impl →
+# workflow: full          — full (default): frame → spec → plan → implement →
 #                           finish (reconcile docs, open a PR). rir:
-#                           research → implement → review → publish (open a PR;
+#                           research → implement → review → finish (open a PR;
 #                           no spec/plan), for small, well-understood work.
 # gates_at: overnight     — phases whose gates you attend; the rest are
 #                           pre-authorized and auto-cross with packets

@@ -524,7 +524,7 @@ describe('probeRunPosition — the interactive resting model (Stage 1)', () => {
     onTestFinished,
   }) => {
     // The plan-gate handoff (full's handoffGate): crossInteractive persists the
-    // NEXT phase's loop rest (implLoop), then orchestrationHost is cleared and a
+    // NEXT phase's loop rest (implementLoop), then orchestrationHost is cleared and a
     // headless _drive is spawned (cli.ts). The now-HEADLESS probe must read that
     // phase-loop snapshot as the phase the driver runs — the regression was that
     // the headless branch only handled quiescent (gate/flag) snapshots, so a
@@ -533,7 +533,7 @@ describe('probeRunPosition — the interactive resting model (Stage 1)', () => {
     restInteractiveAt(interactiveRun, [
       { type: 'phase.advance' }, { type: 'human.approve' }, // frame → spec
       { type: 'phase.advance' }, { type: 'human.approve' }, // spec → plan
-      { type: 'phase.advance' }, { type: 'human.approve' }, // plan → impl (the handoff)
+      { type: 'phase.advance' }, { type: 'human.approve' }, // plan → implement (the handoff)
     ]);
     const handed = loadRunState(projectDir, interactiveRun.runId);
     delete handed.orchestrationHost; // the handoff: the run is headless from here
@@ -543,7 +543,7 @@ describe('probeRunPosition — the interactive resting model (Stage 1)', () => {
     // bare `duet continue` re-enters from this very snapshot — not the entry phase.
     expect.soft(probeRunPosition(loadRunState(projectDir, interactiveRun.runId))).toEqual({
       kind: 'crashed',
-      phase: 'impl',
+      phase: 'implement',
     });
 
     // The live headless driver makes it `running` at that same phase — what the
@@ -556,7 +556,7 @@ describe('probeRunPosition — the interactive resting model (Stage 1)', () => {
     expect.soft(probeRunPosition(loadRunState(projectDir, interactiveRun.runId))).toEqual({
       kind: 'running',
       pid: child.pid,
-      phase: 'impl',
+      phase: 'implement',
     });
   });
 
@@ -634,7 +634,7 @@ describe('crossInteractive + the interactive continue model (Slice 4)', () => {
     expect(probeRunPosition(loadRunState(projectDir, interactiveRun.runId))).toEqual({ kind: 'interactive', phase: 'spec' });
   });
 
-  test('plan-gate approve reaches implLoop (marker-then-human ordering), not parked at the gate', ({
+  test('plan-gate approve reaches implementLoop (marker-then-human ordering), not parked at the gate', ({
     projectDir,
     interactiveRun,
   }) => {
@@ -654,7 +654,7 @@ describe('crossInteractive + the interactive continue model (Slice 4)', () => {
     // instead have sent the human event at planLoop (ignored), replayed the marker,
     // and parked at planApprovalGate. The marker-then-human ordering is the fix.
     expect.soft(after.terminalMarker).toBeUndefined();
-    expect.soft(probeRunPosition(after)).toEqual({ kind: 'interactive', phase: 'impl' });
+    expect.soft(probeRunPosition(after)).toEqual({ kind: 'interactive', phase: 'implement' });
   });
 
   test('interactiveContinueAction (full): handoffGate-approve and any --headless hand off; earlier gates rest inline', () => {
@@ -794,7 +794,7 @@ describe('gate pre-authorization (gates_at)', () => {
     const stop = await driveToQuiescence(run, undefined, { machine, notify });
 
     expect.soft(stop.snapshot.value).toBe('openPrGate');
-    expect.soft(calls).toEqual(['frame', 'spec', 'plan', 'impl', 'finish']);
+    expect.soft(calls).toEqual(['frame', 'spec', 'plan', 'implement', 'finish']);
     // The four gates before finish auto-cross; finish opens the PR and
     // stops at its (attended) openPrGate.
     expect.soft(loadRunState(projectDir, run.runId).autoApprovals?.map((a) => a.gate)).toEqual([
@@ -866,7 +866,7 @@ describe('enterAfk — the mid-session AFK handoff (#1)', () => {
     expect.soft(persisted.orchestrationHost).toBeUndefined(); // handed off to headless
     expect.soft(probeRunPosition(persisted)).not.toEqual({ kind: 'gate', phase: 'frame' }); // frame crossed
     expect.soft(split.attended).toEqual(['spec']);
-    expect.soft(split.preAuthorized).toEqual(['frame', 'plan', 'impl', 'finish']);
+    expect.soft(split.preAuthorized).toEqual(['frame', 'plan', 'implement', 'finish']);
   });
 
   test('is legal at a PRE-AUTHORIZED interactive gate — legality keys on the gate position, not gateAttended (the F1 case)', async ({
@@ -955,7 +955,7 @@ describe('the severity hold — a high human decision withholds a NON-EXPLICIT c
     // an overnight posture (everything pre-authorized) it must convert the Ship
     // auto-cross into an attended stop, not ship past a broken target.
     run.gatesAt = []; // attend nothing — frame/spec/plan/impl all pre-authorized
-    run.phaseSummaries.impl = {
+    run.phaseSummaries.implement = {
       summary: 'shipped',
       artifacts: [],
       humanDecisions: [{ title: 'contract assertion A3 failed: bad-password login returns 500, not 401', severity: 'high' }],
@@ -1191,7 +1191,7 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
 
   test('the pre-authorized plan auto-cross freezes the contract (driveToQuiescence)', async ({ projectDir }) => {
     const { state, contractPath } = await contractRun(projectDir);
-    state.gatesAt = ['impl']; // frame/spec/plan pre-authorized → plan auto-crosses; impl attended → stop
+    state.gatesAt = ['implement']; // frame/spec/plan pre-authorized → plan auto-crosses; impl attended → stop
     saveRunState(state);
     const { machine } = scriptedMachine([advanced, advanced, advanced, advanced]);
 

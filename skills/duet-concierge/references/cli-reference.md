@@ -7,8 +7,8 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | Command | What it does |
 |---|---|
 | `duet new --framing <file>` | Start a run from a framing file (the project briefing — the only place project knowledge enters). Returns immediately; the first phase runs in a detached driver. Runs the **full** arc unless `--workflow` says otherwise. |
-| `duet new --workflow <full\|rir> --framing <file>` | Pick the arc. **full** (default): frame → spec → plan → implementation → PR. **rir**: research → implement → one review round → `publish` (reconcile docs → PR), with no spec or plan — for small, well-understood work. Also settable as `workflow:` in the framing frontmatter; the flag wins. |
-| `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates; the rest are pre-authorized and auto-cross with their packets recorded. Phases and presets are **workflow-specific**. full: gates `frame, spec, plan, impl, finish` — **default `overnight` (= frame,spec)**; presets `skip-plan` (= walk away at spec approval, return at the Ship gate) and `afk` (= attend none from the start — every gate pre-authorized, the consultant's safety nets intact). The Open-PR gate (end of `finish`) sits *after* the open — the PR auto-opens and the gate auto-crosses to done; list `finish` to attend a post-open review stop. rir: gates `research, implement, publish` — or the preset `afk` (= attend none, run straight to done with the PR open). |
+| `duet new --workflow <full\|rir> --framing <file>` | Pick the arc. **full** (default): frame → spec → plan → implementation → PR. **rir**: research → implement (build, review, reconcile docs) → `finish` (open the PR), with no spec or plan — for small, well-understood work. Also settable as `workflow:` in the framing frontmatter; the flag wins. |
+| `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates; the rest are pre-authorized and auto-cross with their packets recorded. Phases and presets are **workflow-specific**. full: gates `frame, spec, plan, implement, finish` — **default `overnight` (= frame,spec)**; presets `skip-plan` (= walk away at spec approval, return at the Ship gate) and `afk` (= attend none from the start — every gate pre-authorized, the consultant's safety nets intact). The Open-PR gate (end of `finish`) sits *after* the open — the PR auto-opens and the gate auto-crosses to done; list `finish` to attend a post-open review stop. rir: gates `research, implement, finish` — or the preset `afk` (= attend none, run straight to done with the PR open). |
 | `duet new --framing <file> --gateless` | Walk away from the **start**: pre-authorize every gate (the run flows to an open PR with no attended stop) and, if a consultant is bound, keep only its **non-holding** work — its framing third-opinion still folds into the direction and the acceptance-contract **verify** still guards the build, with its mid-run bet audits off. A genuine product `high` or a contract that can't be met still stops it; `ask_human` and the merge stay the human's. Conflicts with `--gates-at` and `--interactive`. Also settable as `gateless:` in the framing frontmatter (the flag wins). |
 | `duet new --spec <path>` | Start at the spec review loop from a draft spec (skips the FRAME phase). **full-only** — rir has no spec phase and rejects `--spec`. |
 | `duet new --framing <file> --retry-infra <n>` | Set the headless run's bounded auto-retry budget for transient infra failures (network/server/rate-limit) — **default 3** for a new run, `--retry-infra 0` disables, an old run started without the field stays off; or set `retry_infra:` in the framing frontmatter (the flag wins). `auth` retries once then escalates; login/quota/dns/unknown never retry; exhaustion flags. |
@@ -67,7 +67,7 @@ Top-level fields:
 **`running`** — a phase is live; `duet steer` is the channel.
 
 ```json
-{ "kind": "running", "pid": 4242, "phase": "impl" }
+{ "kind": "running", "pid": 4242, "phase": "implement" }
 ```
 
 **`gate`** — a decision is waiting. Present `packet.summary` (it is written to be decided from), then act with one of `commands`. When `packet.humanDecisions` is present, scan it first: empty or all-`severity:"low"` is safe to relay an approve; any `"high"` is a genuine product decision — hold and put it to the human. It is **signal-only**; nothing crosses the gate but the human's command.
@@ -75,7 +75,7 @@ Top-level fields:
 ```json
 {
   "kind": "gate",
-  "phase": "impl",
+  "phase": "implement",
   "gate": "shipGate",
   "heading": "SHIP gate — the orchestrator's packet (CEO summary first)",
   "hint": "(verify in your environment before deciding — …)",
@@ -106,7 +106,7 @@ Top-level fields:
 **`crashed`** — the phase died mid-flight (infrastructure, not content). Report it; resuming re-enters from the transcripts.
 
 ```json
-{ "kind": "crashed", "phase": "impl", "command": "duet continue <run-id>" }
+{ "kind": "crashed", "phase": "implement", "command": "duet continue <run-id>" }
 ```
 
 **`abandoned`** — the human stopped the run with `duet abandon`. Report it as stopped-on-purpose, not failed; it stays revivable with `revive`, or `purge` wipes it.
@@ -133,7 +133,7 @@ A markdown file: an optional `---`-fenced frontmatter block holding only fixed m
 ```markdown
 ---
 # workflow: full           — full (default) or rir. full: frame → spec → plan →
-#                             impl → PR. rir: research → implement → publish
+#                             implement → PR. rir: research → implement → finish
 #                             (a PR; no spec/plan), for small work.
 # gates_at: overnight       — phases whose gates the human attends; the rest
 #                             auto-cross. full's default is overnight. Presets
@@ -172,7 +172,7 @@ A markdown file: an optional `---`-fenced frontmatter block holding only fixed m
 - Environment-only actions (migrations, deploys): flag the human — never attempt.
 
 # Docs
-<for reconciling docs after the implementation (full's `finish` phase, rir's
- `publish` phase): a docs-update skill if one exists, else where docs live and
- what a change like this should update>
+<for reconciling docs at the end of the implement phase (both arcs — docs are
+ reconciled as the last build step, before the Ship gate): a docs-update skill if
+ one exists, else where docs live and what a change like this should update>
 ```

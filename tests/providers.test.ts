@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 import { COMPACT_CONFIRMATION, ClaudeWorker, claudeArgs, claudeExecaOptions, parseClaudeTurn, recoverClaudeFailure } from '../src/providers/claude.ts';
 import { CodexWorker, codexThreadOptions, parseRolloutContext, reconstructCodexTurn, recoverCodexAbort } from '../src/providers/codex.ts';
-import { WALL_CLOCK_DRAIN_GRACE_MS, WALL_CLOCK_TICK_MS, WallClockExceededError } from '../src/providers/wall-clock.ts';
+import { ContextDeadlineExceededError, WALL_CLOCK_DRAIN_GRACE_MS, WALL_CLOCK_TICK_MS, WallClockExceededError } from '../src/providers/wall-clock.ts';
+import { classifyError } from '../src/worker-health.ts';
 import type { ThreadEvent } from '@openai/codex-sdk';
 import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn, sessionIdForNonce } from '../src/providers/interactive-claude.ts';
 import { claudePaneLaunchCommand } from '../src/providers/pane.ts';
@@ -640,6 +641,89 @@ describe('context-window probes (per-provider math, one shape)', () => {
     expect.soft(parseClaudeTurn(noWindow, 'p').context).toBeUndefined();
   });
 
+  test('claude: a trailing zero-usage assistant message (the error echo) never zeroes the reading', () => {
+    // The 20260701 wedge: an error-terminated turn's last assistant message is
+    // the CLI's error echo with zeroed usage — taking it verbatim reported
+    // "context 0%" on a session that died of overflow at 98%. The last REAL
+    // request's reading must win.
+    const result = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: 'done',
+      session_id: 'sess-1',
+      modelUsage: { 'claude-opus-4-8[1m]': { contextWindow: 1_000_000 } },
+    };
+    const stdout = JSON.stringify([
+      { type: 'assistant', message: { usage: { input_tokens: 900_000, cache_read_input_tokens: 70_000, output_tokens: 500 } } },
+      { type: 'assistant', message: { usage: { input_tokens: 0, output_tokens: 0 } } },
+      result,
+    ]);
+    expect(parseClaudeTurn(stdout, 'p').context).toEqual({ usedTokens: 970_500, windowTokens: 1_000_000 });
+  });
+
+  test('claude: only zero-usage assistant messages means no reading at all', () => {
+    const result = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: 'x',
+      session_id: 's',
+      modelUsage: { 'claude-opus-4-8[1m]': { contextWindow: 1_000_000 } },
+    };
+    const stdout = JSON.stringify([{ type: 'assistant', message: { usage: { input_tokens: 0, output_tokens: 0 } } }, result]);
+    expect(parseClaudeTurn(stdout, 'p').context).toBeUndefined();
+  });
+
+  test('claude: an interrupted turn keeps the last honest reading, not the error echo’s zero', () => {
+    // The mid-response failure shape from the wedge night: an is_error envelope
+    // whose partial work settles as an interrupted checkpoint. Its context must
+    // come from the last real request — undefined would also be acceptable, but
+    // 0% (the old behavior) actively misled the send-gate.
+    const stdout = JSON.stringify([
+      {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'text', text: 'real partial work' }],
+          usage: { input_tokens: 950_000, cache_read_input_tokens: 20_000, output_tokens: 400 },
+        },
+      },
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'Prompt is too long' }], usage: { input_tokens: 0, output_tokens: 0 } } },
+      {
+        type: 'result',
+        subtype: 'error_during_execution',
+        is_error: true,
+        result: 'Prompt is too long',
+        session_id: 'sess-wedge',
+        modelUsage: { 'claude-opus-4-8[1m]': { contextWindow: 1_000_000 } },
+      },
+    ]);
+    const turn = parseClaudeTurn(stdout, 'continue the keystone');
+    expect.soft(turn.interrupted).toBe(true);
+    expect.soft(turn.contextExhausted).toBe(true); // the failure reason WAS the window ceiling
+    expect.soft(turn.context).toEqual({ usedTokens: 970_400, windowTokens: 1_000_000 });
+  });
+
+  test('claude: a non-overflow interruption is NOT marked context-exhausted', () => {
+    const stdout = JSON.stringify([
+      {
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'real partial work' }], usage: { input_tokens: 50_000, output_tokens: 200 } },
+      },
+      {
+        type: 'result',
+        subtype: 'error_during_execution',
+        is_error: true,
+        result: 'Connection closed mid-response',
+        session_id: 'sess-drop',
+        modelUsage: { 'claude-opus-4-8[1m]': { contextWindow: 1_000_000 } },
+      },
+    ]);
+    const turn = parseClaudeTurn(stdout, 'p');
+    expect.soft(turn.interrupted).toBe(true);
+    expect.soft(turn.contextExhausted).toBeUndefined(); // a plain drop keeps the continuation recovery
+  });
+
   test('codex: the rollout’s last token_count event wins', () => {
     const tail = [
       JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { total_tokens: 30_000 }, model_context_window: 258_400 } } }),
@@ -817,6 +901,30 @@ describe('recoverClaudeFailure (S5 — the accepted-abort vs never-accepted spli
     expect.soft(turn.sessionId).toBe('sess-wc');
   });
 
+  test('a ContextDeadlineExceededError with an accepted transcript ⇒ aborted + context-exhausted checkpoint', () => {
+    const turn = recoverClaudeFailure(new ContextDeadlineExceededError(870_000, 850_000), 'do it', {
+      sessionId: 'sess-ctx',
+      turnStartedAt,
+      readTail: () => ({ jsonl: acceptedTail }),
+    });
+    expect.soft(turn.aborted).toBe(true);
+    expect.soft(turn.contextExhausted).toBe(true); // the window ran out, not time — compact-then-resume
+    expect.soft(turn.sessionId).toBe('sess-ctx');
+  });
+
+  test('a never-accepted context cut throws a message that classifies as context-overflow, never generic infra', () => {
+    try {
+      recoverClaudeFailure(new ContextDeadlineExceededError(870_000, 850_000), 'do it', {
+        sessionId: 's',
+        turnStartedAt,
+        readTail: () => undefined,
+      });
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect(classifyError((err as Error).message)).toBe('context-overflow'); // the compaction prescription fires
+    }
+  });
+
   test('a timeout with only PRE-start records (resumed session, this turn never accepted) ⇒ throws infra', () => {
     expect(() =>
       recoverClaudeFailure(timeoutErr(), 'do it', { sessionId: 's', turnStartedAt, readTail: () => ({ jsonl: preStartTail }) }),
@@ -968,7 +1076,7 @@ describe('reconstructCodexTurn (the codex event-stream seam)', () => {
 
 describe('createWorkers', () => {
   test('binds each role to its provider with the phase rails applied', () => {
-    const workers = createWorkers(DEFAULT_BINDINGS, 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
+    const workers = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
     expect.soft(workers.implementer.name).toBe('claude');
     expect.soft(workers.reviewer.name).toBe('codex');
   });
@@ -977,17 +1085,18 @@ describe('createWorkers', () => {
     // The undefined cap is now a legal rail (budgets off); it flows to the
     // ClaudeWorker's config, where claudeArgs leaves --max-budget-usd off the
     // argv (pinned directly by the claudeArgs omission test above).
-    const workers = createWorkers(DEFAULT_BINDINGS, 'spec', { workerBudgetUsd: undefined, timeoutMs: 60_000 });
+    const workers = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: undefined, timeoutMs: 60_000 });
     expect.soft(workers.implementer).toBeInstanceOf(ClaudeWorker);
     expect.soft(workers.implementer.name).toBe('claude');
   });
 
   test('an interactive claude binding builds the interactive transport; headless stays ClaudeWorker', () => {
-    const headless = createWorkers(DEFAULT_BINDINGS, 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
+    const headless = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
     expect.soft(headless.implementer).toBeInstanceOf(ClaudeWorker);
 
     const interactive = createWorkers(
       { ...DEFAULT_BINDINGS, implementer: { provider: 'claude', model: 'claude-opus-4-8', transport: 'interactive' } },
+      'full',
       'spec',
       { workerBudgetUsd: 10, timeoutMs: 60_000 },
     );
@@ -1016,20 +1125,21 @@ describe('createWorkers', () => {
           stdout: JSON.stringify([{ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 's' }]),
         });
       });
-      await createWorkers(bindings, phase, { workerBudgetUsd: 10, timeoutMs: 60_000 }).implementer.runTurn({ prompt: 'go', cwd: '/x' });
+      await createWorkers(bindings, 'full', phase, { workerBudgetUsd: 10, timeoutMs: 60_000 }).implementer.runTurn({ prompt: 'go', cwd: '/x' });
       return argv[argv.indexOf('--model') + 1]!;
     };
     expect.soft(await modelOnArgv('plan')).toBe('claude-opus-4-8'); // planning keeps the smart base
-    expect.soft(await modelOnArgv('impl')).toBe('claude-sonnet-5'); // the build switches to the impl model
+    expect.soft(await modelOnArgv('implement')).toBe('claude-sonnet-5'); // the build switches to the impl model
   });
 
   test('the consultant provider is built only when bound; an un-enabled run has exactly today’s two', () => {
-    const unbound = createWorkers(DEFAULT_BINDINGS, 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
+    const unbound = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
     expect.soft(unbound).not.toHaveProperty('consultant');
     expect.soft(unbound.consultant).toBeUndefined();
 
     const bound = createWorkers(
       { ...DEFAULT_BINDINGS, consultant: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' } },
+      'full',
       'spec',
       { workerBudgetUsd: 10, timeoutMs: 60_000 },
     );
@@ -1040,13 +1150,14 @@ describe('createWorkers', () => {
 
 describe('providerFor (narrow-or-prescribed-error over the optional consultant)', () => {
   test('returns a built provider, and throws a prescribed-recovery error for an unbuilt role', () => {
-    const unbound = createWorkers(DEFAULT_BINDINGS, 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
+    const unbound = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
     expect.soft(providerFor(unbound, 'implementer').name).toBe('claude');
     expect.soft(providerFor(unbound, 'reviewer').name).toBe('codex');
     expect.soft(() => providerFor(unbound, 'consultant')).toThrow(/no consultant worker is built/);
 
     const bound = createWorkers(
       { ...DEFAULT_BINDINGS, consultant: { provider: 'codex' } },
+      'full',
       'spec',
       { workerBudgetUsd: 10, timeoutMs: 60_000 },
     );

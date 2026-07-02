@@ -26,6 +26,12 @@ Worker budget caps are per turn (opt-in, off by default) — a fresh turn carrie
 
 The 2026-06-12 fix was transparency, not a model: `send_prompt` and the impl entry brief now state that budget is per-turn and that running low means splitting work across turns, never shrinking scope. That may suffice — the descope also had a legitimate risk argument. If post-fix runs still show budget-shaped scope, the next step is an explicit run-level budget the orchestrator can reason about (`budget_usd` is pre-approved as a framing-frontmatter key under the boundary rule). The opt-in `--budget` knob added since is still per-turn, not this model.
 
+## Context-band calibration
+
+The context-pressure bands (75% compaction-due, 85% structural enforcement — constants in `src/context-guard.ts`) are tuned from one incident and one probe: the 20260701 wedge, plus measured margins (rejection at ~97.7% of the nominal window; single-turn growth of hundreds of thousands of tokens). What we believe now: 85% leaves headroom for the 30-second sampling lag, one burst round, and the recovery compact itself; 75% is early enough that a compact is still cheap and its post-compact floor low.
+
+What would change the answer is the `contextEvents` ledger across real overnight runs. Cutoffs firing despite the 75% nudge → the orchestrator compacts too late or the caution band is too high. Salvage ladders that escalate to reset → the post-compact floor, not the bands, is the problem. A ledger that stays empty for months under real load → the bands could relax. Either way the dial is the constants' *values* — they deliberately never become per-run config.
+
 ## The consultant's value
 
 The consultant is a bet on a bet: that a deliberately low-context, ephemeral, cross-family reviewer challenges the *premise* where the embedded reviewer — invested in the run's accumulated context — is strong on execution and blind to it. The mechanism is built and live-verified; its value is still thin on evidence.

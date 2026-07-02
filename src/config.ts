@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { isPostHandoffPhase } from './phases.ts';
-import type { PhaseName } from './phases.ts';
+import type { PhaseName, WorkflowName } from './phases.ts';
 
 /**
  * Run config — the one config duet ships (docs/automation-design.md
@@ -105,7 +105,7 @@ export const DEFAULT_CLAUDE_MODEL: Record<BindableRole, string> = {
  * `budgetFor`/`gateAttended` (pure, absent-knob ⇒ identity). Pre-/at-handoff
  * phases (the planning arc: frame, spec, plan) run the base binding's model;
  * phases strictly after the handoff gate (the AFK build + finishing tail — full's
- * {impl, finish}, rir's {implement, publish}) run the optional `impl` override's
+ * {implement, finish}, rir's {implement, finish}) run the optional `impl` override's
  * model when one is bound. Absent `impl` ⇒ the base model for every phase,
  * byte-for-byte today.
  *
@@ -115,10 +115,10 @@ export const DEFAULT_CLAUDE_MODEL: Record<BindableRole, string> = {
  * codex implementer has no model and never reaches here (createWorkers' codex
  * branch skips it); the base-model fallback keeps the function total regardless.
  */
-export function implementerModelFor(bindings: RoleBindings, phase: PhaseName): string {
+export function implementerModelFor(bindings: RoleBindings, workflow: WorkflowName, phase: PhaseName): string {
   const binding = bindings.implementer;
   const base = binding.model ?? DEFAULT_CLAUDE_MODEL.implementer;
-  if (binding.provider === 'claude' && binding.impl && isPostHandoffPhase(phase)) {
+  if (binding.provider === 'claude' && binding.impl && isPostHandoffPhase(workflow, phase)) {
     return binding.impl.model ?? DEFAULT_CLAUDE_MODEL.implementer;
   }
   return base;

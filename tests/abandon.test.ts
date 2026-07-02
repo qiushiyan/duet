@@ -187,7 +187,7 @@ describe('status at an abandoned / done stop', () => {
   });
 
   test('steering an abandoned run is refused toward revive/new', ({ run }) => {
-    const copy = steerRefusal({ kind: 'abandoned' }, run.runId);
+    const copy = steerRefusal('full', { kind: 'abandoned' }, run.runId);
     expect.soft(copy).toContain('abandoned');
     expect.soft(copy).toContain(`duet continue ${run.runId}`);
   });

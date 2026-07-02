@@ -89,7 +89,7 @@ describe('the stdio-MCP adapter over the kernel registry', () => {
 
     // The safe read-only poke (readOnlyHint, no side effects): identical bytes to
     // calling the renderer directly proves a real handler ran over the boundary.
-    expect(text).toBe(renderSnippetLibrary({ phase: 'spec', sentTo: {}, all: undefined }));
+    expect(text).toBe(renderSnippetLibrary({ phase: 'spec', workflow: 'full', sentTo: {}, all: undefined }));
     await client.close();
   });
 
@@ -174,13 +174,13 @@ describe('the run-scoped, phase-less kernel server (Stage 1)', () => {
 
     // Resting at frame (no snapshot) → the frame-focused library.
     expect.soft(textOf(await kernel.callTool('list_snippets', {}, {}))).toBe(
-      renderSnippetLibrary({ phase: 'frame', sentTo: {}, all: undefined }),
+      renderSnippetLibrary({ phase: 'frame', workflow: 'full', sentTo: {}, all: undefined }),
     );
 
     // Advance on disk to rest at spec; the next call on the same kernel follows.
     restAtSpec(loadRunState(projectDir, interactiveRun.runId));
     expect.soft(textOf(await kernel.callTool('list_snippets', {}, {}))).toBe(
-      renderSnippetLibrary({ phase: 'spec', sentTo: {}, all: undefined }),
+      renderSnippetLibrary({ phase: 'spec', workflow: 'full', sentTo: {}, all: undefined }),
     );
   });
 
@@ -416,7 +416,7 @@ describe('the run-scoped, phase-less kernel server (Stage 1)', () => {
       try {
         expect.soft((await client.listTools()).tools.map((t) => t.name).sort()).toEqual(INTERACTIVE_TOOLS); // incl check_turns
         const result = await client.callTool({ name: 'list_snippets', arguments: {} });
-        expect.soft(textOf(result)).toBe(renderSnippetLibrary({ phase: 'frame', sentTo: {}, all: undefined }));
+        expect.soft(textOf(result)).toBe(renderSnippetLibrary({ phase: 'frame', workflow: 'full', sentTo: {}, all: undefined }));
       } finally {
         await client.close();
         await transport.close();
