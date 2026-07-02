@@ -625,7 +625,7 @@ export function renderTurnResult(
     content.push(
       block(
         outcome.contextExhausted
-          ? `(the turn ended at the session's context-window ceiling — the partial work above is committed and the session is intact, but any further prompt would bounce off the same ceiling. Send the ${role} a "/compact " body with your adapted compact instructions first (a compaction request still fits — it adds no new content), then resume with a short continuation. This is a checkpoint, not a failure.)`
+          ? `(the turn ended at the session's context-window ceiling — the partial work above is committed and the session is intact, but any further prompt would bounce off the same ceiling. Send the ${role} a "/compact " body with your adapted compact-inflight instructions first (a compaction request still fits — it adds no new content), then resume with a short continuation. This is a checkpoint, not a failure.)`
           : `(the connection dropped mid-response — the worker's partial work above is committed to its session, which is resumable. Send it a short continuation to finish from where it stopped; do not re-send the original prompt. This is a checkpoint, not a failure.)`,
       ),
     );
@@ -644,7 +644,7 @@ export function renderTurnResult(
         shouldResetAfterCompactAbort(role, meta.isCompactTurn === true, true)
           ? `(the /compact turn ran to its cap and was aborted — its session is un-compacted and bloated, so resuming it is the wrong move. duet has RESET the ${role} to a fresh session; re-anchor it by sending the recover-context snippet (a project/status overview + reread), NOT the original /compact or a resume. This is a recovery checkpoint, not a failure.)`
           : outcome.contextExhausted
-            ? `(the worker turn was cut at the session's context cap — it saw your prompt and committed work may be on disk, but the session is nearly full, so a bare resume would run straight back into the same ceiling. Send the ${role} a "/compact " body with your adapted compact instructions first (a compaction request still fits), then resume with a short continuation to finish the remainder. This is a scheduled maintenance stop, not a failure.)`
+            ? `(the worker turn was cut at the session's context cap — it saw your prompt and committed work may be on disk, but the session is nearly full, so a bare resume would run straight back into the same ceiling. Send the ${role} a "/compact " body with your adapted compact-inflight instructions first (a compaction request still fits), then resume with a short continuation to finish the remainder. This is a scheduled maintenance stop, not a failure.)`
             : `(the worker ran to its time cap and was aborted — but it saw your prompt and committed work may be on disk, in a resumable session. Resume that session with a short continuation to finish the remainder; do NOT re-send the original prompt (it would duplicate the conversation). This is a checkpoint, not a failure.)`,
       ),
     );
