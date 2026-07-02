@@ -40,6 +40,18 @@ describe('latestTranscriptUsageTokens — the mid-turn fill parse', () => {
     expect(latestTranscriptUsageTokens(jsonl)).toBe(950_300);
   });
 
+  test('a sidechain (subagent) assistant record never speaks for the session', () => {
+    // A subagent's usage reflects ITS window, not the session's — reading it
+    // would mis-report the fill exactly while a subagent runs. (Empirically
+    // absent in 14 days of real transcripts — the spike's census — but the
+    // parser matches the validated mainline-only read structurally.)
+    const jsonl = [
+      rec({ type: 'assistant', message: { usage: { input_tokens: 800_000, output_tokens: 200 } } }),
+      rec({ type: 'assistant', isSidechain: true, message: { usage: { input_tokens: 12_000, output_tokens: 50 } } }),
+    ].join('\n');
+    expect(latestTranscriptUsageTokens(jsonl)).toBe(800_200);
+  });
+
   test('no usage-bearing assistant record means undefined, not zero', () => {
     const jsonl = [
       rec({ type: 'system', subtype: 'init' }),

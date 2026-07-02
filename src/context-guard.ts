@@ -72,14 +72,22 @@ export function salvageCompactInstructions(facts: { phase: string; specPath?: st
  * mid-turn half of the context reading, parsed with the same honesty rule as
  * the settle-time extractor (`claudeContextUsage`): the last assistant record
  * whose usage actually billed tokens wins, and a zero-sum usage (the CLI's
- * error echo) is skipped, never taken as "0". The window half is NOT in the
- * transcript — the caller joins this with the last settle's `windowTokens`.
+ * error echo) is skipped, never taken as "0". Sidechain records (a subagent's
+ * turns, interleaved into the same transcript) are skipped too — their usage
+ * reflects the SUBAGENT's window, not the session's. The window half is NOT in
+ * the transcript — the caller joins this with the last settle's `windowTokens`.
  * Returns undefined when no real usage exists (a fresh or foreign tail).
+ *
+ * Accuracy is probed against real transcripts, not assumed: the spike
+ * (src/spike/context-probe.ts) replays this parser over ~/.claude/projects and
+ * checks it against the CLI's own compact_boundary preTokens accounting
+ * (drift under 0.5% across three real boundaries, claude 2.1.19x) — re-run it
+ * after a CLI upgrade, like the other pinned facts.
  */
 export function latestTranscriptUsageTokens(jsonl: string): number | undefined {
   let latest: number | undefined;
   for (const record of parseRecords(jsonl)) {
-    if (record['type'] !== 'assistant') continue;
+    if (record['type'] !== 'assistant' || record['isSidechain'] === true) continue;
     const usage = (record['message'] as { usage?: unknown } | undefined)?.usage;
     if (!usage || typeof usage !== 'object') continue;
     const u = usage as Record<string, unknown>;
