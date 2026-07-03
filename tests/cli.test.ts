@@ -57,13 +57,13 @@ describe('newRunInputOpts — duet new flag forwarding (#3)', () => {
 
 describe('takeoverPlan — the takeover decision (resume vs inspect vs clear-orphan)', () => {
   test('a persistent role with a captured session opens to RESUME (not ephemeral)', ({ run }) => {
-    run.workerSessions = { reviewer: 'rev-1' };
-    expect(takeoverPlan(run, 'reviewer')).toEqual({ kind: 'open', sessionId: 'rev-1', ephemeral: false });
+    run.workerSessions = { reviewer: { provider: 'codex', id: 'rev-1' } };
+    expect(takeoverPlan(run, 'reviewer')).toEqual({ kind: 'open', sessionId: 'rev-1', provider: 'codex', ephemeral: false });
   });
 
   test('the consultant with a captured session opens to INSPECT — ephemeral, duet will not resume it', ({ consultantRun }) => {
-    consultantRun.workerSessions = { consultant: 'c-1' };
-    expect(takeoverPlan(consultantRun, 'consultant')).toEqual({ kind: 'open', sessionId: 'c-1', ephemeral: true });
+    consultantRun.workerSessions = { consultant: { provider: 'claude', id: 'c-1' } };
+    expect(takeoverPlan(consultantRun, 'consultant')).toEqual({ kind: 'open', sessionId: 'c-1', provider: 'claude', ephemeral: true });
   });
 
   test('a pending record with no session is a clear-orphan — read-only-safe for the consultant, an abandon for a worker', ({

@@ -246,8 +246,8 @@ describe('the run-scoped, phase-less kernel server (Stage 1)', () => {
     await Promise.all([implSend, revSend]);
 
     const disk = loadRunState(projectDir, interactiveRun.runId);
-    expect.soft(disk.workerSessions.implementer).toBe('impl-session'); // not clobbered by the reviewer's save
-    expect.soft(disk.workerSessions.reviewer).toBe('rev-session');
+    expect.soft(disk.workerSessions.implementer?.id).toBe('impl-session'); // not clobbered by the reviewer's save
+    expect.soft(disk.workerSessions.reviewer?.id).toBe('rev-session');
     expect.soft(disk.sentSnippets?.frame?.implementer).toEqual(['think-holistic']);
     expect.soft(disk.sentSnippets?.frame?.reviewer).toEqual(['review-spec']);
     expect.soft(disk.costs.claudeWorkersUsd).toBe(1.5);

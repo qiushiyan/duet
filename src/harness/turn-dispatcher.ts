@@ -220,7 +220,7 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
           .then(() =>
             providerFor(providers, role).runTurn({
               prompt: body,
-              sessionId: sessionIdFor(fresh, role),
+              sessionId: sessionIdFor(fresh, role, phase),
               readOnly: !writeAuthorityFor(fresh, phase, role, tag),
               cwd: fresh.cwd,
               ...(timeoutMs !== undefined ? { timeoutMs } : {}),

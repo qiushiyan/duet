@@ -199,7 +199,7 @@ describe('buildStatsModel — the fs composer over real appendVoiceLog output', 
       provider: 'claude',
       model: 'claude-opus-4-8',
       transport: 'headless',
-      impl: { provider: 'claude', model: 'claude-sonnet-5' },
+      build: { provider: 'claude', model: 'claude-sonnet-5' },
     };
     appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=plan)', 'brief');
     appendVoiceLog(run, 'orchestrator', 'advance_phase (plan)', 'ok');

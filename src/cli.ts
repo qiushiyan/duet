@@ -8,7 +8,7 @@ import { createActor } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
 import { continuePlanner } from './continue-planner.ts';
 import type { ContinueEventType, RestoredFacts } from './continue-planner.ts';
-import { DEFAULT_CLAUDE_MODEL, bindingFor, loadRunConfig } from './config.ts';
+import { DEFAULT_CLAUDE_MODEL, loadRunConfig } from './config.ts';
 import type { BindableRole } from './config.ts';
 import { sessionPolicyFor, voicesFor } from './roles.ts';
 import { DEFAULT_FRAMING_FILE, composeInEditor, parseGatesAt, resolveHumanText, resolveRunInputs } from './framing.ts';
@@ -224,18 +224,26 @@ export function resolveAfkArgs(
  * (sessionPolicyFor), never a `role === 'consultant'` check.
  */
 export type TakeoverPlan =
-  | { kind: 'open'; sessionId: string; ephemeral: boolean }
+  | { kind: 'open'; sessionId: string; provider: 'claude' | 'codex'; ephemeral: boolean }
   | { kind: 'clear-orphan'; ephemeral: boolean }
   | { kind: 'no-session' };
 
 export function takeoverPlan(state: RunState, role: BindableRole): TakeoverPlan {
   const ephemeral = role !== 'orchestrator' && sessionPolicyFor(role) === 'ephemeral';
-  const sessionId = role === 'orchestrator' ? state.orchestratorSessionId : state.workerSessions[role];
-  if (!sessionId) {
+  // A worker's provider comes from its SESSION RECORD, never the base binding —
+  // a post-handoff build override makes the binding wrong for a switched role,
+  // and a wrong provider here would hand the human the wrong resume CLI.
+  const session =
+    role === 'orchestrator'
+      ? state.orchestratorSessionId
+        ? { provider: state.bindings.orchestrator.provider, id: state.orchestratorSessionId }
+        : undefined
+      : state.workerSessions[role];
+  if (!session) {
     if (role !== 'orchestrator' && state.pendingTurns?.[role]) return { kind: 'clear-orphan', ephemeral };
     return { kind: 'no-session' };
   }
-  return { kind: 'open', sessionId, ephemeral };
+  return { kind: 'open', sessionId: session.id, provider: session.provider, ephemeral };
 }
 program
   .name('duet')
@@ -382,10 +390,12 @@ program
     if (framingFile === DEFAULT_FRAMING_FILE) unlinkSync(join(cwd, DEFAULT_FRAMING_FILE));
     console.log(`run ${state.runId} created`);
     if (opts.tmux) await openTmuxView(state);
-    // The implementer field shows the post-handoff split when an impl model is
-    // bound (base → build model); absent, it reads exactly as before.
-    const implImpl = bindings.implementer.impl;
-    const implModelSplit = implImpl ? ` → build:${implImpl.model ?? DEFAULT_CLAUDE_MODEL.implementer}` : '';
+    // The implementer field shows the post-handoff split when a build override
+    // is bound (base → build binding); absent, it reads exactly as before.
+    const implBuild = bindings.implementer.build;
+    const implModelSplit = implBuild
+      ? ` → build:${implBuild.provider === 'claude' ? implBuild.model ?? DEFAULT_CLAUDE_MODEL.implementer : implBuild.provider}`
+      : '';
     console.log(
       `roles: orchestrator=${bindings.orchestrator.provider}:${bindings.orchestrator.model ?? ''} implementer=${bindings.implementer.provider}${bindings.implementer.model ? ':' + bindings.implementer.model : ''}${implModelSplit} reviewer=${bindings.reviewer.provider}${bindings.reviewer.model ? ':' + bindings.reviewer.model : ''}${bindings.consultant ? ` consultant=${bindings.consultant.provider}${bindings.consultant.model ? ':' + bindings.consultant.model : ''}` : ''}`,
     );
@@ -965,8 +975,7 @@ program
     // session back up); the ephemeral consultant only INSPECTS its latest
     // checkpoint — duet will not resume it, so the messaging must not imply
     // continuity.
-    const provider = role === 'orchestrator' ? state.bindings.orchestrator.provider : bindingFor(state.bindings, role).provider;
-    const cmd = provider === 'claude' ? ['claude', '--resume', plan.sessionId] : ['codex', 'resume', plan.sessionId];
+    const cmd = plan.provider === 'claude' ? ['claude', '--resume', plan.sessionId] : ['codex', 'resume', plan.sessionId];
     console.log(
       plan.ephemeral
         ? `opening the ${role}'s latest checkpoint session (${plan.sessionId}) for inspection — it is ephemeral, so duet will not resume it: the next ${role} turn seeds a fresh session.`

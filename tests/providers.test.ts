@@ -1114,7 +1114,7 @@ describe('createWorkers', () => {
         provider: 'claude',
         model: 'claude-opus-4-8',
         transport: 'headless',
-        impl: { provider: 'claude', model: 'claude-sonnet-5' },
+        build: { provider: 'claude', model: 'claude-sonnet-5' },
       },
     };
     const modelOnArgv = async (phase: PhaseName): Promise<string> => {
@@ -1130,6 +1130,26 @@ describe('createWorkers', () => {
     };
     expect.soft(await modelOnArgv('plan')).toBe('claude-opus-4-8'); // planning keeps the smart base
     expect.soft(await modelOnArgv('implement')).toBe('claude-sonnet-5'); // the build switches to the impl model
+  });
+
+  test('a build override SWITCHES THE PROVIDER post-handoff — relay\u2019s criss-cross falls out per phase', () => {
+    // The T4 wiring: effectiveBindingFor resolves BEFORE the provider branch,
+    // so the same bindings construct different worker classes per phase.
+    const crisscross: RoleBindings = {
+      ...DEFAULT_BINDINGS,
+      implementer: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless', build: { provider: 'codex' } },
+      reviewer: { provider: 'codex', build: { provider: 'claude', model: 'claude-fable-5' } },
+    };
+    const rails = { workerBudgetUsd: 10, timeoutMs: 60_000 };
+    // Planning: implementer on claude, reviewer on codex (the base pair).
+    const planning = createWorkers(crisscross, 'design', 'design', rails);
+    expect.soft(planning.implementer).toBeInstanceOf(ClaudeWorker);
+    expect.soft(planning.reviewer.name).toBe('codex');
+    // Post-handoff: the providers swap — codex builds, claude judges.
+    const build = createWorkers(crisscross, 'design', 'implement', rails);
+    expect.soft(build.implementer.name).toBe('codex');
+    expect.soft(build.reviewer).toBeInstanceOf(ClaudeWorker);
+    expect.soft(build.reviewer.name).toBe('claude');
   });
 
   test('the consultant provider is built only when bound; an un-enabled run has exactly today’s two', () => {

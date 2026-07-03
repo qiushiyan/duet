@@ -77,10 +77,29 @@ describe('role policy helpers', () => {
   });
 
   test('sessionIdFor: persistent roles resume; the ephemeral consultant never does', ({ run }) => {
-    run.workerSessions = { implementer: 'i-1', reviewer: 'r-1', consultant: 'c-1' };
-    expect.soft(sessionIdFor(run, 'implementer')).toBe('i-1');
-    expect.soft(sessionIdFor(run, 'reviewer')).toBe('r-1');
-    expect.soft(sessionIdFor(run, 'consultant')).toBeUndefined(); // ephemeral, despite a tracked id
+    run.workerSessions = { implementer: { provider: 'claude', id: 'i-1' }, reviewer: { provider: 'codex', id: 'r-1' }, consultant: { provider: 'claude', id: 'c-1' } };
+    expect.soft(sessionIdFor(run, 'implementer', 'implement')).toBe('i-1');
+    expect.soft(sessionIdFor(run, 'reviewer', 'implement')).toBe('r-1');
+    expect.soft(sessionIdFor(run, 'consultant', 'implement')).toBeUndefined(); // ephemeral, despite a tracked id
+  });
+
+  test('sessionIdFor: a provider mismatch against the phase-effective binding derives a FRESH session (T1)', ({
+    run,
+  }) => {
+    // The implementer plans on claude and builds on codex — its planning-era
+    // claude session must never be resumed through the codex CLI. The reset is
+    // DERIVED at the read, not evented: no crash window, idempotent on any host.
+    run.bindings = {
+      ...run.bindings,
+      implementer: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless', build: { provider: 'codex' } },
+    };
+    run.workerSessions = { implementer: { provider: 'claude', id: 'planning-era' } };
+    expect.soft(sessionIdFor(run, 'implementer', 'plan')).toBe('planning-era'); // pre-handoff: same provider, resume
+    expect.soft(sessionIdFor(run, 'implementer', 'implement')).toBeUndefined(); // post-handoff: codex now — mint fresh
+    // Once the build's codex session settles, it resumes normally post-handoff.
+    run.workerSessions = { implementer: { provider: 'codex', id: 'build-era' } };
+    expect.soft(sessionIdFor(run, 'implementer', 'implement')).toBe('build-era');
+    expect.soft(sessionIdFor(run, 'implementer', 'plan')).toBeUndefined(); // and never leaks back into a claude phase
   });
 
   test('orphanRecoveryFor: takeover for the persistent roles, discard-and-reseed for the consultant', () => {

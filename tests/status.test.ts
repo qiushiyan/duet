@@ -306,7 +306,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
   test('sessions[] surfaces the known voices and is [] on a fresh run', ({ run }) => {
     expect.soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions).toEqual([]);
     run.orchestratorSessionId = 'orch-1';
-    run.workerSessions = { reviewer: 'rev-1' };
+    run.workerSessions = { reviewer: { provider: 'codex', id: 'rev-1' } };
     expect.soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions).toEqual([
       { role: 'orchestrator', provider: 'claude', sessionId: 'orch-1' },
       { role: 'reviewer', provider: 'codex', sessionId: 'rev-1' },
@@ -372,13 +372,13 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
   }) => {
     // sessions[] (worker surface): the consultant appears when bound, never when not.
     run.orchestratorSessionId = 'orch-1';
-    run.workerSessions = { reviewer: 'rev-1', consultant: 'stray' }; // unbound: 'stray' must not surface
+    run.workerSessions = { reviewer: { provider: 'codex', id: 'rev-1' }, consultant: { provider: 'claude', id: 'stray' } }; // unbound: 'stray' must not surface
     expect
       .soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions.map((s) => s.role))
       .toEqual(['orchestrator', 'reviewer']);
 
     consultantRun.orchestratorSessionId = 'orch-1';
-    consultantRun.workerSessions = { consultant: 'c-1' };
+    consultantRun.workerSessions = { consultant: { provider: 'claude', id: 'c-1' } };
     expect
       .soft(buildStatusModel(consultantRun, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions)
       .toContainEqual({ role: 'consultant', provider: 'claude', sessionId: 'c-1' });

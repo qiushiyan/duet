@@ -32,7 +32,7 @@ import {
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
 import { listPendingSteers, markSteersDelivered } from '../steer-store.ts';
-import { bindingFor } from '../config.ts';
+import { bindingFor, effectiveBindingFor } from '../config.ts';
 import { readTranscriptTailAtPath, readTranscriptTailForSession } from '../sessions.ts';
 import type { TurnDispatcher } from './turn-dispatcher.ts';
 import { classifyError, formatAge, probeRole } from '../worker-health.ts';
@@ -467,7 +467,24 @@ export function settleTurn(
   // (collectible, orphan/in-flight rails) is preserved.
   const compactReset = shouldResetAfterCompactAbort(role, meta.isCompactTurn === true, aborted);
   const fresh = loadRunState(state.cwd, state.runId);
-  fresh.workerSessions[role] = turn.sessionId;
+  // The session record carries the provider that actually ran the turn (the
+  // phase's EFFECTIVE binding — a post-handoff build override may differ from
+  // the base), so every session consumer reads the truth. A provider switch
+  // over a prior record lands in the sessionResets ledger — the reset itself
+  // is derived (sessionIdFor), never evented, but the ledger explains to
+  // status/takeover why the old session is gone.
+  const effectiveProvider = effectiveBindingFor(state.bindings, role, workflowOf(state), phase).provider;
+  const priorSession = fresh.workerSessions[role];
+  if (priorSession && priorSession.provider !== effectiveProvider) {
+    (fresh.sessionResets ??= []).push({
+      role,
+      phase,
+      fromProvider: priorSession.provider,
+      toProvider: effectiveProvider,
+      at: new Date().toISOString(),
+    });
+  }
+  fresh.workerSessions[role] = { provider: effectiveProvider, id: turn.sessionId };
   if (compactReset) delete fresh.workerSessions[role];
   // Re-read off fresh rather than a call-start snapshot: the minutes-long await
   // means a parallel call may have moved the round count. An aborted turn delivered
@@ -1419,7 +1436,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           try {
             const outcome = await providerFor(providers, role).runTurn({
               prompt: turn.body,
-              sessionId: sessionIdFor(state, role),
+              sessionId: sessionIdFor(state, role, phase),
               readOnly: !writeAuthorityFor(state, phase, role, turn.tag),
               cwd: state.cwd,
               ...(turn.timeoutMs !== undefined ? { timeoutMs: turn.timeoutMs } : {}),

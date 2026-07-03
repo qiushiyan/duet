@@ -1,10 +1,11 @@
+import { effectiveBindingFor } from './config.ts';
 import { phaseSpec } from './phases.ts';
 import type { PhaseName, ReviewPosture } from './phases.ts';
 import type { WorkerRole } from './providers/types.ts';
 // Type-only on the run-store imports, so no runtime cycle closes: run-store.ts
 // value-imports this module (workerRolesFor), and the harness value-imports
-// both. The one value edge out of here is phases.ts, itself a leaf (node:path
-// only). The Voice edge is erased at build.
+// both. The value edges out of here are phases.ts and config.ts, neither of
+// which imports this module. The Voice edge is erased at build.
 import type { RunState, Voice } from './run-store.ts';
 
 /**
@@ -45,14 +46,28 @@ const POLICY: Record<WorkerRole, RolePolicy> = {
 };
 
 /**
- * The resume session id for a role's next turn, or `undefined` for an ephemeral
- * role — the whole of "fresh session per checkpoint". The two resume sites (the
- * blocking turn in tools.ts, the dispatcher's background launch) read this
- * instead of `state.workerSessions[role]` directly, so ephemerality holds on
- * BOTH hosts.
+ * The resume session id for a role's next turn at `phase`, or `undefined` when
+ * the next send must mint a fresh session. Two derivations, no events (T1):
+ *
+ * - An ephemeral role never resumes — the whole of "fresh session per
+ *   checkpoint".
+ * - A persistent role resumes its record ONLY when the record's provider
+ *   matches the phase's effective binding's provider. A mismatch (the
+ *   post-handoff `build` override switched the role's provider) derives
+ *   `undefined`, so a cross-provider resume is unrepresentable rather than
+ *   guarded: no hook, no crash window — the answer re-derives on any host,
+ *   even for a run resumed mid-arc by an older flow.
+ *
+ * The two resume sites (the blocking turn in tools.ts, the dispatcher's
+ * background launch) read this instead of `state.workerSessions[role]`
+ * directly, so both rules hold on BOTH hosts.
  */
-export function sessionIdFor(state: RunState, role: WorkerRole): string | undefined {
-  return POLICY[role].session === 'ephemeral' ? undefined : state.workerSessions[role];
+export function sessionIdFor(state: RunState, role: WorkerRole, phase: PhaseName): string | undefined {
+  if (POLICY[role].session === 'ephemeral') return undefined;
+  const record = state.workerSessions[role];
+  if (!record) return undefined;
+  const effective = effectiveBindingFor(state.bindings, role, state.workflow ?? 'full', phase);
+  return record.provider === effective.provider ? record.id : undefined;
 }
 
 /** Whether a role's worker runs read-only — the reviewer and the consultant. */
