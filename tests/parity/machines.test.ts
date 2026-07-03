@@ -12,7 +12,7 @@ import type { WorkflowName } from '../../src/phases.ts';
  * never changes these three.
  */
 
-const WORKFLOWS: readonly WorkflowName[] = ['full', 'design', 'rir'];
+const WORKFLOWS: readonly WorkflowName[] = ['full', 'design', 'relay', 'rir'];
 
 const shapeOf = (workflow: WorkflowName): string => {
   const { config } = machineFor(workflow);

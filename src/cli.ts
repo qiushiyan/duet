@@ -259,6 +259,9 @@ The shape of a run (pick the arc with --workflow on duet new):
           → implement (AFK, often hours) → SHIP gate → finish (reconcile docs → PR) → OPEN-PR gate → done
   design: frame → DIRECTION gate → design (one design doc) → DESIGN gate (walk away)
           → implement (AFK) → SHIP gate → finish (PR) → OPEN-PR gate → done
+  relay:  design's arc with a criss-cross build — the implementer builds from the
+          committed doc, the reviewer reviews WITH write access (fixes directly,
+          owns docs + PR); bind the providers per stage with [roles.*].build
   rir:    research → DIRECTION gate (walk away) → implement (AFK) → SHIP gate
           → finish (reconcile docs → PR) → OPEN-PR gate → done
 
@@ -280,11 +283,11 @@ Run state: .duet/runs/<id>/ — state.json is a hint; the JSONL transcripts are 
 
 program
   .command('new')
-  .description('Start a run on the chosen arc (--workflow): full (spec → plan → implement → ship → PR), design (one design doc → implement → ship → PR), or rir (research → implement → review → ship).')
+  .description('Start a run on the chosen arc (--workflow): full (spec → plan → implement → ship → PR), design (one design doc → implement → ship → PR), relay (design plus a fixing reviewer that owns the PR), or rir (research → implement → review → ship).')
   .option('--spec <path>', 'path to a draft of the primary artifact (full: the spec; design: the design doc); omit to start from the framing alone (the FRAME phase drafts it)')
   .option('--framing <file>', 'project briefing file — the only place project knowledge enters; omit both flags to write it in your editor')
   .option('--template <name>', 'seed the editor draft from .duet/templates/<name>.md (bare `duet new` uses .duet/templates/default.md when present); conflicts with --spec/--framing')
-  .option('--workflow <name>', 'which arc to run: full (spec → plan → implement → ship → PR), design (one design doc replaces spec + plan), or rir (research → implement → review); default full. Also settable via a workflow: framing key (flag wins)')
+  .option('--workflow <name>', 'which arc to run: full (spec → plan → implement → ship → PR), design (one design doc replaces spec + plan), relay (design + a fixing reviewer that owns the PR), or rir (research → implement → review); default full. Also settable via a workflow: framing key (flag wins)')
   .option(
     '--gates-at <phases>',
     'phases whose gates you attend — the set and presets are workflow-specific (full gates: frame, spec, plan, implement, finish; presets "skip-plan" = walk away at spec approval and return at the Ship gate, "overnight" = frame,spec, "afk" = attend none from the start, keeping every safety net — the consultant nets stay on, which --gateless drops. design gates: frame, design, implement, finish; preset "afk". rir gates: research, implement, finish; preset "afk" = attend none). The rest are pre-authorized and auto-cross with their packets recorded. Default for full: overnight (frame,spec) — plan, Ship, and the Open-PR gate all auto-cross; list `finish` for a post-open review stop on the opened PR. Default for design: attend the design gate only (one interruption — read the doc, tap once, walk away). rir attends all three of its gates',

@@ -23,7 +23,7 @@ import { renderSnippetLibrary } from '../../src/snippets.ts';
  *   key lists, since variants differ only by which blocks they include).
  */
 
-const WORKFLOWS: readonly WorkflowName[] = ['full', 'design', 'rir'];
+const WORKFLOWS: readonly WorkflowName[] = ['full', 'design', 'relay', 'rir'];
 
 const keysOf = (rendered: string): string[] =>
   [...rendered.matchAll(/<snippet key="([^"]+)"/g)].map((m) => m[1] as string);
@@ -86,6 +86,7 @@ describe('served library pins — phase-scoped', () => {
     { name: 'full-plan.bound', phase: 'plan', workflow: 'full', consultant: true },
     { name: 'full-implement.bound', phase: 'implement', workflow: 'full', consultant: true },
     { name: 'design-design.bound', phase: 'design', workflow: 'design', consultant: true },
+    { name: 'relay-implement.bound', phase: 'implement', workflow: 'relay', consultant: true },
     { name: 'rir-implement.bound', phase: 'implement', workflow: 'rir', consultant: true },
     { name: 'rir-implement.bound-gateless', phase: 'implement', workflow: 'rir', consultant: true, gateless: true },
   ];

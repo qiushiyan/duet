@@ -254,6 +254,19 @@ The reviewer's analysis favors a thin adapter; the implementer's favors a deeper
 Routing the reviewer's critique to the implementer as a verdict to comply with. compare-notes asks the implementer to weigh both views and keep its own where it has reasons — a second opinion informs the synthesis, it does not overwrite the first; don't let the later voice win by default.
 </example>`;
 
+const RELAY_IMPL_EXAMPLES = `## Implementation phase examples
+
+This phase's call is the fixer's: resolve, or escalate. The reviewer fixes with its own hands, so the line between "an issue to fix" and "a decision to reopen" is what keeps the human's gates real. Apply the substance test, not the size of the diff.
+<example name="an ordinary finding is fixed, not filed">
+The reviewer finds a missing error path and a test asserting internals instead of behavior. Both are ordinary valid findings — it fixes them directly with fix commits and moves the tests along; routing them back to the builder would spend a slow turn re-explaining what the fixer already understands.
+</example>
+<example name="a substance disagreement escalates">
+The reviewer concludes the doc's chosen seam puts state in the wrong module now that the code is real — the fix would move a boundary the human ratified. That is a design disagreement, not a defect: the reviewer stops that thread, and you ask_human with its reasoning; patching it silently would hide a pivot inside a review.
+</example>
+<example type="avoid" name="re-deciding the build under review">
+The reviewer dislikes the builder's structure and starts rewriting module by module. The build's approach was the builder's to choose within the doc; wholesale re-deciding it is the drift the escalation valve exists for — it should understand the intent first, fix what is wrong, and escalate what is contested.
+</example>`;
+
 const IMPLEMENT_EXAMPLES = `## Implement phase examples
 
 This phase's call is running the one review round to convergence — the RIR arc has a single writable round, not the spec/plan arc's reflect-then-round-2 loop. Apply that: the reviewer critiques once, the implementer fixes directly.
@@ -405,7 +418,8 @@ Consultant checkpoint — author the acceptance contract (the consultant is boun
  * audit. Empty when no consultant is bound.
  */
 function consultantVerifyStep(state: RunState): string {
-  const snippet = consultantSnippetFor(workflowOf(state), 'implement');
+  const workflow = workflowOf(state);
+  const snippet = consultantSnippetFor(workflow, 'implement');
   if (!checkpointLive(state, 'implement') || !snippet) return '';
   if (!state.acceptanceContract) {
     return `
@@ -413,13 +427,19 @@ function consultantVerifyStep(state: RunState): string {
 Consultant checkpoint — no frozen acceptance contract exists for this run (none was authored at the plan phase), so there is nothing to verify: skip the consultant here and note in your advance_phase packet that the implementation shipped without a frozen contract to verify against.`;
   }
   const { path } = state.acceptanceContract;
+  // Who self-heals a failed assertion: the worker that owns fixing the build at
+  // this phase — the reviewer under the fixer posture (it already fixes with
+  // write access, and a verify fix is a review finding by another name), the
+  // implementer everywhere else.
+  const semantics = phaseSpec(workflow, 'implement').semantics;
+  const fixer = semantics.block === 'build' && semantics.reviewPosture === 'fixer' ? 'reviewer' : 'implementer';
   return `
 
-Consultant checkpoint — verify the frozen acceptance contract, then let the implementer self-heal any failure (the consultant is bound for this run): run this as your FINAL step before advance — after the docs reconcile and the CEO summary — so it certifies the exact state you are shipping (a later code- or doc-changing turn would leave the verification stale). Send the consultant a ${snippet} prompt over a fresh, ephemeral, read-only session pointed at the frozen contract at ${path} (committed and ratified at the plan gate). It re-reads each assertion, exercises the built system for evidence (run the tests, run the CLI, read logs — never edit or commit), and returns a per-assertion pass/fail with the evidence it cited. "Every assertion holds — ship" is a first-class expected outcome.
+Consultant checkpoint — verify the frozen acceptance contract, then let the ${fixer} self-heal any failure (the consultant is bound for this run): run this as your FINAL step before advance — after the docs reconcile and the CEO summary — so it certifies the exact state you are shipping (a later code- or doc-changing turn would leave the verification stale). Send the consultant a ${snippet} prompt over a fresh, ephemeral, read-only session pointed at the frozen contract at ${path} (committed and ratified at the plan gate). It re-reads each assertion, exercises the built system for evidence (run the tests, run the CLI, read logs — never edit or commit), and returns a per-assertion pass/fail with the evidence it cited. "Every assertion holds — ship" is a first-class expected outcome.
 
-Route a failed assertion to the implementer first, not to the human — it is a fact the implementer can usually just fix, and the human cares only about the ones that resist fixing. Send the failing assertions and their evidence to the implementer as a fix request (like routing a review finding), let it fix, then re-verify by sending a fresh ${snippet} consultant turn — a new session each time, so the check stays independent and a fix only counts when an independent re-run confirms it. Repeat this fix-then-re-verify a round or two; an assertion that passes on an independent re-run is resolved and needs nothing from the human.
+Route a failed assertion to the ${fixer} first, not to the human — it is a fact the ${fixer} can usually just fix, and the human cares only about the ones that resist fixing. Send the failing assertions and their evidence to the ${fixer} as a fix request (like routing a review finding), let it fix, then re-verify by sending a fresh ${snippet} consultant turn — a new session each time, so the check stays independent and a fix only counts when an independent re-run confirms it. Repeat this fix-then-re-verify a round or two; an assertion that passes on an independent re-run is resolved and needs nothing from the human.
 
-Record a high human_decision (titled by the assertion) only for an assertion that still fails after that — the build cannot be made to meet its own ratified target — or if verification could not run at all. That high is the load-bearing AFK protection: it holds the pre-authorized Ship auto-cross and a one-tap afk handoff, so the run stops for the human rather than shipping past a broken target. In your advance_phase summary report the verify outcome so the human can audit it without you: which assertions passed, which the implementer self-healed and in how many rounds, and which remain — plus any residual concerns the consultant raised.`;
+Record a high human_decision (titled by the assertion) only for an assertion that still fails after that — the build cannot be made to meet its own ratified target — or if verification could not run at all. That high is the load-bearing AFK protection: it holds the pre-authorized Ship auto-cross and a one-tap afk handoff, so the run stops for the human rather than shipping past a broken target. In your advance_phase summary report the verify outcome so the human can audit it without you: which assertions passed, which the ${fixer} self-healed and in how many rounds, and which remain — plus any residual concerns the consultant raised.`;
 }
 
 function documentsBlock(state: RunState): string {
@@ -879,6 +899,65 @@ const WRITABLE_BUILD_BRIEFS: Partial<Record<ExamplesKey, WritableBuildData>> = {
 };
 
 /**
+ * The fixer build's per-arc data — relay's today. The posture's discipline
+ * (a fresh builder from the committed doc, one review-and-fix round by a
+ * writing reviewer, the reviewer-owned tail, the escalation valve) lives in
+ * fixerBuildBrief.
+ */
+interface FixerBuildData {
+  approvedAttended: string;
+  approvedPreauth: string;
+  /** The midpoint judgment's size signal. */
+  sizeSignal: string;
+  examples: string;
+}
+
+const FIXER_BUILD_BRIEFS: Partial<Record<ExamplesKey, FixerBuildData>> = {
+  'relay-impl': {
+    approvedAttended: 'The human approved the design doc and walked away —',
+    approvedPreauth: 'The design gate was pre-authorized at run start and auto-crossed; the human is away —',
+    sizeSignal:
+      "the design fixes the shape, not a slice list, so read the size from the doc's scope and structural risk, and from how the implementer slices the work as the build starts.",
+    examples: RELAY_IMPL_EXAMPLES,
+  },
+};
+
+/**
+ * The fixer build — the plan-smart / build-cheap / judge-strong arc's AFK
+ * phase: the implementer builds the whole change from the committed design
+ * doc, then the reviewer reviews WITH write access — it fixes ordinary valid
+ * findings directly (one review-and-fix round), escalates substance to the
+ * human, and owns the build tail (docs + CEO summary). There is no
+ * critique-and-respond loop; the consultant's contract verify is the one
+ * fully independent pass over work the reviewer both judged and edited, which
+ * is why it runs last and why its self-heal routes fixes to the reviewer.
+ */
+function fixerBuildBrief(state: RunState, spec: PhaseSpec, data: FixerBuildData): string {
+  return `<task>
+${approvalClause(
+    state,
+    priorPhaseOf(workflowOf(state), spec.name),
+    data.approvedAttended,
+    data.approvedPreauth,
+  )} this is the AFK IMPLEMENTATION phase. You drive it end to end; ask_human still works but now queues the question and pauses the whole run until the human returns, so a flag is a real stop, not a quick check-in. Make each one self-contained, and let everything that can wait for the Ship gate wait.
+${attendancePosture(state, spec.name)}
+The arc — the implementer builds from the committed design doc, then the reviewer reviews with write access: it fixes what it finds and owns the docs and the summary; there is no critique-and-respond loop in this phase:
+
+1. Have the implementer commit the approved design doc with a conventional message, as its own commit. Name the doc's committed path in this prompt and every later first prompt — the build seeds from the document, not from any session's memory of writing it, so a first prompt reads cold: orient it (the project, the doc's path, the working branch) before the task.
+2. Send the implementer an implement-design prompt: it builds the whole change from the committed design doc — the doc fixes the shape and the test standards; the slicing and sequencing are the implementer's own, vertical slices with a commit per slice and that slice's tests per the doc's standards. Drive it as a single pass — a deliberate hold between slices burns a slow worker turn re-covering ground the review-and-fix round covers anyway. ${buildPassGuardrails(state.runId)}
+3. ${midpointStep(data.sizeSignal)} Mid-build the implementer is the sole writer: the reviewer's midpoint read is guidance the implementer folds in, never fixes the reviewer applies itself — its write authority begins at the review-and-fix round, on the finished build.
+4. When all slices are in: implementation-handoff from the implementer — whoever wrote the code authors the map the reviewer starts from.
+5. The review-and-fix round: send the reviewer a review-and-fix prompt wrapping the handoff, pointing it at the design doc's committed path and the build's commits. This is the phase's one review round, and it is writable: the reviewer assesses each finding, fixes the ordinary valid ones directly (fix commits, tests moved along), reports what it changed versus left as-is, and ESCALATES a product or design disagreement, intent it cannot reconstruct, or drift broad enough to mean re-deciding the direction — an escalation is yours to ask_human, never something to patch over. The backstop cap for this phase is ${spec.roundCap} review round; a follow-up to the same reviewer session (a fix request from the verify below) steers by delta and needs no new round.
+6. When the round has settled, reconcile the docs with what shipped — send the reviewer the reconcile-docs prompt (it owns the record it just judged). Your one decision is the doc method, by precedence: if the framing names a doc-update skill or document, name it in the prompt — relay the framing's path or skill faithfully and treat it as authoritative. If the framing names none, send the snippet's default unchanged. The reviewer commits the docs; they ride the branch into the PR that FINISH opens. A doc-scope product call it surfaces is yours to ask_human.
+7. Last, after the docs are committed: send the reviewer ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review-and-fix summary (fixes applied, push-backs, anything escalated), the docs reconciled, deviations from the design doc, and the test state. The human returns from hours away and decides to ship from this packet alone, so it must carry everything.${consultantVerifyStep(state)}
+
+Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
+
+${data.examples}
+</task>`;
+}
+
+/**
  * The writable build — the AFK build, lighter than the critique posture's: no
  * artifact to commit, no compaction ceremony, no midpoint, and one writable
  * review round (review-direct → apply-review) instead of the
@@ -931,6 +1010,11 @@ function renderBuildBrief(state: RunState, spec: PhaseSpec, semantics: Extract<P
       const data = WRITABLE_BUILD_BRIEFS[semantics.examplesKey];
       if (!data) throw new Error(`no writable-build brief data for examples key "${semantics.examplesKey}"`);
       return writableBuildBrief(state, spec, data);
+    }
+    case 'fixer': {
+      const data = FIXER_BUILD_BRIEFS[semantics.examplesKey];
+      if (!data) throw new Error(`no fixer-build brief data for examples key "${semantics.examplesKey}"`);
+      return fixerBuildBrief(state, spec, data);
     }
   }
 }
@@ -1004,14 +1088,16 @@ export function feedbackResumePrompt(workflow: WorkflowName, phase: PhaseName, f
   const spec = phaseSpec(workflow, phase);
   const artifact = spec.artifactLabel;
   // A gate rejection is the editor-in-chief returning the artifact — always to
-  // the implementer. Whether the *reviewer* re-engages is a phase property, not
-  // a default: only the multi-round review-loop phases (reviewLoop && cap > 1 —
-  // Full's spec/plan/impl) re-run a verifying round, and they have the -again
-  // variants and cap headroom for it. A single-writable-round phase (RIR's
-  // implement, cap 1) and the non-loop phases (frame/research/docs/pr) route the
-  // human's feedback straight into the revision — instructing a fresh reviewer
-  // round there is both wrong for the arc and, at cap 1, blocked by send_prompt.
-  const reRunsReviewLoop = spec.reviewLoop && spec.roundCap > 1;
+  // the implementer. Whether the *reviewer* re-engages is a phase property read
+  // off the SEMANTICS: the doc-loops and the critique-posture build re-run a
+  // verifying round (they have the -again variants and cap headroom for it);
+  // the writable and fixer postures, and the non-loop blocks (frame/finish),
+  // route the human's feedback straight into the revision — instructing a
+  // fresh reviewer round there is wrong for the arc (their loops have no
+  // -again variants) and, at cap 1, blocked by send_prompt.
+  const reRunsReviewLoop =
+    spec.semantics.block === 'doc-loop' ||
+    (spec.semantics.block === 'build' && spec.semantics.reviewPosture === 'critique');
   const reviseClause = reRunsReviewLoop
     ? 'run whatever review rounds the changes warrant (with the -again variants), and advance the phase again when converged'
     : "have the implementer apply the changes directly and advance the phase again — this phase doesn't re-run a reviewer round on re-entry, so the human's feedback is the revision itself, not the trigger for a new review pass";

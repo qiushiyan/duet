@@ -10,6 +10,8 @@ import {
   workerRolesFor,
   writeAuthorityFor,
 } from '../src/roles.ts';
+import { DEFAULT_BINDINGS } from '../src/config.ts';
+import { createRun } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**
@@ -74,6 +76,28 @@ describe('role policy helpers', () => {
     // resolver never widens it, so author-never-commits holds mechanically.
     expect.soft(writeAuthorityFor(consultantRun, 'plan', 'consultant', 'consultant-contract')).toBe(false);
     expect.soft(writeAuthorityFor(consultantRun, 'implement', 'consultant', 'consultant-verify')).toBe(false);
+  });
+
+  test('writeAuthorityFor on relay: the fixer writes action-scoped, never phase-blanket', ({ projectDir }) => {
+    const relay = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'relay', framing: 'x' });
+    // The fixer's grant: review-and-fix, and the reviewer-owned tails.
+    expect.soft(writeAuthorityFor(relay, 'implement', 'reviewer', 'review-and-fix')).toBe(true);
+    expect.soft(writeAuthorityFor(relay, 'implement', 'reviewer', 'reconcile-docs')).toBe(true); // buildTailOwner
+    expect.soft(writeAuthorityFor(relay, 'implement', 'reviewer', 'ceo-summary')).toBe(true); // buildTailOwner
+    expect.soft(writeAuthorityFor(relay, 'finish', 'reviewer', 'pr-description')).toBe(true); // finishOwner
+    // Action-scoped, never a blanket: mid-build the builder is the sole writer,
+    // so a midpoint turn under the fixer posture stays guidance-only — two
+    // interleaved writers would wreck the builder's model of its own tree.
+    expect.soft(writeAuthorityFor(relay, 'implement', 'reviewer', 'review-midpoint')).toBe(false);
+    expect.soft(writeAuthorityFor(relay, 'implement', 'reviewer', 'custom')).toBe(false);
+    // And never in the planning arc — the relay reviewer is critique-only pre-handoff.
+    expect.soft(writeAuthorityFor(relay, 'design', 'reviewer', 'review-design')).toBe(false);
+    expect.soft(writeAuthorityFor(relay, 'frame', 'reviewer', 'think-holistic')).toBe(false);
+  });
+
+  test('countsReviewRound: the fixer round counts like any review round', () => {
+    expect.soft(countsReviewRound('reviewer', 'review-and-fix')).toBe(true);
+    expect.soft(countsReviewRound('implementer', 'review-and-fix')).toBe(false);
   });
 
   test('sessionIdFor: persistent roles resume; the ephemeral consultant never does', ({ run }) => {

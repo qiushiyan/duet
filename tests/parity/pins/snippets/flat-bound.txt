@@ -661,6 +661,33 @@ If a point needs my input to resolve — a real product or direction call — fl
 
 $0
 </snippet>
+<snippet key="review-and-fix">
+Code-review this implementation — and resolve what you find. You review with write access: you didn't write this code, but you own getting it ship-ready. The bar is the committed design doc — its product sections carry the goal and the boundaries, its technical sections the module shapes, seams, and test standards the build was to honor. Review against the doc's intent, not a redesign of your own.
+
+**First, understand what the builder did.** Read the actual code and commits, not just the handoff below. Where something looks wrong, work out what the builder was doing before judging it — an approach that reads oddly from outside often encodes a constraint you haven't hit yet, and where it is genuinely wrong, knowing the intent is what lets you fix it without breaking what the intent got right.
+
+**Lens — everything is fair game:**
+- **Correctness** — bugs, edge cases, failure modes.
+- **Solves the problem** — does this achieve the goal behind the design, not just run?
+- **Test quality** — right altitude (behavior, not internals), covers the real cases, survives plausible refactors, uses project patterns. Flag tests of *shape* that pass when behavior breaks, and over-testing of edge cases instead of the critical paths.
+- **Structural quality — be ambitious, not just local:** a reframing that deletes whole branches/helpers/modes beats rearranging them; apply the **deletion test** to new modules; flag **shallow** ones (a thin pass-through wrapper, an interface nearly as complex as its implementation); keep logic in its canonical module.
+- **Right-sizing — over-building is the likelier failure:** defensive branches for states that can't occur, fallbacks the invariants rule out, speculative config beyond the design, abstractions pulled out before the pattern is real.
+
+**Then resolve each finding yourself — this round is review-and-fix, not review-and-file:**
+1. **Assess validity honestly** — a finding you can't defend from the code or the doc isn't a finding.
+2. **An ordinary valid issue: fix it directly**, and move the tests with the fix — add one for the corrected behavior, strengthen a weak one, delete what the fix makes obsolete. Keep the suite green; commit as you go.
+3. **Where the code is right and your instinct was wrong: leave it**, and say why in your report.
+
+**Escalate instead of fixing when a finding changes the substance:** a product or design disagreement (the doc said X, and X now looks wrong in the real code), intent you cannot reconstruct from the code and commits, or drift so broad that fixing it means re-deciding the build's direction. Fixing those directly would hide a pivot inside a review — flag them and leave that thread unresolved. Direct fixing is the default for ordinary issues, not a license to re-decide the work.
+
+**Report when done:** the fixes you applied and the points you left as-is, each grounded in the actual commits, plus anything you escalated. This review-and-fix summary travels into the ship packet, so it must reflect the final state of the code, not a plan for it.
+
+The builder's handoff:
+
+---
+
+$0
+</snippet>
 <snippet key="reconcile-docs">
 The docs ship with this change — they ride the branch (and the PR, where there is one) into the shippable record. Reconcile them with what actually shipped, in one pass.
 

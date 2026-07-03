@@ -88,19 +88,25 @@ export type ArtifactKind = 'spec' | 'plan' | 'design';
  * How the build phase enters: full compacts the planning session down to the
  * committed spec + plan (`compact-for-impl`), the design arc re-anchors on its
  * one committed doc (`implement-design`), rir builds directly from the
- * research decisions (`implement-direct`).
+ * research decisions (`implement-direct`), and relay seeds a FRESH builder
+ * session from the committed design doc (`fresh-seed` — the provider-switched
+ * builder never held the planning context, so there is nothing to compact;
+ * the doc is the whole re-anchor).
  */
-export type EntrySeed = 'compact-for-impl' | 'implement-design' | 'implement-direct';
+export type EntrySeed = 'compact-for-impl' | 'implement-design' | 'implement-direct' | 'fresh-seed';
 
 /**
  * The build's review posture — the vocabulary's load-bearing axis: `critique`
  * (reviewer critiques, implementer fixes — the reflect-then-round-2 loop),
- * `writable` (one round, the implementer applies fixes in place).
+ * `writable` (one round, the implementer applies fixes in place), `fixer`
+ * (relay: the reviewer applies fixes directly with write access and owns the
+ * finishing tails; substance escalates to the human rather than being
+ * patched over).
  */
-export type ReviewPosture = 'critique' | 'writable';
+export type ReviewPosture = 'critique' | 'writable' | 'fixer';
 
 /** The worked-example set a phase's brief appends — per-arc data, keyed not inlined. */
-export type ExamplesKey = 'frame' | 'research' | 'spec' | 'plan' | 'design' | 'impl' | 'design-impl' | 'rir-impl';
+export type ExamplesKey = 'frame' | 'research' | 'spec' | 'plan' | 'design' | 'impl' | 'design-impl' | 'rir-impl' | 'relay-impl';
 
 /** A phase's block identity + knob values (discriminated on `block`). */
 export type PhaseSemantics =
@@ -159,6 +165,10 @@ const ENTRY_SEED_SNIPPETS: Record<EntrySeed, readonly string[]> = {
   'compact-for-impl': ['compact-for-impl'],
   'implement-design': ['compact-for-impl', 'implement-design'],
   'implement-direct': ['implement-direct'],
+  // The fresh builder seeds from the committed doc alone — implement-design's
+  // body is cold-safe (it anchors on the doc and the vendored lessons, never
+  // on prior session context), and there is no planning session to compact.
+  'fresh-seed': ['implement-design'],
 };
 
 const MIDPOINT_SNIPPETS: readonly string[] = ['midpoint-status', 'review-midpoint', 'respond-midpoint'];
@@ -180,6 +190,10 @@ const REVIEW_POSTURE_SNIPPETS: Record<ReviewPosture, readonly string[]> = {
     'respond-review-again',
   ],
   writable: ['handoff-direct', 'review-direct', 'apply-review'],
+  // The handoff stays with the BUILDER — whoever wrote the code authors the
+  // map — and review-and-fix is the fixer's one writable round. No boundary
+  // compaction: the fixer's session is born fresh at the handoff.
+  fixer: ['implementation-handoff', 'review-and-fix'],
 };
 
 const FINISH_SNIPPETS: readonly string[] = ['pr-description', 'compact-for-cleanup'];
@@ -581,6 +595,119 @@ export const WORKFLOWS = {
     forceAttend: [],
     defaultPreAuthorized: ['frame', 'implement', 'finish'],
   },
+  relay: {
+    // The plan-smart / build-cheap / judge-strong arc
+    // (docs/specs/2026-07-03-workflow-vocabulary.md §"The relay arc"): design's
+    // shape with two substitutions — the build's review posture is `fixer`
+    // (the reviewer applies fixes directly and owns the tails) and both tail
+    // owners move to the reviewer. The provider criss-cross (plan on claude
+    // with a codex reviewer; build on codex with a claude judge-fixer) is
+    // CONFIG-tier — the `build` override on each worker binding — never
+    // registry data; this arc works on any binding.
+    name: 'relay',
+    displayName: 'Relay (frame → design → codex build → fixer review → PR)',
+    phases: [
+      {
+        name: 'frame',
+        semantics: { block: 'frame', examplesKey: 'frame' },
+        gate: {
+          state: 'directionGate',
+          heading: 'DIRECTION gate — the synthesized direction',
+          ready: 'Direction gate — synthesized direction ready',
+          hint: null,
+        },
+        artifactLabel: 'direction analysis',
+        reviewLoop: false,
+        roundCap: 2,
+        orchestratorBudgetUsd: 15,
+        workerBudgetUsd: 10,
+        workerTurnTimeoutMs: 30 * 60_000,
+        consultantCheckpoint: 'frame',
+      },
+      {
+        // Byte-for-byte the design arc's one artifact phase — same loop, same
+        // late-authored contract, same handoff-and-ratification gate.
+        name: 'design',
+        semantics: { block: 'doc-loop', artifactKind: 'design', examplesKey: 'design' },
+        gate: {
+          state: 'designGate',
+          heading: "DESIGN gate — the orchestrator's summary",
+          ready: 'Design gate — design doc ready for review',
+          hint: '(approving hands off to AFK implementation — the design doc is the single design artifact; there is no separate spec or plan)',
+        },
+        artifactLabel: 'design doc',
+        reviewLoop: true,
+        roundCap: 2,
+        orchestratorBudgetUsd: 15,
+        workerBudgetUsd: 10,
+        workerTurnTimeoutMs: 30 * 60_000,
+        consultantCheckpoint: 'contract',
+      },
+      {
+        // The fixer build: a fresh builder seeds from the committed design doc
+        // (fresh-seed — a provider-switched builder held no planning context),
+        // the reviewer reviews WITH write access (one review-and-fix round,
+        // cap 1 like rir's writable round — the verify self-heal's fix
+        // follow-ups ride the established frame, not new rounds) and owns the
+        // build tail. Verify matters MORE here: the maker-vs-critic
+        // adversariality collapses into build-then-judge, so the consultant's
+        // fresh-session contract verify is the one fully independent pass.
+        name: 'implement',
+        semantics: {
+          block: 'build',
+          entrySeed: 'fresh-seed',
+          reviewPosture: 'fixer',
+          midpoint: 'judgment',
+          shipPacket: 'ceo-summary',
+          buildTailOwner: 'reviewer',
+          examplesKey: 'relay-impl',
+        },
+        gate: {
+          state: 'shipGate',
+          heading: 'SHIP gate — the orchestrator’s packet (CEO summary first)',
+          ready: 'Ship gate — implementation packet ready',
+          hint: '(verify in your environment before deciding — migrations, smoke tests; docs are reconciled here too, so approving enters FINISH = open the PR)',
+        },
+        artifactLabel: 'implementation',
+        reviewLoop: true,
+        roundCap: 1,
+        orchestratorBudgetUsd: 30,
+        workerBudgetUsd: 25,
+        workerTurnTimeoutMs: 90 * 60_000,
+        consultantCheckpoint: 'verify',
+      },
+      {
+        // The shared PR-only finishing tail, owned by the REVIEWER — the
+        // judge-fixer that already owns the docs and the summary writes the
+        // description and opens the PR; pure data (renderFinishBrief reads
+        // finishOwner).
+        name: 'finish',
+        semantics: { block: 'finish', finishOwner: 'reviewer' },
+        gate: {
+          state: 'openPrGate',
+          heading: 'OPEN-PR gate — docs reconciled, PR open',
+          ready: 'Open-PR gate — PR open, ready for your review',
+          hint: '(the PR is already open and auto-crosses to done by default; list `finish` in gates_at for a post-open review stop — approve marks it done, reject amends the open PR. The merge is always yours.)',
+        },
+        artifactLabel: 'PR',
+        reviewLoop: false,
+        roundCap: 2,
+        orchestratorBudgetUsd: 15,
+        workerBudgetUsd: 15,
+        workerTurnTimeoutMs: 30 * 60_000,
+      },
+    ],
+    entry: { firstPhase: 'frame', specSkipsTo: 'design' },
+    // The design gate is the interactive→headless handoff AND the session
+    // boundary: a provider-switched role's next turn derives a fresh session
+    // (sessionIdFor), re-anchored on the committed doc.
+    handoffGate: 'design',
+    presets: { afk: [] },
+    // design's one-interruption posture: the human reads one document, taps
+    // once, and walks away.
+    forceAttend: [],
+    defaultPreAuthorized: ['frame', 'implement', 'finish'],
+  },
   rir: {
     name: 'rir',
     displayName: 'Research → Implement → Review',
@@ -880,6 +1007,7 @@ function servePhases(workflow: WorkflowName): readonly PhaseSpec[] {
 const SERVED_PHASES: Record<WorkflowName, readonly PhaseSpec[]> = {
   full: servePhases('full'),
   design: servePhases('design'),
+  relay: servePhases('relay'),
   rir: servePhases('rir'),
 };
 

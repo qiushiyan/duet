@@ -137,6 +137,7 @@ export const ACTION_CATALOG: Record<string, ActionBehavior> = {
   'review-implementation': { countsReviewRound: true },
   'review-implementation-again': { countsReviewRound: true },
   'review-direct': { countsReviewRound: true },
+  'review-and-fix': { countsReviewRound: true },
   // Explicitly cataloged as NOT a round: the midpoint checkpoint is one-shot
   // mid-build guidance, not a round of the post-implementation review loop —
   // counting it would burn a third of the implement cap on a pause the cap
@@ -166,14 +167,17 @@ const BUILD_TAIL_ACTIONS: ReadonlySet<string> = new Set(['reconcile-docs', 'ceo-
 
 /**
  * The reviewer's write grants per review posture, ACTION-scoped — never a
- * phase blanket. Neither current posture grants any: under `critique` and
- * `writable` alike, the IMPLEMENTER applies fixes (apply-review is an
- * implementer action). relay's `fixer` posture adds its grant here
- * (review-and-fix — and only that: a review-midpoint turn under the fixer
- * stays guidance-only, because mid-build the builder is the sole writer and
- * two interleaved writers would wreck its mental model of its own tree).
+ * phase blanket. `critique` and `writable` grant nothing: under both, the
+ * IMPLEMENTER applies fixes (apply-review is an implementer action). `fixer`
+ * grants exactly review-and-fix — and only that: a review-midpoint turn under
+ * the fixer stays guidance-only, because mid-build the builder is the sole
+ * writer and two interleaved writers would wreck its mental model of its own
+ * tree. (The fixer's tail writes — reconcile-docs, ceo-summary — ride the
+ * buildTailOwner grant below, not the posture.)
  */
-const REVIEWER_WRITE_GRANTS: Partial<Record<ReviewPosture, ReadonlySet<string>>> = {};
+const REVIEWER_WRITE_GRANTS: Partial<Record<ReviewPosture, ReadonlySet<string>>> = {
+  fixer: new Set(['review-and-fix']),
+};
 
 /**
  * Whether a role's worker turn runs WITH write authority — the one resolver

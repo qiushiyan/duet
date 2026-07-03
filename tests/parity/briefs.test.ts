@@ -134,6 +134,27 @@ const CASES: Array<{ name: string; phase: PhaseName; opts: ParityRunOpts }> = [
   },
   { name: 'design-finish.default', phase: 'finish', opts: { workflow: 'design', spec: true, warmSessions: true } },
 
+  // ---- relay: the fixer arc (design's shape; writing reviewer owns the tails) ----
+  { name: 'relay-frame.default', phase: 'frame', opts: { workflow: 'relay' } },
+  { name: 'relay-design.review', phase: 'design', opts: { workflow: 'relay', spec: true } },
+  {
+    name: 'relay-design.review-consultant',
+    phase: 'design',
+    opts: { workflow: 'relay', spec: true, consultant: true },
+  },
+  { name: 'relay-implement.default', phase: 'implement', opts: { workflow: 'relay', spec: true, warmSessions: true } },
+  {
+    name: 'relay-implement.autocrossed',
+    phase: 'implement',
+    opts: { workflow: 'relay', spec: true, warmSessions: true, autoApprovals: ['designGate'] },
+  },
+  {
+    name: 'relay-implement.consultant-frozen',
+    phase: 'implement',
+    opts: { workflow: 'relay', spec: true, warmSessions: true, consultant: true, contract: 'frozen' },
+  },
+  { name: 'relay-finish.default', phase: 'finish', opts: { workflow: 'relay', spec: true, warmSessions: true } },
+
   // ---- rir: the lighter arc (attend-all by default; one writable round) ----
   { name: 'rir-research.default', phase: 'research', opts: { workflow: 'rir' } },
   { name: 'rir-research.consultant', phase: 'research', opts: { workflow: 'rir', consultant: true } },

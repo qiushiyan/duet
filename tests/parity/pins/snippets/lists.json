@@ -228,6 +228,95 @@
       "compact-for-cleanup"
     ]
   },
+  "relay.frame": {
+    "base": [
+      "think-holistic",
+      "compare-notes"
+    ],
+    "consultant": [
+      "think-holistic",
+      "compare-notes",
+      "consultant-frame"
+    ],
+    "consultantGateless": [
+      "think-holistic",
+      "compare-notes",
+      "consultant-frame"
+    ]
+  },
+  "relay.design": {
+    "base": [
+      "write-design",
+      "review-design",
+      "update-design",
+      "review-design-again",
+      "update-design-again"
+    ],
+    "consultant": [
+      "write-design",
+      "review-design",
+      "update-design",
+      "review-design-again",
+      "update-design-again",
+      "consultant-contract"
+    ],
+    "consultantGateless": [
+      "write-design",
+      "review-design",
+      "update-design",
+      "review-design-again",
+      "update-design-again",
+      "consultant-contract"
+    ]
+  },
+  "relay.implement": {
+    "base": [
+      "implement-design",
+      "midpoint-status",
+      "review-midpoint",
+      "respond-midpoint",
+      "implementation-handoff",
+      "review-and-fix",
+      "reconcile-docs",
+      "ceo-summary"
+    ],
+    "consultant": [
+      "implement-design",
+      "midpoint-status",
+      "review-midpoint",
+      "respond-midpoint",
+      "implementation-handoff",
+      "review-and-fix",
+      "reconcile-docs",
+      "ceo-summary",
+      "consultant-verify"
+    ],
+    "consultantGateless": [
+      "implement-design",
+      "midpoint-status",
+      "review-midpoint",
+      "respond-midpoint",
+      "implementation-handoff",
+      "review-and-fix",
+      "reconcile-docs",
+      "ceo-summary",
+      "consultant-verify"
+    ]
+  },
+  "relay.finish": {
+    "base": [
+      "pr-description",
+      "compact-for-cleanup"
+    ],
+    "consultant": [
+      "pr-description",
+      "compact-for-cleanup"
+    ],
+    "consultantGateless": [
+      "pr-description",
+      "compact-for-cleanup"
+    ]
+  },
   "rir.research": {
     "base": [
       "think-holistic",
@@ -313,6 +402,16 @@
     "consultant-verify"
   ],
   "consultant-reach.design.gateless": [
+    "consultant-frame",
+    "consultant-contract",
+    "consultant-verify"
+  ],
+  "consultant-reach.relay": [
+    "consultant-frame",
+    "consultant-contract",
+    "consultant-verify"
+  ],
+  "consultant-reach.relay.gateless": [
     "consultant-frame",
     "consultant-contract",
     "consultant-verify"
