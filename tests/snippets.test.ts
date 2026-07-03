@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
-import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, UNLISTED_SNIPPETS, WORKFLOWS, consultantSnippetFor } from '../src/phases.ts';
+import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, UNLISTED_SNIPPETS, WORKFLOWS, consultantSnippetFor, phasesOf } from '../src/phases.ts';
 import type { WorkflowName } from '../src/phases.ts';
 import {
   LESSONS_DIR,
@@ -189,7 +189,7 @@ describe('the snippet library', () => {
     // "exactly one bucket" but: every snippet has a home; the three bucket
     // KINDS (phase-bound / anytime / unlisted) are pairwise disjoint; and no
     // snippet repeats within a single workflow's phase lists.
-    const phaseSet = new Set(WORKFLOW_NAMES.flatMap((wf) => WORKFLOWS[wf].phases.flatMap((p) => p.snippets)));
+    const phaseSet = new Set(WORKFLOW_NAMES.flatMap((wf) => phasesOf(wf).flatMap((p) => p.snippets)));
     const anytime = new Set(ANYTIME_SNIPPETS);
     const unlisted = new Set(UNLISTED_SNIPPETS);
     // The consultant checkpoint snippets are a FOURTH bucket — registry data
@@ -220,7 +220,7 @@ describe('the snippet library', () => {
 
     // (c) no snippet appears twice within one workflow's own phase lists.
     for (const wf of WORKFLOW_NAMES) {
-      const within = WORKFLOWS[wf].phases.flatMap((p) => p.snippets);
+      const within = phasesOf(wf).flatMap((p) => p.snippets);
       expect.soft(new Set(within).size, `workflow "${wf}" lists a snippet under more than one of its phases`).toBe(within.length);
     }
 
@@ -231,7 +231,7 @@ describe('the snippet library', () => {
   });
 
   test('the five consultant snippets exist, are checkpoint-classified (never in a base phase list), and never carry a review- prefix', () => {
-    const phaseSet = new Set<string>(WORKFLOW_NAMES.flatMap((wf) => WORKFLOWS[wf].phases.flatMap((p) => p.snippets)));
+    const phaseSet = new Set<string>(WORKFLOW_NAMES.flatMap((wf) => phasesOf(wf).flatMap((p) => p.snippets)));
     for (const key of ['consultant-frame', 'consultant-spec', 'consultant-impl', 'consultant-contract', 'consultant-verify']) {
       const snippet = getSnippet(key);
       expect.soft(snippet, `snippet "${key}"`).toBeDefined();

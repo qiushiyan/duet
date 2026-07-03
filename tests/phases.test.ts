@@ -34,7 +34,6 @@ function phase(name: string, gateState: string = `${name}Gate`, overrides: Recor
   return {
     name,
     semantics: { block: 'frame', examplesKey: 'frame' } as PhaseSemantics,
-    snippets: [] as readonly string[],
     gate: { state: gateState, heading: 'h', ready: 'r', hint: null },
     artifactLabel: name,
     reviewLoop: false,
@@ -145,6 +144,26 @@ describe('validateRegistry', () => {
         w: workflow({ phases: [phase('a', 'aGate', { consultantCheckpoint: 'contract' }), phase('b', 'bGate')] }),
       },
       throws: /checkpoint "contract" but is a "frame" block/,
+    },
+    {
+      // The closed vocabulary, structurally: a knob value with no shipped
+      // snippet family fails at load — "a knob value ships its prompt support"
+      // is enforced, not prose. (TypeScript already forbids this for the
+      // literal registry; this is the same rule for a registry that arrives as
+      // data, e.g. a future external arc file.)
+      name: 'a knob value without a shipped snippet family throws (closed vocabulary)',
+      registry: {
+        w: workflow({
+          phases: [
+            phase('a', 'aGate', {
+              reviewLoop: true,
+              semantics: { block: 'doc-loop', artifactKind: 'memo', examplesKey: 'spec' } as unknown as PhaseSemantics,
+            }),
+            phase('b', 'bGate'),
+          ],
+        }),
+      },
+      throws: /artifactKind "memo", which ships no snippet family/,
     },
   ])('$name', ({ registry, throws }) => {
     if (throws) expect(() => validateRegistry(registry)).toThrow(throws);
