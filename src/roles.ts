@@ -1,7 +1,10 @@
+import { phaseSpec } from './phases.ts';
+import type { PhaseName, ReviewPosture } from './phases.ts';
 import type { WorkerRole } from './providers/types.ts';
-// Type-only on BOTH imports, so this module compiles to a runtime leaf (it
-// value-imports nothing) — which is why run-store.ts and the harness can
-// value-import it without closing a cycle. The Voice edge is erased at build.
+// Type-only on the run-store imports, so no runtime cycle closes: run-store.ts
+// value-imports this module (workerRolesFor), and the harness value-imports
+// both. The one value edge out of here is phases.ts, itself a leaf (node:path
+// only). The Voice edge is erased at build.
 import type { RunState, Voice } from './run-store.ts';
 
 /**
@@ -95,16 +98,93 @@ export function shouldResetAfterCompactAbort(role: WorkerRole, isCompactTurn: bo
 }
 
 /**
+ * The action catalog — the snippet keys whose use ENCODES BEHAVIOR, as
+ * explicit metadata (T3). Deliberately a code map keyed by snippet key, never
+ * fields in the snippets/ TOML: the override layers replace snippet BODIES
+ * per-key, and an override must never be able to change behavior. Scope rule:
+ * catalog only the keys that drive code today (round counting, write
+ * authority); the full snippet taxonomy waits until something reads it.
+ * tests/snippets.test.ts pins the catalog against the library — every catalog
+ * key exists, and every review-family key in a phase list is cataloged.
+ */
+interface ActionBehavior {
+  /** Counts against the phase's review-round backstop cap (reviewer only). */
+  readonly countsReviewRound?: true;
+}
+
+export const ACTION_CATALOG: Record<string, ActionBehavior> = {
+  'review-spec': { countsReviewRound: true },
+  'review-spec-again': { countsReviewRound: true },
+  'review-plan': { countsReviewRound: true },
+  'review-plan-again': { countsReviewRound: true },
+  'review-design': { countsReviewRound: true },
+  'review-design-again': { countsReviewRound: true },
+  'review-implementation': { countsReviewRound: true },
+  'review-implementation-again': { countsReviewRound: true },
+  'review-direct': { countsReviewRound: true },
+  // Explicitly cataloged as NOT a round: the midpoint checkpoint is one-shot
+  // mid-build guidance, not a round of the post-implementation review loop —
+  // counting it would burn a third of the implement cap on a pause the cap
+  // wasn't budgeting for.
+  'review-midpoint': {},
+};
+
+/**
  * Whether a turn counts as a review round against the phase's backstop cap: the
- * reviewer on a `review*`-tagged prompt, and only the reviewer. A consultant
+ * reviewer on a cataloged review action, and only the reviewer. A consultant
  * turn NEVER counts — it is additive, never substitutive, so advance_phase's
- * "needs a review round" rule keeps requiring an embedded reviewer round. The
- * midpoint checkpoint is exempt too: it is one-shot mid-build guidance, not a
- * round of the post-implementation review loop, so counting it would burn a
- * third of the implement cap on a pause the cap wasn't budgeting for.
+ * "needs a review round" rule keeps requiring an embedded reviewer round.
+ * Catalog-driven, not `tag.startsWith('review')`: the metadata is explicit
+ * per key, so an uncataloged or custom tag never counts and the midpoint
+ * exemption is data rather than a carve-out.
  */
 export function countsReviewRound(role: WorkerRole, tag: string): boolean {
-  return role === 'reviewer' && tag.startsWith('review') && tag !== 'review-midpoint';
+  return role === 'reviewer' && (ACTION_CATALOG[tag]?.countsReviewRound ?? false);
+}
+
+/**
+ * The build tail's actions — reconcile-docs + ceo-summary, inside implement,
+ * strictly before verify. Named once: writeAuthorityFor grants them to a
+ * reviewer-owned tail, and the relay brief routes them by the same set.
+ */
+const BUILD_TAIL_ACTIONS: ReadonlySet<string> = new Set(['reconcile-docs', 'ceo-summary']);
+
+/**
+ * The reviewer's write grants per review posture, ACTION-scoped — never a
+ * phase blanket. Neither current posture grants any: under `critique` and
+ * `writable` alike, the IMPLEMENTER applies fixes (apply-review is an
+ * implementer action). relay's `fixer` posture adds its grant here
+ * (review-and-fix — and only that: a review-midpoint turn under the fixer
+ * stays guidance-only, because mid-build the builder is the sole writer and
+ * two interleaved writers would wreck its mental model of its own tree).
+ */
+const REVIEWER_WRITE_GRANTS: Partial<Record<ReviewPosture, ReadonlySet<string>>> = {};
+
+/**
+ * Whether a role's worker turn runs WITH write authority — the one resolver
+ * every harness path that mutates correctness state reads (T2). The static
+ * POLICY table is the default beneath it: the implementer always writes, and
+ * a read-only role widens only where the phase's semantics grant it — a
+ * posture grant (action-scoped), a reviewer-owned build tail, or a
+ * reviewer-owned finish (the PR mechanics are the owner's whole phase). The
+ * consultant's contract/verify relaxations stay PROMPT-scoped as today — they
+ * never flip this flag, so author-never-commits holds mechanically.
+ */
+export function writeAuthorityFor(state: RunState, phase: PhaseName, role: WorkerRole, action: string): boolean {
+  if (!POLICY[role].readOnly) return true;
+  if (role !== 'reviewer') return false;
+  const semantics = phaseSpec(state.workflow ?? 'full', phase).semantics;
+  switch (semantics.block) {
+    case 'build':
+      return (
+        (REVIEWER_WRITE_GRANTS[semantics.reviewPosture]?.has(action) ?? false) ||
+        (semantics.buildTailOwner === 'reviewer' && BUILD_TAIL_ACTIONS.has(action))
+      );
+    case 'finish':
+      return semantics.finishOwner === 'reviewer';
+    default:
+      return false;
+  }
 }
 
 /**

@@ -1,8 +1,8 @@
 # Doc-loop × design — the design arc's ONE committed document replacing the
 # spec + plan pair: product sections on top (spec altitude), technical
 # sections below (plan altitude minus per-case enumeration), reviewed in one
-# section-scoped loop. review-design keeps the `review-` prefix — the
-# review-round counter recognizes a round by it.
+# section-scoped loop. review-design and its -again variant count review
+# rounds through the action catalog (ACTION_CATALOG in src/roles.ts).
 
 [[snippets]]
 key = "write-design"

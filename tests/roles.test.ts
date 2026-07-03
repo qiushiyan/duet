@@ -8,6 +8,7 @@ import {
   shouldResetAfterCompactAbort,
   voicesFor,
   workerRolesFor,
+  writeAuthorityFor,
 } from '../src/roles.ts';
 import { test } from './helpers/fixtures.ts';
 
@@ -37,7 +38,7 @@ describe('role policy helpers', () => {
     expect.soft(readOnlyFor('consultant')).toBe(true);
   });
 
-  test('countsReviewRound: only the reviewer on a review* tag; the midpoint checkpoint is exempt', () => {
+  test('countsReviewRound: only the reviewer on a CATALOGED review action; the midpoint checkpoint is exempt', () => {
     expect.soft(countsReviewRound('reviewer', 'review-spec')).toBe(true);
     expect.soft(countsReviewRound('reviewer', 'custom')).toBe(false);
     expect.soft(countsReviewRound('consultant', 'review-spec')).toBe(false); // additive, never substitutive
@@ -46,6 +47,33 @@ describe('role policy helpers', () => {
     // the post-implementation review loop budgets on.
     expect.soft(countsReviewRound('reviewer', 'review-midpoint')).toBe(false);
     expect.soft(countsReviewRound('reviewer', 'review-implementation')).toBe(true);
+    // Catalog-driven, not prefix-matched (T3): a review-prefixed tag the
+    // library doesn't ship never counts — behavior lives in the code map,
+    // where a snippet-body override can't reach it.
+    expect.soft(countsReviewRound('reviewer', 'review-something-invented')).toBe(false);
+  });
+
+  test('writeAuthorityFor: the implementer writes everywhere; read-only roles gain nothing on the current arcs', ({
+    run,
+    rirRun,
+    designRun,
+    consultantRun,
+  }) => {
+    // The implementer's authority is the static policy — any phase, any action.
+    expect.soft(writeAuthorityFor(run, 'implement', 'implementer', 'respond-review')).toBe(true);
+    expect.soft(writeAuthorityFor(run, 'spec', 'implementer', 'update-spec')).toBe(true);
+    // The reviewer stays read-only on every current arc/phase/action — the
+    // resolver widens only on semantics no shipped arc sets yet (a fixer
+    // grant, a reviewer-owned tail).
+    expect.soft(writeAuthorityFor(run, 'implement', 'reviewer', 'review-implementation')).toBe(false);
+    expect.soft(writeAuthorityFor(run, 'implement', 'reviewer', 'reconcile-docs')).toBe(false);
+    expect.soft(writeAuthorityFor(run, 'finish', 'reviewer', 'pr-description')).toBe(false);
+    expect.soft(writeAuthorityFor(rirRun, 'implement', 'reviewer', 'review-direct')).toBe(false);
+    expect.soft(writeAuthorityFor(designRun, 'design', 'reviewer', 'review-design')).toBe(false);
+    // The consultant's contract/verify relaxations are PROMPT-scoped — the
+    // resolver never widens it, so author-never-commits holds mechanically.
+    expect.soft(writeAuthorityFor(consultantRun, 'plan', 'consultant', 'consultant-contract')).toBe(false);
+    expect.soft(writeAuthorityFor(consultantRun, 'implement', 'consultant', 'consultant-verify')).toBe(false);
   });
 
   test('sessionIdFor: persistent roles resume; the ephemeral consultant never does', ({ run }) => {

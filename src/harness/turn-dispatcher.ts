@@ -2,7 +2,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { PhaseName } from '../phases.ts';
 import { providerFor } from '../providers/index.ts';
 import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
-import { readOnlyFor, sessionIdFor } from '../roles.ts';
+import { sessionIdFor, writeAuthorityFor } from '../roles.ts';
 import {
   clearPendingTurn,
   clearTurnActive,
@@ -221,7 +221,7 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
             providerFor(providers, role).runTurn({
               prompt: body,
               sessionId: sessionIdFor(fresh, role),
-              readOnly: readOnlyFor(role),
+              readOnly: !writeAuthorityFor(fresh, phase, role, tag),
               cwd: fresh.cwd,
               ...(timeoutMs !== undefined ? { timeoutMs } : {}),
               ...(contextCapTokens !== undefined ? { contextCapTokens } : {}),

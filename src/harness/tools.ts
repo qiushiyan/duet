@@ -7,7 +7,7 @@ import { providerFor } from '../providers/index.ts';
 import { BudgetCutoffError } from '../providers/types.ts';
 import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
 import { CONTEXT_CAUTION_PERCENT, CONTEXT_EMERGENCY_PERCENT, contextBand, latestTranscriptUsageTokens, salvageCompactInstructions } from '../context-guard.ts';
-import { countsReviewRound, orphanRecoveryFor, readOnlyFor, sessionIdFor, sessionPolicyFor, shouldResetAfterCompactAbort, workerRolesFor } from '../roles.ts';
+import { countsReviewRound, orphanRecoveryFor, sessionIdFor, sessionPolicyFor, shouldResetAfterCompactAbort, workerRolesFor, writeAuthorityFor } from '../roles.ts';
 import { getSnippet, renderSnippetLibrary, runtimeLibraryContext } from '../snippets.ts';
 import {
   appendNote,
@@ -541,12 +541,16 @@ export function settleTurn(
       // (pass/fail rides the gate packet; this only records that it happened).
       fresh.acceptanceContract = { ...fresh.acceptanceContract, verifiedAt: new Date().toISOString() };
     }
-  } else if (checkpointMode === 'verify' && !readOnlyFor(role) && fresh.acceptanceContract?.verifiedAt) {
-    // A code-changing (non-read-only) worker turn at the verify checkpoint AFTER a
+  } else if (checkpointMode === 'verify' && writeAuthorityFor(state, phase, role, tag) && fresh.acceptanceContract?.verifiedAt) {
+    // A worker turn WITH write authority at the verify checkpoint AFTER a
     // verification ran: the build just changed, so the prior verify is stale. Drop
     // verifiedAt so the rail requires a FRESH, independent re-verify before advance —
     // the self-heal loop's "re-verify after the fix" made structural, not just
     // prompt-trusted, so a routed fix can't ride the pre-fix verify to auto-cross Ship.
+    // Keyed on the effective authority (writeAuthorityFor), not the static role
+    // table: a reviewer writing under a fixer posture must go stale-and-re-verify
+    // exactly like the implementer, or its fixes would ship certified by a
+    // pre-fix verification.
     delete fresh.acceptanceContract.verifiedAt;
   }
   fresh.lastActivity = `send_prompt → ${role} (${tag})${aborted ? ' [aborted]' : ''}`;
@@ -1416,7 +1420,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             const outcome = await providerFor(providers, role).runTurn({
               prompt: turn.body,
               sessionId: sessionIdFor(state, role),
-              readOnly: readOnlyFor(role),
+              readOnly: !writeAuthorityFor(state, phase, role, turn.tag),
               cwd: state.cwd,
               ...(turn.timeoutMs !== undefined ? { timeoutMs: turn.timeoutMs } : {}),
               ...(contextCapTokens !== undefined ? { contextCapTokens } : {}),

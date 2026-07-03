@@ -6,9 +6,9 @@
 # (implementation-handoff → review-implementation → respond-review, with
 # -again round-2 variants), the writable one-round family (handoff-direct →
 # review-direct → apply-review — rir's, reviewing against the research
-# decisions; review-direct keeps the `review-` prefix so the round counter
-# recognizes it), and the build tail (reconcile-docs, ceo-summary — the last
-# build steps before the Ship packet).
+# decisions; review-direct counts a review round through the action catalog,
+# ACTION_CATALOG in src/roles.ts), and the build tail (reconcile-docs,
+# ceo-summary — the last build steps before the Ship packet).
 
 [[snippets]]
 key = "compact-for-impl"

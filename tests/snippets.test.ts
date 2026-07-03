@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
 import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, UNLISTED_SNIPPETS, WORKFLOWS, consultantSnippetFor, phasesOf } from '../src/phases.ts';
+import { ACTION_CATALOG } from '../src/roles.ts';
 import type { WorkflowName } from '../src/phases.ts';
 import {
   LESSONS_DIR,
@@ -242,9 +243,11 @@ describe('the snippet library', () => {
       // run's list_snippets (registry data, gated per-run by phaseSnippetsFor).
       expect.soft(CONSULTANT_SNIPPETS.has(key), `"${key}" is a consultant checkpoint snippet`).toBe(true);
       expect.soft(phaseSet.has(key), `"${key}" must NOT sit in any base phase snippets list`).toBe(false);
-      // Load-bearing: a consultant tag must NOT start with "review" — tools.ts
-      // counts a review round by tag.startsWith('review'), so a review-prefixed
-      // consultant tag would consume a round (and pollute the telemetry).
+      // A consultant snippet must never be cataloged as a review round —
+      // round counting is catalog-driven (ACTION_CATALOG, T3), and a
+      // consultant turn is additive, never substitutive. The old prefix
+      // hygiene stays as naming clarity.
+      expect.soft(ACTION_CATALOG[key]?.countsReviewRound ?? false, `"${key}" must not count a review round`).toBe(false);
       expect.soft(key.startsWith('review'), `"${key}" must not start with review`).toBe(false);
     }
     // The checkpoint→snippet mapping is the single source the registry exposes:
@@ -256,6 +259,22 @@ describe('the snippet library', () => {
     expect.soft(consultantSnippetFor('full', 'spec')).toBe('consultant-spec');
     expect.soft(consultantSnippetFor('full', 'plan')).toBe('consultant-contract');
     expect.soft(consultantSnippetFor('full', 'implement')).toBe('consultant-verify');
+  });
+
+  test('the action catalog pins to the library: every catalog key ships, every review-family key is cataloged (T3)', () => {
+    // (a) A catalog entry for a snippet the library doesn't ship is dead
+    // metadata — or worse, a typo silently detached from its snippet.
+    for (const key of Object.keys(ACTION_CATALOG)) {
+      expect.soft(getSnippet(key), `catalog key "${key}" is missing from the library`).toBeDefined();
+    }
+    // (b) Every review-family key a phase actually serves must be cataloged —
+    // counting is catalog-driven now, so an uncataloged review snippet would
+    // silently stop counting toward the round cap.
+    const served = new Set(WORKFLOW_NAMES.flatMap((wf) => phasesOf(wf).flatMap((p) => p.snippets)));
+    for (const key of served) {
+      if (!key.startsWith('review')) continue;
+      expect.soft(ACTION_CATALOG[key], `review-family snippet "${key}" is not in the action catalog`).toBeDefined();
+    }
     expect.soft(consultantSnippetFor('rir', 'research')).toBe('consultant-frame');
     expect.soft(consultantSnippetFor('rir', 'implement')).toBe('consultant-impl');
     expect.soft(consultantSnippetFor('full', 'finish'), 'finish carries no consultant checkpoint').toBeUndefined();
