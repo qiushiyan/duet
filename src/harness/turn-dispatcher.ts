@@ -180,7 +180,7 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
         const fresh = loadRunState(state.cwd, state.runId);
         const startedAt = Date.now();
         stopHeartbeat = startHeartbeat(
-          { state: fresh, log, ...(home !== undefined ? { home } : {}) },
+          { state: fresh, phase, log, ...(home !== undefined ? { home } : {}) },
           { role, tag, startedAt },
         );
         const stop = stopHeartbeat;
@@ -215,7 +215,7 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
         // 5-minute interval can never leak, on any exit.
         // The context deadline, gated exactly as on the blocking host (one
         // helper, two call sites): claude-persistent-headless, never a /compact.
-        const contextCapTokens = contextCapFor(fresh, role, isCompactTurn === true);
+        const contextCapTokens = contextCapFor(fresh, phase, role, isCompactTurn === true);
         Promise.resolve()
           .then(() =>
             providerFor(providers, role).runTurn({

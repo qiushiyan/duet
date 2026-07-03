@@ -649,18 +649,43 @@ describe('send_prompt', () => {
   test('contextCapFor: the emergency band of the known window, only where the hazard exists', ({ run, consultantRun }) => {
     // A persistent claude role with a known window gets the cap…
     recordContextUsage(run, 'implementer', { usedTokens: 170_000, windowTokens: 1_000_000 });
-    expect.soft(contextCapFor(run, 'implementer', false)).toBe(850_000);
+    expect.soft(contextCapFor(run, 'spec', 'implementer', false)).toBe(850_000);
     // …a /compact turn never does (its whole job is running at high fill)…
-    expect.soft(contextCapFor(run, 'implementer', true)).toBeUndefined();
+    expect.soft(contextCapFor(run, 'spec', 'implementer', true)).toBeUndefined();
     // …codex self-compacts (the default reviewer binding)…
     recordContextUsage(run, 'reviewer', { usedTokens: 100_000, windowTokens: 258_400 });
-    expect.soft(contextCapFor(run, 'reviewer', false)).toBeUndefined();
+    expect.soft(contextCapFor(run, 'spec', 'reviewer', false)).toBeUndefined();
     // …an unknown window (no reading yet) is honest absence, not a guess…
-    expect.soft(contextCapFor(consultantRun, 'implementer', false)).toBeUndefined();
+    expect.soft(contextCapFor(consultantRun, 'spec', 'implementer', false)).toBeUndefined();
     // …and the ephemeral consultant seeds fresh every turn, so even with a
     // reading it accumulates nothing.
     recordContextUsage(consultantRun, 'consultant', { usedTokens: 100_000, windowTokens: 1_000_000 });
-    expect.soft(contextCapFor(consultantRun, 'consultant', false)).toBeUndefined();
+    expect.soft(contextCapFor(consultantRun, 'spec', 'consultant', false)).toBeUndefined();
+  });
+
+  test('the pressure policy follows the PHASE-EFFECTIVE binding, not the base (relay criss-cross)', ({ projectDir }) => {
+    // relay's post-handoff reviewer is claude via the build override — its
+    // session is metered like any persistent claude session, even though the
+    // base reviewer binding is codex; and the post-handoff implementer
+    // (codex via its override) leaves the policy despite its claude base.
+    const relay = createRun({
+      cwd: projectDir,
+      workflow: 'relay',
+      framing: 'x',
+      bindings: {
+        ...DEFAULT_BINDINGS,
+        implementer: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless', build: { provider: 'codex' } },
+        reviewer: { provider: 'codex', build: { provider: 'claude', model: 'claude-opus-4-8' } },
+      },
+    });
+    recordContextUsage(relay, 'reviewer', { usedTokens: 100_000, windowTokens: 1_000_000 });
+    recordContextUsage(relay, 'implementer', { usedTokens: 100_000, windowTokens: 1_000_000 });
+    // Pre-handoff: the base pair — claude implementer metered, codex reviewer not.
+    expect.soft(contextCapFor(relay, 'design', 'implementer', false)).toBe(850_000);
+    expect.soft(contextCapFor(relay, 'design', 'reviewer', false)).toBeUndefined();
+    // Post-handoff: the criss-cross — the claude fixer metered, the codex builder not.
+    expect.soft(contextCapFor(relay, 'implement', 'reviewer', false)).toBe(850_000);
+    expect.soft(contextCapFor(relay, 'implement', 'implementer', false)).toBeUndefined();
   });
 
   test('a blocking send threads the context cap into the worker turn; a /compact send does not', async ({ run }) => {

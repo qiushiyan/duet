@@ -7,6 +7,7 @@ import {
   contractAuthorPhaseOf,
   entryOf,
   phaseSpec,
+  phasesOf,
   priorPhaseOf,
 } from '../phases.ts';
 import type { ArtifactKind, ExamplesKey, GatePhase, PhaseName, PhaseSemantics, PhaseSpec, WorkflowName } from '../phases.ts';
@@ -153,17 +154,41 @@ export function consultantIdentityClause(workflow: WorkflowName): string {
 }
 
 /**
+ * The fixer-posture clause — appended ONLY for an arc whose build phase runs
+ * the `fixer` review posture (relay). The base prompt's standing frame says
+ * the reviewer critiques and is read-only; on a fixer arc that is true only
+ * until the build's review round, so the durable prompt must carry the
+ * narrower truth or it fights the phase brief the whole build. Arc-scoped
+ * like the consultant contract clause: every other arc's prompt is
+ * byte-for-byte unchanged.
+ */
+export const FIXER_IDENTITY_CLAUSE = `## The reviewer writes on this arc's build
+
+This run's build phase reviews with a WRITING reviewer: at its review-and-fix round and the finishing tail (docs, summary, PR), the reviewer edits the repository directly — fix commits for ordinary valid findings — rather than filing critiques back to the implementer. Everywhere before that round it reviews read-only as usual, and mid-build the implementer stays the sole writer. The escalation path still runs through you: a product or design disagreement the reviewer surfaces is an ask_human, never something to route back for patching over.`;
+
+/** Whether a workflow's build phase runs the fixer review posture. */
+function hasFixerBuild(workflow: WorkflowName): boolean {
+  return phasesOf(workflow).some((p) => p.semantics.block === 'build' && p.semantics.reviewPosture === 'fixer');
+}
+
+/**
  * The headless orchestrator's system prompt for a run — the base prompt, plus
- * the arc's consultant clause only when one is bound. Unbound it returns
- * ORCHESTRATOR_SYSTEM_PROMPT verbatim (the default-off byte-for-byte). The
- * interactive host gains the same clause by a different route — the launcher
- * composes it onto the shipped identity file it feeds (`orchestrate.ts`) — so
- * both hosts' identities match when bound and are unchanged when not.
+ * the arc's consultant clause only when one is bound, plus the fixer clause
+ * only on a fixer arc. With neither it returns ORCHESTRATOR_SYSTEM_PROMPT
+ * verbatim (the default-off byte-for-byte). The interactive host gains the
+ * consultant clause by a different route — the launcher composes it onto the
+ * shipped identity file it feeds (`orchestrate.ts`) — but deliberately not
+ * the fixer clause: the interactive session serves only the attended arc up
+ * to the handoff gate, where a fixer arc's reviewer is still read-only.
  */
 export function orchestratorSystemPrompt(state: RunState): string {
-  return state.bindings.consultant
-    ? `${ORCHESTRATOR_SYSTEM_PROMPT}\n\n${consultantIdentityClause(workflowOf(state))}`
-    : ORCHESTRATOR_SYSTEM_PROMPT;
+  const workflow = workflowOf(state);
+  const clauses = [
+    ORCHESTRATOR_SYSTEM_PROMPT,
+    ...(state.bindings.consultant ? [consultantIdentityClause(workflow)] : []),
+    ...(hasFixerBuild(workflow) ? [FIXER_IDENTITY_CLAUSE] : []),
+  ];
+  return clauses.join('\n\n');
 }
 
 /**

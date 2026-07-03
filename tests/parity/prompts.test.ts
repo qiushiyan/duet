@@ -47,6 +47,15 @@ describe('orchestrator system prompt pins', () => {
       orchestratorSystemPrompt(parityRun(projectDir, { workflow: 'rir', consultant: true })),
     ).toMatchFileSnapshot('./pins/system-prompt/consultant-rir.txt');
   });
+
+  test('a fixer arc appends the writing-reviewer clause; other arcs stay byte-identical', async ({ projectDir }) => {
+    const relay = orchestratorSystemPrompt(parityRun(projectDir, { workflow: 'relay' }));
+    expect.soft(relay.startsWith(ORCHESTRATOR_SYSTEM_PROMPT)).toBe(true); // append-only, never a rewrite
+    await expect(relay).toMatchFileSnapshot('./pins/system-prompt/relay.txt');
+    await expect(
+      orchestratorSystemPrompt(parityRun(projectDir, { workflow: 'relay', consultant: true })),
+    ).toMatchFileSnapshot('./pins/system-prompt/relay-consultant.txt');
+  });
 });
 
 // Gate-feedback re-entry covers both branch pairs: re-runs-review-loop
