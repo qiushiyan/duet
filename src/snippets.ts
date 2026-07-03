@@ -8,10 +8,13 @@ import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, GATELESS_CONSULTANT_SNIPPETS, co
 import type { PhaseName, WorkflowName } from './phases.ts';
 
 /**
- * Duet's snippet library — `snippets.toml` at the repo root, seeded from the
- * user's tabtype config plus the documented `ceo-summary`. The
- * orchestrator reads it via `list_snippets`; approved `propose_snippet_edit`
- * diffs apply here, and porting back to tabtype stays a manual human step.
+ * Duet's snippet library — the `snippets/` directory at the repo root, one
+ * block-named TOML file per vocabulary block (frame · doc-loop artifacts ·
+ * build · finish, plus the anytime helpers and the consultant checkpoints),
+ * seeded from the user's tabtype config plus the documented `ceo-summary`.
+ * The orchestrator reads the merged library via `list_snippets`; approved
+ * `propose_snippet_edit` diffs apply to the owning block file, and porting
+ * back to tabtype stays a manual human step.
  */
 
 export interface Snippet {
@@ -92,14 +95,34 @@ export function mergeSnippetLayers(base: Snippet[], overrides: SnippetOverrideLa
 }
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const SNIPPETS_PATH = join(PACKAGE_ROOT, 'snippets.toml');
+const SNIPPETS_DIR = join(PACKAGE_ROOT, 'snippets');
+
+/**
+ * The shipped library's files, in serve order — the file layout navigates by
+ * the same mental model as the workflow vocabulary (an agent touching the
+ * fixer posture opens build.toml and nothing else), and the merged sequence
+ * IS the served base order, so the list is explicit data, never a directory
+ * glob (globbing would make serve order a filesystem accident). Keys stay
+ * globally unique across all files and remain the only identity — a filename
+ * never reaches the serve surface.
+ */
+const SNIPPET_FILES = [
+  'frame.toml',
+  'doc-spec.toml',
+  'doc-plan.toml',
+  'doc-design.toml',
+  'build.toml',
+  'finish.toml',
+  'anytime.toml',
+  'consultant.toml',
+] as const;
 
 /**
  * The vendored methodology lessons (`lessons/`) — duet's PLAN-phase quality
  * opinion, shipped in the package (`files` includes `lessons`). Snippet bodies
  * cite these with a `{{lessons_dir}}/…` token that `snippetBlock` resolves to
  * this absolute dir at serve time, so a worker on any install reads the real
- * files. Same package-relative resolution as `SNIPPETS_PATH` — `src/` and
+ * files. Same package-relative resolution as `SNIPPETS_DIR` — `src/` and
  * `dist/` both sit one level below the root, so it survives the published build.
  * A frozen snapshot of the author's `~/.config/lessons`, refreshed by hand via
  * `pnpm vendor-lessons` — which writes to this same path, so keep the two in sync
@@ -128,13 +151,28 @@ let cache: Snippet[] | undefined;
 
 export function loadSnippets(): Snippet[] {
   if (!cache) {
-    const parsed = librarySchema.safeParse(parse(readFileSync(SNIPPETS_PATH, 'utf8')));
-    if (!parsed.success) {
-      throw new Error(
-        `${SNIPPETS_PATH} is not a valid snippet library (${parsed.error.issues[0]?.message ?? 'unknown issue'}) — each [[snippets]] entry needs a string "key" and a string "expand".`,
-      );
+    const merged: Snippet[] = [];
+    const owners = new Map<string, string>();
+    for (const file of SNIPPET_FILES) {
+      const path = join(SNIPPETS_DIR, file);
+      const parsed = librarySchema.safeParse(parse(readFileSync(path, 'utf8')));
+      if (!parsed.success) {
+        throw new Error(
+          `${path} is not a valid snippet library (${parsed.error.issues[0]?.message ?? 'unknown issue'}) — each [[snippets]] entry needs a string "key" and a string "expand".`,
+        );
+      }
+      for (const s of parsed.data.snippets) {
+        const prior = owners.get(s.key);
+        if (prior) {
+          throw new Error(
+            `duplicate snippet key "${s.key}" in snippets/${file} (already defined in snippets/${prior}) — keys are the library's only identity and must stay globally unique across the snippets/ files.`,
+          );
+        }
+        owners.set(s.key, file);
+        merged.push(s);
+      }
     }
-    cache = parsed.data.snippets;
+    cache = merged;
   }
   return cache;
 }

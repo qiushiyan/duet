@@ -20,7 +20,7 @@
   },
   "files": [
     "dist",
-    "snippets.toml",
+    "snippets",
     "skills",
     "lessons",
     "prompts"

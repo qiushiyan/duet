@@ -1,0 +1,29 @@
+# Finish block — the PR-only finishing tail shared by every arc: write the PR
+# description, open the PR idempotently, plus the rare late compaction.
+
+[[snippets]]
+key = "pr-description"
+expand = '''
+Write a PR description aimed at a technical colleague who **won't read the diff**.
+
+**Format:**
+1. **Top (1–2 sentences):** direct impact in product/user-facing terms — what changed for the world, even if work is purely technical. Lead with this.
+2. **Body (3–5 sentences):** the substance of what changed and why it was done this way. Name components/functions **only when load-bearing** for the reader's mental model — don't enumerate.
+
+**Avoid:** line-by-line or file-by-file changelogs, line number references, restating the obvious (e.g., "added a function that does X" when X was the whole point).
+
+Reader should leave with a clear mental model of **what we did and why** — not how every piece works.'''
+
+[[snippets]]
+key = "compact-for-cleanup"
+expand = '''
+/compact Implementation is essentially done and polished through review — only small, non-blocking tasks remain (docs, minor fixes, cleanup). Compact for a **focused window on the finished code**, not on how we built it.
+
+**Preserve:**
+- What the feature does and its user-facing intent — enough to write accurate docs.
+- The current state of the implementation: what was built and where it lives (key modules/files), and any decision or invariant docs or callers must respect.
+- The remaining tasks — the specific docs, fixes, and cleanup still to do.
+
+**Drop:**
+- The whole spec → plan → review journey: alternatives, plan iterations, review rounds, and the back-and-forth that produced the code.
+- Reasoning debates and superseded critiques — the code already reflects their conclusions.'''

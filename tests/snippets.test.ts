@@ -19,9 +19,9 @@ import type { Snippet, SnippetOverrideLayer, SnippetRenderOpts } from '../src/sn
 const WORKFLOW_NAMES = Object.keys(WORKFLOWS) as WorkflowName[];
 
 /**
- * Guards the real snippets.toml — the file is hand-edited (approved
- * propose_snippet_edit diffs apply here), and a broken library should fail
- * a five-second test run, not a real orchestrated run.
+ * Guards the real snippets/ library — the block-named TOML files are
+ * hand-edited (approved propose_snippet_edit diffs apply there), and a broken
+ * library should fail a five-second test run, not a real orchestrated run.
  */
 
 describe('the snippet library', () => {
