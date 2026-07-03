@@ -1,0 +1,167 @@
+import { describe, expect } from 'vitest';
+import { buildPhaseBrief } from '../../src/harness/orchestrator-prompts.ts';
+import type { PhaseName } from '../../src/phases.ts';
+import { test } from '../helpers/fixtures.ts';
+import { parityRun } from './matrix.ts';
+import type { ParityRunOpts } from './matrix.ts';
+
+/**
+ * The phase-brief parity pins — every (workflow, phase) entry brief across the
+ * run-state matrix, pinned byte-identical at the one public seam both hosts
+ * cross (`buildPhaseBrief`). The rule (one-PR plan step 2): every conditional
+ * branch in orchestrator-prompts.ts has at least one pinned fixture BEFORE the
+ * renderer refactor; wording improvements discovered mid-refactor are deferred,
+ * never folded in. A red pin during steps 3–7 means behavior changed — the
+ * refactor is wrong, not the pin.
+ *
+ * Case naming: `<workflow>-<phase>.<variant>`; the variant names the branch the
+ * case exists to hold (default = the arc's materialized posture, fresh run).
+ */
+
+const CASES: Array<{ name: string; phase: PhaseName; opts: ParityRunOpts }> = [
+  // ---- full: frame (attended by default; branch policy; consultant fan-out) ----
+  { name: 'full-frame.default', phase: 'frame', opts: {} },
+  { name: 'full-frame.consultant', phase: 'frame', opts: { consultant: true } },
+  { name: 'full-frame.no-branch', phase: 'frame', opts: { branch: null } },
+  { name: 'full-frame.preauthorized', phase: 'frame', opts: { gatesAt: [] } },
+
+  // ---- full: spec (draft vs --spec review; audit checkpoint; gateless drop) ----
+  { name: 'full-spec.draft', phase: 'spec', opts: { warmSessions: true } },
+  {
+    name: 'full-spec.draft-autocrossed',
+    phase: 'spec',
+    opts: { warmSessions: true, gatesAt: [], autoApprovals: ['directionGate'] },
+  },
+  { name: 'full-spec.review', phase: 'spec', opts: { spec: true } },
+  { name: 'full-spec.review-consultant', phase: 'spec', opts: { spec: true, consultant: true } },
+  {
+    name: 'full-spec.review-consultant-gateless',
+    phase: 'spec',
+    opts: { spec: true, consultant: true, gateless: true, gatesAt: [] },
+  },
+
+  // ---- full: plan (contract author placement; spec-path vs convention prose) ----
+  { name: 'full-plan.default', phase: 'plan', opts: { spec: true, warmSessions: true } },
+  { name: 'full-plan.consultant', phase: 'plan', opts: { spec: true, warmSessions: true, consultant: true } },
+  { name: 'full-plan.consultant-no-spec', phase: 'plan', opts: { warmSessions: true, consultant: true } },
+  {
+    name: 'full-plan.autocrossed',
+    phase: 'plan',
+    opts: { spec: true, warmSessions: true, gatesAt: [], autoApprovals: ['directionGate', 'commitSpecGate'] },
+  },
+
+  // ---- full: implement (approval narration; posture; compaction prose; verify) ----
+  { name: 'full-implement.default', phase: 'implement', opts: { spec: true, warmSessions: true } },
+  {
+    name: 'full-implement.autocrossed',
+    phase: 'implement',
+    opts: { spec: true, warmSessions: true, autoApprovals: ['planApprovalGate'] },
+  },
+  {
+    name: 'full-implement.attended',
+    phase: 'implement',
+    opts: { spec: true, warmSessions: true, gatesAt: ['frame', 'spec', 'plan', 'implement', 'finish'] },
+  },
+  { name: 'full-implement.codex', phase: 'implement', opts: { spec: true, warmSessions: true, codexImplementer: true } },
+  {
+    name: 'full-implement.consultant-no-contract',
+    phase: 'implement',
+    opts: { spec: true, warmSessions: true, consultant: true },
+  },
+  {
+    name: 'full-implement.consultant-draft',
+    phase: 'implement',
+    opts: { spec: true, warmSessions: true, consultant: true, contract: 'draft' },
+  },
+  {
+    name: 'full-implement.consultant-frozen',
+    phase: 'implement',
+    opts: { spec: true, warmSessions: true, consultant: true, contract: 'frozen' },
+  },
+  {
+    name: 'full-implement.consultant-verified',
+    phase: 'implement',
+    opts: { spec: true, warmSessions: true, consultant: true, contract: 'verified' },
+  },
+  {
+    name: 'full-implement.consultant-frozen-gateless',
+    phase: 'implement',
+    opts: { spec: true, warmSessions: true, consultant: true, contract: 'frozen', gateless: true, gatesAt: [] },
+  },
+
+  // ---- full: finish (Open-PR posture both ways; Ship-gate narration) ----
+  { name: 'full-finish.default', phase: 'finish', opts: { spec: true, warmSessions: true } },
+  {
+    name: 'full-finish.autocrossed',
+    phase: 'finish',
+    opts: { spec: true, warmSessions: true, autoApprovals: ['planApprovalGate', 'shipGate'] },
+  },
+  {
+    name: 'full-finish.attended',
+    phase: 'finish',
+    opts: { spec: true, warmSessions: true, gatesAt: ['frame', 'spec', 'plan', 'implement', 'finish'] },
+  },
+
+  // ---- design: the one-doc arc (frame pre-authorized by default) ----
+  { name: 'design-frame.default', phase: 'frame', opts: { workflow: 'design' } },
+  { name: 'design-design.draft', phase: 'design', opts: { workflow: 'design', warmSessions: true } },
+  {
+    name: 'design-design.draft-autocrossed',
+    phase: 'design',
+    opts: { workflow: 'design', warmSessions: true, autoApprovals: ['directionGate'] },
+  },
+  { name: 'design-design.review', phase: 'design', opts: { workflow: 'design', spec: true } },
+  {
+    name: 'design-design.review-consultant',
+    phase: 'design',
+    opts: { workflow: 'design', spec: true, consultant: true },
+  },
+  {
+    name: 'design-design.draft-consultant',
+    phase: 'design',
+    opts: { workflow: 'design', warmSessions: true, consultant: true },
+  },
+  { name: 'design-implement.default', phase: 'implement', opts: { workflow: 'design', spec: true, warmSessions: true } },
+  {
+    name: 'design-implement.codex',
+    phase: 'implement',
+    opts: { workflow: 'design', spec: true, warmSessions: true, codexImplementer: true },
+  },
+  {
+    name: 'design-implement.consultant-frozen',
+    phase: 'implement',
+    opts: { workflow: 'design', spec: true, warmSessions: true, consultant: true, contract: 'frozen' },
+  },
+  { name: 'design-finish.default', phase: 'finish', opts: { workflow: 'design', spec: true, warmSessions: true } },
+
+  // ---- rir: the lighter arc (attend-all by default; one writable round) ----
+  { name: 'rir-research.default', phase: 'research', opts: { workflow: 'rir' } },
+  { name: 'rir-research.consultant', phase: 'research', opts: { workflow: 'rir', consultant: true } },
+  { name: 'rir-implement.default', phase: 'implement', opts: { workflow: 'rir', warmSessions: true } },
+  { name: 'rir-implement.consultant', phase: 'implement', opts: { workflow: 'rir', warmSessions: true, consultant: true } },
+  {
+    name: 'rir-implement.consultant-gateless',
+    phase: 'implement',
+    opts: { workflow: 'rir', warmSessions: true, consultant: true, gateless: true, gatesAt: [] },
+  },
+  {
+    name: 'rir-implement.autocrossed',
+    phase: 'implement',
+    opts: { workflow: 'rir', warmSessions: true, gatesAt: [], autoApprovals: ['directionGate'] },
+  },
+  { name: 'rir-finish.default', phase: 'finish', opts: { workflow: 'rir', warmSessions: true } },
+  {
+    name: 'rir-finish.preauthorized',
+    phase: 'finish',
+    opts: { workflow: 'rir', warmSessions: true, gatesAt: [], autoApprovals: ['directionGate', 'shipGate'] },
+  },
+];
+
+describe('phase-brief parity pins', () => {
+  for (const c of CASES) {
+    test(c.name, async ({ projectDir }) => {
+      const state = parityRun(projectDir, c.opts);
+      await expect(buildPhaseBrief(state, c.phase)).toMatchFileSnapshot(`./pins/briefs/${c.name}.txt`);
+    });
+  }
+});

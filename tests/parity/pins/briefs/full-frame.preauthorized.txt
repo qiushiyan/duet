@@ -1,0 +1,32 @@
+<documents>
+<document name="framing" description="the human's project briefing for this run">
+Parity framing: a fixed briefing used only by the parity pins.
+</document>
+</documents>
+
+<task>
+No spec exists yet — run the FRAME phase: both workers build an independent understanding of the problem, then the implementer synthesizes, and the direction lands on the Direction gate.
+
+Branch: the run works on exactly one branch, fixed before your first worker prompt. The repo is currently on "feat/parity". A feature branch whose name fits this problem means the human created it deliberately — proceed on it. If the run sits on the default branch or one unrelated to this problem, call create_branch first with a name that fits the work. Either way, name the working branch in your first prompt to each worker, with the note that branch management is settled outside their sessions.
+
+This phase's exit gate is pre-authorized: the human granted approval at run start, so advance_phase records your packet for their later review and the run continues immediately — no live gate decision arrives, and the human is away from the terminal. Product calls that would have waited for this gate: encode the recommendation in the artifacts and the packet, and carry them forward — unless proceeding without an answer would make most of the downstream work throwaway, in which case ask_human (it still reaches the human, but pauses the whole run until they return).
+
+The shape of the phase:
+1. Read the snippet library (list_snippets) — think-holistic and compare-notes are this phase's templates.
+2. Onboard each worker in your first prompt to it: the framing says how (the document paths to read — e.g. an onboarding or skill file named by path). Workers receive document PATHS, never slash commands — a headless worker or codex cannot expand a /command — so send the path the framing names; if the framing gives only a slash command with no path, treat the framing as incomplete and ask_human rather than inventing a path. Order the prompt to orient before it assigns: a line on what the project is, then the onboarding paths (so the worker gets grounded), then the working branch and the problem and goal from the framing — and only then the analysis ask. The worker reads it cold, so lead with the work in plain terms, not duet's machinery (the arc, gate, or checkpoint names).
+3. Send think-holistic to both workers in one fan-out call — send_prompt with role ["implementer", "reviewer"] — so one role-neutral problem read reaches each, and they analyze it independently and in parallel. Keep that body role-neutral: the two reads differ by model and session, not by a label you write in, so don't add "you are the implementer/reviewer" framing — just the shared problem and the analysis ask.
+4. Send the reviewer's analysis to the implementer with compare-notes: critique, synthesize, don't capitulate.
+5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The human decides "does this direction match what I meant?" from it. (The backstop cap of 2 review rounds rarely matters here — analysis turns aren't review rounds.)
+
+Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
+
+## Frame phase examples
+
+This phase's call is turning two analyses into one direction — apply the signal (the stronger spine plus the other's best insight), not a surface compromise.
+<example name="synthesize, don't average">
+The reviewer's analysis favors a thin adapter; the implementer's favors a deeper refactor. Synthesis is not splitting the difference — it is naming the stronger approach and grafting the other's best insight (recommend the refactor, but adopt the reviewer's staging so it ships incrementally). The advance_phase summary recommends one direction and says why the other lost.
+</example>
+<example type="avoid" name="capitulating to the reviewer">
+Routing the reviewer's critique to the implementer as a verdict to comply with. compare-notes asks the implementer to weigh both views and keep its own where it has reasons — a second opinion informs the synthesis, it does not overwrite the first; don't let the later voice win by default.
+</example>
+</task>

@@ -1,0 +1,106 @@
+<snippet_library phase="frame">
+Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in arc order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).
+<phase_templates phase="frame">
+<snippet key="think-holistic" already_sent_this_phase_to="implementer, reviewer">
+This turn is analysis, not building — work through the problem and the design before any code changes. Reason holistically, grounded in the actual code, not assumptions.
+
+1. **Read the relevant code** to see how things work today. Trace real data/control flow, note existing constraints and why they exist, cite the files/functions you read. Without this, "first principles" is guessing.
+2. **Interview me about ambiguous product intent** (fuzzy terms, unclear scope, priorities you're guessing at) and **push back if my framing seems off**. One question at a time, each with your recommended answer. Don't ask what code can answer — you've just read it. **For clear, targeted bug fixes, skip this step.**
+3. **State the real problem** and the underlying goal **in your own words**, informed by what you read and learned.
+4. **Evaluate the current design** against the goal — is this a *local* change the structure absorbs cleanly, or is the structure itself in the way? When the foundation fights the change, reach for **preparatory refactoring** (Kent Beck: *make the change easy, then make the easy change*) — reshape the foundation first so the feature becomes a natural addition.
+5. **Explore the design space, then synthesize.** Sketch 2–3 approaches that make *genuinely different bets* — from a contained change within the subsystem's current structure to a rework of its architecture — so they stress-test each other instead of standing in as strawmen for a choice you've already made. Then recommend a direction built *from* that comparison, weighed by how fully it solves the root problem rather than how little it disturbs: combine the best of more than one where it helps, rather than adopt a single option whole. Name the tradeoff you're accepting, and where the decision is genuinely a judgment call, say so.
+
+Don't patch a flawed design with another patch, and don't shy from structural change when it's justified — but back a "structurally wrong" claim with code and name its cost. Preparatory refactoring is earned only when the structure genuinely blocks the goal, never license to rewrite what merely looks imperfect.
+</snippet>
+<snippet key="compare-notes" already_sent_this_phase_to="implementer">
+Another engineer analyzed the same problem independently. Compare notes and build the sharper direction — take what's genuinely stronger in their reasoning and combine it with yours, rather than defending your draft or averaging the two. **Update where they're right; hold where they're not**, and say why — don't shift just because they disagree, and **don't split the difference**. Settle a factual disagreement on what the code actually shows, not on who argued it better; where a difference is a real judgment call rather than a matter of fact, surface it as an open choice rather than forcing agreement.
+
+Their analysis below:
+
+---
+
+$0
+</snippet>
+</phase_templates>
+<anytime_helpers>
+<snippet key="reread-context">
+Reread the files this change touches and rebuild your mental model from the actual code, not memory — trace the real data/control flow, note existing constraints, and find the seams the work will build on. **No code yet.**
+</snippet>
+<snippet key="recover-context">
+Your prior session was compacted unsuccessfully and reset, so you're in a fresh session with no memory of this run. Re-anchor before any work — this is a post-compact recovery from an empty session, not a routine reread of code you still hold in context: there's no prior context to lean on, so the orientation below has to carry the whole picture.
+
+Orient from what's actually on disk and in git — fill each in concretely:
+- What we're building: the change in a sentence or two, and where the authoritative design lives (the committed spec/plan, or the research decisions).
+- What's committed and green: the work that already landed and passes tests, so you don't redo it.
+- What's left: the next unit of work, plus any uncommitted in-flight edits.
+- The load-bearing seams and files: the modules this change turns on, so you reread the right code first.
+
+Then reread those files and rebuild your mental model from the actual code, not the summary — trace the real data and control flow and the constraints in play. No code yet: re-anchor first, then pick the work up from where it actually stands.
+</snippet>
+<snippet key="compact-inflight">
+/compact This compaction lands mid-work — the same task continues in this session immediately after it, so compact for **continuing**, not for a stage transition: keep the work's live state, drop the journey.
+
+**Preserve:**
+- The work in flight and its exact state: what's in progress, files mid-edit, the next intended step.
+- Every decision already made, with its reason.
+- The concrete repo facts in use: paths, commands, test state, the working branch.
+
+**Drop or summarize:**
+- The exploration journey, superseded drafts, and old tool output — keep conclusions, not the path.
+
+The committed artifacts survive on disk — cite their paths rather than restating them.
+
+</snippet>
+<snippet key="commits-summary">
+Commits summary for high-level context — what changed and why. **Don't review commit-by-commit;** review the current state of the codebase as a whole, with these commits as context.
+</snippet>
+<snippet key="find-similar-bugs">
+Bug just fixed. Before committing, sweep the codebase for other places likely to have the same pattern — same assumption, same missing check.
+
+**Per candidate:**
+- file + brief description
+- why same class of bug
+- confidence (high / medium / low)
+
+**Don't fix yet** — just enumerate. We'll decide what to address.
+</snippet>
+<snippet key="list-assumptions">
+List every non-trivial assumption you're making — about the data, system state, my actual intent, failure modes, or what "done" looks like.
+
+**Group as:**
+- **Verified** — confirmed from code or my message
+- **Likely** — reasonable inference, unconfirmed
+- **Speculative** — guessing
+
+Flag the speculative ones as questions for me before proceeding.
+</snippet>
+<snippet key="trace-execution">
+Walk through this code step-by-step as if you were the runtime. **Per step:**
+- variable values
+- which branch is taken and why
+- what gets called, with what arguments
+
+Use a concrete example input. **Stop and flag the moment behavior diverges from intent.** Don't summarize — actually trace.
+</snippet>
+<snippet key="smart-adapt-skills">
+References are **general best practices, not prescriptions**. Evaluate each suggestion against our codebase, architecture, and constraints before applying — **discard what doesn't fit, adapt what does**.
+
+Can't find a referenced skill? Tell me immediately for the exact path. **Don't search for it yourself.**
+</snippet>
+<snippet key="technical-difficulty">
+**Don't measure technical difficulty by lines changed.** Instead, consider:
+- complexity of the problem being solved
+- number of components affected
+- potential for unintended consequences
+- level of uncertainty involved
+
+**Most importantly:** does this solve the core UX problem while maintaining a clean technical design?
+</snippet>
+</anytime_helpers>
+<coming_next note="the nominal arc — gate rejects loop back and pre-authorized gates skip the stop; orientation for forward-looking work, not a cue to reach ahead">
+<phase name="spec">write-spec, review-spec, update-spec, review-spec-again, update-spec-again</phase>
+<phase name="plan">start-plan, review-plan, update-plan, review-plan-again, update-plan-again</phase>
+<phase name="implement">compact-for-impl, midpoint-status, review-midpoint, respond-midpoint, compact-for-review, implementation-handoff, review-implementation, respond-review, review-implementation-again, respond-review-again, reconcile-docs, ceo-summary</phase>
+<phase name="finish">pr-description, compact-for-cleanup</phase>
+</coming_next>
+</snippet_library>
