@@ -23,7 +23,8 @@ For code, start there or run `/onboarding [topic]` (`statechart` · `providers` 
 
 **Other docs, by what they answer:**
 - prompts / tools / errors → `docs/prompting-and-tool-design.md` (the binding conventions; consult for any prompt or tool surface).
-- the snippet library → `snippets.toml` (source of truth) + `docs/snippets.md` (catalog); the PLAN snippets cite the vendored `lessons/` methodology (`pnpm vendor-lessons` re-syncs it).
+- the snippet library → the block-named `snippets/` files (source of truth) + `docs/snippets.md` (catalog); the PLAN snippets cite the vendored `lessons/` methodology (`pnpm vendor-lessons` re-syncs it).
+- the workflow vocabulary & the relay arc → `docs/specs/2026-07-03-workflow-vocabulary.md` (arcs as compositions of phase blocks with knobs; the stage-0 spec — the comprehensive doc pass is owed after relay's first live run).
 - the interactive-Claude transport → `docs/interactive-transport.md` (opt-in, flat-quota billing).
 - the protocol & its evidence → `docs/workflow-model.md` / `docs/observed-pattern.md`.
 - the open design questions (the roadmap) → `docs/open-questions.md`: triage precision, the worker output schema, a run-level budget, context-band calibration, the consultant's value, codex-as-orchestrator.

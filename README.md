@@ -218,6 +218,7 @@ Two Claude Code skills ship with duet (installed with `npx skills add` above): *
 Built and test-verified, awaiting a first live run:
 
 - the **design arc** — the one-doc middle arc above
+- the **relay arc** and the **workflow vocabulary** beneath it (arcs as compositions of phase blocks with knobs; [`docs/specs/2026-07-03-workflow-vocabulary.md`](docs/specs/2026-07-03-workflow-vocabulary.md)) — relay plans on a strong model, builds on a cheap one via per-stage `[roles.*].build` bindings, and reviews with a **writing reviewer** that fixes findings directly and owns the docs + PR
 - the experimental **interactive-Claude implementer transport** (bill the implementer's turns to your flat subscription quota) — pending one live-auth check; see [`docs/interactive-transport.md`](docs/interactive-transport.md)
 - **warm-starting** the interactive orchestrator from an existing session (`--resume-session`)
 - the **AFK-resilience hardening** (stream watchdog, wall-clock caps, compaction recovery, context-pressure guards) — test-verified at the seams and probed against real transcripts; the induced-failure checks (a stalled stream, a real suspend) are still manual
