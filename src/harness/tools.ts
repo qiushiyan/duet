@@ -863,10 +863,13 @@ export interface SendInput {
 }
 
 /** A terminal-tool rail's input — the verb names the caller (for the recovery copy),
- *  and advance_phase's checkpoint rails read its human_decisions echo. */
+ *  and advance_phase's checkpoint rails read its human_decisions echo. specPath is
+ *  the call's own spec_path arg: rails run BEFORE the handler records it onto state,
+ *  so a rail requiring a resolvable path must see the path this very call carries. */
 export interface TerminalInput {
   verb: 'advance the phase' | 'queue a question';
   humanDecisions?: { title: string; severity: 'low' | 'high' }[];
+  specPath?: string;
 }
 
 /** The reconnect-orphan refusal copy — branch on whether a resumable session exists. */
@@ -1012,20 +1015,46 @@ export const reviewLoopRail: Rail<TerminalInput> = (_input, ctx) =>
 
 /** The acceptance contract can't be SILENTLY skipped (guarantee 2, mechanically).
  *  The escape hatch is a `high` human_decision, which itself holds the AFK crossing. */
-export const contractCheckpointRail: Rail<TerminalInput> = ({ humanDecisions }, ctx) => {
+export const contractCheckpointRail: Rail<TerminalInput> = ({ humanDecisions, specPath }, ctx) => {
   if (!ctx.state.bindings.consultant || phaseSpec(workflowOf(ctx.state), ctx.phase).consultantCheckpoint !== 'contract') return null;
   const hasHigh = (humanDecisions ?? []).some((d) => d.severity === 'high');
-  if (ctx.state.acceptanceContractDraft || hasHigh) return null;
-  return refuse(
-    'A consultant is bound, so this phase owes its acceptance contract before it advances: send the consultant a consultant-contract turn (it authors the contract from the settled design document, seeing no code), then advance. If it genuinely could not author one, record a high human_decision ("acceptance contract not authored — proceeding freezes no target") so the gate stops for the human rather than shipping with no frozen target.',
-  );
+  if (hasHigh) return null;
+  const draft = ctx.state.acceptanceContractDraft;
+  if (!draft) {
+    return refuse(
+      'A consultant is bound, so this phase owes its acceptance contract before it advances: send the consultant a consultant-contract turn (it authors the contract from the settled design document, seeing no code), then advance. If it genuinely could not author one, record a high human_decision ("acceptance contract not authored — proceeding freezes no target") so the gate stops for the human rather than shipping with no frozen target.',
+    );
+  }
+  // A path-less draft (a late-author arc settled the contract turn before any
+  // document path was recorded) freezes at the gate crossing from the primary
+  // artifact's path — so that path must be resolvable BY this advance, or the
+  // freeze would silently find nothing and the run would proceed with no frozen
+  // target. Fail closed here, where the caller can supply it in one re-call.
+  if (draft.path === undefined && !ctx.state.specPath && !specPath) {
+    return refuse(
+      "The acceptance contract was authored this run, but no document path is recorded and this call carries none — the contract freezes at the gate crossing from that path, so advancing now would silently drop it and the run would proceed with no frozen target. Re-call advance_phase with the same arguments plus spec_path set to the settled document's repo-relative path.",
+    );
+  }
+  return null;
 };
 
-/** A frozen contract must be verified before advancing — same `high` escape hatch. */
+/** A frozen contract must be verified before advancing — same `high` escape hatch.
+ *  Authored-but-never-froze is refused too: the freeze's silent no-op paths (a
+ *  document moved after the contract turn, the contract file gone by crossing
+ *  time) would otherwise erase the backstop with nothing recorded anywhere. */
 export const verifyCheckpointRail: Rail<TerminalInput> = ({ humanDecisions }, ctx) => {
   if (!ctx.state.bindings.consultant || phaseSpec(workflowOf(ctx.state), ctx.phase).consultantCheckpoint !== 'verify') return null;
   const hasHigh = (humanDecisions ?? []).some((d) => d.severity === 'high');
-  if (!ctx.state.acceptanceContract || ctx.state.acceptanceContract.verifiedAt || hasHigh) return null;
+  if (hasHigh) return null;
+  if (!ctx.state.acceptanceContract) {
+    // No contract AND no draft: authoring never happened, and the author gate
+    // already held a high for that absence — nothing to verify here.
+    if (!ctx.state.acceptanceContractDraft) return null;
+    return refuse(
+      'An acceptance contract was authored at its gate, but no frozen contract exists — the freeze found nothing at the recorded path (the document may have moved after the contract turn, or the contract file is gone), so there is no target to verify the built system against. Record a high human_decision ("acceptance contract authored but never froze — proceeding ships with no verified target") so the gate stops for the human rather than shipping past the broken backstop.',
+    );
+  }
+  if (ctx.state.acceptanceContract.verifiedAt) return null;
   return refuse(
     'A frozen acceptance contract exists for this run but has not been verified: send the consultant a consultant-verify turn (a fresh session runs the built system and returns a per-assertion pass/fail), then advance. Route any failed assertion to the implementer to fix and re-verify with a fresh consultant session; record a high human_decision only for an assertion that still fails after that bounded loop, or if verification could not run at all — so the gate stops for the human rather than shipping past a broken target.',
   );
@@ -1544,7 +1573,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         // mechanically; the escape hatch is a `high` human_decision, which itself
         // holds the AFK crossing).
         const refusal = firstRefusal(
-          { verb: 'advance the phase', humanDecisions: args.human_decisions },
+          { verb: 'advance the phase', humanDecisions: args.human_decisions, ...(args.spec_path ? { specPath: args.spec_path } : {}) },
           ctx,
           terminalAlreadySetRail,
           pendingTurnGateRail,
