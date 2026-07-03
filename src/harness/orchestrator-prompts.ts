@@ -9,7 +9,7 @@ import {
   phaseSpec,
   priorPhaseOf,
 } from '../phases.ts';
-import type { GatePhase, PhaseName, WorkflowName } from '../phases.ts';
+import type { ArtifactKind, ExamplesKey, GatePhase, PhaseName, PhaseSemantics, PhaseSpec, WorkflowName } from '../phases.ts';
 import { workerRolesFor } from '../roles.ts';
 import { gateAttended, workflowOf } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
@@ -440,27 +440,83 @@ function documentsBlock(state: RunState): string {
   return `<documents>\n${docs.join('\n')}\n</documents>`;
 }
 
-export function framePhaseEntryPrompt(state: RunState, roundCap: number): string {
+/**
+ * The frame block's per-arc data, keyed by the semantics' examplesKey — the
+ * arc-specific prose (what follows the frame, what the packet must carry) and
+ * the worked examples. The machinery (fan-out, synthesis, branch policy) is
+ * the block's own and lives in renderFrameBrief; per the single-world rule the
+ * arcs never share hedged prose — each key carries its own world.
+ */
+interface FrameBriefData {
+  /** The task's opening line — what this phase is and what its gate decides. */
+  opening: string;
+  /** Extra advance-packet duty (rir: the decisions ARE the design), or ''. */
+  advanceClause: string;
+  examples: string;
+}
+
+const FRAME_BRIEFS: Record<'frame' | 'research', FrameBriefData> = {
+  frame: {
+    opening:
+      'No spec exists yet — run the FRAME phase: both workers build an independent understanding of the problem, then the implementer synthesizes, and the direction lands on the Direction gate.',
+    advanceClause: '',
+    examples: FRAME_EXAMPLES,
+  },
+  research: {
+    opening:
+      'Run the RESEARCH phase: both workers build an independent understanding of the problem, then the implementer synthesizes, and the direction lands on the Direction gate. This is the lighter arc — the research decisions ARE the design; there is no spec or plan to draft, and approving the gate hands the run off to AFK implementation.',
+    advanceClause:
+      'The implementer builds directly from these decisions, so the summary must carry enough that the build can proceed without a spec. ',
+    examples: RESEARCH_EXAMPLES,
+  },
+};
+
+function renderFrameBrief(state: RunState, spec: PhaseSpec, semantics: Extract<PhaseSemantics, { block: 'frame' }>): string {
+  const data = FRAME_BRIEFS[semantics.examplesKey];
   return `${documentsBlock(state)}
 
 <task>
-No spec exists yet — run the FRAME phase: both workers build an independent understanding of the problem, then the implementer synthesizes, and the direction lands on the Direction gate.
-${branchPolicyParagraph(state)}${attendancePosture(state, 'frame')}
+${data.opening}
+${branchPolicyParagraph(state)}${attendancePosture(state, spec.name)}
 The shape of the phase:
 1. Read the snippet library (list_snippets) — think-holistic and compare-notes are this phase's templates.
 2. Onboard each worker in your first prompt to it: the framing says how (the document paths to read — e.g. an onboarding or skill file named by path). Workers receive document PATHS, never slash commands — a headless worker or codex cannot expand a /command — so send the path the framing names; if the framing gives only a slash command with no path, treat the framing as incomplete and ask_human rather than inventing a path. Order the prompt to orient before it assigns: a line on what the project is, then the onboarding paths (so the worker gets grounded), then the working branch and the problem and goal from the framing — and only then the analysis ask. The worker reads it cold, so lead with the work in plain terms, not duet's machinery (the arc, gate, or checkpoint names).
-3. ${analysisSendStep(state, 'frame')}
-4. ${synthesisStep(state, 'frame')}
-5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
+3. ${analysisSendStep(state, spec.name)}
+4. ${synthesisStep(state, spec.name)}
+5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. ${data.advanceClause}The human decides "does this direction match what I meant?" from it. (The backstop cap of ${spec.roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
 
-${FRAME_EXAMPLES}
+${data.examples}
 </task>`;
 }
 
-export function specPhaseEntryPrompt(state: RunState, roundCap: number): string {
-  if (!state.specPath) return specDraftEntryPrompt(state, roundCap);
+/**
+ * The doc-loop block's per-artifact templates, keyed by artifactKind — the
+ * fragment library at its maximal-fork end: each artifact's brief is its own
+ * hand-written world (the single-world rule prefers forking over hedged
+ * parameterization), sharing only the state-conditional helpers
+ * (documentsBlock, approvalClause, attendancePosture, the consultant
+ * injections). spec and design are ENTRY doc-loops (the arc admits a --spec
+ * draft entry, so each has a review variant for a provided draft — cold
+ * session, documents + branch policy — and a draft variant from the approved
+ * direction — warm session); plan is a FOLLOW-ON doc-loop building on the
+ * committed spec, one shape. Which applies is registry topology
+ * (entry.specSkipsTo), not a knob.
+ */
+const DOC_BRIEFS: Record<ArtifactKind, (state: RunState, spec: PhaseSpec) => string> = {
+  spec: specDocBrief,
+  plan: planDocBrief,
+  design: designDocBrief,
+};
+
+function renderDocLoopBrief(state: RunState, spec: PhaseSpec, semantics: Extract<PhaseSemantics, { block: 'doc-loop' }>): string {
+  return DOC_BRIEFS[semantics.artifactKind](state, spec);
+}
+
+function specDocBrief(state: RunState, spec: PhaseSpec): string {
+  const roundCap = spec.roundCap;
+  if (!state.specPath) return specDraftBrief(state, roundCap);
   return `${documentsBlock(state)}
 
 <task>
@@ -479,7 +535,7 @@ ${SPEC_EXAMPLES}
 </task>`;
 }
 
-function specDraftEntryPrompt(state: RunState, roundCap: number): string {
+function specDraftBrief(state: RunState, roundCap: number): string {
   return `<task>
 ${approvalClause(
     state,
@@ -500,7 +556,8 @@ ${SPEC_EXAMPLES}
 </task>`;
 }
 
-export function planPhaseEntryPrompt(state: RunState, roundCap: number): string {
+function planDocBrief(state: RunState, spec: PhaseSpec): string {
+  const roundCap = spec.roundCap;
   const specRef = state.specPath ?? 'the approved spec file (you know its path from the spec phase)';
   const documents = state.specPath
     ? `<documents>
@@ -558,8 +615,9 @@ const DESIGN_CONTRACT_PLACEMENT = {
  * branch policy included); the post-frame path drafts from the approved
  * direction (warm session — the framing is already in context).
  */
-export function designPhaseEntryPrompt(state: RunState, roundCap: number): string {
-  if (!state.specPath) return designDraftEntryPrompt(state, roundCap);
+function designDocBrief(state: RunState, spec: PhaseSpec): string {
+  const roundCap = spec.roundCap;
+  if (!state.specPath) return designDraftBrief(state, roundCap);
   return `${documentsBlock(state)}
 
 <task>
@@ -578,7 +636,7 @@ ${DESIGN_EXAMPLES}
 </task>`;
 }
 
-function designDraftEntryPrompt(state: RunState, roundCap: number): string {
+function designDraftBrief(state: RunState, roundCap: number): string {
   return `<task>
 ${approvalClause(
     state,
@@ -653,64 +711,92 @@ function implReviewTail(state: RunState, roundCap: number, deviationsFrom: strin
 8. Last, after the docs are committed: send the implementer ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review history (rounds run, points raised, resolved, disputed), the docs reconciled, deviations from the ${deviationsFrom}, and the test state. The human returns from hours away and decides to ship — code and docs together — from this packet alone, so it must carry everything.${consultantVerifyStep(state)}`;
 }
 
-export function implPhaseEntryPrompt(state: RunState, roundCap: number): string {
-  const claudeImplementer = state.bindings.implementer.provider === 'claude';
-  const anchors = { journey: 'the whole planning arc (spec exploration, both review loops)', anchors: 'the committed spec and plan' };
-
-  return `<task>
-${approvalClause(
-    state,
-    'plan',
-    'The human approved the plan and walked away —',
-    'The plan-approval gate was pre-authorized at run start and auto-crossed; the human is away —',
-  )} this is the AFK IMPLEMENTATION phase. You drive it end to end; ask_human still works but now queues the question and pauses the whole run until the human returns, so a flag is a real stop, not a quick check-in. Make each one self-contained, and let everything that can wait for the Ship gate wait.
-${attendancePosture(state, 'implement')}
-The arc:
-
-1. Have the implementer commit the approved plan file with a conventional message, as its own commit. It wrote the plan and still holds it, so keep this prompt short — don't restate the plan back to it.
-2. Before the first slice: ${resetForImplStep(claudeImplementer, anchors)}
-3. Drive the implementation as a single pass, not a slice-by-slice loop with reviews between. Send the implementer one prompt to implement the whole plan — every slice, end to end — one commit per slice with that slice's tests per the plan's verification story. The plan already fixes the slice order and verification, so the implementer executes it straight through; a review or a deliberate hold between slices burns a slow worker turn re-covering ground the post-implementation review (step 6) covers anyway. ${buildPassGuardrails(state.runId)}
-4. ${midpointStep('more than roughly six slices is a rough signal, but judge by the real size and structural risk, not the count.')}
-5. ${reviewCompactionStep(claudeImplementer, 'the plan file and the spec')}
-${implReviewTail(state, roundCap, 'plan')}
-
-Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
-
-${IMPL_EXAMPLES}
-</task>`;
+/**
+ * The critique-posture build's per-arc data, keyed by the semantics'
+ * examplesKey — what the run committed (the approval narration, the commit
+ * step, the compaction anchors, the midpoint size signal, the deviations
+ * anchor) and the worked examples. The build discipline itself — single pass,
+ * one midpoint judgment, the compactions, the review-and-ship tail — is the
+ * posture's and lives in critiqueBuildBrief.
+ */
+interface CritiqueBuildData {
+  /** approvalClause's attended / pre-authorized narrations for the prior gate. */
+  approvedAttended: string;
+  approvedPreauth: string;
+  /** Step 1 — commit the approved artifact. */
+  commitStep: string;
+  /** resetForImplStep's journey/anchors phrasing. */
+  anchors: { journey: string; anchors: string };
+  /** Step 3 head — how the single pass is driven (the guardrails ride after it). */
+  buildStep: string;
+  /** The midpoint judgment's size signal. */
+  sizeSignal: string;
+  /** reviewCompactionStep's re-anchor phrasing. */
+  reviewAnchors: string;
+  /** What the Ship packet reports deviations from. */
+  deviationsFrom: string;
+  examples: string;
 }
 
-/**
- * The design arc's AFK implement brief — full's build discipline anchored on
- * the ONE committed design doc: the doc is the authority for what and why, the
- * implement-design snippet carries the how (the implementer slices the work
- * itself; the doc fixes shape and test standards, not build order). No "plan"
- * vocabulary reaches a design-arc worker — the arc has none.
- */
-export function designImplementPhaseEntryPrompt(state: RunState, roundCap: number): string {
+const CRITIQUE_BUILD_BRIEFS: Partial<Record<ExamplesKey, CritiqueBuildData>> = {
+  impl: {
+    approvedAttended: 'The human approved the plan and walked away —',
+    approvedPreauth: 'The plan-approval gate was pre-authorized at run start and auto-crossed; the human is away —',
+    commitStep:
+      "Have the implementer commit the approved plan file with a conventional message, as its own commit. It wrote the plan and still holds it, so keep this prompt short — don't restate the plan back to it.",
+    anchors: { journey: 'the whole planning arc (spec exploration, both review loops)', anchors: 'the committed spec and plan' },
+    buildStep:
+      "Drive the implementation as a single pass, not a slice-by-slice loop with reviews between. Send the implementer one prompt to implement the whole plan — every slice, end to end — one commit per slice with that slice's tests per the plan's verification story. The plan already fixes the slice order and verification, so the implementer executes it straight through; a review or a deliberate hold between slices burns a slow worker turn re-covering ground the post-implementation review (step 6) covers anyway.",
+    sizeSignal: 'more than roughly six slices is a rough signal, but judge by the real size and structural risk, not the count.',
+    reviewAnchors: 'the plan file and the spec',
+    deviationsFrom: 'plan',
+    examples: IMPL_EXAMPLES,
+  },
+  // The design arc's build — full's discipline anchored on the ONE committed
+  // design doc: the doc is the authority for what and why, the implement-design
+  // snippet carries the how (the implementer slices the work itself; the doc
+  // fixes shape and test standards, not build order). No "plan" vocabulary
+  // reaches a design-arc worker — the arc has none.
+  'design-impl': {
+    approvedAttended: 'The human approved the design doc and walked away —',
+    approvedPreauth: 'The design gate was pre-authorized at run start and auto-crossed; the human is away —',
+    commitStep:
+      "Have the implementer commit the approved design doc with a conventional message, as its own commit. It wrote the doc and still holds it, so keep this prompt short — don't restate the design back to it.",
+    anchors: { journey: 'the whole design arc (the framing analyses and the design review loop)', anchors: 'the committed design doc' },
+    buildStep:
+      "Drive the implementation as a single pass, not a piece-by-piece loop with reviews between. Send the implementer an implement-design prompt: it builds the whole change from the committed design doc — the doc fixes the shape and the test standards; the slicing and sequencing are the implementer's own, vertical slices with a commit per slice and that slice's tests per the doc's standards. A review or a deliberate hold between slices burns a slow worker turn re-covering ground the post-implementation review (step 6) covers anyway.",
+    sizeSignal:
+      "the design fixes the shape, not a slice list, so read the size from the doc's scope and structural risk, and from how the implementer slices the work as the build starts.",
+    reviewAnchors: 'the design doc',
+    deviationsFrom: 'design doc',
+    examples: DESIGN_IMPL_EXAMPLES,
+  },
+};
+
+function critiqueBuildBrief(state: RunState, spec: PhaseSpec, data: CritiqueBuildData): string {
   const claudeImplementer = state.bindings.implementer.provider === 'claude';
-  const anchors = { journey: 'the whole design arc (the framing analyses and the design review loop)', anchors: 'the committed design doc' };
+  const priorPhase = priorPhaseOf(workflowOf(state), spec.name);
 
   return `<task>
 ${approvalClause(
     state,
-    'design',
-    'The human approved the design doc and walked away —',
-    'The design gate was pre-authorized at run start and auto-crossed; the human is away —',
+    priorPhase,
+    data.approvedAttended,
+    data.approvedPreauth,
   )} this is the AFK IMPLEMENTATION phase. You drive it end to end; ask_human still works but now queues the question and pauses the whole run until the human returns, so a flag is a real stop, not a quick check-in. Make each one self-contained, and let everything that can wait for the Ship gate wait.
-${attendancePosture(state, 'implement')}
+${attendancePosture(state, spec.name)}
 The arc:
 
-1. Have the implementer commit the approved design doc with a conventional message, as its own commit. It wrote the doc and still holds it, so keep this prompt short — don't restate the design back to it.
-2. Before the first slice: ${resetForImplStep(claudeImplementer, anchors)}
-3. Drive the implementation as a single pass, not a piece-by-piece loop with reviews between. Send the implementer an implement-design prompt: it builds the whole change from the committed design doc — the doc fixes the shape and the test standards; the slicing and sequencing are the implementer's own, vertical slices with a commit per slice and that slice's tests per the doc's standards. A review or a deliberate hold between slices burns a slow worker turn re-covering ground the post-implementation review (step 6) covers anyway. ${buildPassGuardrails(state.runId)}
-4. ${midpointStep("the design fixes the shape, not a slice list, so read the size from the doc's scope and structural risk, and from how the implementer slices the work as the build starts.")}
-5. ${reviewCompactionStep(claudeImplementer, 'the design doc')}
-${implReviewTail(state, roundCap, 'design doc')}
+1. ${data.commitStep}
+2. Before the first slice: ${resetForImplStep(claudeImplementer, data.anchors)}
+3. ${data.buildStep} ${buildPassGuardrails(state.runId)}
+4. ${midpointStep(data.sizeSignal)}
+5. ${reviewCompactionStep(claudeImplementer, data.reviewAnchors)}
+${implReviewTail(state, spec.roundCap, data.deviationsFrom)}
 
 Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
 
-${DESIGN_IMPL_EXAMPLES}
+${data.examples}
 </task>`;
 }
 
@@ -734,17 +820,17 @@ ${DESIGN_IMPL_EXAMPLES}
  * attended or auto-crossed, so the orchestrator already has that posture; the
  * checklist itself is posture-agnostic).
  *
- * The two phases share this builder; `phase` is the dispatch key (passed by
- * buildPhaseBrief, never a re-stated literal). It drives the Open-PR gate's
- * attendance read and — via the registry — the prior (Ship-gate) phase whose
- * approval enters this one, so a renamed or reordered arc can't silently
- * mis-key it.
+ * Every finish phase shares this renderer; the row's name is the dispatch key
+ * (never a re-stated literal). It drives the Open-PR gate's attendance read
+ * and — via the registry — the prior (Ship-gate) phase whose approval enters
+ * this one, so a renamed or reordered arc can't silently mis-key it. The
+ * finishOwner knob names which worker runs the PR mechanics — 'implementer'
+ * on every current arc; relay moves it to the reviewer as pure data.
  */
-export function openPrPhaseEntryPrompt(
-  state: RunState,
-  roundCap: number,
-  phase: PhaseName,
-): string {
+function renderFinishBrief(state: RunState, spec: PhaseSpec, semantics: Extract<PhaseSemantics, { block: 'finish' }>): string {
+  const phase = spec.name;
+  const roundCap = spec.roundCap;
+  const owner = semantics.finishOwner;
   const openPrAttended = gateAttended(state, phase);
   const priorPhase = priorPhaseOf(workflowOf(state), phase);
   return `<task>
@@ -755,8 +841,8 @@ ${approvalClause(
     'The Ship gate was pre-authorized at run start and auto-crossed — the implementation packet is recorded for the human, and their environment verification (migrations, smoke tests) is still pending; what you ship here describes work that has not yet had a human eye.',
   )} Run the ${phase.toUpperCase()} phase — write the PR description and open the PR, in one continuous pass. The docs were already reconciled and committed at the end of implementation, so they are on the branch and this phase does not touch them:
 
-1. Write the PR description: send the implementer the pr-description snippet. The body must LEAD with a "Verification (pending)" checklist of the environment checks owed before merge — migrations, smoke tests, anything the Ship packet flagged — the human's standing reminder to run them before merging (when the Ship gate auto-crossed unattended they have not run these yet, so the checklist rides the PR until they do). A review round on the description is available when it warrants one (backstop cap ${roundCap}); most are a single pass.
-2. Open the PR, idempotently. Have the implementer first check whether a PR already exists for this branch (gh pr view, or gh pr list --head <branch>): if none exists, push the branch and run gh pr create with the title and description; if one already exists (a re-entry, a resumed run, or a PR already on the branch), don't create a second one — amend it in place (gh pr edit for the body, push any new commits). Report the PR URL. If the push or PR creation fails for an environment reason (auth, remote, permissions), that's the human's to fix: ask_human with the error.
+1. Write the PR description: send the ${owner} the pr-description snippet. The body must LEAD with a "Verification (pending)" checklist of the environment checks owed before merge — migrations, smoke tests, anything the Ship packet flagged — the human's standing reminder to run them before merging (when the Ship gate auto-crossed unattended they have not run these yet, so the checklist rides the PR until they do). A review round on the description is available when it warrants one (backstop cap ${roundCap}); most are a single pass.
+2. Open the PR, idempotently. Have the ${owner} first check whether a PR already exists for this branch (gh pr view, or gh pr list --head <branch>): if none exists, push the branch and run gh pr create with the title and description; if one already exists (a re-entry, a resumed run, or a PR already on the branch), don't create a second one — amend it in place (gh pr edit for the body, push any new commits). Report the PR URL. If the push or PR creation fails for an environment reason (auth, remote, permissions), that's the human's to fix: ask_human with the error.
 3. Call advance_phase with the PR URL leading the summary — this is the Open-PR packet. ${
     openPrAttended
       ? 'The Open-PR gate is attended: the human reads the packet and the opened PR, then approves (the run completes) or rejects with feedback (you re-enter to amend the open PR).'
@@ -768,47 +854,48 @@ Throughout: flag product or direction questions with ask_human; tactical questio
 }
 
 /**
- * RIR's research phase — the analogue of FRAME for the lighter arc. Both
- * workers analyze independently, the implementer synthesizes, and the direction
- * lands on the Direction gate. The difference from FRAME: the synthesized
- * decisions ARE the design (no spec or plan follows), and this gate is the
- * walk-away → headless handoff.
+ * The writable-posture build's per-arc data — rir's today. The posture's
+ * discipline (a direct build from the settled decisions, one writable review
+ * round, docs reconciled last, a lean Ship packet) lives in
+ * writableBuildBrief; the data carries what the run committed and the
+ * consultant seed.
  */
-export function researchPhaseEntryPrompt(state: RunState, roundCap: number): string {
-  return `${documentsBlock(state)}
-
-<task>
-Run the RESEARCH phase: both workers build an independent understanding of the problem, then the implementer synthesizes, and the direction lands on the Direction gate. This is the lighter arc — the research decisions ARE the design; there is no spec or plan to draft, and approving the gate hands the run off to AFK implementation.
-${branchPolicyParagraph(state)}${attendancePosture(state, 'research')}
-The shape of the phase:
-1. Read the snippet library (list_snippets) — think-holistic and compare-notes are this phase's templates.
-2. Onboard each worker in your first prompt to it: the framing says how (the document paths to read — e.g. an onboarding or skill file named by path). Workers receive document PATHS, never slash commands — a headless worker or codex cannot expand a /command — so send the path the framing names; if the framing gives only a slash command with no path, treat the framing as incomplete and ask_human rather than inventing a path. Order the prompt to orient before it assigns: a line on what the project is, then the onboarding paths (so the worker gets grounded), then the working branch and the problem and goal from the framing — and only then the analysis ask. The worker reads it cold, so lead with the work in plain terms, not duet's machinery (the arc, gate, or checkpoint names).
-3. ${analysisSendStep(state, 'research')}
-4. ${synthesisStep(state, 'research')}
-5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. The implementer builds directly from these decisions, so the summary must carry enough that the build can proceed without a spec. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
-
-Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
-
-${RESEARCH_EXAMPLES}
-</task>`;
+interface WritableBuildData {
+  approvedAttended: string;
+  approvedPreauth: string;
+  /** What seeds the consultant's bet audit (checkpoint `implGate`), when bound. */
+  auditSeedNote: string;
+  examples: string;
 }
 
+const WRITABLE_BUILD_BRIEFS: Partial<Record<ExamplesKey, WritableBuildData>> = {
+  'rir-impl': {
+    approvedAttended: 'The human approved the direction and walked away —',
+    approvedPreauth: 'The Direction gate was pre-authorized at run start and auto-crossed; the human is away —',
+    auditSeedNote:
+      "the research decisions treated as the design, the implemented change, and the consultant's own prior research-checkpoint findings — not the raw build or review traffic.",
+    examples: IMPLEMENT_EXAMPLES,
+  },
+};
+
 /**
- * RIR's implement phase — the AFK build, lighter than Full's: no plan to commit,
- * no compaction ceremony, no midpoint, and one writable review round
- * (review-direct → apply-review) instead of the reflect-then-round-2 loop. Docs
- * reconcile as the last build step (reconcile-docs), so the Ship gate reviews
- * code + docs together and `finish` is left the mechanical PR open — the same
- * docs-at-implement shape as Full, minus Full's CEO summary. Approving Ship
- * enters FINISH (open the PR).
+ * The writable build — the AFK build, lighter than the critique posture's: no
+ * artifact to commit, no compaction ceremony, no midpoint, and one writable
+ * review round (review-direct → apply-review) instead of the
+ * reflect-then-round-2 loop. Docs reconcile as the last build step
+ * (reconcile-docs), so the Ship gate reviews code + docs together and `finish`
+ * is left the mechanical PR open — the same docs-at-implement shape as the
+ * critique posture, minus the CEO summary. Approving Ship enters FINISH (open
+ * the PR).
  */
-export function implementPhaseEntryPrompt(state: RunState, roundCap: number): string {
+function writableBuildBrief(state: RunState, spec: PhaseSpec, data: WritableBuildData): string {
+  const roundCap = spec.roundCap;
   return `<task>
 ${approvalClause(
     state,
-    'research',
-    'The human approved the direction and walked away —',
-    'The Direction gate was pre-authorized at run start and auto-crossed; the human is away —',
+    priorPhaseOf(workflowOf(state), spec.name),
+    data.approvedAttended,
+    data.approvedPreauth,
   )} this is the AFK IMPLEMENTATION phase. You drive it end to end; ask_human still works but now queues the question and pauses the whole run until the human returns, so a flag is a real stop, not a quick check-in. Make each one self-contained, and let everything that can wait for the Ship gate wait.
 ${attendancePosture(state, 'implement')}
 The arc — there is no spec or plan here; the research decisions are the source of truth, and the build runs directly from them with one review round:
@@ -817,7 +904,7 @@ The arc — there is no spec or plan here; the research decisions are the source
 2. When the build is in: handoff-direct from the implementer — it orients the reviewer fast (what changed, where to look hardest), tied to the research decisions rather than a spec/plan.
 3. One writable review round — this arc has exactly one, no second pass: review-direct to the reviewer (it reviews against the research decisions and the actual goal, not a document), then apply-review to the implementer. apply-review is writable: the implementer assesses each point, fixes the valid ones in place, pushes back on the rest with reasons, and reports what it changed. The backstop cap for this phase is ${roundCap} review round.
 4. When the review round has settled, reconcile the docs with what shipped — docs are part of the work the Ship gate reviews now. Send the implementer the reconcile-docs prompt. Your one decision is the doc method, by precedence: if the framing names a doc-update skill or document, name it in the prompt — relay the framing's path or skill faithfully and treat it as authoritative; the implementer locates and follows it. If the framing names none, send the snippet's default unchanged — it has the implementer find the project's own doc skill, then reconcile by hand if there is none. Never substitute your own survey for a method the framing named. The implementer commits the docs; they ride the branch into the PR that FINISH opens. A doc-scope product call it surfaces — deleting a documented concept, rewriting a design claim — is yours to ask_human.
-5. Call advance_phase with a lean Ship packet: the implementation handoff, the review-and-fix summary (what the reviewer raised, what was fixed, anything disputed), the docs reconciled, and the test state. There is no CEO summary in this arc — the human reads what shipped, the docs, and the review outcome. Approving the Ship gate enters FINISH (open the PR — the docs already ride the branch); rejecting returns the work to you here. The human returns from away and decides to ship from this packet, so it must reflect the final state of the code and docs.${consultantAuditStep(state, 'implement', "the research decisions treated as the design, the implemented change, and the consultant's own prior research-checkpoint findings — not the raw build or review traffic.")}
+5. Call advance_phase with a lean Ship packet: the implementation handoff, the review-and-fix summary (what the reviewer raised, what was fixed, anything disputed), the docs reconciled, and the test state. There is no CEO summary in this arc — the human reads what shipped, the docs, and the review outcome. Approving the Ship gate enters FINISH (open the PR — the docs already ride the branch); rejecting returns the work to you here. The human returns from away and decides to ship from this packet, so it must reflect the final state of the code and docs.${consultantAuditStep(state, spec.name, data.auditSeedNote)}
 
 Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
 
@@ -826,52 +913,54 @@ ${IMPLEMENT_EXAMPLES}
 }
 
 /**
- * A phase's entry brief — the *PhaseEntryPrompt body for `phase`, with the
- * phase table's round cap folded in. The one place the phase→entry-prompt
- * dispatch lives, shared by two callers: the headless driver's basePrompt
+ * The build block's renderer — the posture picks the skeleton (critique's
+ * ceremonial single-pass-with-midpoint-and-tail vs writable's direct build
+ * with one writable round), the examplesKey picks the arc data. A missing
+ * data entry is a registry/fragment mismatch — a knob combination no shipped
+ * arc exercises — and fails loud (the closed-vocabulary rule at the prose
+ * tier; the driver's "every phase builds a non-empty brief" test covers it).
+ */
+function renderBuildBrief(state: RunState, spec: PhaseSpec, semantics: Extract<PhaseSemantics, { block: 'build' }>): string {
+  switch (semantics.reviewPosture) {
+    case 'critique': {
+      const data = CRITIQUE_BUILD_BRIEFS[semantics.examplesKey];
+      if (!data) throw new Error(`no critique-build brief data for examples key "${semantics.examplesKey}"`);
+      return critiqueBuildBrief(state, spec, data);
+    }
+    case 'writable': {
+      const data = WRITABLE_BUILD_BRIEFS[semantics.examplesKey];
+      if (!data) throw new Error(`no writable-build brief data for examples key "${semantics.examplesKey}"`);
+      return writableBuildBrief(state, spec, data);
+    }
+  }
+}
+
+/**
+ * A phase's entry brief — ONE renderer over (the registry row's semantics ×
+ * the fragment library × the per-arc data records), replacing the per-arc
+ * builder functions and their (workflow, phase) dispatch table (T5). The
+ * block chooses the renderer; the knob values choose dedicated fragments; a
+ * new arc adds registry data and — at most — new data-record entries, never a
+ * composer function. Shared by two callers: the headless driver's basePrompt
  * (which additionally marks phaseStarted on the first build), and the
  * interactive get_task tool (which returns this idempotently and folds any
  * staged human input as a separate appended block). Pure — no side effects —
  * so each caller owns its own phaseStarted/consume bookkeeping.
- *
- * The dispatch is WORKFLOW-KEYED: both arcs now share the `implement` and
- * `finish` phase names but need DIFFERENT builders there (full's `implement`
- * carries the CEO summary + contract verify; rir's is the lighter one-round
- * build), so a flat `Record<PhaseName, …>` could not hold both. Nesting by
- * workflow keeps each arc's `implement`/`finish` distinct. Every builder
- * receives the phase name (buildPhaseBrief passes the dispatch key); single-phase
- * builders ignore it, while the shared openPrPhaseEntryPrompt reads it so both
- * arcs' `finish` map to one function with no re-stated phase literal to drift.
  */
-type PhaseBriefBuilder = (state: RunState, cap: number, phase: PhaseName) => string;
-const phaseBriefBuilders: Record<WorkflowName, Partial<Record<PhaseName, PhaseBriefBuilder>>> = {
-  full: {
-    frame: framePhaseEntryPrompt,
-    spec: specPhaseEntryPrompt,
-    plan: planPhaseEntryPrompt,
-    implement: implPhaseEntryPrompt,
-    finish: openPrPhaseEntryPrompt,
-  },
-  design: {
-    frame: framePhaseEntryPrompt,
-    design: designPhaseEntryPrompt,
-    implement: designImplementPhaseEntryPrompt,
-    finish: openPrPhaseEntryPrompt,
-  },
-  rir: {
-    research: researchPhaseEntryPrompt,
-    implement: implementPhaseEntryPrompt,
-    finish: openPrPhaseEntryPrompt,
-  },
-};
-
 export function buildPhaseBrief(state: RunState, phase: PhaseName): string {
   const workflow = workflowOf(state);
-  const builder = phaseBriefBuilders[workflow][phase];
-  // A missing builder is a registry/dispatch mismatch — fail loud. The driver's
-  // "every phase builds a non-empty brief" test is the belt-and-braces cover.
-  if (!builder) throw new Error(`no entry-brief builder for phase "${phase}" in the "${workflow}" arc`);
-  return builder(state, phaseSpec(workflow, phase).roundCap, phase);
+  const spec = phaseSpec(workflow, phase);
+  const semantics = spec.semantics;
+  switch (semantics.block) {
+    case 'frame':
+      return renderFrameBrief(state, spec, semantics);
+    case 'doc-loop':
+      return renderDocLoopBrief(state, spec, semantics);
+    case 'build':
+      return renderBuildBrief(state, spec, semantics);
+    case 'finish':
+      return renderFinishBrief(state, spec, semantics);
+  }
 }
 
 /**

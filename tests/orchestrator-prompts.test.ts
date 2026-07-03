@@ -1,10 +1,5 @@
 import { describe, expect } from 'vitest';
-import {
-  framePhaseEntryPrompt,
-  implPhaseEntryPrompt,
-  implementPhaseEntryPrompt,
-  specPhaseEntryPrompt,
-} from '../src/harness/orchestrator-prompts.ts';
+import { buildPhaseBrief } from '../src/harness/orchestrator-prompts.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
 import { createRun } from '../src/run-store.ts';
 import { consultantBindings, test } from './helpers/fixtures.ts';
@@ -17,35 +12,35 @@ describe('gateless drops the consultant bet-audit in the phase briefs, keeping f
   test('frame: the generative third-opinion is byte-identical gateless or not — gateless keeps it (non-holding)', ({
     consultantRun,
   }) => {
-    const attended = framePhaseEntryPrompt(consultantRun, 2);
+    const attended = buildPhaseBrief(consultantRun, 'frame');
     expect.soft(attended).toContain('consultant-frame'); // the generative analysis send
     expect.soft(attended).toContain("the consultant's analyses"); // folded into the synthesis
     consultantRun.gateless = true;
-    const gateless = framePhaseEntryPrompt(consultantRun, 2);
+    const gateless = buildPhaseBrief(consultantRun, 'frame');
     expect.soft(gateless).toBe(attended); // generative frame survives gateless untouched
   });
 
   test('spec: gateless omits the pre-gate bet audit', ({ consultantRun }) => {
-    expect.soft(specPhaseEntryPrompt(consultantRun, 3)).toContain('bet audit');
+    expect.soft(buildPhaseBrief(consultantRun, 'spec')).toContain('bet audit');
     consultantRun.gateless = true;
-    expect.soft(specPhaseEntryPrompt(consultantRun, 3)).not.toContain('bet audit');
+    expect.soft(buildPhaseBrief(consultantRun, 'spec')).not.toContain('bet audit');
   });
 
   test('impl: the verify backstop is byte-identical gateless or not — gateless never touches it', ({
     consultantRun,
   }) => {
-    const attended = implPhaseEntryPrompt(consultantRun, 3);
+    const attended = buildPhaseBrief(consultantRun, 'implement');
     consultantRun.gateless = true;
-    const gateless = implPhaseEntryPrompt(consultantRun, 3);
+    const gateless = buildPhaseBrief(consultantRun, 'implement');
     expect.soft(gateless).toBe(attended); // the correctness backstop is unaffected by gateless
     expect.soft(gateless).toContain('acceptance contract'); // and it still runs
   });
 
   test('rir implement: gateless drops the open-ended bet audit', ({ projectDir }) => {
     const rir = createRun({ cwd: projectDir, bindings: consultantBindings, workflow: 'rir', framing: 'x' });
-    expect.soft(implementPhaseEntryPrompt(rir, 1)).toContain('bet audit');
+    expect.soft(buildPhaseBrief(rir, 'implement')).toContain('bet audit');
     rir.gateless = true;
-    expect.soft(implementPhaseEntryPrompt(rir, 1)).not.toContain('bet audit');
+    expect.soft(buildPhaseBrief(rir, 'implement')).not.toContain('bet audit');
   });
 });
 
@@ -57,7 +52,7 @@ describe('gateless drops the consultant bet-audit in the phase briefs, keeping f
 describe('the scratch guardrail keeps a worker out of the live run state', () => {
   test('full impl: per-run scratch path, no cleanup step, deleting under .duet/ forbidden', ({ projectDir }) => {
     const run = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, framing: 'x' });
-    const brief = implPhaseEntryPrompt(run, 3);
+    const brief = buildPhaseBrief(run, 'implement');
     expect.soft(brief).toContain(`.duet/runs/${run.runId}/scratch/`); // inside the run dir, not a shared parent
     expect.soft(brief).toContain('never delete .duet/'); // the hard guardrail, with its reason in the brief
     expect.soft(brief).not.toContain('.duet/scratch/'); // the old top-level location is gone
@@ -66,7 +61,7 @@ describe('the scratch guardrail keeps a worker out of the live run state', () =>
 
   test('rir implement: same guardrail and per-run scratch path', ({ projectDir }) => {
     const rir = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'x' });
-    const brief = implementPhaseEntryPrompt(rir, 1);
+    const brief = buildPhaseBrief(rir, 'implement');
     expect.soft(brief).toContain(`.duet/runs/${rir.runId}/scratch/`);
     expect.soft(brief).toContain('never delete .duet/');
     expect.soft(brief).not.toContain('delete them before handoff');
@@ -84,18 +79,18 @@ describe('the approval clause narrates from the ledger, not the posture', () => 
     run.gatesAt = ['frame', 'spec']; // the overnight posture — plan pre-authorized
 
     // Held-then-approved: no ledger entry for the plan gate → the human decided it.
-    expect.soft(implPhaseEntryPrompt(run, 3)).toContain('The human approved the plan');
+    expect.soft(buildPhaseBrief(run, 'implement')).toContain('The human approved the plan');
 
     // The same posture with the crossing in the ledger → honest auto-cross narration.
     run.autoApprovals = [{ gate: 'planApprovalGate', at: '2026-07-01T00:00:00.000Z' }];
-    expect.soft(implPhaseEntryPrompt(run, 3)).toContain('pre-authorized at run start and auto-crossed');
+    expect.soft(buildPhaseBrief(run, 'implement')).toContain('pre-authorized at run start and auto-crossed');
   });
 
   test('an attended gate always narrates the human approval, ledger or not', ({ projectDir }) => {
     const run = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, framing: 'x' });
     run.gatesAt = ['frame', 'spec', 'plan'];
     run.autoApprovals = [{ gate: 'directionGate', at: '2026-07-01T00:00:00.000Z' }];
-    expect(implPhaseEntryPrompt(run, 3)).toContain('The human approved the plan');
+    expect(buildPhaseBrief(run, 'implement')).toContain('The human approved the plan');
   });
 });
 
@@ -107,7 +102,7 @@ describe('verify self-heal (universal, when a contract is frozen)', () => {
     consultantRun,
   }) => {
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc' };
-    const brief = implPhaseEntryPrompt(consultantRun, 3);
+    const brief = buildPhaseBrief(consultantRun, 'implement');
     expect.soft(brief).toContain('self-heal'); // the universal loop
     expect.soft(brief).toContain('implementer first'); // route failures to the implementer, not the human
     expect.soft(brief).toContain('re-verify'); // a fresh, independent re-check
@@ -116,8 +111,8 @@ describe('verify self-heal (universal, when a contract is frozen)', () => {
 
   test('the self-heal loop is identical gateless or not (the backstop is universal)', ({ consultantRun }) => {
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc' };
-    const attended = implPhaseEntryPrompt(consultantRun, 3);
+    const attended = buildPhaseBrief(consultantRun, 'implement');
     consultantRun.gateless = true;
-    expect.soft(implPhaseEntryPrompt(consultantRun, 3)).toBe(attended);
+    expect.soft(buildPhaseBrief(consultantRun, 'implement')).toBe(attended);
   });
 });

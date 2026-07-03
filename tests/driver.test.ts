@@ -9,15 +9,9 @@ import {
   ORCHESTRATOR_SYSTEM_PROMPT,
   buildPhaseBrief,
   feedbackResumePrompt,
-  framePhaseEntryPrompt,
-  implementPhaseEntryPrompt,
-  openPrPhaseEntryPrompt,
-  planPhaseEntryPrompt,
-  researchPhaseEntryPrompt,
-  specPhaseEntryPrompt,
 } from '../src/harness/orchestrator-prompts.ts';
 import { DEFAULT_BINDINGS } from '../src/config.ts';
-import { phaseSpec, phasesOf } from '../src/phases.ts';
+import { phasesOf } from '../src/phases.ts';
 import type { WorkflowName } from '../src/phases.ts';
 import { budgetFor, createRun, loadRunState, saveRunState } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
@@ -82,24 +76,11 @@ const quiesce = (cwd: string, runId: string): void => {
 const runOf = (cwd: string, workflow: WorkflowName): RunState =>
   createRun({ cwd, bindings: DEFAULT_BINDINGS, framing: 'test framing', workflow });
 
-describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)', () => {
-  test('returns each phase’s entry prompt with the phase table’s round cap', ({ run, projectDir }) => {
-    // The extraction is a pure move: the headless basePrompt and the interactive
-    // get_task both build the brief here, dispatching the right *PhaseEntryPrompt
-    // with the right cap. A wrong-phase or wrong-cap dispatch would break this.
-    const rir = runOf(projectDir, 'rir');
-    expect.soft(buildPhaseBrief(run, 'frame')).toBe(framePhaseEntryPrompt(run, phaseSpec('full', 'frame').roundCap));
-    expect.soft(buildPhaseBrief(run, 'spec')).toBe(specPhaseEntryPrompt(run, phaseSpec('full', 'spec').roundCap));
-    expect.soft(buildPhaseBrief(run, 'plan')).toBe(planPhaseEntryPrompt(run, phaseSpec('full', 'plan').roundCap));
-    expect.soft(buildPhaseBrief(run, 'finish')).toBe(openPrPhaseEntryPrompt(run, phaseSpec('full', 'finish').roundCap, 'finish'));
-    expect.soft(buildPhaseBrief(rir, 'research')).toBe(researchPhaseEntryPrompt(rir, phaseSpec('rir', 'research').roundCap));
-    expect.soft(buildPhaseBrief(rir, 'implement')).toBe(implementPhaseEntryPrompt(rir, phaseSpec('rir', 'implement').roundCap));
-    expect.soft(buildPhaseBrief(rir, 'finish')).toBe(openPrPhaseEntryPrompt(rir, phaseSpec('rir', 'finish').roundCap, 'finish'));
-  });
-
-  // Belt-and-braces for the exhaustive `satisfies Record<PhaseName, …>` — the
-  // compiler is the real guard, but a phase with a stub/throwing builder would
-  // still surface here. Each phase is built against a run of its own arc.
+describe('buildPhaseBrief (the shared entry-prompt renderer — headless parity)', () => {
+  // The rendered briefs themselves are pinned byte-identical by the parity
+  // harness (tests/parity/briefs.test.ts); here the guard is coverage — a
+  // phase whose semantics reach a stub or throwing render path surfaces here.
+  // Each phase is built against a run of its own arc.
   test.for([
     ...phasesOf('full').map((p) => ['full', p.name] as const),
     ...phasesOf('design').map((p) => ['design', p.name] as const),
@@ -857,9 +838,9 @@ describe('provider-agnostic onboarding — workers get document paths, not slash
   test('the onboarding entry prompts name a path and never instruct slash-command expansion', ({ run, projectDir }) => {
     // research is a rir phase — build it against a rir run (the brief resolves its
     // consultant snippet against the run's own arc).
-    const frame = framePhaseEntryPrompt(run, phaseSpec('full', 'frame').roundCap);
-    const research = researchPhaseEntryPrompt(runOf(projectDir, 'rir'), phaseSpec('rir', 'research').roundCap);
-    const finish = openPrPhaseEntryPrompt(run, phaseSpec('full', 'finish').roundCap, 'finish');
+    const frame = buildPhaseBrief(run, 'frame');
+    const research = buildPhaseBrief(runOf(projectDir, 'rir'), 'research');
+    const finish = buildPhaseBrief(run, 'finish');
 
     for (const p of [frame, research, finish]) {
       expect.soft(p).not.toContain('CLI expands it'); // the now-wrong slash-command instruction is gone
