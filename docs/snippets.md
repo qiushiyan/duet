@@ -2,7 +2,7 @@
 
 Snippets are the prompt templates the orchestrator sends the workers — they *are* the workflow. This doc catalogs the ones you're most likely to override, **with their full bodies**, so you can see exactly what you're changing before you change it. For *how* overriding works — the two override files, precedence, fail-closed, the `duet snippets` inspector — see the README's [Customizing the snippets](../README.md#customizing-the-snippets).
 
-`snippets.toml` at the repo root is the source of truth; the bodies below are reproduced for reading. For the **live** body on your install — with any user/project overrides already applied — run `duet snippets show <key>`. A `{{lessons_dir}}` token in a body is resolved to duet's vendored methodology lessons at serve time (the worker sees a real path, not the token). The trailing `---` / `$0` in the review snippets is the paste-point convention from the source schema: `$0` is where the human's reviewer feedback lands.
+The `snippets/` directory at the repo root is the source of truth — block-named TOML files mirroring the workflow vocabulary (`frame.toml`, one per document kind, `build.toml`, `finish.toml`, `anytime.toml`, `consultant.toml`), merged into one library at load; the bodies below are reproduced for reading. For the **live** body on your install — with any user/project overrides already applied — run `duet snippets show <key>`. A `{{lessons_dir}}` token in a body is resolved to duet's vendored methodology lessons at serve time (the worker sees a real path, not the token). The trailing `---` / `$0` in the review snippets is the paste-point convention from the source schema: `$0` is where the human's reviewer feedback lands.
 
 ## How snippets map to the arc
 
@@ -12,19 +12,20 @@ Each phase pulls a few snippets in the order the orchestrator reaches for them; 
 |---|---|---|---|
 | [`write-spec`](#write-spec) | full · spec | implementer | the first spec draft |
 | [`start-plan`](#start-plan) | full · plan | implementer | the implementation plan (vertical slices) |
-| [`write-design`](#the-design-arc-snippets) | design · design | implementer | the design doc (product tier + technical tier) |
-| [`implement-design`](#the-design-arc-snippets) | design · implement | implementer | code built from the committed design doc |
+| [`write-design`](#the-design-arc-snippets) | design/relay · design | implementer | the design doc (product tier + technical tier) |
+| [`implement-design`](#the-design-arc-snippets) | design/relay · implement | implementer | code built from the committed design doc |
 | [`implement-direct`](#implement-direct) | rir · implement | implementer | code built straight from the research decisions |
-| [`reconcile-docs`](#reconcile-docs) | every arc · implement | implementer | docs reconciled with what shipped, then committed |
+| [`reconcile-docs`](#reconcile-docs) | every arc · implement | implementer (relay: reviewer) | docs reconciled with what shipped, then committed |
 | [`review-spec`](#review-spec) | full · spec | reviewer | spec critique (at spec altitude) |
 | [`review-plan`](#review-plan) | full · plan | reviewer | plan critique |
-| [`review-design`](#the-design-arc-snippets) | design · design | reviewer | design-doc critique (section-scoped altitude) |
+| [`review-design`](#the-design-arc-snippets) | design/relay · design | reviewer | design-doc critique (section-scoped altitude) |
 | [`review-implementation`](#review-implementation) | full · implement, design · implement | reviewer | code review |
 | [`review-direct`](#review-direct) | rir · implement | reviewer | code review (no spec/plan to measure against) |
+| [`review-and-fix`](#review-and-fix) | relay · implement | reviewer | code review with the findings fixed in place |
 
-The full arc alone has no draft snippet for its implementation phase — the plan is the script, so the orchestrator composes the build prompt from it. The design and rir arcs each seed the build from a template (`implement-design` / `implement-direct`) because no plan exists there.
+The full arc alone has no draft snippet for its implementation phase — the plan is the script, so the orchestrator composes the build prompt from it. The other arcs seed the build from a template because no plan exists there: `implement-design` on design and relay (relay's builder reads it in a fresh post-handoff session — the body assumes only the committed doc), `implement-direct` on rir.
 
-Beyond the phase-bound snippets above, a handful of **cross-cutting anytime helpers** are reachable in any phase (classified `ANYTIME_SNIPPETS`, listed in full by `list_snippets`) — e.g. `reread-context` (reread the touched code before continuing), `recover-context` (the post-compact fresh-session re-anchor: an orchestrator-authored status overview + reread, prescribed when a `/compact` is killed and the implementer session is reset — see `docs/automation-design.md` §"Resilience for the AFK window"), and `compact-inflight` (the mid-work compaction: where the boundary compacts keep what the *next* stage consumes, this one keeps the in-flight state — for a caution-band pause that isn't a stage boundary, and the compact-then-resume recovery after a context cut). They are not customization targets, so they live in `snippets.toml` (source of truth) rather than the curated table here.
+Beyond the phase-bound snippets above, a handful of **cross-cutting anytime helpers** are reachable in any phase (classified `ANYTIME_SNIPPETS`, listed in full by `list_snippets`) — e.g. `reread-context` (reread the touched code before continuing), `recover-context` (the post-compact fresh-session re-anchor: an orchestrator-authored status overview + reread, prescribed when a `/compact` is killed and the implementer session is reset — see `docs/automation-design.md` §"Resilience for the AFK window"), and `compact-inflight` (the mid-work compaction: where the boundary compacts keep what the *next* stage consumes, this one keeps the in-flight state — for a caution-band pause that isn't a stage boundary, and the compact-then-resume recovery after a context cut). They are not customization targets, so they live in the shipped library (`snippets/anytime.toml`) rather than the curated table here.
 
 ---
 
@@ -368,6 +369,38 @@ There's no spec or plan for this arc — the bar is the **research decisions we 
 **Approval bar:** don't pass because it works — structural regressions and missed reframings are presumptive blockers, flag them **critical**.
 
 Implementation handoff below — a starting map, not the boundary of your review. Review the whole change against its actual goal, and actively look for what the handoff leaves out; if you only check what was surfaced, it isn't an independent review.
+
+---
+
+$0
+```
+
+### `review-and-fix`
+
+The relay arc's one review round, sent to the reviewer — the only shipped snippet whose reader has **write access**. It carries `review-direct`'s full lens plus the resolve-it-yourself discipline (assess validity → fix ordinary issues directly, tests moving with the fix → leave what was right), and the **escalation valve**: a product or design disagreement, unreconstructable intent, or broad drift escalates to the human instead of being patched over — a direct fix must never hide a pivot. Override it to change how hard relay's judge-fixer pushes, or where its fix-vs-escalate line sits.
+
+```text
+Code-review this implementation — and resolve what you find. You review with write access: you didn't write this code, but you own getting it ship-ready. The bar is the committed design doc — its product sections carry the goal and the boundaries, its technical sections the module shapes, seams, and test standards the build was to honor. Review against the doc's intent, not a redesign of your own.
+
+**First, understand what the builder did.** Read the actual code and commits, not just the handoff below. Where something looks wrong, work out what the builder was doing before judging it — an approach that reads oddly from outside often encodes a constraint you haven't hit yet, and where it is genuinely wrong, knowing the intent is what lets you fix it without breaking what the intent got right.
+
+**Lens — everything is fair game:**
+- **Correctness** — bugs, edge cases, failure modes.
+- **Solves the problem** — does this achieve the goal behind the design, not just run?
+- **Test quality** — right altitude (behavior, not internals), covers the real cases, survives plausible refactors, uses project patterns. Flag tests of *shape* that pass when behavior breaks, and over-testing of edge cases instead of the critical paths.
+- **Structural quality — be ambitious, not just local:** a reframing that deletes whole branches/helpers/modes beats rearranging them; apply the **deletion test** to new modules; flag **shallow** ones (a thin pass-through wrapper, an interface nearly as complex as its implementation); keep logic in its canonical module.
+- **Right-sizing — over-building is the likelier failure:** defensive branches for states that can't occur, fallbacks the invariants rule out, speculative config beyond the design, abstractions pulled out before the pattern is real.
+
+**Then resolve each finding yourself — this round is review-and-fix, not review-and-file:**
+1. **Assess validity honestly** — a finding you can't defend from the code or the doc isn't a finding.
+2. **An ordinary valid issue: fix it directly**, and move the tests with the fix — add one for the corrected behavior, strengthen a weak one, delete what the fix makes obsolete. Keep the suite green; commit as you go.
+3. **Where the code is right and your instinct was wrong: leave it**, and say why in your report.
+
+**Escalate instead of fixing when a finding changes the substance:** a product or design disagreement (the doc said X, and X now looks wrong in the real code), intent you cannot reconstruct from the code and commits, or drift so broad that fixing it means re-deciding the build's direction. Fixing those directly would hide a pivot inside a review — flag them and leave that thread unresolved. Direct fixing is the default for ordinary issues, not a license to re-decide the work.
+
+**Report when done:** the fixes you applied and the points you left as-is, each grounded in the actual commits, plus anything you escalated. This report travels into the summary the human decides to ship from, so it must reflect the final state of the code, not a plan for it.
+
+The builder's handoff:
 
 ---
 

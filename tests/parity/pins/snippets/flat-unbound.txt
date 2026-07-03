@@ -680,7 +680,7 @@ Code-review this implementation — and resolve what you find. You review with w
 
 **Escalate instead of fixing when a finding changes the substance:** a product or design disagreement (the doc said X, and X now looks wrong in the real code), intent you cannot reconstruct from the code and commits, or drift so broad that fixing it means re-deciding the build's direction. Fixing those directly would hide a pivot inside a review — flag them and leave that thread unresolved. Direct fixing is the default for ordinary issues, not a license to re-decide the work.
 
-**Report when done:** the fixes you applied and the points you left as-is, each grounded in the actual commits, plus anything you escalated. This review-and-fix summary travels into the ship packet, so it must reflect the final state of the code, not a plan for it.
+**Report when done:** the fixes you applied and the points you left as-is, each grounded in the actual commits, plus anything you escalated. This report travels into the summary the human decides to ship from, so it must reflect the final state of the code, not a plan for it.
 
 The builder's handoff:
 

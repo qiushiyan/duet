@@ -958,6 +958,17 @@ const FIXER_BUILD_BRIEFS: Partial<Record<ExamplesKey, FixerBuildData>> = {
  * is why it runs last and why its self-heal routes fixes to the reviewer.
  */
 function fixerBuildBrief(state: RunState, spec: PhaseSpec, data: FixerBuildData): string {
+  // Single-world: the round-cap follow-up clause may only point at "the verify
+  // below" when a real verify step renders below (consultant bound AND a frozen
+  // contract to verify) — the consultant-off and no-contract worlds get a
+  // world-neutral phrasing instead of a dangling reference.
+  const verifyRenders =
+    checkpointLive(state, 'implement') &&
+    consultantSnippetFor(workflowOf(state), 'implement') !== undefined &&
+    Boolean(state.acceptanceContract);
+  const capFollowUp = verifyRenders
+    ? 'a follow-up to the same reviewer session (a fix request from the verify below) steers by delta and needs no new round'
+    : 'a later follow-up into that same reviewer session steers by delta and needs no new round';
   return `<task>
 ${approvalClause(
     state,
@@ -972,7 +983,7 @@ The arc — the implementer builds from the committed design doc, then the revie
 2. Send the implementer an implement-design prompt: it builds the whole change from the committed design doc — the doc fixes the shape and the test standards; the slicing and sequencing are the implementer's own, vertical slices with a commit per slice and that slice's tests per the doc's standards. Drive it as a single pass — a deliberate hold between slices burns a slow worker turn re-covering ground the review-and-fix round covers anyway. ${buildPassGuardrails(state.runId)}
 3. ${midpointStep(data.sizeSignal)} Mid-build the implementer is the sole writer: the reviewer's midpoint read is guidance the implementer folds in, never fixes the reviewer applies itself — its write authority begins at the review-and-fix round, on the finished build.
 4. When all slices are in: implementation-handoff from the implementer — whoever wrote the code authors the map the reviewer starts from.
-5. The review-and-fix round: send the reviewer a review-and-fix prompt wrapping the handoff, pointing it at the design doc's committed path and the build's commits. This is the phase's one review round, and it is writable: the reviewer assesses each finding, fixes the ordinary valid ones directly (fix commits, tests moved along), reports what it changed versus left as-is, and ESCALATES a product or design disagreement, intent it cannot reconstruct, or drift broad enough to mean re-deciding the direction — an escalation is yours to ask_human, never something to patch over. The backstop cap for this phase is ${spec.roundCap} review round; a follow-up to the same reviewer session (a fix request from the verify below) steers by delta and needs no new round.
+5. The review-and-fix round: send the reviewer a review-and-fix prompt wrapping the handoff, pointing it at the design doc's committed path and the build's commits. This is the phase's one review round, and it is writable: the reviewer assesses each finding, fixes the ordinary valid ones directly (fix commits, tests moved along), reports what it changed versus left as-is, and ESCALATES a product or design disagreement, intent it cannot reconstruct, or drift broad enough to mean re-deciding the direction — an escalation is yours to ask_human, never something to patch over. The backstop cap for this phase is ${spec.roundCap} review round; ${capFollowUp}.
 6. When the round has settled, reconcile the docs with what shipped — send the reviewer the reconcile-docs prompt (it owns the record it just judged). Your one decision is the doc method, by precedence: if the framing names a doc-update skill or document, name it in the prompt — relay the framing's path or skill faithfully and treat it as authoritative. If the framing names none, send the snippet's default unchanged. The reviewer commits the docs; they ride the branch into the PR that FINISH opens. A doc-scope product call it surfaces is yours to ask_human.
 7. Last, after the docs are committed: send the reviewer ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review-and-fix summary (fixes applied, push-backs, anything escalated), the docs reconciled, deviations from the design doc, and the test state. The human returns from hours away and decides to ship from this packet alone, so it must carry everything.${consultantVerifyStep(state)}
 
@@ -1112,20 +1123,30 @@ export function answerResumePrompt(answer: string): string {
 export function feedbackResumePrompt(workflow: WorkflowName, phase: PhaseName, feedback: string): string {
   const spec = phaseSpec(workflow, phase);
   const artifact = spec.artifactLabel;
-  // A gate rejection is the editor-in-chief returning the artifact — always to
-  // the implementer. Whether the *reviewer* re-engages is a phase property read
-  // off the SEMANTICS: the doc-loops and the critique-posture build re-run a
-  // verifying round (they have the -again variants and cap headroom for it);
-  // the writable and fixer postures, and the non-loop blocks (frame/finish),
-  // route the human's feedback straight into the revision — instructing a
-  // fresh reviewer round there is wrong for the arc (their loops have no
-  // -again variants) and, at cap 1, blocked by send_prompt.
+  // A gate rejection is the editor-in-chief returning the artifact — to the
+  // role that owns this phase's writes: the implementer everywhere except a
+  // reviewer-owned finish (relay), whose PR work the reviewer authored and owns.
+  // On the fixer build the reviser stays the implementer deliberately — the
+  // reviewer's write authority there is action-scoped to its review-and-fix
+  // round, whose cap is already spent by re-entry time. Whether the *reviewer*
+  // re-engages is a phase property read off the SEMANTICS: the doc-loops and
+  // the critique-posture build re-run a verifying round (they have the -again
+  // variants and cap headroom for it); the writable and fixer postures, and
+  // the non-loop blocks (frame/finish), route the human's feedback straight
+  // into the revision — instructing a fresh reviewer round there is wrong for
+  // the arc (their loops have no -again variants) and, at cap 1, blocked by
+  // send_prompt.
+  const reviser = spec.semantics.block === 'finish' ? spec.semantics.finishOwner : 'implementer';
+  const outranks =
+    reviser === 'reviewer'
+      ? "their feedback outranks the review's own conclusions"
+      : 'their feedback outranks reviewer opinions';
   const reRunsReviewLoop =
     spec.semantics.block === 'doc-loop' ||
     (spec.semantics.block === 'build' && spec.semantics.reviewPosture === 'critique');
   const reviseClause = reRunsReviewLoop
     ? 'run whatever review rounds the changes warrant (with the -again variants), and advance the phase again when converged'
-    : "have the implementer apply the changes directly and advance the phase again — this phase doesn't re-run a reviewer round on re-entry, so the human's feedback is the revision itself, not the trigger for a new review pass";
+    : `have the ${reviser} apply the changes directly and advance the phase again — this phase doesn't re-run a reviewer round on re-entry, so the human's feedback is the revision itself, not the trigger for a new review pass`;
   // The PR is already open by the time an openPrGate reject is reached (both
   // finish and finish open it before advancing), so a reject AMENDS it in place —
   // gh pr edit / more commits — never re-opens it; a second gh pr create would
@@ -1135,11 +1156,11 @@ export function feedbackResumePrompt(workflow: WorkflowName, phase: PhaseName, f
   // in the finish phase regardless.)
   const opensPr = spec.gate?.state === 'openPrGate';
   const amendClause = opensPr
-    ? ` The PR is already open — have the implementer amend it in place (gh pr edit for the description, more commits + push for code or doc changes) and never run gh pr create again (it errors on an existing PR). If the feedback changes what shipped, refresh the docs commit too so it still describes the branch. Re-advance with the PR URL still leading the packet.`
+    ? ` The PR is already open — have the ${reviser} amend it in place (gh pr edit for the description, more commits + push for code or doc changes) and never run gh pr create again (it errors on an existing PR). If the feedback changes what shipped, refresh the docs commit too so it still describes the branch. Re-advance with the PR URL still leading the packet.`
     : '';
   return `At the gate, the human sent the ${artifact} back with this feedback: ${JSON.stringify(
     feedback,
-  )}. Re-enter the phase to address it — route the feedback to the implementer (the human is the editor-in-chief; their feedback outranks reviewer opinions), ${reviseClause}.${amendClause} Your workers kept their full context from before the gate: steer them with deltas to the frames they already hold (what changed and why), not by re-running templates they've already received.`;
+  )}. Re-enter the phase to address it — route the feedback to the ${reviser} (the human is the editor-in-chief; ${outranks}), ${reviseClause}.${amendClause} Your workers kept their full context from before the gate: steer them with deltas to the frames they already hold (what changed and why), not by re-running templates they've already received.`;
 }
 
 export function nudgeContinuePrompt(): string {

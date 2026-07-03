@@ -14,9 +14,9 @@ Three roles. The two **workers** can each run on either provider (`claude` or `c
 |---|---|---|
 | **Orchestrator** | Routes the protocol — never writes code, only triages and decides who answers what | `claude` (Opus) |
 | **Implementer** | Writes specs, plans, code, the PR | `claude` (Opus) |
-| **Reviewer** | Critiques each artifact (review-only) | `codex` |
+| **Reviewer** | Critiques each artifact — review-only, except on the relay arc's build, where it fixes findings directly | `codex` |
 
-A run moves through an **arc** you pick at the start (`--workflow`) — three of them, by how much ceremony the work deserves. Each `→` is a phase the agents work through; each **GATE** is a stop where the run waits for you:
+A run moves through an **arc** you pick at the start (`--workflow`). Under the hood the arcs aren't four hand-built pipelines — each is composed from the same few **phase blocks** (a framing analysis, a document loop, the AFK build, a finishing phase that opens the PR) with named knobs: which document the loop produces, whether the reviewer critiques or fixes, who owns the finishing steps, which model builds. duet ships four compositions as its standard library; the vocabulary is how the set grows. Each `→` is a phase the agents work through; each **GATE** is a stop where the run waits for you:
 
 ```
 full    frame → DIRECTION → spec → COMMIT-SPEC → plan → PLAN (walk away)
@@ -25,15 +25,20 @@ full    frame → DIRECTION → spec → COMMIT-SPEC → plan → PLAN (walk awa
 design  frame → DIRECTION (auto-crosses) → design → DESIGN (your one stop — then walk away)
           → implement (AFK) → SHIP → finish (open the PR) → OPEN-PR → done
 
+relay   frame → DIRECTION (auto-crosses) → design → DESIGN (your one stop)
+          → implement (AFK: a fresh builder implements the doc; the reviewer reviews AND fixes)
+          → SHIP → finish (the reviewer opens the PR) → OPEN-PR → done
+
 rir     research → DIRECTION (walk away) → implement (AFK) → SHIP
           → finish (open the PR) → OPEN-PR → done
 ```
 
 - **full** — the thorough arc: a spec and a plan, each drafted and reviewed on paper before any code. Pick it for unfamiliar or risky work, where the product spec and the technical plan each deserve their own review.
 - **design** — the middle arc: one committed **design doc** replaces the spec + plan pair — product goals and behaviors on top, module boundaries and test standards below — reviewed in a single loop. Pick it for serious work on an implementer model you trust: by default you read one document, tap once, and walk away.
+- **relay** — design's arc with the build **criss-crossed**: after the design doc commits, the implementer switches to a fast, cheaper binding and builds the doc from a fresh session, while the reviewer switches to a strong model that doesn't just file critiques — it fixes ordinary findings in place, owns the docs pass, and opens the PR, escalating anything that smells like a design change instead of patching over it. Pick it when the doc is strong enough that the build is labor, not judgment. The model pairing is yours to bind (per-stage `build` bindings — see [Configure](#configure)); the arc supplies the shape.
 - **rir** — the fast arc: no documents at all; the research decisions are the design. Pick it for small, well-understood changes.
 
-Every arc shares the same AFK implementation phase and ends by opening a real pull request.
+Every arc shares the same AFK implementation phase and ends by opening a real pull request. Composing your *own* arc from the blocks isn't exposed yet — the vocabulary is internal today, and external arc definitions are a documented direction, deliberately gated on a real composition the shipped set doesn't cover ([`docs/future-directions.md`](docs/future-directions.md)).
 
 The gates are enforced in code (a statechart), not by a prompt an agent could be talked out of. Between stops a detached background process drives the phase; nothing runs while a run is parked, and you get a desktop notification at every stop. Three things worth knowing about how a run ends:
 
@@ -41,7 +46,7 @@ The gates are enforced in code (a statechart), not by a prompt an agent could be
 - The **OPEN-PR** gate sits *after* the PR opens. Under the hands-off defaults it auto-crosses to done; to stop and review the opened PR, list `finish` in `--gates-at` (rejecting there amends the PR in place). A bare rir run still attends all of its gates.
 - A pre-authorized gate auto-crosses only on a clean packet: a `high`-severity decision in it holds the run for you instead, and an `ask_human` question stops the run under any posture. The merge is always yours.
 
-Each phase runs a handful of prompt templates — **snippets** — that carry the workflow's conventions. The implementer drafts each artifact from one — [`write-spec`](docs/snippets.md#write-spec) in spec, [`start-plan`](docs/snippets.md#start-plan) in plan, [`write-design`](docs/snippets.md#the-design-arc-snippets) on the design arc, [`implement-direct`](docs/snippets.md#implement-direct) on rir — and the reviewer critiques through altitude-tuned lenses like [`review-spec`](docs/snippets.md#review-spec) and [`review-design`](docs/snippets.md#the-design-arc-snippets). The snippets are the substance of the workflow, and the part you can reshape to your own methodology — see [Customizing the snippets](#customizing-the-snippets), or the full [snippet reference](docs/snippets.md).
+Each phase runs a handful of prompt templates — **snippets** — that carry the workflow's conventions. The implementer drafts each artifact from one — [`write-spec`](docs/snippets.md#write-spec) in spec, [`start-plan`](docs/snippets.md#start-plan) in plan, [`write-design`](docs/snippets.md#the-design-arc-snippets) on the design arc, [`implement-direct`](docs/snippets.md#implement-direct) on rir — and the reviewer critiques through altitude-tuned lenses like [`review-spec`](docs/snippets.md#review-spec) and [`review-design`](docs/snippets.md#the-design-arc-snippets) (on relay's build it works from [`review-and-fix`](docs/snippets.md#review-and-fix) — the same lens, plus the authority to fix what it finds). The snippets are the substance of the workflow, and the part you can reshape to your own methodology — see [Customizing the snippets](#customizing-the-snippets), or the full [snippet reference](docs/snippets.md).
 
 ## What it is — and isn't
 
@@ -52,7 +57,7 @@ Four ideas shape every design choice:
 - **Stop anytime.** A run can be paused indefinitely. The state file is a hint; the agents' transcripts are the truth. Drop out to drive `claude --resume` / `codex resume` by hand, then pick duet back up later — or never.
 - **Not a daemon, not an app.** A small CLI you invoke per gate. No GUI, no background service, no webhooks.
 
-**It is not** a general orchestration framework, not multi-user, and not provider-agnostic — exactly two providers exist by design. It ships with no project conventions: which skills to run, where specs go, what context to seed all come from a **framing** you write at the start of each run.
+**It is not** a general orchestration framework — the arcs compose from a small internal vocabulary, but a neutral engine would be a commodity; what duet actually ships is the opinions (the snippets, the altitude-tuned review lenses, the gate discipline), and a knob exists only when a shipped arc exercises it. Not multi-user, and not provider-agnostic — exactly two providers exist by design. It ships with no project conventions: which skills to run, where specs go, what context to seed all come from a **framing** you write at the start of each run.
 
 ## Install
 
@@ -85,7 +90,7 @@ The smoothest way to run duet is to let a Claude Code session sharpen your probl
    duet new --interactive --framing .duet/<your-framing>.md
    ```
    Your own Claude Code session becomes the orchestrator: you act at the early gates right in the chat — the spec and plan on full, the design doc on design, the direction on rir.
-4. **Walk away.** At the arc's handoff gate — plan approval (full), the Design gate (design), or Direction (rir) — the session hands the run to a background driver, which implements semi-AFK, often for an hour or more. Under the hands-off defaults it then crosses the Ship gate and opens the PR, so you return to an opened pull request (with a CEO-style summary recorded for your morning review) — or a well-formed question waiting for you. Prefer to verify the build before it ships? Attend the Ship gate (`--gates-at skip-plan` on full).
+4. **Walk away.** At the arc's handoff gate — plan approval (full), the Design gate (design and relay), or Direction (rir) — the session hands the run to a background driver, which implements semi-AFK, often for an hour or more. Under the hands-off defaults it then crosses the Ship gate and opens the PR, so you return to an opened pull request (with a CEO-style summary recorded for your morning review) — or a well-formed question waiting for you. Prefer to verify the build before it ships? Attend the Ship gate (`--gates-at skip-plan` on full).
 
 > **Prefer the terminal?** Skip `--interactive` and run a headless framing turn instead — `duet new` opens your editor on a framing draft, then the orchestrator runs in the background and you act at each gate with `duet continue`.
 
@@ -96,6 +101,7 @@ duet new                       # editor on a framing draft (issue, context, scop
 duet new --template bug        # seed the draft from .duet/templates/bug.md
 duet new --spec spec.md        # start from a draft you already wrote (full: a spec; design: a design doc)
 duet new --workflow design     # the one-doc middle arc — one attended gate by default
+duet new --workflow relay      # design's arc, build criss-crossed — bind [roles.*].build in config first
 duet new --workflow rir        # the fast arc (add --gates-at afk to run unattended → PR open)
 duet new --gates-at skip-plan  # full's default is hands-off after the spec; this returns you at the Ship gate
 duet new --budget default      # opt in to per-turn cost caps (off by default)
@@ -103,7 +109,7 @@ duet new --gateless            # walk away from the START — every gate pre-aut
 duet new --retry-infra 2       # tune the bounded infra auto-retry budget (default 3 for new runs; 0 disables)
 ```
 
-Each arc has a sensible hands-off default: **full** is `overnight` — approve the spec, then walk away (plan, Ship, and the Open-PR gate all auto-cross); **design** attends only its Design gate — one interruption for the whole run; **rir** attends all three of its gates unless you say `afk`. `--gates-at` names the *complete* set of gates you attend, not a delta: `--gates-at finish` attends **only** the Open-PR gate — everything else auto-crosses; to keep the usual stops *and* add a post-open review, list them all.
+Each arc has a sensible hands-off default: **full** is `overnight` — approve the spec, then walk away (plan, Ship, and the Open-PR gate all auto-cross); **design** and **relay** attend only their Design gate — one interruption for the whole run; **rir** attends all three of its gates unless you say `afk`. `--gates-at` names the *complete* set of gates you attend, not a delta: `--gates-at finish` attends **only** the Open-PR gate — everything else auto-crosses; to keep the usual stops *and* add a post-open review, list them all.
 
 ## Everyday commands
 
@@ -151,14 +157,19 @@ model = "claude-opus-4-8"   # any Anthropic model id
 [roles.implementer]
 provider = "claude"
 model = "claude-opus-4-8"
+# build = "codex"           # optional: a different model — or provider — for the
+                            # phases after the arc's handoff gate; planning keeps
+                            # the base binding (flag form: --impl-model)
 
 [roles.reviewer]
 provider = "codex"          # no model key — your ~/.codex/config.toml governs
+# build = "claude:claude-opus-4-8"   # optional: relay's judge-fixer binding
 ```
 
 That's the only config duet has — role-to-provider bindings plus billing posture (`transport`, `budget`), nothing else. Project knowledge never lives here; it goes in the framing.
 
-- **Consultant (optional, off by default).** Add `[roles.consultant]`, or pass `--consultant <provider[:model]>` per run, for a second, read-only reviewer that questions the *bet* (assumptions, product fit) rather than the build — ideally on a different model family from your reviewer, which is the point. `--no-consultant` disables a configured one for a single run. On the full and design arcs it also authors an **acceptance contract** — a short, frozen list of falsifiable assertions of what success means, written before any code — which you ratify at the last gate before the build and a fresh session verifies against the built system before the Ship gate. A failed assertion routes to the implementer to fix and re-verify first, holding the gate for you only if it stays broken after a bounded loop — you see a summary of what self-healed, not every fix.
+- **Per-stage bindings (`build`).** Any worker binding may carry `build = "provider[:model]"` — that role's binding for the phases after the arc's handoff gate (the AFK build and the PR tail), while planning keeps the base. Use it alone for the plan-smart / build-cheap split on any arc, or pair the two overrides for **relay's criss-cross** (implementer builds on codex, reviewer judges-and-fixes on claude). A provider-switched role starts a fresh session at the handoff; the committed design doc is its context.
+- **Consultant (optional, off by default).** Add `[roles.consultant]`, or pass `--consultant <provider[:model]>` per run, for a second, read-only reviewer that questions the *bet* (assumptions, product fit) rather than the build — ideally on a different model family from your reviewer, which is the point. `--no-consultant` disables a configured one for a single run. On the document-bearing arcs (full, design, relay) it also authors an **acceptance contract** — a short, frozen list of falsifiable assertions of what success means, written before any code — which you ratify at the last gate before the build and a fresh session verifies against the built system before the Ship gate. A failed assertion routes back to the arc's fixer to fix and re-verify first, holding the gate for you only if it stays broken after a bounded loop — you see a summary of what self-healed, not every fix. On relay the verify earns extra weight: the reviewer both grades and edits the build there, so the consultant's fresh session is the one fully independent pass.
 - **Interactive implementer transport (advanced, experimental).** Add `transport = "interactive"` under `[roles.implementer]` to drive the interactive `claude` TUI instead of headless `claude -p`, so its turns bill your flat subscription quota rather than the metered credit pool. tmux-driven, implementer-only, pending one live-auth check — see [`docs/interactive-transport.md`](docs/interactive-transport.md).
 
 ## Customizing the snippets
@@ -218,7 +229,7 @@ Two Claude Code skills ship with duet (installed with `npx skills add` above): *
 Built and test-verified, awaiting a first live run:
 
 - the **design arc** — the one-doc middle arc above
-- the **relay arc** and the **workflow vocabulary** beneath it (arcs as compositions of phase blocks with knobs; [`docs/specs/2026-07-03-workflow-vocabulary.md`](docs/specs/2026-07-03-workflow-vocabulary.md)) — relay plans on a strong model, builds on a cheap one via per-stage `[roles.*].build` bindings, and reviews with a **writing reviewer** that fixes findings directly and owns the docs + PR
+- the **relay arc** and the **workflow vocabulary** beneath it (arcs as compositions of phase blocks with knobs; [`docs/automation-design.md`](docs/automation-design.md) §"The workflow vocabulary") — relay plans on a strong model, builds on a cheap one via per-stage `[roles.*].build` bindings, and reviews with a **writing reviewer** that fixes findings directly and owns the docs + PR
 - the experimental **interactive-Claude implementer transport** (bill the implementer's turns to your flat subscription quota) — pending one live-auth check; see [`docs/interactive-transport.md`](docs/interactive-transport.md)
 - **warm-starting** the interactive orchestrator from an existing session (`--resume-session`)
 - the **AFK-resilience hardening** (stream watchdog, wall-clock caps, compaction recovery, context-pressure guards) — test-verified at the seams and probed against real transcripts; the induced-failure checks (a stalled stream, a real suspend) are still manual

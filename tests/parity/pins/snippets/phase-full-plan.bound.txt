@@ -135,7 +135,7 @@ Work in two moves, in this order — the order is load-bearing.
 
 Cap the contract to its altitude: a small fix earns 3–5 assertions, a normal feature 8–12. If you want more, the contract is at the wrong altitude — raise it. Do not restate the document as assertions, do not assert the obvious happy path the tests already own, and do not demand detail the document intentionally defers.
 
-Write the contract to the path the orchestrator names, and do NOT commit it — duet freezes it when the human ratifies the design at its gate. Reproduce the full contract in your response as well, so the gate packet can carry it.
+Write the contract to the path the orchestrator names, and do NOT commit it — duet freezes it when the human ratifies the design at its gate. Reproduce the full contract in your response as well, so the human can read it at the ratification stop without opening the file.
 
 The document to author against:
 
