@@ -46,6 +46,12 @@ Role–provider decoupling makes orchestrator-on-codex a legal configuration, bu
 
 The bridge is the host-neutral kernel served over stdio MCP (`duet _mcp`) — the same server a codex orchestrator would connect to; the harness-side half exists. Two codex-specific unknowns gate it: **pause/resume at a tool call** (codex has no `canUseTool` callback, and what `codex exec resume` does with a turn ended mid-tool-call is unknown — the hard part), and **tool-call faithfulness** under codex's MCP client. It stays deliberately unbuilt because nobody has wanted the configuration — the interface allows it, no one pays for it. If wanted: a half-day spike mirroring the claude substrate spike, against the same tools.
 
+## Phase-scoped bindings
+
+The composition vocabulary resolves per-phase — each phase names its block and knob values (`src/phases.ts:111-233`). The provider/model binding does not: a role runs its base binding, or a single post-handoff `build` override, split at the arc's one `handoffGate` (`effectiveBindingFor`, `src/config.ts:119-126`). So the two configuration vocabularies sit at different altitudes and meet at exactly one seam. The friction is real but small — configuring the PR6 relay run (`20260703-1500-e035`) meant translating a phase-first intent ("codex frames and designs, the strong model builds, the reviewer switches to fix") into two role tables split across the handoff, and the reviewer's post-handoff model has no CLI flag at all. Full analysis, code smells, and a tiered proposal live in `docs/specs/2026-07-04-phase-scoped-bindings.md`.
+
+The bet now: the 2-band model covers today's criss-cross — every real configuration so far *is* a clean pre/post-handoff split, which `build` already expresses. The ergonomic gaps (a reviewer build flag symmetric with `--impl-model`, a `duet config show`) are worth closing regardless; the deeper move — a sparse per-phase binding map replacing the binary band — earns its complexity only when a real run wants a split the two bands can't say (a distinct model at `design` vs `frame`, not merely pre/post-handoff). The relay arc's first live runs are the evidence stream: watch their notes for a wanted binding the vocabulary can't express. Explicitly *not* in scope — a phase-scoped *extra worker* (the parallel-maker ask): that reverses the two-role-legibility decision (`docs/future-directions.md`), a product call, not this vocabulary's.
+
 ## Settled, still watched
 
 Resolved by decision, kept only for a live revisit trigger; the substance lives in the named design doc.
