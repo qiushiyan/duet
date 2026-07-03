@@ -11,7 +11,7 @@ This file is the canonical home for how duet keeps its docs. `CLAUDE.md` carries
 ```
 CLAUDE.md                       always-loaded mental model + conventions; the doc map
 README.md                       orientation + the verified-vs-not status line
-snippets.toml                   the orchestrator's snippet library
+snippets/                       the orchestrator's snippet library, block-named files
 docs/
   automation-design.md          THE design — roles, layers, phases/gates, triage, policy
   engineering.md                the codebase mental model — module map, seams, patterns

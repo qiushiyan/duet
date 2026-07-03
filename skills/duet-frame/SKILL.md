@@ -42,20 +42,21 @@ Surface a conflict as an observation and a question, never a redesign — naming
 
 ## Pick the workflow
 
-duet runs one of three arcs; settle which before gate posture, because the gates differ between them. Choose by how much ceremony the problem warrants, and record it as `workflow:` in the frontmatter (default `full`):
+duet runs one of four arcs; settle which before gate posture, because the gates differ between them. Choose by how much ceremony the problem warrants, and record it as `workflow:` in the frontmatter (default `full`):
 
 - **`full`** — the thorough arc: frame → spec → plan → implementation → PR. Use it when the ceremony earns its keep: an unfamiliar domain, heavy risk, or work where the product spec and the technical plan genuinely differ and each deserves its own review.
 - **`design`** — the middle arc: frame → design → implementation → PR. One committed **design doc** replaces the spec + plan pair — product goals and behaviors on top, module boundaries and test standards below — reviewed in a single loop and ratified at one gate. Use it for serious work on a trusted frontier-model implementer.
+- **`relay`** — design's arc with the build criss-crossed: the same one design doc and single gate, but after the doc commits the implementer switches to a faster, cheaper binding and builds fresh from the doc, while the reviewer switches to a stronger model that fixes findings directly and owns the docs pass and the PR. Use it when the design doc will be strong enough that the build is labor rather than judgment. It only pays off when the user's duet config binds the per-stage models — the arc supplies the shape, the config the economy — so before suggesting it, read `~/.config/duet/config.toml` and look for `build` keys under `[roles.implementer]` / `[roles.reviewer]`.
 - **`rir`** (Research → Implement → Review) — the fast arc: research → implement (build, review, reconcile docs) → a `finish` phase that opens a PR. No spec, no plan; the research decisions are the design. Use it for quick, well-understood iteration where any document ceremony would cost more than it returns.
 
-If the user hasn't said: suggest `rir` when the problem is small and clearly understood, `design` when the work is substantial but they trust the implementer's model with the technical depth, and `full` otherwise — then confirm.
+If the user hasn't said: suggest `rir` when the problem is small and clearly understood, `design` when the work is substantial but they trust the implementer's model with the technical depth, `relay` when they want that one-doc shape with a cheap builder and a strong fixing reviewer (and their config carries the `build` bindings), and `full` otherwise — then confirm.
 
 ## Gate posture
 
 A framing can pre-authorize gates so the user can walk away. Before finalizing, ask how hands-off they want the run unless they've already said — the gates depend on the workflow you picked:
 
 - **full** has five gates — Direction, Commit-spec, Plan-approval, Ship, Open-PR (their `gates_at` tokens are `frame`, `spec`, `plan`, `implement`, `finish`). The **default is `overnight`** (= `frame,spec`): attend the first two, auto-cross the rest — the Open-PR gate sits _after_ the open, so the PR auto-opens and the gate auto-crosses to done. Postures, increasingly hands-off: **`overnight`** (the default — walk away once the spec is approved); **`skip-plan`** (= `frame,spec,implement`) — walk away at spec approval but return at the Ship gate; **`afk`** (= attend nothing) — walk away from the start, every gate pre-authorized but every safety net intact (the consultant's bet audits stay on, unlike `gateless` below); or a custom token list (e.g. add `finish` for a post-open review stop on the opened PR — reject there amends it).
-- **design** has four gates — Direction, Design, Ship, Open-PR (their `gates_at` tokens are `frame`, `design`, `implement`, `finish`). The **default is attend `design` only** — the arc's whole promise is one interruption: the Direction gate auto-crosses, the user reads the design doc, taps once, and walks away (a contentious direction still stops the run — a high-stakes call at an auto-crossed gate converts it to an attended stop). Postures: the default; **`afk`** (= attend nothing); or a custom token list.
+- **design** and **relay** have four gates — Direction, Design, Ship, Open-PR (their `gates_at` tokens are `frame`, `design`, `implement`, `finish`). The **default is attend `design` only** — these arcs' whole promise is one interruption: the Direction gate auto-crosses, the user reads the design doc, taps once, and walks away (a contentious direction still stops the run — a high-stakes call at an auto-crossed gate converts it to an attended stop). Postures: the default; **`afk`** (= attend nothing); or a custom token list.
 - **rir** has three gates — **Direction** (the walk-away / headless-handoff point), **Ship**, and **Open-PR** (after the PR opens; their `gates_at` tokens are `research`, `implement`, `finish`). Postures: **attend all** (default), or **`afk`** — pre-authorize all three and run straight through to done with the PR open.
 
 Record their choice as `gates_at:` in the framing frontmatter. A preset must belong to the chosen workflow (`overnight` / `skip-plan` are full's; `afk` belongs to every arc), so duet rejects a mismatch.
@@ -64,7 +65,7 @@ Record their choice as `gates_at:` in the framing frontmatter. A preset must bel
 
 ## Consultant — an optional outside voice
 
-duet's reviewer is sharp on _is this well-built_, but — invested in the framing it helped shape — rarely challenges the _bet_ underneath. A run can bind an optional **consultant**: a read-only second reviewer that questions assumptions and product fit rather than the build, ideally on a **different model family** from the reviewer — the one outside perspective a single reviewer working harder can't supply. It is **off by default** and never changes what gets built; it checks whether the bet is sound. On the **full** and **design** arcs it also authors a frozen **acceptance contract** — a short, falsifiable list of what success means, written before any code — which the user ratifies at the last gate before the build (full's plan gate; design's design gate) and a fresh session verifies against the built system before shipping (a failed assertion routes to the implementer to fix and re-verify first, holding the gate only if it stays broken); worth mentioning when the consultant is in play, since that gate then carries the extra thing to sign off.
+duet's reviewer is sharp on _is this well-built_, but — invested in the framing it helped shape — rarely challenges the _bet_ underneath. A run can bind an optional **consultant**: a read-only second reviewer that questions assumptions and product fit rather than the build, ideally on a **different model family** from the reviewer — the one outside perspective a single reviewer working harder can't supply. It is **off by default** and never changes what gets built; it checks whether the bet is sound. On the document-bearing arcs (**full**, **design**, **relay**) it also authors a frozen **acceptance contract** — a short, falsifiable list of what success means, written before any code — which the user ratifies at the last gate before the build (full's plan gate; the design gate on design and relay) and a fresh session verifies against the built system before shipping (a failed assertion routes back to the arc's fixer to fix and re-verify first, holding the gate only if it stays broken); worth mentioning when the consultant is in play, since that gate then carries the extra thing to sign off. On **relay** the consultant is worth raising even for routine work: the reviewer there both grades and fixes the build, so the consultant's fresh verify is the run's one fully independent pass.
 
 Surface it like gate posture — offer the choice, don't make it; whether the premise is worth a second opinion is the user's call:
 
@@ -94,8 +95,8 @@ Frontmatter is optional and machine-parsed; everything else is prose sent to the
 
 ```
 ---
-workflow: rir              # optional: full (default), design, or rir
-gates_at: afk              # optional: omit for the arc's default posture (full/rir: attend every gate; design: attend the design gate only); presets are workflow-specific (full: overnight / skip-plan / afk; design/rir: afk) or a phase list
+workflow: rir              # optional: full (default), design, relay, or rir
+gates_at: afk              # optional: omit for the arc's default posture (full: overnight — attend frame,spec; design/relay: attend the design gate only; rir: attend every gate); presets are workflow-specific (full: overnight / skip-plan / afk; design/relay/rir: afk) or a phase list
 gateless: true             # optional: walk away from the START — pre-authorize every gate (conflicts with gates_at and interactive)
 interactive: true          # optional: drive the early gates from your own session (the --interactive flag by another door; for a template's launch hint)
 consultant: on             # optional: on | off toggle for a config-bound consultant (the binding's provider/model stays a flag, never here)
@@ -169,7 +170,7 @@ User: "requests sometimes time out on a slow network." AVOID writing "add a boun
 Before handing off, check the framing against the user's original words: is every piece of their intent and scope present, with nothing you invented and no solution smuggled in? Then get their sign-off on the drafted file, fold in their edits, and emit:
 
 ```
-duet new --interactive --workflow <full|design|rir> --framing .duet/<slug>.md
+duet new --interactive --workflow <full|design|relay|rir> --framing .duet/<slug>.md
 ```
 
 Use the workflow you settled on (omit `--workflow` to take the default `full`). Add `--consultant <provider[:model]>` only if the user chose the outside voice for this run (omit it otherwise, or when their config already binds one). Tell them to run it in their own terminal — `--interactive` hands the terminal to a live orchestrator session, so it can't be launched for them from a non-interactive session.
@@ -177,11 +178,11 @@ Use the workflow you settled on (omit `--workflow` to take the default `full`). 
 If the user chose to warm-start from this session (see "Attach to this discussion"), add the captured id and remind them to quit this session before running it:
 
 ```
-duet new --interactive --resume-session <session-id> --workflow <full|design|rir> --framing .duet/<slug>.md
+duet new --interactive --resume-session <session-id> --workflow <full|design|relay|rir> --framing .duet/<slug>.md
 ```
 
 If the user chose to walk away from the start (gateless), drop `--interactive` and use `--gateless` instead — the two are mutually exclusive, and a gateless run is headless from the first prompt:
 
 ```
-duet new --gateless --workflow <full|design|rir> --framing .duet/<slug>.md
+duet new --gateless --workflow <full|design|relay|rir> --framing .duet/<slug>.md
 ```

@@ -304,7 +304,7 @@ program
   .option('--impl <provider[:model]>', 'implementer binding override (the model used for every phase)')
   .option(
     '--impl-model <provider[:model]>',
-    "the implementer's model from the implementation phase onward: plan on the base model, build & finish on this (usually cheaper) one. claude[:model] only in v1",
+    "the implementer's binding from the implementation phase onward: plan on the base binding, build & finish on this (usually cheaper) one — another model or another provider (config form: [roles.<worker>].build)",
   )
   .option('--reviewer <provider[:model]>', 'reviewer binding override')
   .option(

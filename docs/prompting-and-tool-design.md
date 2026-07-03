@@ -60,7 +60,16 @@ A second boundary, the mirror of the first: **relay the framing's references, ne
 
 The behavior predates its design: the first real run collapsed write-spec's ~2k-char generic template into a 4.3k-char run-specific prompt — actual workstreams, file/line anchors, run-specific non-goals, gate-approved decisions folded in — with every guardrail intact (planlab run `20260611-1542-aeca`, implementer voice log) **(observed)**. The framework's job is making that designed rather than borrowed from one model's judgment.
 
-Authoring corollary for `snippets.toml`: hedged generality in a template is load-bearing, not vagueness to fix — write what varies between runs as the hedge, hard-code only the discipline, and let the orchestrator collapse the rest.
+Authoring corollary for the snippet library (the `snippets/` files): hedged generality in a template is load-bearing, not vagueness to fix — write what varies between runs as the hedge, hard-code only the discipline, and let the orchestrator collapse the rest.
+
+### One world per rendered prompt
+
+Workflow knobs (the composition vocabulary, `docs/automation-design.md` §"The workflow vocabulary") must never leak into what a model reads. **Every rendered prompt describes exactly one world**: the model sees only the instructions that apply to this run's actual configuration, and could not tell from its prompt that other blocks, postures, or arcs exist. Two binding principles:
+
+1. **Never encode knob-conditionals in prose.** No rendered brief or snippet says "if the review posture is fixer, …; otherwise …". Conditional prose makes the model parse configuration state, hedges the instruction, and spends attention on branches that don't apply — it is a patch, not an instruction. The registry's semantics decide; the prose asserts.
+2. **Branch in the composer, not the prompt.** All conditioning happens at render time: the statechart knows the phase, the registry row carries the semantics, and the renderer selects a dedicated fragment for the branch. Where knob values diverge in what the worker should *do*, each value gets its own hand-written fragment or snippet — `review-and-fix` is a dedicated snippet, not `review-direct` plus a conditional paragraph — and prose is shared only when genuinely identical across values. Prefer forking a fragment over parameterizing it into hedged generality; the closed vocabulary keeps the fork count bounded.
+
+The distinction from the adaptation hedges just above: a hedge covers what varies **between runs of the same configuration** (the orchestrator collapses it per turn); a knob covers what varies **between configurations** (the renderer forks it per value). The test-side enforcement is the parity harness's fixture rule — one pinned fixture per conditional branch (`docs/engineering.md` §"Patterns that carry the design").
 
 The send boundary carries the "self-check before finishing" rule at the moment it matters: send_prompt is framed as a commit (the body persists in the worker's session; there is no unsend), and the orchestrator is told to read its composed body once against the template's discipline and the run's specifics before calling. No preview tool exists by design — the harness sends the body verbatim, so a preview would echo what the orchestrator just composed; its own context is the draft surface, and the post-send corrective is the delta mechanics, not a re-send.
 
@@ -162,3 +171,4 @@ The binding rules every duet prompt and tool must follow (the condensed form liv
 3. Tool descriptions surface the implicit, load-bearing facts.
 4. Errors name the failure layer and prescribe the recovery path.
 5. Results that change the agent's next step say so explicitly, with the reason.
+6. One world per rendered prompt — no knob-conditionals in prose; branch in the composer, dedicated fragments per knob value.
