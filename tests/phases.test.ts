@@ -20,7 +20,7 @@ import {
   validateRegistry,
   workflowHasConsultantBackstop,
 } from '../src/phases.ts';
-import type { WorkflowSpecInput } from '../src/phases.ts';
+import type { PhaseSemantics, WorkflowSpecInput } from '../src/phases.ts';
 
 /**
  * The workflow registry — the source of truth the flat lookups derive from.
@@ -30,10 +30,10 @@ import type { WorkflowSpecInput } from '../src/phases.ts';
  */
 
 // A minimal phase in the registry input shape — always gated (every phase gates).
-function phase(name: string, gateState: string = `${name}Gate`) {
+function phase(name: string, gateState: string = `${name}Gate`, overrides: Record<string, unknown> = {}) {
   return {
     name,
-    snippets: [] as readonly string[],
+    semantics: { block: 'frame', examplesKey: 'frame' } as PhaseSemantics,
     gate: { state: gateState, heading: 'h', ready: 'r', hint: null },
     artifactLabel: name,
     reviewLoop: false,
@@ -41,6 +41,7 @@ function phase(name: string, gateState: string = `${name}Gate`) {
     orchestratorBudgetUsd: 1,
     workerBudgetUsd: 1,
     workerTurnTimeoutMs: 1,
+    ...overrides,
   };
 }
 
@@ -114,6 +115,55 @@ describe('validateRegistry', () => {
       name: 'an entry.specSkipsTo not in the workflow throws',
       registry: { w: workflow({ entry: { firstPhase: 'a', specSkipsTo: 'zzz' } }) },
       throws: /entry\.specSkipsTo "zzz" is not a phase/,
+    },
+    {
+      // Vocabulary coherence: reviewLoop must agree with the block — doc-loop
+      // and build phases ARE review loops; frame and finish phases are not.
+      name: 'a frame block claiming reviewLoop throws (semantics ↔ flag coherence)',
+      registry: { w: workflow({ phases: [phase('a', 'aGate', { reviewLoop: true }), phase('b', 'bGate')] }) },
+      throws: /reviewLoop true but block "frame"/,
+    },
+    {
+      name: 'a doc-loop block without reviewLoop throws',
+      registry: {
+        w: workflow({
+          phases: [
+            phase('a', 'aGate', { semantics: { block: 'doc-loop', artifactKind: 'spec', examplesKey: 'spec' } }),
+            phase('b', 'bGate'),
+          ],
+        }),
+      },
+      throws: /reviewLoop false but block "doc-loop"/,
+    },
+    {
+      // A checkpoint fires from the block that hosts its work: a contract
+      // author on a frame block would brief the consultant about a document
+      // the phase never produces.
+      name: 'a consultant checkpoint on a foreign block throws',
+      registry: {
+        w: workflow({ phases: [phase('a', 'aGate', { consultantCheckpoint: 'contract' }), phase('b', 'bGate')] }),
+      },
+      throws: /checkpoint "contract" but is a "frame" block/,
+    },
+    {
+      // The closed vocabulary, structurally: a knob value with no shipped
+      // snippet family fails at load — "a knob value ships its prompt support"
+      // is enforced, not prose. (TypeScript already forbids this for the
+      // literal registry; this is the same rule for a registry that arrives as
+      // data, e.g. a future external arc file.)
+      name: 'a knob value without a shipped snippet family throws (closed vocabulary)',
+      registry: {
+        w: workflow({
+          phases: [
+            phase('a', 'aGate', {
+              reviewLoop: true,
+              semantics: { block: 'doc-loop', artifactKind: 'memo', examplesKey: 'spec' } as unknown as PhaseSemantics,
+            }),
+            phase('b', 'bGate'),
+          ],
+        }),
+      },
+      throws: /artifactKind "memo", which ships no snippet family/,
     },
   ])('$name', ({ registry, throws }) => {
     if (throws) expect(() => validateRegistry(registry)).toThrow(throws);

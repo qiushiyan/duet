@@ -1,0 +1,35 @@
+<documents>
+<document name="approved-spec" path="docs/specs/parity-fixture.md">
+# Parity fixture spec
+
+A fixed document the parity pins read through documentsBlock. Its content is
+frozen so the rendered briefs are byte-stable; it stands in for a real spec,
+plan seed, or design doc depending on the arc under pin.
+
+</document>
+</documents>
+
+<task>
+The commit-spec gate was pre-authorized at run start and auto-crossed — the spec stands approved as converged. Run the PLAN phase:
+
+This phase's exit gate is pre-authorized: the human granted approval at run start, so advance_phase records your packet for their later review and the run continues immediately — no live gate decision arrives, and the human is away from the terminal. Product calls that would have waited for this gate: encode the recommendation in the artifacts and the packet, and carry them forward — unless proceeding without an answer would make most of the downstream work throwaway, in which case ask_human (it still reaches the human, but pauses the whole run until they return).
+
+1. Have the implementer commit the approved spec file (docs/specs/parity-fixture.md) with a conventional message, as its own commit.
+2. Decide where the plan file lives: the framing names the project's plan location (path or directory convention). The plan must be a file in the repo — implementation may compact the implementer's context, and the plan file is what later turns re-anchor on. If the framing doesn't name a plan location, ask_human for one before drafting.
+3. Send the implementer a planning prompt based on the start-plan snippet. The implementer writes the plan to the file and reports it.
+4. Run the plan review loop: review-plan to the reviewer (point it at the plan file's path as well as the content), update-plan to the implementer, -again variants for later rounds. Plans are reviewable at a finer altitude than specs — test cases, fixtures, and line-level references are fair game; only full code bodies are deferred.
+5. The backstop cap for this phase is 3 review rounds; converge well before it.
+6. When converged, call advance_phase with a summary, listing the plan file among the artifacts. Implementation runs AFK after this gate, so the summary should give the human confidence the plan is workable end to end.
+
+Throughout: flag product or direction questions with ask_human; tactical questions bounce to the worker.
+
+## Plan phase examples
+
+This phase's call is the altitude the plan owes — finer than the spec's. Apply it both ways: press on vagueness the plan should resolve, but don't review below it.
+<example name="the plan owes what the spec could defer">
+The plan's verification story is just "we'll add tests for this slice." In a spec that vagueness was fine; in a plan it is not — test cases, fixtures, and line-level anchors for existing code are the plan's altitude. Route it back: the plan should name the cases and the fixtures before it is workable.
+</example>
+<example type="avoid" name="reviewing below the plan's altitude">
+Pressing the implementer to write full function bodies into the plan. Code bodies are the one thing the plan defers — that is the implementation phase's work. Keep the plan review at test-cases-and-anchors altitude, not at code.
+</example>
+</task>

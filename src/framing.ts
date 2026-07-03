@@ -55,9 +55,13 @@ export const FRAMING_TEMPLATE = `---
 #                           finish (reconcile docs, open a PR). design:
 #                           frame → design (one design doc replaces spec +
 #                           plan) → implement → finish, for serious work on a
-#                           trusted frontier-model implementer. rir:
-#                           research → implement → review → finish (open a PR;
-#                           no spec/plan), for small, well-understood work.
+#                           trusted frontier-model implementer. relay:
+#                           design's arc, but the reviewer reviews with write
+#                           access — it fixes findings directly and owns the
+#                           docs + PR (bind providers per stage via
+#                           [roles.*].build). rir: research → implement →
+#                           review → finish (open a PR; no spec/plan), for
+#                           small, well-understood work.
 # gates_at: overnight     — phases whose gates you attend; the rest are
 #                           pre-authorized and auto-cross with packets
 #                           recorded. Presets are workflow-specific: full →

@@ -1,0 +1,38 @@
+<documents>
+<document name="framing" description="the human's project briefing for this run">
+Parity framing: a fixed briefing used only by the parity pins.
+</document>
+<document name="draft-spec" path="docs/specs/parity-fixture.md">
+# Parity fixture spec
+
+A fixed document the parity pins read through documentsBlock. Its content is
+frozen so the rendered briefs are byte-stable; it stands in for a real spec,
+plan seed, or design doc depending on the arc under pin.
+
+</document>
+</documents>
+
+<task>
+Run the SPEC review loop on the draft spec above, then advance to the commit-spec gate.
+
+Branch: the run works on exactly one branch, fixed before your first worker prompt. The repo is currently on "feat/parity". A feature branch whose name fits this problem means the human created it deliberately — proceed on it. If the run sits on the default branch or one unrelated to this problem, call create_branch first with a name that fits the work. Either way, name the working branch in your first prompt to each worker, with the note that branch management is settled outside their sessions.
+
+The shape of the loop:
+1. Read the snippet library (list_snippets) — the review-spec / update-spec snippets (and their -again variants for later rounds) are the templates for this loop.
+2. Send the reviewer a review-spec prompt wrapping the current spec. The reviewer can read the repo directly, so point it at docs/specs/parity-fixture.md and related code — name the path as well as quoting the content.
+3. Route the reviewer's feedback to the implementer with an update-spec prompt. The implementer should apply accepted changes to docs/specs/parity-fixture.md directly (it has write access) and report what it changed versus rejected and why.
+4. Judge convergence. Run another round with the -again variants when substantive points remain open; stop when what's left is minor. The backstop cap for this phase is 3 review rounds — your judgment should converge well before it.
+5. When converged, call advance_phase with a summary of what the reviewer flagged, what changed, and any rejections with their rationale — the human decides at the gate from your summary.
+
+Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
+
+## Spec phase examples
+
+This phase's call is reading each reviewer point at spec altitude — intentionally-deferred detail, or a real gap. Apply that distinction, not the point's wording.
+<example name="deferred detail is not a spec gap">
+The reviewer notes the spec doesn't list the specific test cases or the exact line-level edits. At spec altitude those are intentionally deferred to the plan, not gaps — don't route them to the implementer as required spec changes; note they are plan-stage and move on.
+</example>
+<example name="a real spec gap">
+The reviewer notes the spec never says what happens when the input is empty — a behavior the feature must define. That is a spec-altitude gap: route it to the implementer to resolve in the spec, because the plan and the code will both build on the answer.
+</example>
+</task>

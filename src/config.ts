@@ -42,18 +42,19 @@ export interface RoleBinding {
    */
   transport?: 'headless' | 'interactive';
   /**
-   * The IMPLEMENTER's post-handoff model override (present-only, implementer-only):
-   * the claude model the implementer switches to for phases strictly after the
-   * workflow's handoff gate (the AFK build + finishing tail), typically a
-   * cheaper/faster model than the base that plans. A `RoleOverride`, not a
-   * `RoleBinding`, precisely because it carries no transport — the post-handoff
-   * turn keeps the base implementer's transport. Claude-only and same-provider in
-   * v1 (a non-claude provider is grammar-reserved but rejected at the config
-   * boundary); validated once in loadRunConfig so `implementerModelFor` can trust
-   * it. ABSENT ⇒ byte-for-byte today: the implementer runs its base model in every
-   * phase. Only ever set on `bindings.implementer`.
+   * The role's post-handoff BUILD override (present-only, worker roles only):
+   * the binding this worker switches to for phases strictly after the
+   * workflow's handoff gate (the AFK build + finishing tail). A provider
+   * switch is allowed — relay's criss-cross plans on claude and builds on
+   * codex for the implementer, the inverse for the reviewer. A `RoleOverride`,
+   * not a `RoleBinding`, precisely because it carries no transport — a claude
+   * override runs headless (the interactive-transport combination is rejected
+   * at the config boundary). Written as `build` in the config table; `impl`
+   * is accepted as an alias on the implementer (the pre-generalization
+   * spelling) and parses into this same field. ABSENT ⇒ byte-for-byte today:
+   * the role runs its base binding in every phase.
    */
-  impl?: RoleOverride;
+  build?: RoleOverride;
 }
 
 /**
@@ -100,28 +101,28 @@ export const DEFAULT_CLAUDE_MODEL: Record<BindableRole, string> = {
 };
 
 /**
- * The Anthropic model the IMPLEMENTER runs on at `phase` — the one place the
- * per-phase model split resolves, and the opt-in resolver the design mirrors on
- * `budgetFor`/`gateAttended` (pure, absent-knob ⇒ identity). Pre-/at-handoff
- * phases (the planning arc: frame, spec, plan) run the base binding's model;
- * phases strictly after the handoff gate (the AFK build + finishing tail — full's
- * {implement, finish}, rir's {implement, finish}) run the optional `impl` override's
- * model when one is bound. Absent `impl` ⇒ the base model for every phase,
- * byte-for-byte today.
+ * The BINDING a worker role runs on at `phase` — the one resolver answering
+ * "who runs this turn" (T4; it replaces the model-only `implementerModelFor`),
+ * and the opt-in resolver the design mirrors on `budgetFor`/`gateAttended`
+ * (pure, absent-knob ⇒ identity). Pre-/at-handoff phases run the base
+ * binding; phases strictly after the handoff gate (the AFK build + finishing
+ * tail) run the role's optional `build` override when one is bound — a full
+ * REPLACEMENT binding (provider switch allowed), never a mutation of the
+ * base. Absent `build` ⇒ the base binding for every phase, byte-for-byte.
  *
- * Returns a model STRING, never a provider switch: `impl` is validated at the
- * config boundary (loadRunConfig) to be claude-only, so the swap only ever changes
- * the model — the base binding's provider/transport still build the worker. A
- * codex implementer has no model and never reaches here (createWorkers' codex
- * branch skips it); the base-model fallback keeps the function total regardless.
+ * The returned binding is trustworthy by the config boundary's guards
+ * (loadRunConfig): a build override never rides an interactive-transport
+ * base, and the orchestrator can't carry one — so no downstream site
+ * re-checks. `createWorkers` consumes this BEFORE its provider branch, which
+ * is what makes the codex-vs-claude construction fall out per phase.
  */
-export function implementerModelFor(bindings: RoleBindings, workflow: WorkflowName, phase: PhaseName): string {
-  const binding = bindings.implementer;
-  const base = binding.model ?? DEFAULT_CLAUDE_MODEL.implementer;
-  if (binding.provider === 'claude' && binding.impl && isPostHandoffPhase(workflow, phase)) {
-    return binding.impl.model ?? DEFAULT_CLAUDE_MODEL.implementer;
-  }
-  return base;
+export function effectiveBindingFor(bindings: RoleBindings, role: BindableRole, workflow: WorkflowName, phase: PhaseName): RoleBinding {
+  const base = bindingFor(bindings, role);
+  const override = base.build;
+  if (!override || !isPostHandoffPhase(workflow, phase)) return base;
+  return override.provider === 'claude'
+    ? { provider: 'claude', model: override.model ?? DEFAULT_CLAUDE_MODEL[role], transport: 'headless' }
+    : { provider: 'codex' };
 }
 
 /** Shipped default when no config file is present (claude roles on Opus 4.8, reviewer on codex). */
@@ -180,38 +181,46 @@ function parseProviderModel(role: BindableRole, table: Record<string, unknown>):
 }
 
 /**
- * The config-file `impl` field (`[roles.implementer].impl = "claude:model"`),
- * validated against the base provider, or undefined when absent. Implementer-only
- * and claude-only: a stray `impl` on another role, a non-string value, or an impl
- * on a codex implementer each reject by name here — the config-file half of the
- * one boundary that makes `bindings.implementer.impl` trustworthy downstream (the
- * flag half, and the cross-source final guard, live in loadRunConfig). The reserved
- * non-claude-provider rejection rides parseImplOverride.
+ * The config-file `build` field (`[roles.<worker>].build = "provider[:model]"`),
+ * or its `impl` alias on the implementer (the pre-generalization spelling), or
+ * undefined when absent. Worker-roles-only — the orchestrator never switches
+ * mid-run — and the alias is implementer-only, so a stray `impl` on another
+ * role still rejects by name. This is the config-file half of the one boundary
+ * that makes `binding.build` trustworthy downstream; the flag half and the
+ * cross-source transport guard live in loadRunConfig.
  */
-function parseImplField(role: BindableRole, table: Record<string, unknown>, baseProvider: 'claude' | 'codex'): RoleOverride | undefined {
-  const raw = table['impl'];
-  if (raw === undefined) return undefined;
-  if (role !== 'implementer') {
+function parseBuildField(role: BindableRole, table: Record<string, unknown>): RoleOverride | undefined {
+  const rawBuild = table['build'];
+  const rawImpl = table['impl'];
+  if (rawImpl !== undefined && role !== 'implementer') {
     throw new Error(
-      `config: [roles.${role}].impl is implementer-only — the post-handoff model swap applies to the implementer, no other role`,
+      `config: [roles.${role}].impl is implementer-only (it is the legacy alias of "build") — spell the post-handoff override [roles.${role}].build`,
+    );
+  }
+  if (rawBuild !== undefined && rawImpl !== undefined) {
+    throw new Error(
+      `config: [roles.implementer] sets both "build" and its alias "impl" — keep one (they are the same knob)`,
+    );
+  }
+  const raw = rawBuild ?? rawImpl;
+  if (raw === undefined) return undefined;
+  const key = rawBuild !== undefined ? 'build' : 'impl';
+  if (role === 'orchestrator') {
+    throw new Error(
+      `config: [roles.orchestrator].${key} — the post-handoff build override is a worker knob; the orchestrator runs one binding across the whole arc`,
     );
   }
   if (typeof raw !== 'string') {
-    throw new Error(`config: [roles.implementer].impl must be a "provider[:model]" string, got ${JSON.stringify(raw)}`);
+    throw new Error(`config: [roles.${role}].${key} must be a "provider[:model]" string, got ${JSON.stringify(raw)}`);
   }
-  if (baseProvider !== 'claude') {
-    throw new Error(
-      `config: [roles.implementer].impl needs a claude implementer — the post-handoff model swap is a claude-only, same-provider change (the base implementer is codex here)`,
-    );
-  }
-  return parseImplOverride(raw);
+  return parseRoleOverride(role, raw);
 }
 
 function parseBinding(role: BindableRole, raw: unknown): RoleBinding {
   if (typeof raw !== 'object' || raw === null) throw new Error(`config: [roles.${role}] must be a table`);
   const table = raw as Record<string, unknown>;
   const base = parseProviderModel(role, table);
-  const impl = parseImplField(role, table, base.provider);
+  const build = parseBuildField(role, table);
   const transport = table['transport'];
   if (transport !== undefined) {
     if (base.provider === 'codex') {
@@ -235,11 +244,12 @@ function parseBinding(role: BindableRole, raw: unknown): RoleBinding {
     }
   }
   // Claude bindings always carry a transport (default headless, alongside the
-  // model default); codex bindings never do. The impl override rides only a claude
-  // implementer (parseImplField already rejected it on a codex base).
+  // model default); codex bindings never do. The build override rides either
+  // base provider — the switch is the point (relay's reviewer is codex-based
+  // with a claude build override).
   return base.provider === 'claude'
-    ? { ...base, transport: (transport as 'headless' | 'interactive' | undefined) ?? 'headless', ...(impl ? { impl } : {}) }
-    : base;
+    ? { ...base, transport: (transport as 'headless' | 'interactive' | undefined) ?? 'headless', ...(build ? { build } : {}) }
+    : { ...base, ...(build ? { build } : {}) };
 }
 
 /**
@@ -254,25 +264,18 @@ export function parseRoleOverride(role: BindableRole, spec: string): RoleOverrid
 }
 
 /**
- * Parse an impl-model spec — the `--impl-model` flag or `[roles.implementer].impl`,
- * the same `provider[:model]` grammar as parseRoleOverride but with the v1 provider
- * guard: only a `claude:model` swap is supported. A non-claude provider is REJECTED
- * as grammar-reserved-but-unbuilt, checked BEFORE parseProviderModel so a bare
- * `codex` (which parseProviderModel would accept) and a `codex:gpt-5` (which it
- * rejects for the wrong reason — "no model key") both surface the reserved message.
- * The one parse boundary for the impl knob: past it, `impl.provider` is claude by
- * construction, so downstream never re-checks it.
+ * Parse a build-override spec — the `--impl-model` flag or a
+ * `[roles.<worker>].build` value, the same `provider[:model]` grammar as
+ * parseRoleOverride. A provider switch is a supported value now (the
+ * generalization relay rides): `codex` hands the post-handoff phases to
+ * codex, `claude:model` swaps the claude model. The one parse boundary for
+ * the build knob; the cross-source guards (interactive transport) live in
+ * loadRunConfig.
  */
 export function parseImplOverride(spec: string): RoleOverride {
   if (spec.trim() === '') {
     throw new Error(
-      'impl model is empty — set it to a "claude:model" spec (e.g. "claude:claude-sonnet-5"), or omit it to keep the base model in every phase',
-    );
-  }
-  const provider = spec.split(':')[0];
-  if (provider !== 'claude') {
-    throw new Error(
-      `impl model provider "${provider}" is reserved — v1 supports only a claude:model implementer swap (a provider switch is grammar-reserved but unbuilt)`,
+      'the build override is empty — set it to a "provider[:model]" spec (e.g. "codex", "claude:claude-sonnet-5"), or omit it to keep the base binding in every phase',
     );
   }
   return parseRoleOverride('implementer', spec);
@@ -353,48 +356,42 @@ export function loadRunConfig(
     // the billing footgun the RoleOverride/RoleBinding split prevents: a
     // model-only override must not silently flip a subscription-billed run back
     // to metered headless.
+    // Carry a configured post-handoff `build` forward on either branch: the
+    // `--<role>` grammar can't express it, so a base override must not silently
+    // discard the role's build-phase binding — and unlike transport (claude-only),
+    // the build override rides either base provider.
     if (override.provider === 'claude') {
       const carried = prev.provider === 'claude' ? prev.transport : undefined;
-      // Carry a configured post-handoff `impl` forward exactly as transport is
-      // carried: a model-only `--impl` base override must not silently discard the
-      // implementer's build-phase model (the load-bearing merge — only the
-      // implementer ever has `prev.impl`, so this is a no-op for other roles). A
-      // switch to codex takes the `else` branch and drops it, mirroring transport.
-      const carriedImpl = prev.provider === 'claude' ? prev.impl : undefined;
-      bindings[role] = { ...override, transport: carried ?? 'headless', ...(carriedImpl ? { impl: carriedImpl } : {}) };
+      bindings[role] = { ...override, transport: carried ?? 'headless', ...(prev.build ? { build: prev.build } : {}) };
     } else {
-      bindings[role] = override;
+      bindings[role] = { ...override, ...(prev.build ? { build: prev.build } : {}) };
     }
   }
 
-  // The implementer's post-handoff model: the `--impl-model` flag wins over a
-  // configured `[roles.implementer].impl`, applied AFTER the role overrides so the
-  // guards below see the final implementer provider/transport. This is the one
-  // cross-source boundary that makes `bindings.implementer.impl` trustworthy — a
-  // `--impl codex` (which already dropped a carried impl above) plus `--impl-model`,
-  // or a `--impl-model` on a codex-configured implementer, both reject here rather
-  // than reaching a worker. The reserved non-claude provider is caught at parse
-  // time (parseImplOverride), so it is not re-checked.
+  // The implementer's post-handoff build override: the `--impl-model` flag wins
+  // over a configured `[roles.implementer].build`, applied AFTER the role
+  // overrides so the guard below sees the final implementer transport.
   if (opts.implModelOverride !== undefined) {
     // REPLACE the implementer object, never mutate it: when no config table and no
     // `--impl` override supplied one, `bindings.implementer` is still the SHARED
     // `DEFAULT_BINDINGS.implementer` reference (`bindings` is only a shallow copy of
-    // DEFAULT_BINDINGS above), so `bindings.implementer.impl = …` would write the
-    // build model onto the process-global default and leak it into every later
+    // DEFAULT_BINDINGS above), so `bindings.implementer.build = …` would write the
+    // build override onto the process-global default and leak it into every later
     // default-binding load — breaking the absent-knob invariant. A fresh object
     // leaves the default pristine (the same replace-don't-mutate discipline the
     // transport merge above already follows).
-    bindings.implementer = { ...bindings.implementer, impl: parseImplOverride(opts.implModelOverride) };
+    bindings.implementer = { ...bindings.implementer, build: parseImplOverride(opts.implModelOverride) };
   }
-  if (bindings.implementer.impl) {
-    if (bindings.implementer.provider !== 'claude') {
+  // The cross-source transport guard, per worker role: a build override never
+  // rides an interactive-transport base — the interactive pane launches with one
+  // binding, and a swap-on-resume there is unverified. Checked after both
+  // sources so a config `build` plus a `--implementer` transport carry, or a
+  // `--impl-model` on an interactive base, both reject rather than reach a worker.
+  for (const role of ['implementer', 'reviewer', 'consultant'] as const) {
+    const binding = bindings[role];
+    if (binding?.build && binding.transport === 'interactive') {
       throw new Error(
-        'the impl model is a claude-only knob, but the implementer is bound to codex — remove --impl-model / [roles.implementer].impl, or bind the implementer to claude',
-      );
-    }
-    if (bindings.implementer.transport === 'interactive') {
-      throw new Error(
-        'the impl model is unsupported with the interactive transport in v1 — the interactive pane launches with one model and model-swap-on-resume is unverified there; use a headless implementer for the per-phase model split',
+        `the ${role}'s build override is unsupported with the interactive transport in v1 — the interactive pane launches with one binding and a swap-on-resume is unverified there; use a headless ${role} for the post-handoff split`,
       );
     }
   }

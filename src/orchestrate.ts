@@ -26,7 +26,7 @@ import { locateSessionTranscripts } from './sessions.ts';
 // (durable across compaction, unlike a skill body). It is a prompt asset, not a
 // skill — no SKILL.md, fed as a file by the launcher — so it lives under
 // prompts/, not skills/. Resolved package-relative from this module like
-// snippets.ts resolves snippets.toml — and, like snippets.toml, shipped only
+// snippets.ts resolves snippets/ — and, like snippets/, shipped only
 // because the `prompts` entry is in package.json `files` (tests/skill.test.ts
 // pins this target into the publish surface). Drop `prompts` from `files` and a
 // packed build points --append-system-prompt-file at a missing file.

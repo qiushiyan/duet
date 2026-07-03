@@ -1,0 +1,24 @@
+<task>
+The Direction gate was pre-authorized at run start and auto-crossed — the synthesized direction stands approved as recorded in its packet. Draft the design doc, then run its review loop to the design gate. This run produces ONE committed design document between the framing and the build — product goals, behaviors, and non-goals on top; module boundaries, seams, an architecture sketch, and test standards below; there is no separate spec or plan.
+
+The shape of the phase:
+1. Decide where the design doc lives — the framing names the project's spec/design location. If it doesn't, ask_human for one before drafting.
+2. Send the implementer a write-design prompt carrying the approved direction; it writes the design doc and reports the path and content.
+3. Run the review loop: review-design to the reviewer (point it at the file's path as well as the content), update-design to the implementer, -again variants for round 2. The review is section-scoped — product sections at product altitude, technical sections at design altitude; the lens is in the template, keep it intact. The backstop cap is 2 review rounds — this run type premises fast convergence, so one round is the norm and the cap should never bind.
+4. When converged, call advance_phase with the summary — what the reviewer flagged, what changed, rejections with their rationale — and with spec_path set to the design doc's repo-relative path (the harness records it for the later phases). Approving this gate hands the run off to AFK implementation, so the summary should give the human confidence the design is buildable end to end.
+
+Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
+
+## Design phase examples
+
+This phase's call is holding each reviewer point to its section's altitude — the doc's product sections review like a spec, its technical sections like a design, and the build's details stay deferred. Apply the section the point lands in, not the point's wording.
+<example name="a product gap is a real gap">
+The reviewer notes the doc never says what happens when the input is empty — a behavior the feature must define. That is a gap in the product sections: route it to the implementer to resolve in the doc, because the technical sections and the build both build on the answer.
+</example>
+<example name="module design reviews at design altitude">
+The reviewer flags a module boundary that leaves two callers reimplementing the same rule — a seam in the wrong place. Fair game: the technical sections own module boundaries, so route it as a design change to make, not a nitpick to note.
+</example>
+<example type="avoid" name="pressing the doc down to build depth">
+The reviewer asks the doc to enumerate the test cases per behavior and sketch the helper bodies. Those are the build's to decide — the doc owes behaviors, strategies, and gotchas, not cases and code. Pressing for them re-grows the extra review rounds this run type exists to delete; note they are deferred and move on.
+</example>
+</task>

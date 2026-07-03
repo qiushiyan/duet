@@ -180,6 +180,33 @@ describe('run creation', () => {
     expect(() => loadRunState(projectDir, 'nope')).toThrow(/is nope a run of this project/);
   });
 
+  test('loadRunState normalizes legacy shapes once at the boundary (parse-don\u2019t-validate, T1)', ({
+    projectDir,
+    run,
+  }) => {
+    // Hand-write a PRE-FEATURE state file: bare-string sessions and the old
+    // `impl` binding key, exactly as an existing run on disk would carry them.
+    const legacy = JSON.parse(readFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), 'utf8'));
+    legacy.workerSessions = { implementer: 'legacy-impl-sess', reviewer: 'legacy-rev-sess' };
+    legacy.bindings.implementer = {
+      provider: 'claude',
+      model: 'claude-opus-4-8',
+      transport: 'headless',
+      impl: { provider: 'claude', model: 'claude-sonnet-5' },
+    };
+    writeFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), JSON.stringify(legacy, null, 2));
+
+    const loaded = loadRunState(projectDir, run.runId);
+    // Bare strings become provider-qualified records carrying the BASE
+    // binding's provider — correct by construction (no override existed when
+    // legacy state was written).
+    expect.soft(loaded.workerSessions.implementer).toEqual({ provider: 'claude', id: 'legacy-impl-sess' });
+    expect.soft(loaded.workerSessions.reviewer).toEqual({ provider: 'codex', id: 'legacy-rev-sess' });
+    // The pre-generalization `impl` key becomes `build` — one shape downstream.
+    expect.soft(loaded.bindings.implementer.build).toEqual({ provider: 'claude', model: 'claude-sonnet-5' });
+    expect.soft(loaded.bindings.implementer).not.toHaveProperty('impl');
+  });
+
   test('createRun without gatesAt leaves it absent when defaultPreAuthorized is empty (rir — legacy attend-all)', ({
     projectDir,
   }) => {

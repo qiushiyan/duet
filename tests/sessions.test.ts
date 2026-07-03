@@ -9,7 +9,7 @@ const TS = '2026-06-20T00:00:00.000Z';
 describe('resolveSessions — the cheap exact session map (no fs)', () => {
   test('orchestrator + both workers map to their provider and id', ({ run }) => {
     run.orchestratorSessionId = 'orch-1';
-    run.workerSessions = { implementer: 'impl-1', reviewer: 'rev-1' };
+    run.workerSessions = { implementer: { provider: 'claude', id: 'impl-1' }, reviewer: { provider: 'codex', id: 'rev-1' } };
     expect(resolveSessions(run)).toEqual([
       { role: 'orchestrator', provider: 'claude', sessionId: 'orch-1' },
       { role: 'implementer', provider: 'claude', sessionId: 'impl-1' },
@@ -19,7 +19,7 @@ describe('resolveSessions — the cheap exact session map (no fs)', () => {
 
   test('a role with no session id yet is OMITTED, never a null-id entry', ({ run }) => {
     run.orchestratorSessionId = 'orch-1';
-    run.workerSessions = { implementer: 'impl-1' }; // reviewer not started
+    run.workerSessions = { implementer: { provider: 'claude', id: 'impl-1' } }; // reviewer not started
     const roles = resolveSessions(run).map((s) => s.role);
     expect.soft(roles).toEqual(['orchestrator', 'implementer']);
     expect.soft(resolveSessions(run).every((s) => s.sessionId)).toBe(true);
@@ -34,7 +34,7 @@ describe('resolveSessions — the cheap exact session map (no fs)', () => {
     consultantRun,
   }) => {
     consultantRun.orchestratorSessionId = 'orch-1';
-    consultantRun.workerSessions = { implementer: 'impl-1', reviewer: 'rev-1', consultant: 'c-1' };
+    consultantRun.workerSessions = { implementer: { provider: 'claude', id: 'impl-1' }, reviewer: { provider: 'codex', id: 'rev-1' }, consultant: { provider: 'claude', id: 'c-1' } };
     expect.soft(resolveSessions(consultantRun)).toEqual([
       { role: 'orchestrator', provider: 'claude', sessionId: 'orch-1' },
       { role: 'implementer', provider: 'claude', sessionId: 'impl-1' },
@@ -43,7 +43,7 @@ describe('resolveSessions — the cheap exact session map (no fs)', () => {
     ]);
     // Unbound: even a stray tracked consultant id is not enumerated — the role
     // isn't bound, so workerRolesFor doesn't reach it.
-    run.workerSessions = { implementer: 'impl-1', consultant: 'stray' };
+    run.workerSessions = { implementer: { provider: 'claude', id: 'impl-1' }, consultant: { provider: 'claude', id: 'stray' } };
     expect.soft(resolveSessions(run).map((s) => s.role)).toEqual(['implementer']);
   });
 });
@@ -51,7 +51,7 @@ describe('resolveSessions — the cheap exact session map (no fs)', () => {
 describe('readRoleTranscriptTail — the fs tail wrapper', () => {
   test('a small transcript is read from offset 0, first record intact, with a path', ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
-    run.workerSessions = { implementer: 'impl-1' };
+    run.workerSessions = { implementer: { provider: 'claude', id: 'impl-1' } };
     const content = jsonl(claudeUserToolResult({ ts: TS }), claudeUserToolResult({ ts: TS }));
     const path = plantClaudeTranscript(home, 'impl-1', content);
 
@@ -65,7 +65,7 @@ describe('readRoleTranscriptTail — the fs tail wrapper', () => {
   test('a transcript larger than maxBytes returns <= maxBytes with the partial first line discarded', ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
     const maxBytes = 64 * 1024;
-    run.workerSessions = { implementer: 'impl-1' };
+    run.workerSessions = { implementer: { provider: 'claude', id: 'impl-1' } };
     // A huge leading record (the read seeks into it), then small intact records.
     const big = JSON.stringify({ type: 'assistant', timestamp: TS, pad: 'x'.repeat(200_000), message: { content: [] } });
     const survivor = JSON.stringify({ type: 'user', timestamp: TS, message: { content: [{ type: 'tool_result', content: 'first-survivor' }] } });
@@ -83,7 +83,7 @@ describe('readRoleTranscriptTail — the fs tail wrapper', () => {
 
   test('on multiple located paths, the newest by mtime wins', ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
-    run.workerSessions = { implementer: 'shared-id' };
+    run.workerSessions = { implementer: { provider: 'claude', id: 'shared-id' } };
     plantClaudeTranscript(home, 'shared-id', jsonl(claudeUserToolResult({ ts: TS })), { slug: 'proj-old', mtime: 1_000_000_000_000 });
     const newerPath = plantClaudeTranscript(
       home,
@@ -98,7 +98,7 @@ describe('readRoleTranscriptTail — the fs tail wrapper', () => {
 
   test('a role with no locatable transcript returns undefined', ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
-    run.workerSessions = { implementer: 'ghost' }; // session id with no file on disk
+    run.workerSessions = { implementer: { provider: 'claude', id: 'ghost' } }; // session id with no file on disk
     expect.soft(readRoleTranscriptTail(run, 'implementer', { home })).toBeUndefined();
     // A role with no session id at all is also undefined.
     expect.soft(readRoleTranscriptTail(run, 'reviewer', { home })).toBeUndefined();
@@ -139,7 +139,7 @@ describe('readTranscriptTailForSession — the locate-by-explicit-id core (the l
 describe('readTranscriptTailAtPath — the locate-free reader (the 30s activity poll)', () => {
   test('reads the tail at an already-located path, no directory scan', ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
-    run.workerSessions = { implementer: 'impl-1' };
+    run.workerSessions = { implementer: { provider: 'claude', id: 'impl-1' } };
     const path = plantClaudeTranscript(home, 'impl-1', jsonl(claudeUserToolResult({ ts: TS })));
     const tail = readTranscriptTailAtPath(path, 'claude');
     expect.soft(tail?.path).toBe(path);

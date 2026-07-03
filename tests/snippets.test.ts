@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
-import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, UNLISTED_SNIPPETS, WORKFLOWS, consultantSnippetFor } from '../src/phases.ts';
+import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, UNLISTED_SNIPPETS, WORKFLOWS, consultantSnippetFor, phasesOf } from '../src/phases.ts';
+import { ACTION_CATALOG } from '../src/roles.ts';
 import type { WorkflowName } from '../src/phases.ts';
 import {
   LESSONS_DIR,
@@ -19,9 +20,9 @@ import type { Snippet, SnippetOverrideLayer, SnippetRenderOpts } from '../src/sn
 const WORKFLOW_NAMES = Object.keys(WORKFLOWS) as WorkflowName[];
 
 /**
- * Guards the real snippets.toml — the file is hand-edited (approved
- * propose_snippet_edit diffs apply here), and a broken library should fail
- * a five-second test run, not a real orchestrated run.
+ * Guards the real snippets/ library — the block-named TOML files are
+ * hand-edited (approved propose_snippet_edit diffs apply there), and a broken
+ * library should fail a five-second test run, not a real orchestrated run.
  */
 
 describe('the snippet library', () => {
@@ -189,7 +190,7 @@ describe('the snippet library', () => {
     // "exactly one bucket" but: every snippet has a home; the three bucket
     // KINDS (phase-bound / anytime / unlisted) are pairwise disjoint; and no
     // snippet repeats within a single workflow's phase lists.
-    const phaseSet = new Set(WORKFLOW_NAMES.flatMap((wf) => WORKFLOWS[wf].phases.flatMap((p) => p.snippets)));
+    const phaseSet = new Set(WORKFLOW_NAMES.flatMap((wf) => phasesOf(wf).flatMap((p) => p.snippets)));
     const anytime = new Set(ANYTIME_SNIPPETS);
     const unlisted = new Set(UNLISTED_SNIPPETS);
     // The consultant checkpoint snippets are a FOURTH bucket — registry data
@@ -220,7 +221,7 @@ describe('the snippet library', () => {
 
     // (c) no snippet appears twice within one workflow's own phase lists.
     for (const wf of WORKFLOW_NAMES) {
-      const within = WORKFLOWS[wf].phases.flatMap((p) => p.snippets);
+      const within = phasesOf(wf).flatMap((p) => p.snippets);
       expect.soft(new Set(within).size, `workflow "${wf}" lists a snippet under more than one of its phases`).toBe(within.length);
     }
 
@@ -231,7 +232,7 @@ describe('the snippet library', () => {
   });
 
   test('the five consultant snippets exist, are checkpoint-classified (never in a base phase list), and never carry a review- prefix', () => {
-    const phaseSet = new Set<string>(WORKFLOW_NAMES.flatMap((wf) => WORKFLOWS[wf].phases.flatMap((p) => p.snippets)));
+    const phaseSet = new Set<string>(WORKFLOW_NAMES.flatMap((wf) => phasesOf(wf).flatMap((p) => p.snippets)));
     for (const key of ['consultant-frame', 'consultant-spec', 'consultant-impl', 'consultant-contract', 'consultant-verify']) {
       const snippet = getSnippet(key);
       expect.soft(snippet, `snippet "${key}"`).toBeDefined();
@@ -242,9 +243,11 @@ describe('the snippet library', () => {
       // run's list_snippets (registry data, gated per-run by phaseSnippetsFor).
       expect.soft(CONSULTANT_SNIPPETS.has(key), `"${key}" is a consultant checkpoint snippet`).toBe(true);
       expect.soft(phaseSet.has(key), `"${key}" must NOT sit in any base phase snippets list`).toBe(false);
-      // Load-bearing: a consultant tag must NOT start with "review" — tools.ts
-      // counts a review round by tag.startsWith('review'), so a review-prefixed
-      // consultant tag would consume a round (and pollute the telemetry).
+      // A consultant snippet must never be cataloged as a review round —
+      // round counting is catalog-driven (ACTION_CATALOG, T3), and a
+      // consultant turn is additive, never substitutive. The old prefix
+      // hygiene stays as naming clarity.
+      expect.soft(ACTION_CATALOG[key]?.countsReviewRound ?? false, `"${key}" must not count a review round`).toBe(false);
       expect.soft(key.startsWith('review'), `"${key}" must not start with review`).toBe(false);
     }
     // The checkpoint→snippet mapping is the single source the registry exposes:
@@ -256,6 +259,22 @@ describe('the snippet library', () => {
     expect.soft(consultantSnippetFor('full', 'spec')).toBe('consultant-spec');
     expect.soft(consultantSnippetFor('full', 'plan')).toBe('consultant-contract');
     expect.soft(consultantSnippetFor('full', 'implement')).toBe('consultant-verify');
+  });
+
+  test('the action catalog pins to the library: every catalog key ships, every review-family key is cataloged (T3)', () => {
+    // (a) A catalog entry for a snippet the library doesn't ship is dead
+    // metadata — or worse, a typo silently detached from its snippet.
+    for (const key of Object.keys(ACTION_CATALOG)) {
+      expect.soft(getSnippet(key), `catalog key "${key}" is missing from the library`).toBeDefined();
+    }
+    // (b) Every review-family key a phase actually serves must be cataloged —
+    // counting is catalog-driven now, so an uncataloged review snippet would
+    // silently stop counting toward the round cap.
+    const served = new Set(WORKFLOW_NAMES.flatMap((wf) => phasesOf(wf).flatMap((p) => p.snippets)));
+    for (const key of served) {
+      if (!key.startsWith('review')) continue;
+      expect.soft(ACTION_CATALOG[key], `review-family snippet "${key}" is not in the action catalog`).toBeDefined();
+    }
     expect.soft(consultantSnippetFor('rir', 'research')).toBe('consultant-frame');
     expect.soft(consultantSnippetFor('rir', 'implement')).toBe('consultant-impl');
     expect.soft(consultantSnippetFor('full', 'finish'), 'finish carries no consultant checkpoint').toBeUndefined();

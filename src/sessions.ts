@@ -1,7 +1,6 @@
 import { closeSync, existsSync, openSync, readSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { bindingFor } from './config.ts';
 import type { RoleBinding } from './config.ts';
 import { workerRolesFor } from './roles.ts';
 // Type-only — run-store.ts value-imports THIS module, so a value import back
@@ -84,8 +83,12 @@ export function resolveSessions(state: RunState): SessionRef[] {
     out.push({ role: 'orchestrator', provider: state.bindings.orchestrator.provider, sessionId: state.orchestratorSessionId });
   }
   for (const role of workerRolesFor(state)) {
-    const sessionId = state.workerSessions[role];
-    if (sessionId) out.push({ role, provider: bindingFor(state.bindings, role).provider, sessionId });
+    // The RECORD is the provider source, never the base binding — a
+    // post-handoff build override makes the binding's provider wrong for a
+    // switched role, and a wrong provider here locates the wrong transcript
+    // tree (~/.claude/projects/ vs ~/.codex/sessions/).
+    const record = state.workerSessions[role];
+    if (record) out.push({ role, provider: record.provider, sessionId: record.id });
   }
   return out;
 }

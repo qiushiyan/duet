@@ -1,0 +1,426 @@
+{
+  "full.frame": {
+    "base": [
+      "think-holistic",
+      "compare-notes"
+    ],
+    "consultant": [
+      "think-holistic",
+      "compare-notes",
+      "consultant-frame"
+    ],
+    "consultantGateless": [
+      "think-holistic",
+      "compare-notes",
+      "consultant-frame"
+    ]
+  },
+  "full.spec": {
+    "base": [
+      "write-spec",
+      "review-spec",
+      "update-spec",
+      "review-spec-again",
+      "update-spec-again"
+    ],
+    "consultant": [
+      "write-spec",
+      "review-spec",
+      "update-spec",
+      "review-spec-again",
+      "update-spec-again",
+      "consultant-spec"
+    ],
+    "consultantGateless": [
+      "write-spec",
+      "review-spec",
+      "update-spec",
+      "review-spec-again",
+      "update-spec-again"
+    ]
+  },
+  "full.plan": {
+    "base": [
+      "start-plan",
+      "review-plan",
+      "update-plan",
+      "review-plan-again",
+      "update-plan-again"
+    ],
+    "consultant": [
+      "start-plan",
+      "review-plan",
+      "update-plan",
+      "review-plan-again",
+      "update-plan-again",
+      "consultant-contract"
+    ],
+    "consultantGateless": [
+      "start-plan",
+      "review-plan",
+      "update-plan",
+      "review-plan-again",
+      "update-plan-again",
+      "consultant-contract"
+    ]
+  },
+  "full.implement": {
+    "base": [
+      "compact-for-impl",
+      "midpoint-status",
+      "review-midpoint",
+      "respond-midpoint",
+      "compact-for-review",
+      "implementation-handoff",
+      "review-implementation",
+      "respond-review",
+      "review-implementation-again",
+      "respond-review-again",
+      "reconcile-docs",
+      "ceo-summary"
+    ],
+    "consultant": [
+      "compact-for-impl",
+      "midpoint-status",
+      "review-midpoint",
+      "respond-midpoint",
+      "compact-for-review",
+      "implementation-handoff",
+      "review-implementation",
+      "respond-review",
+      "review-implementation-again",
+      "respond-review-again",
+      "reconcile-docs",
+      "ceo-summary",
+      "consultant-verify"
+    ],
+    "consultantGateless": [
+      "compact-for-impl",
+      "midpoint-status",
+      "review-midpoint",
+      "respond-midpoint",
+      "compact-for-review",
+      "implementation-handoff",
+      "review-implementation",
+      "respond-review",
+      "review-implementation-again",
+      "respond-review-again",
+      "reconcile-docs",
+      "ceo-summary",
+      "consultant-verify"
+    ]
+  },
+  "full.finish": {
+    "base": [
+      "pr-description",
+      "compact-for-cleanup"
+    ],
+    "consultant": [
+      "pr-description",
+      "compact-for-cleanup"
+    ],
+    "consultantGateless": [
+      "pr-description",
+      "compact-for-cleanup"
+    ]
+  },
+  "design.frame": {
+    "base": [
+      "think-holistic",
+      "compare-notes"
+    ],
+    "consultant": [
+      "think-holistic",
+      "compare-notes",
+      "consultant-frame"
+    ],
+    "consultantGateless": [
+      "think-holistic",
+      "compare-notes",
+      "consultant-frame"
+    ]
+  },
+  "design.design": {
+    "base": [
+      "write-design",
+      "review-design",
+      "update-design",
+      "review-design-again",
+      "update-design-again"
+    ],
+    "consultant": [
+      "write-design",
+      "review-design",
+      "update-design",
+      "review-design-again",
+      "update-design-again",
+      "consultant-contract"
+    ],
+    "consultantGateless": [
+      "write-design",
+      "review-design",
+      "update-design",
+      "review-design-again",
+      "update-design-again",
+      "consultant-contract"
+    ]
+  },
+  "design.implement": {
+    "base": [
+      "compact-for-impl",
+      "implement-design",
+      "midpoint-status",
+      "review-midpoint",
+      "respond-midpoint",
+      "compact-for-review",
+      "implementation-handoff",
+      "review-implementation",
+      "respond-review",
+      "review-implementation-again",
+      "respond-review-again",
+      "reconcile-docs",
+      "ceo-summary"
+    ],
+    "consultant": [
+      "compact-for-impl",
+      "implement-design",
+      "midpoint-status",
+      "review-midpoint",
+      "respond-midpoint",
+      "compact-for-review",
+      "implementation-handoff",
+      "review-implementation",
+      "respond-review",
+      "review-implementation-again",
+      "respond-review-again",
+      "reconcile-docs",
+      "ceo-summary",
+      "consultant-verify"
+    ],
+    "consultantGateless": [
+      "compact-for-impl",
+      "implement-design",
+      "midpoint-status",
+      "review-midpoint",
+      "respond-midpoint",
+      "compact-for-review",
+      "implementation-handoff",
+      "review-implementation",
+      "respond-review",
+      "review-implementation-again",
+      "respond-review-again",
+      "reconcile-docs",
+      "ceo-summary",
+      "consultant-verify"
+    ]
+  },
+  "design.finish": {
+    "base": [
+      "pr-description",
+      "compact-for-cleanup"
+    ],
+    "consultant": [
+      "pr-description",
+      "compact-for-cleanup"
+    ],
+    "consultantGateless": [
+      "pr-description",
+      "compact-for-cleanup"
+    ]
+  },
+  "relay.frame": {
+    "base": [
+      "think-holistic",
+      "compare-notes"
+    ],
+    "consultant": [
+      "think-holistic",
+      "compare-notes",
+      "consultant-frame"
+    ],
+    "consultantGateless": [
+      "think-holistic",
+      "compare-notes",
+      "consultant-frame"
+    ]
+  },
+  "relay.design": {
+    "base": [
+      "write-design",
+      "review-design",
+      "update-design",
+      "review-design-again",
+      "update-design-again"
+    ],
+    "consultant": [
+      "write-design",
+      "review-design",
+      "update-design",
+      "review-design-again",
+      "update-design-again",
+      "consultant-contract"
+    ],
+    "consultantGateless": [
+      "write-design",
+      "review-design",
+      "update-design",
+      "review-design-again",
+      "update-design-again",
+      "consultant-contract"
+    ]
+  },
+  "relay.implement": {
+    "base": [
+      "implement-design",
+      "midpoint-status",
+      "review-midpoint",
+      "respond-midpoint",
+      "implementation-handoff",
+      "review-and-fix",
+      "reconcile-docs",
+      "ceo-summary"
+    ],
+    "consultant": [
+      "implement-design",
+      "midpoint-status",
+      "review-midpoint",
+      "respond-midpoint",
+      "implementation-handoff",
+      "review-and-fix",
+      "reconcile-docs",
+      "ceo-summary",
+      "consultant-verify"
+    ],
+    "consultantGateless": [
+      "implement-design",
+      "midpoint-status",
+      "review-midpoint",
+      "respond-midpoint",
+      "implementation-handoff",
+      "review-and-fix",
+      "reconcile-docs",
+      "ceo-summary",
+      "consultant-verify"
+    ]
+  },
+  "relay.finish": {
+    "base": [
+      "pr-description",
+      "compact-for-cleanup"
+    ],
+    "consultant": [
+      "pr-description",
+      "compact-for-cleanup"
+    ],
+    "consultantGateless": [
+      "pr-description",
+      "compact-for-cleanup"
+    ]
+  },
+  "rir.research": {
+    "base": [
+      "think-holistic",
+      "compare-notes"
+    ],
+    "consultant": [
+      "think-holistic",
+      "compare-notes",
+      "consultant-frame"
+    ],
+    "consultantGateless": [
+      "think-holistic",
+      "compare-notes",
+      "consultant-frame"
+    ]
+  },
+  "rir.implement": {
+    "base": [
+      "implement-direct",
+      "handoff-direct",
+      "review-direct",
+      "apply-review",
+      "reconcile-docs"
+    ],
+    "consultant": [
+      "implement-direct",
+      "handoff-direct",
+      "review-direct",
+      "apply-review",
+      "reconcile-docs",
+      "consultant-impl"
+    ],
+    "consultantGateless": [
+      "implement-direct",
+      "handoff-direct",
+      "review-direct",
+      "apply-review",
+      "reconcile-docs"
+    ]
+  },
+  "rir.finish": {
+    "base": [
+      "pr-description",
+      "compact-for-cleanup"
+    ],
+    "consultant": [
+      "pr-description",
+      "compact-for-cleanup"
+    ],
+    "consultantGateless": [
+      "pr-description",
+      "compact-for-cleanup"
+    ]
+  },
+  "anytime": [
+    "reread-context",
+    "recover-context",
+    "compact-inflight",
+    "commits-summary",
+    "find-similar-bugs",
+    "list-assumptions",
+    "trace-execution",
+    "smart-adapt-skills",
+    "technical-difficulty"
+  ],
+  "unlisted": [
+    "compact-for-plan"
+  ],
+  "consultant-reach.full": [
+    "consultant-frame",
+    "consultant-spec",
+    "consultant-contract",
+    "consultant-verify"
+  ],
+  "consultant-reach.full.gateless": [
+    "consultant-frame",
+    "consultant-contract",
+    "consultant-verify"
+  ],
+  "consultant-reach.design": [
+    "consultant-frame",
+    "consultant-contract",
+    "consultant-verify"
+  ],
+  "consultant-reach.design.gateless": [
+    "consultant-frame",
+    "consultant-contract",
+    "consultant-verify"
+  ],
+  "consultant-reach.relay": [
+    "consultant-frame",
+    "consultant-contract",
+    "consultant-verify"
+  ],
+  "consultant-reach.relay.gateless": [
+    "consultant-frame",
+    "consultant-contract",
+    "consultant-verify"
+  ],
+  "consultant-reach.rir": [
+    "consultant-frame",
+    "consultant-impl"
+  ],
+  "consultant-reach.rir.gateless": [
+    "consultant-frame"
+  ]
+}

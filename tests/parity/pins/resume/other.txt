@@ -1,0 +1,11 @@
+=== answer ===
+The human answered your queued question: "Parity answer: yes, gate it to the paid plan.". Continue the phase from where you paused, taking their answer into account.
+
+=== nudge ===
+Your turn ended without calling advance_phase or ask_human, so the harness cannot tell whether the phase is done, paused, or stuck. Continue the phase: route the next worker turn, or advance_phase if converged, or ask_human if something needs the human.
+
+=== approval rider ===
+<approval_rider>
+Parity rider: proceed, but keep the flag name stable.
+</approval_rider>
+The human's gate approval came with the rider above — agreement with the direction, plus adjustments. Treat it as gate feedback in approving form: fold it into this phase's work from the start, relay what bears on the workers into their prompts, and where it revises something previously settled, the rider wins. It outranks reviewer opinions.

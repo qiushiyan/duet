@@ -2,7 +2,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { PhaseName } from '../phases.ts';
 import { providerFor } from '../providers/index.ts';
 import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
-import { readOnlyFor, sessionIdFor } from '../roles.ts';
+import { sessionIdFor, writeAuthorityFor } from '../roles.ts';
 import {
   clearPendingTurn,
   clearTurnActive,
@@ -180,7 +180,7 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
         const fresh = loadRunState(state.cwd, state.runId);
         const startedAt = Date.now();
         stopHeartbeat = startHeartbeat(
-          { state: fresh, log, ...(home !== undefined ? { home } : {}) },
+          { state: fresh, phase, log, ...(home !== undefined ? { home } : {}) },
           { role, tag, startedAt },
         );
         const stop = stopHeartbeat;
@@ -215,13 +215,13 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
         // 5-minute interval can never leak, on any exit.
         // The context deadline, gated exactly as on the blocking host (one
         // helper, two call sites): claude-persistent-headless, never a /compact.
-        const contextCapTokens = contextCapFor(fresh, role, isCompactTurn === true);
+        const contextCapTokens = contextCapFor(fresh, phase, role, isCompactTurn === true);
         Promise.resolve()
           .then(() =>
             providerFor(providers, role).runTurn({
               prompt: body,
-              sessionId: sessionIdFor(fresh, role),
-              readOnly: readOnlyFor(role),
+              sessionId: sessionIdFor(fresh, role, phase),
+              readOnly: !writeAuthorityFor(fresh, phase, role, tag),
               cwd: fresh.cwd,
               ...(timeoutMs !== undefined ? { timeoutMs } : {}),
               ...(contextCapTokens !== undefined ? { contextCapTokens } : {}),

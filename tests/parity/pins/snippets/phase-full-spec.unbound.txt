@@ -1,0 +1,196 @@
+<snippet_library phase="spec">
+Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in arc order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).
+<phase_templates phase="spec">
+<snippet key="write-spec">
+Now, write the spec to the location the framing's conventions name (where specs live is the project's call, not this template's). Ground problem and approach in actual code — read the relevant modules first if you haven't. **Tight prose beats exhaustive sections.**
+
+**Open with a leader-facing summary.** The spec's first section reports the change the way you'd report it to your leader:
+- What we're adding or fixing, in product terms — the feature, the bug, the problem it solves.
+- The approach we're taking, and the scope of the change.
+- The boundary once it lands: what's fixed, what isn't, and what's explicitly deferred (one-line why each).
+
+Technical detail belongs in this section only when it makes the solution easier to digest or the problem easier to understand — context, not elaboration. Someone who reads nothing else should still know what they're getting and not getting.
+
+**Structure the body around the flow of the change:**
+- **Distinguish current vs. desired** — what's preserved vs. what's changing.
+- **Name the coupling decision** — extension of an existing concept, or intentionally independent?
+- **Name the foundation decision (preparatory refactoring).** Decide whether the existing code is a base the feature extends cleanly, or a structure that blocks the design you actually want. If it blocks, scope a *bounded* preparatory refactoring — reshape the foundation first so the feature becomes an easy add — as the opening move, sized to this feature, not a rewrite of the module, and name what you're deliberately leaving alone.
+- **Use implementation anchors** (modules, functions, files) attached to the flow — not the main narrative.
+
+A tree-style before/after often makes the change crisp — adapt the format (tree, prose, diagram) to what fits:
+
+  Current:
+    User submits form
+    └─ Validation runs
+       └─ Record saved
+          └─ Confirmation shown
+
+  Desired:
+    User submits form
+    └─ Validation runs
+       └─ Record saved
+          └─ Webhook fired
+          └─ Confirmation shown
+
+**Be concrete, not vague.** Vague verbs — "improve", "enhance", "polish", "better", "optimize", "streamline" and friends — name a *direction*, not a *decision*; they quietly defer the real choice to implementation, which defeats the point of writing a spec. Say **what** changes: the specific behavior, state, or outcome that differs, and the rule or shape that produces it. Concrete ≠ exhaustive, though — pin the decision, not the mechanics (no line-level edits or code). E.g. "improve error handling" → "on a failed webhook, retry with backoff, then surface a dismissible banner instead of failing silently."
+
+The spec is a high-level implementation plan — technical content is fine, but stay at that level. **Don't smuggle in later-stage details:**
+- **Skip** line-by-line edits, function renames, exact call-site changes — designed later.
+- **No** doc update plans — later.
+- **Testing:** name behaviors that matter at a high level; leave specific test cases, fixtures, and mocking boundaries for later.
+- Phases are fine; **no precise commit order** — sequencing later.
+
+**Do not include any time/effort estimates** ("2 days", "~3 hours"), describe the work itself.
+
+If you have remaining product questions or major technical uncertainty, interview me before you write.
+</snippet>
+<snippet key="review-spec">
+I've drafted a spec. Review critically — verify problem statements and intended solutions against the actual code.
+
+The spec is intentionally high-level: problem, UX goal, conceptual approach, non-goals, open questions. It IS moderately technical (can name modules, functions, composition patterns) but **defers line-level details, test design, doc plans, and commit order** — those come later.
+
+**Altitude lens:**
+- Vagueness on implementation details (signatures, helper internals, specific test cases) → **intentional, don't ask for more**.
+- Vagueness on concepts the spec should answer (data flow, ordering, failure modes, scope, edge cases, current vs. desired distinction, coupling to existing concepts) → **bug, flag it**.
+- Technical content the spec DOES propose (names, placement, composition, boundaries) → **fair game; propose better if awkward**.
+
+**Push hard on:**
+- Are we solving the right problem? Is the UX goal right?
+- Does the conceptual approach hold up: data flow, state, ordering, failure modes, performance, backward compat, migrations?
+- Spec ↔ code mismatches.
+- Cleaner alternative approaches.
+- **Foundation & preparatory refactoring:** is the feature being bolted onto a structure that can't hold it (a missing prep step), or is a proposed cleanup disproportionate to the feature (scope creep)? Flag either.
+- Non-goals + open questions: anything in-scope that should defer? Anything missing from the uncertainty list?
+
+**Per point:**
+- Agree → add technical suggestions, caveats, or risks worth flagging.
+- Disagree → give reasons and a concrete alternative. If architectural, say so and propose the structural fix.
+
+Weigh technical merit and UX goals together. **Challenge assumptions and propose alternatives** — don't default to politeness. Don't say "not specific enough" without naming the unanswered concept.
+
+**End with an "Optional polish" section**, separate from the findings above: wording-level fixes where you can supply the exact replacement and the meaning doesn't change. Write each as location plus replacement (before → after), ready to apply verbatim. If an imprecision changes behavior, scope, or a testable claim, it's a finding, not polish; if you can't write the exact replacement, it isn't polish either — raise it as a finding or drop it. When nothing qualifies, say so in a line rather than manufacturing items. Delivered as concerns, wording points cost the author a reread of the whole document; delivered as ready replacements, they cost nothing.
+
+---
+
+$0
+</snippet>
+<snippet key="update-spec">
+Engineering team's review feedback on your spec below. **For each point:**
+1. **Assess validity** — be honest, don't agree just to agree.
+2. **If valid:** update the spec. You may propose a better solution than suggested — explain why.
+3. **If you disagree:** explain from first principles why the spec is correct as-is.
+
+The feedback may end with an "Optional polish" section — exact before → after replacements, pre-checked to change no meaning. Apply them as given, or skip any you disagree with; they need no re-analysis, so spend the thinking on the findings above them.
+
+---
+
+$0
+</snippet>
+<snippet key="review-spec-again">
+Spec updated per your review. Re-check — focus on **whether feedback was integrated or hand-waved**, and whether revisions introduced new issues.
+
+**For each previously-flagged point:**
+- Did the update address the concern, or hand-wave it?
+- Did it introduce a new problem (over-corrected, broke an unrelated section)?
+- Still wrong → restate concretely and propose the structural fix.
+
+Same altitude lens as before — spec stays high-level, don't demand line-level details, test cases, or doc plans. **New issues OK; don't relitigate settled points.**
+
+Wording-level points go in the same "Optional polish" section as before — exact before → after replacements only.
+
+---
+
+$0
+</snippet>
+<snippet key="update-spec-again">
+Round-2 reviewer feedback on the spec below. Apply valid points and update. Disagreements: explain briefly, don't dwell — **this round is about converging**. Major disagreement needing my input → flag clearly and **stop** instead of pushing through. "Optional polish" items apply as given (or skip) — no re-analysis.
+
+---
+
+$0
+</snippet>
+</phase_templates>
+<anytime_helpers>
+<snippet key="reread-context">
+Reread the files this change touches and rebuild your mental model from the actual code, not memory — trace the real data/control flow, note existing constraints, and find the seams the work will build on. **No code yet.**
+</snippet>
+<snippet key="recover-context">
+Your prior session was compacted unsuccessfully and reset, so you're in a fresh session with no memory of this run. Re-anchor before any work — this is a post-compact recovery from an empty session, not a routine reread of code you still hold in context: there's no prior context to lean on, so the orientation below has to carry the whole picture.
+
+Orient from what's actually on disk and in git — fill each in concretely:
+- What we're building: the change in a sentence or two, and where the authoritative design lives (the committed spec/plan, or the research decisions).
+- What's committed and green: the work that already landed and passes tests, so you don't redo it.
+- What's left: the next unit of work, plus any uncommitted in-flight edits.
+- The load-bearing seams and files: the modules this change turns on, so you reread the right code first.
+
+Then reread those files and rebuild your mental model from the actual code, not the summary — trace the real data and control flow and the constraints in play. No code yet: re-anchor first, then pick the work up from where it actually stands.
+</snippet>
+<snippet key="compact-inflight">
+/compact This compaction lands mid-work — the same task continues in this session immediately after it, so compact for **continuing**, not for a stage transition: keep the work's live state, drop the journey.
+
+**Preserve:**
+- The work in flight and its exact state: what's in progress, files mid-edit, the next intended step.
+- Every decision already made, with its reason.
+- The concrete repo facts in use: paths, commands, test state, the working branch.
+
+**Drop or summarize:**
+- The exploration journey, superseded drafts, and old tool output — keep conclusions, not the path.
+
+The committed artifacts survive on disk — cite their paths rather than restating them.
+
+</snippet>
+<snippet key="commits-summary">
+Commits summary for high-level context — what changed and why. **Don't review commit-by-commit;** review the current state of the codebase as a whole, with these commits as context.
+</snippet>
+<snippet key="find-similar-bugs">
+Bug just fixed. Before committing, sweep the codebase for other places likely to have the same pattern — same assumption, same missing check.
+
+**Per candidate:**
+- file + brief description
+- why same class of bug
+- confidence (high / medium / low)
+
+**Don't fix yet** — just enumerate. We'll decide what to address.
+</snippet>
+<snippet key="list-assumptions">
+List every non-trivial assumption you're making — about the data, system state, my actual intent, failure modes, or what "done" looks like.
+
+**Group as:**
+- **Verified** — confirmed from code or my message
+- **Likely** — reasonable inference, unconfirmed
+- **Speculative** — guessing
+
+Flag the speculative ones as questions for me before proceeding.
+</snippet>
+<snippet key="trace-execution">
+Walk through this code step-by-step as if you were the runtime. **Per step:**
+- variable values
+- which branch is taken and why
+- what gets called, with what arguments
+
+Use a concrete example input. **Stop and flag the moment behavior diverges from intent.** Don't summarize — actually trace.
+</snippet>
+<snippet key="smart-adapt-skills">
+References are **general best practices, not prescriptions**. Evaluate each suggestion against our codebase, architecture, and constraints before applying — **discard what doesn't fit, adapt what does**.
+
+Can't find a referenced skill? Tell me immediately for the exact path. **Don't search for it yourself.**
+</snippet>
+<snippet key="technical-difficulty">
+**Don't measure technical difficulty by lines changed.** Instead, consider:
+- complexity of the problem being solved
+- number of components affected
+- potential for unintended consequences
+- level of uncertainty involved
+
+**Most importantly:** does this solve the core UX problem while maintaining a clean technical design?
+</snippet>
+</anytime_helpers>
+<coming_next note="the nominal arc — gate rejects loop back and pre-authorized gates skip the stop; orientation for forward-looking work, not a cue to reach ahead">
+<phase name="plan">start-plan, review-plan, update-plan, review-plan-again, update-plan-again</phase>
+<phase name="implement">compact-for-impl, midpoint-status, review-midpoint, respond-midpoint, compact-for-review, implementation-handoff, review-implementation, respond-review, review-implementation-again, respond-review-again, reconcile-docs, ceo-summary</phase>
+<phase name="finish">pr-description, compact-for-cleanup</phase>
+</coming_next>
+<already_done>
+<phase name="frame">think-holistic, compare-notes</phase>
+</already_done>
+</snippet_library>

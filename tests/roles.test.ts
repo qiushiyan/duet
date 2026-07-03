@@ -8,7 +8,10 @@ import {
   shouldResetAfterCompactAbort,
   voicesFor,
   workerRolesFor,
+  writeAuthorityFor,
 } from '../src/roles.ts';
+import { DEFAULT_BINDINGS } from '../src/config.ts';
+import { createRun } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**
@@ -37,7 +40,7 @@ describe('role policy helpers', () => {
     expect.soft(readOnlyFor('consultant')).toBe(true);
   });
 
-  test('countsReviewRound: only the reviewer on a review* tag; the midpoint checkpoint is exempt', () => {
+  test('countsReviewRound: only the reviewer on a CATALOGED review action; the midpoint checkpoint is exempt', () => {
     expect.soft(countsReviewRound('reviewer', 'review-spec')).toBe(true);
     expect.soft(countsReviewRound('reviewer', 'custom')).toBe(false);
     expect.soft(countsReviewRound('consultant', 'review-spec')).toBe(false); // additive, never substitutive
@@ -46,13 +49,81 @@ describe('role policy helpers', () => {
     // the post-implementation review loop budgets on.
     expect.soft(countsReviewRound('reviewer', 'review-midpoint')).toBe(false);
     expect.soft(countsReviewRound('reviewer', 'review-implementation')).toBe(true);
+    // Catalog-driven, not prefix-matched (T3): a review-prefixed tag the
+    // library doesn't ship never counts — behavior lives in the code map,
+    // where a snippet-body override can't reach it.
+    expect.soft(countsReviewRound('reviewer', 'review-something-invented')).toBe(false);
+  });
+
+  test('writeAuthorityFor: the implementer writes everywhere; read-only roles gain nothing on the current arcs', ({
+    run,
+    rirRun,
+    designRun,
+    consultantRun,
+  }) => {
+    // The implementer's authority is the static policy — any phase, any action.
+    expect.soft(writeAuthorityFor(run, 'implement', 'implementer', 'respond-review')).toBe(true);
+    expect.soft(writeAuthorityFor(run, 'spec', 'implementer', 'update-spec')).toBe(true);
+    // The reviewer stays read-only on every current arc/phase/action — the
+    // resolver widens only on semantics no shipped arc sets yet (a fixer
+    // grant, a reviewer-owned tail).
+    expect.soft(writeAuthorityFor(run, 'implement', 'reviewer', 'review-implementation')).toBe(false);
+    expect.soft(writeAuthorityFor(run, 'implement', 'reviewer', 'reconcile-docs')).toBe(false);
+    expect.soft(writeAuthorityFor(run, 'finish', 'reviewer', 'pr-description')).toBe(false);
+    expect.soft(writeAuthorityFor(rirRun, 'implement', 'reviewer', 'review-direct')).toBe(false);
+    expect.soft(writeAuthorityFor(designRun, 'design', 'reviewer', 'review-design')).toBe(false);
+    // The consultant's contract/verify relaxations are PROMPT-scoped — the
+    // resolver never widens it, so author-never-commits holds mechanically.
+    expect.soft(writeAuthorityFor(consultantRun, 'plan', 'consultant', 'consultant-contract')).toBe(false);
+    expect.soft(writeAuthorityFor(consultantRun, 'implement', 'consultant', 'consultant-verify')).toBe(false);
+  });
+
+  test('writeAuthorityFor on relay: the fixer writes action-scoped, never phase-blanket', ({ projectDir }) => {
+    const relay = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'relay', framing: 'x' });
+    // The fixer's grant: review-and-fix, and the reviewer-owned tails.
+    expect.soft(writeAuthorityFor(relay, 'implement', 'reviewer', 'review-and-fix')).toBe(true);
+    expect.soft(writeAuthorityFor(relay, 'implement', 'reviewer', 'reconcile-docs')).toBe(true); // buildTailOwner
+    expect.soft(writeAuthorityFor(relay, 'implement', 'reviewer', 'ceo-summary')).toBe(true); // buildTailOwner
+    expect.soft(writeAuthorityFor(relay, 'finish', 'reviewer', 'pr-description')).toBe(true); // finishOwner
+    // Action-scoped, never a blanket: mid-build the builder is the sole writer,
+    // so a midpoint turn under the fixer posture stays guidance-only — two
+    // interleaved writers would wreck the builder's model of its own tree.
+    expect.soft(writeAuthorityFor(relay, 'implement', 'reviewer', 'review-midpoint')).toBe(false);
+    expect.soft(writeAuthorityFor(relay, 'implement', 'reviewer', 'custom')).toBe(false);
+    // And never in the planning arc — the relay reviewer is critique-only pre-handoff.
+    expect.soft(writeAuthorityFor(relay, 'design', 'reviewer', 'review-design')).toBe(false);
+    expect.soft(writeAuthorityFor(relay, 'frame', 'reviewer', 'think-holistic')).toBe(false);
+  });
+
+  test('countsReviewRound: the fixer round counts like any review round', () => {
+    expect.soft(countsReviewRound('reviewer', 'review-and-fix')).toBe(true);
+    expect.soft(countsReviewRound('implementer', 'review-and-fix')).toBe(false);
   });
 
   test('sessionIdFor: persistent roles resume; the ephemeral consultant never does', ({ run }) => {
-    run.workerSessions = { implementer: 'i-1', reviewer: 'r-1', consultant: 'c-1' };
-    expect.soft(sessionIdFor(run, 'implementer')).toBe('i-1');
-    expect.soft(sessionIdFor(run, 'reviewer')).toBe('r-1');
-    expect.soft(sessionIdFor(run, 'consultant')).toBeUndefined(); // ephemeral, despite a tracked id
+    run.workerSessions = { implementer: { provider: 'claude', id: 'i-1' }, reviewer: { provider: 'codex', id: 'r-1' }, consultant: { provider: 'claude', id: 'c-1' } };
+    expect.soft(sessionIdFor(run, 'implementer', 'implement')).toBe('i-1');
+    expect.soft(sessionIdFor(run, 'reviewer', 'implement')).toBe('r-1');
+    expect.soft(sessionIdFor(run, 'consultant', 'implement')).toBeUndefined(); // ephemeral, despite a tracked id
+  });
+
+  test('sessionIdFor: a provider mismatch against the phase-effective binding derives a FRESH session (T1)', ({
+    run,
+  }) => {
+    // The implementer plans on claude and builds on codex — its planning-era
+    // claude session must never be resumed through the codex CLI. The reset is
+    // DERIVED at the read, not evented: no crash window, idempotent on any host.
+    run.bindings = {
+      ...run.bindings,
+      implementer: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless', build: { provider: 'codex' } },
+    };
+    run.workerSessions = { implementer: { provider: 'claude', id: 'planning-era' } };
+    expect.soft(sessionIdFor(run, 'implementer', 'plan')).toBe('planning-era'); // pre-handoff: same provider, resume
+    expect.soft(sessionIdFor(run, 'implementer', 'implement')).toBeUndefined(); // post-handoff: codex now — mint fresh
+    // Once the build's codex session settles, it resumes normally post-handoff.
+    run.workerSessions = { implementer: { provider: 'codex', id: 'build-era' } };
+    expect.soft(sessionIdFor(run, 'implementer', 'implement')).toBe('build-era');
+    expect.soft(sessionIdFor(run, 'implementer', 'plan')).toBeUndefined(); // and never leaks back into a claude phase
   });
 
   test('orphanRecoveryFor: takeover for the persistent roles, discard-and-reseed for the consultant', () => {

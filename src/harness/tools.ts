@@ -7,7 +7,7 @@ import { providerFor } from '../providers/index.ts';
 import { BudgetCutoffError } from '../providers/types.ts';
 import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
 import { CONTEXT_CAUTION_PERCENT, CONTEXT_EMERGENCY_PERCENT, contextBand, latestTranscriptUsageTokens, salvageCompactInstructions } from '../context-guard.ts';
-import { countsReviewRound, orphanRecoveryFor, readOnlyFor, sessionIdFor, sessionPolicyFor, shouldResetAfterCompactAbort, workerRolesFor } from '../roles.ts';
+import { countsReviewRound, orphanRecoveryFor, sessionIdFor, sessionPolicyFor, shouldResetAfterCompactAbort, workerRolesFor, writeAuthorityFor } from '../roles.ts';
 import { getSnippet, renderSnippetLibrary, runtimeLibraryContext } from '../snippets.ts';
 import {
   appendNote,
@@ -32,7 +32,7 @@ import {
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
 import { listPendingSteers, markSteersDelivered } from '../steer-store.ts';
-import { bindingFor } from '../config.ts';
+import { effectiveBindingFor } from '../config.ts';
 import { readTranscriptTailAtPath, readTranscriptTailForSession } from '../sessions.ts';
 import type { TurnDispatcher } from './turn-dispatcher.ts';
 import { classifyError, formatAge, probeRole } from '../worker-health.ts';
@@ -204,11 +204,15 @@ export interface PhaseTools {
  * turn. Returns '' before the id is announced or on ANY read/probe failure —
  * telemetry never throws into a worker turn.
  */
-function heartbeatHealth(state: RunState, role: WorkerRole, startedAt: number, now: number, home?: string): string {
+function heartbeatHealth(state: RunState, phase: PhaseName, role: WorkerRole, startedAt: number, now: number, home?: string): string {
   try {
     const sessionId = state.activeTurns?.[role]?.sessionId;
     if (!sessionId) return ''; // the provider hasn't announced this turn's id yet
-    const tail = readTranscriptTailForSession(bindingFor(state.bindings, role).provider, sessionId, home !== undefined ? { home } : {});
+    // The phase-effective provider: the in-flight turn runs on it, so its
+    // transcript lives in that provider's tree (a base-binding read would probe
+    // the wrong tree for a stage-switched role).
+    const provider = effectiveBindingFor(state.bindings, role, workflowOf(state), phase).provider;
+    const tail = readTranscriptTailForSession(provider, sessionId, home !== undefined ? { home } : {});
     if (!tail) return '';
     const h = probeRole(tail.jsonl, { schema: tail.schema, now, inFlightSince: startedAt, retriesSince: startedAt });
     const activity = h.lastActivityAgeMs !== undefined ? ` · last activity ${formatAge(h.lastActivityAgeMs)} ago` : '';
@@ -252,8 +256,13 @@ export function perTurnTimeoutFor(body: string): number | undefined {
  * long" — codex auto-compacts, the interactive transport's TUI auto-compacts
  * natively, and the ephemeral consultant seeds fresh every turn.
  */
-export function contextPressureApplies(state: RunState, role: WorkerRole): boolean {
-  const binding = bindingFor(state.bindings, role);
+export function contextPressureApplies(state: RunState, phase: PhaseName, role: WorkerRole): boolean {
+  // The PHASE-EFFECTIVE binding, not the base: a post-handoff build override
+  // can switch a role's provider (relay's criss-cross), and the pressure
+  // policy must follow the session that actually runs — a claude fixer on a
+  // codex-based reviewer binding is metered; a codex builder on a claude-based
+  // implementer binding is not.
+  const binding = effectiveBindingFor(state.bindings, role, workflowOf(state), phase);
   return binding.provider === 'claude' && binding.transport !== 'interactive' && sessionPolicyFor(role) === 'persistent';
 }
 
@@ -264,8 +273,8 @@ export function contextPressureApplies(state: RunState, role: WorkerRole): boole
  * high fill), or an unknown window (no reading yet — a fresh session's first
  * turn), which means honest absence, not a guessed cap.
  */
-export function contextCapFor(state: RunState, role: WorkerRole, isCompactTurn: boolean): number | undefined {
-  if (isCompactTurn || !contextPressureApplies(state, role)) return undefined;
+export function contextCapFor(state: RunState, phase: PhaseName, role: WorkerRole, isCompactTurn: boolean): number | undefined {
+  if (isCompactTurn || !contextPressureApplies(state, phase, role)) return undefined;
   const windowTokens = state.contextUsage?.[role]?.windowTokens;
   if (!windowTokens) return undefined;
   return Math.floor((windowTokens * CONTEXT_EMERGENCY_PERCENT) / 100);
@@ -303,14 +312,14 @@ const ACTIVITY_POLL_MS = 30_000;
  * stop fn that clears both intervals.
  */
 export function startHeartbeat(
-  deps: { state: RunState; log: (line: string) => void; home?: string; blockingHost?: boolean },
+  deps: { state: RunState; phase: PhaseName; log: (line: string) => void; home?: string; blockingHost?: boolean },
   meta: { role: WorkerRole; tag: string; startedAt: number },
 ): () => void {
-  const { state, log, home, blockingHost } = deps;
+  const { state, phase, log, home, blockingHost } = deps;
   const { role, tag, startedAt } = meta;
   const heartbeat = setInterval(() => {
     const mins = Math.round((Date.now() - startedAt) / 60_000);
-    const health = heartbeatHealth(state, role, startedAt, Date.now(), home);
+    const health = heartbeatHealth(state, phase, role, startedAt, Date.now(), home);
     // The live fill the 30s sampler below keeps fresh — so a 30-minute quiet
     // turn's heartbeat says how full the session is, not just that it is alive.
     const usage = state.contextUsage?.[role];
@@ -347,7 +356,7 @@ export function startHeartbeat(
       if (located && located.sessionId !== sessionId) located = undefined; // id changed → re-locate
       let tail = located ? readTranscriptTailAtPath(located.path, located.schema) : undefined;
       if (!tail) {
-        tail = readTranscriptTailForSession(bindingFor(state.bindings, role).provider, sessionId, home !== undefined ? { home } : {});
+        tail = readTranscriptTailForSession(effectiveBindingFor(state.bindings, role, workflowOf(state), phase).provider, sessionId, home !== undefined ? { home } : {});
         located = tail ? { sessionId, path: tail.path, schema: tail.schema } : undefined;
       }
       if (!tail) return;
@@ -467,7 +476,24 @@ export function settleTurn(
   // (collectible, orphan/in-flight rails) is preserved.
   const compactReset = shouldResetAfterCompactAbort(role, meta.isCompactTurn === true, aborted);
   const fresh = loadRunState(state.cwd, state.runId);
-  fresh.workerSessions[role] = turn.sessionId;
+  // The session record carries the provider that actually ran the turn (the
+  // phase's EFFECTIVE binding — a post-handoff build override may differ from
+  // the base), so every session consumer reads the truth. A provider switch
+  // over a prior record lands in the sessionResets ledger — the reset itself
+  // is derived (sessionIdFor), never evented, but the ledger explains to
+  // status/takeover why the old session is gone.
+  const effectiveProvider = effectiveBindingFor(state.bindings, role, workflowOf(state), phase).provider;
+  const priorSession = fresh.workerSessions[role];
+  if (priorSession && priorSession.provider !== effectiveProvider) {
+    (fresh.sessionResets ??= []).push({
+      role,
+      phase,
+      fromProvider: priorSession.provider,
+      toProvider: effectiveProvider,
+      at: new Date().toISOString(),
+    });
+  }
+  fresh.workerSessions[role] = { provider: effectiveProvider, id: turn.sessionId };
   if (compactReset) delete fresh.workerSessions[role];
   // Re-read off fresh rather than a call-start snapshot: the minutes-long await
   // means a parallel call may have moved the round count. An aborted turn delivered
@@ -541,12 +567,16 @@ export function settleTurn(
       // (pass/fail rides the gate packet; this only records that it happened).
       fresh.acceptanceContract = { ...fresh.acceptanceContract, verifiedAt: new Date().toISOString() };
     }
-  } else if (checkpointMode === 'verify' && !readOnlyFor(role) && fresh.acceptanceContract?.verifiedAt) {
-    // A code-changing (non-read-only) worker turn at the verify checkpoint AFTER a
+  } else if (checkpointMode === 'verify' && writeAuthorityFor(state, phase, role, tag) && fresh.acceptanceContract?.verifiedAt) {
+    // A worker turn WITH write authority at the verify checkpoint AFTER a
     // verification ran: the build just changed, so the prior verify is stale. Drop
     // verifiedAt so the rail requires a FRESH, independent re-verify before advance —
     // the self-heal loop's "re-verify after the fix" made structural, not just
     // prompt-trusted, so a routed fix can't ride the pre-fix verify to auto-cross Ship.
+    // Keyed on the effective authority (writeAuthorityFor), not the static role
+    // table: a reviewer writing under a fixer posture must go stale-and-re-verify
+    // exactly like the implementer, or its fixes would ship certified by a
+    // pre-fix verification.
     delete fresh.acceptanceContract.verifiedAt;
   }
   fresh.lastActivity = `send_prompt → ${role} (${tag})${aborted ? ' [aborted]' : ''}`;
@@ -672,7 +702,7 @@ export function renderTurnResult(
   // per-call STATE, not repeated procedure (the mechanic lives in the durable
   // prompt; the moment-precise steering in the rail's refusal).
   const ctxUsage = state.contextUsage?.[role];
-  const band = ctxUsage && contextPressureApplies(state, role) ? contextBand(contextSafetyPercent(state, role)) : 'ok';
+  const band = ctxUsage && contextPressureApplies(state, phase, role) ? contextBand(contextSafetyPercent(state, role)) : 'ok';
   const bandMark = band === 'emergency' ? ' — compact before the next send' : band === 'caution' ? ' — compaction due' : '';
   const footer = [
     ...(ctxUsage ? [`context ${contextPercent(ctxUsage)}%${bandMark}`] : []),
@@ -984,7 +1014,7 @@ export const warnOnceTemplateRail: Rail<SendInput> = ({ role, tag }, ctx) => {
  * auto-compacts, the ephemeral consultant seeds fresh.
  */
 export const contextPressureRail: Rail<SendInput> = ({ role, isCompactTurn }, ctx) => {
-  if (isCompactTurn === true || !contextPressureApplies(ctx.state, role)) return null;
+  if (isCompactTurn === true || !contextPressureApplies(ctx.state, ctx.phase, role)) return null;
   const percent = contextSafetyPercent(ctx.state, role);
   const band = contextBand(percent);
   if (band === 'ok') return null;
@@ -1175,7 +1205,9 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   ): Promise<CallToolResult | undefined> => {
     if (!(outcome instanceof Error) || outcome instanceof BudgetCutoffError) return undefined;
     if (classifyError(outcome.message) !== 'context-overflow') return undefined;
-    const binding = bindingFor(state.bindings, role);
+    // The phase-effective binding: relay's fixer is claude on a codex-based
+    // reviewer binding, and its overflow salvages like any claude session.
+    const binding = effectiveBindingFor(state.bindings, role, workflowOf(state), phase);
     if (binding.provider !== 'claude' || binding.transport === 'interactive') return undefined;
     if (sessionPolicyFor(role) !== 'persistent') return undefined;
     // No session ⇒ nothing to compact — the prompt itself was over-window; the
@@ -1408,15 +1440,15 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           turnsInFlight.add(role);
           markTurnActive(state, role, turn.tag);
           const startedAt = Date.now();
-          const stopHeartbeat = startHeartbeat({ state, log, blockingHost: true, ...(home !== undefined ? { home } : {}) }, { role, tag: turn.tag, startedAt });
+          const stopHeartbeat = startHeartbeat({ state, phase, log, blockingHost: true, ...(home !== undefined ? { home } : {}) }, { role, tag: turn.tag, startedAt });
           // settleTurn is kept INSIDE this try/catch (both arms) so a throw during
           // the merge renders as an infra failure exactly as a runTurn throw does.
-          const contextCapTokens = contextCapFor(state, role, turn.isCompactTurn);
+          const contextCapTokens = contextCapFor(state, phase, role, turn.isCompactTurn);
           try {
             const outcome = await providerFor(providers, role).runTurn({
               prompt: turn.body,
-              sessionId: sessionIdFor(state, role),
-              readOnly: readOnlyFor(role),
+              sessionId: sessionIdFor(state, role, phase),
+              readOnly: !writeAuthorityFor(state, phase, role, turn.tag),
               cwd: state.cwd,
               ...(turn.timeoutMs !== undefined ? { timeoutMs: turn.timeoutMs } : {}),
               ...(contextCapTokens !== undefined ? { contextCapTokens } : {}),

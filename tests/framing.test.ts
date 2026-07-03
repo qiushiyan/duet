@@ -69,7 +69,7 @@ describe('parseWorkflow', () => {
   });
 
   plain('an unknown workflow fails with the valid set', () => {
-    expect(() => parseWorkflow('xyz')).toThrow(/"xyz" is not a duet workflow.*full, design, rir/);
+    expect(() => parseWorkflow('xyz')).toThrow(/"xyz" is not a duet workflow.*full, design, relay, rir/);
   });
 });
 

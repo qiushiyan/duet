@@ -1,0 +1,199 @@
+{
+  "id": "duet",
+  "initial": "route",
+  "states": {
+    "route": {
+      "always": [
+        {
+          "guard": "hasSpec",
+          "target": "designLoop"
+        },
+        {
+          "target": "frameLoop"
+        }
+      ]
+    },
+    "frameLoop": {
+      "tags": [
+        "phase"
+      ],
+      "invoke": {
+        "src": "phaseDriver",
+        "onError": {
+          "target": "frameFlagWait"
+        }
+      },
+      "on": {
+        "phase.advance": {
+          "target": "directionGate"
+        },
+        "phase.flag": {
+          "target": "frameFlagWait"
+        }
+      }
+    },
+    "frameFlagWait": {
+      "tags": [
+        "quiescent",
+        "flag-wait"
+      ],
+      "on": {
+        "human.answer": {
+          "target": "frameLoop"
+        }
+      }
+    },
+    "directionGate": {
+      "tags": [
+        "quiescent",
+        "gate"
+      ],
+      "on": {
+        "human.approve": {
+          "target": "designLoop"
+        },
+        "human.reject": {
+          "target": "frameLoop"
+        }
+      }
+    },
+    "designLoop": {
+      "tags": [
+        "phase"
+      ],
+      "invoke": {
+        "src": "phaseDriver",
+        "onError": {
+          "target": "designFlagWait"
+        }
+      },
+      "on": {
+        "phase.advance": {
+          "target": "designGate"
+        },
+        "phase.flag": {
+          "target": "designFlagWait"
+        }
+      }
+    },
+    "designFlagWait": {
+      "tags": [
+        "quiescent",
+        "flag-wait"
+      ],
+      "on": {
+        "human.answer": {
+          "target": "designLoop"
+        }
+      }
+    },
+    "designGate": {
+      "tags": [
+        "quiescent",
+        "gate"
+      ],
+      "on": {
+        "human.approve": {
+          "target": "implementLoop"
+        },
+        "human.reject": {
+          "target": "designLoop"
+        }
+      }
+    },
+    "implementLoop": {
+      "tags": [
+        "phase"
+      ],
+      "invoke": {
+        "src": "phaseDriver",
+        "onError": {
+          "target": "implementFlagWait"
+        }
+      },
+      "on": {
+        "phase.advance": {
+          "target": "shipGate"
+        },
+        "phase.flag": {
+          "target": "implementFlagWait"
+        }
+      }
+    },
+    "implementFlagWait": {
+      "tags": [
+        "quiescent",
+        "flag-wait"
+      ],
+      "on": {
+        "human.answer": {
+          "target": "implementLoop"
+        }
+      }
+    },
+    "shipGate": {
+      "tags": [
+        "quiescent",
+        "gate"
+      ],
+      "on": {
+        "human.approve": {
+          "target": "finishLoop"
+        },
+        "human.reject": {
+          "target": "implementLoop"
+        }
+      }
+    },
+    "finishLoop": {
+      "tags": [
+        "phase"
+      ],
+      "invoke": {
+        "src": "phaseDriver",
+        "onError": {
+          "target": "finishFlagWait"
+        }
+      },
+      "on": {
+        "phase.advance": {
+          "target": "openPrGate"
+        },
+        "phase.flag": {
+          "target": "finishFlagWait"
+        }
+      }
+    },
+    "finishFlagWait": {
+      "tags": [
+        "quiescent",
+        "flag-wait"
+      ],
+      "on": {
+        "human.answer": {
+          "target": "finishLoop"
+        }
+      }
+    },
+    "openPrGate": {
+      "tags": [
+        "quiescent",
+        "gate"
+      ],
+      "on": {
+        "human.approve": {
+          "target": "done"
+        },
+        "human.reject": {
+          "target": "finishLoop"
+        }
+      }
+    },
+    "done": {
+      "type": "final",
+      "tags": [
+        "quiescent"
+      ]
+    }
+  }
+}

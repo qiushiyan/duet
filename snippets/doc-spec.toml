@@ -1,0 +1,121 @@
+# Doc-loop × spec — full's first artifact loop: draft (write-spec), the
+# altitude-lens review (review-spec), and the revision cycle with the round-2
+# -again variants.
+
+[[snippets]]
+key = "write-spec"
+expand = '''
+Now, write the spec to the location the framing's conventions name (where specs live is the project's call, not this template's). Ground problem and approach in actual code — read the relevant modules first if you haven't. **Tight prose beats exhaustive sections.**
+
+**Open with a leader-facing summary.** The spec's first section reports the change the way you'd report it to your leader:
+- What we're adding or fixing, in product terms — the feature, the bug, the problem it solves.
+- The approach we're taking, and the scope of the change.
+- The boundary once it lands: what's fixed, what isn't, and what's explicitly deferred (one-line why each).
+
+Technical detail belongs in this section only when it makes the solution easier to digest or the problem easier to understand — context, not elaboration. Someone who reads nothing else should still know what they're getting and not getting.
+
+**Structure the body around the flow of the change:**
+- **Distinguish current vs. desired** — what's preserved vs. what's changing.
+- **Name the coupling decision** — extension of an existing concept, or intentionally independent?
+- **Name the foundation decision (preparatory refactoring).** Decide whether the existing code is a base the feature extends cleanly, or a structure that blocks the design you actually want. If it blocks, scope a *bounded* preparatory refactoring — reshape the foundation first so the feature becomes an easy add — as the opening move, sized to this feature, not a rewrite of the module, and name what you're deliberately leaving alone.
+- **Use implementation anchors** (modules, functions, files) attached to the flow — not the main narrative.
+
+A tree-style before/after often makes the change crisp — adapt the format (tree, prose, diagram) to what fits:
+
+  Current:
+    User submits form
+    └─ Validation runs
+       └─ Record saved
+          └─ Confirmation shown
+
+  Desired:
+    User submits form
+    └─ Validation runs
+       └─ Record saved
+          └─ Webhook fired
+          └─ Confirmation shown
+
+**Be concrete, not vague.** Vague verbs — "improve", "enhance", "polish", "better", "optimize", "streamline" and friends — name a *direction*, not a *decision*; they quietly defer the real choice to implementation, which defeats the point of writing a spec. Say **what** changes: the specific behavior, state, or outcome that differs, and the rule or shape that produces it. Concrete ≠ exhaustive, though — pin the decision, not the mechanics (no line-level edits or code). E.g. "improve error handling" → "on a failed webhook, retry with backoff, then surface a dismissible banner instead of failing silently."
+
+The spec is a high-level implementation plan — technical content is fine, but stay at that level. **Don't smuggle in later-stage details:**
+- **Skip** line-by-line edits, function renames, exact call-site changes — designed later.
+- **No** doc update plans — later.
+- **Testing:** name behaviors that matter at a high level; leave specific test cases, fixtures, and mocking boundaries for later.
+- Phases are fine; **no precise commit order** — sequencing later.
+
+**Do not include any time/effort estimates** ("2 days", "~3 hours"), describe the work itself.
+
+If you have remaining product questions or major technical uncertainty, interview me before you write.'''
+
+[[snippets]]
+key = "review-spec"
+expand = '''
+I've drafted a spec. Review critically — verify problem statements and intended solutions against the actual code.
+
+The spec is intentionally high-level: problem, UX goal, conceptual approach, non-goals, open questions. It IS moderately technical (can name modules, functions, composition patterns) but **defers line-level details, test design, doc plans, and commit order** — those come later.
+
+**Altitude lens:**
+- Vagueness on implementation details (signatures, helper internals, specific test cases) → **intentional, don't ask for more**.
+- Vagueness on concepts the spec should answer (data flow, ordering, failure modes, scope, edge cases, current vs. desired distinction, coupling to existing concepts) → **bug, flag it**.
+- Technical content the spec DOES propose (names, placement, composition, boundaries) → **fair game; propose better if awkward**.
+
+**Push hard on:**
+- Are we solving the right problem? Is the UX goal right?
+- Does the conceptual approach hold up: data flow, state, ordering, failure modes, performance, backward compat, migrations?
+- Spec ↔ code mismatches.
+- Cleaner alternative approaches.
+- **Foundation & preparatory refactoring:** is the feature being bolted onto a structure that can't hold it (a missing prep step), or is a proposed cleanup disproportionate to the feature (scope creep)? Flag either.
+- Non-goals + open questions: anything in-scope that should defer? Anything missing from the uncertainty list?
+
+**Per point:**
+- Agree → add technical suggestions, caveats, or risks worth flagging.
+- Disagree → give reasons and a concrete alternative. If architectural, say so and propose the structural fix.
+
+Weigh technical merit and UX goals together. **Challenge assumptions and propose alternatives** — don't default to politeness. Don't say "not specific enough" without naming the unanswered concept.
+
+**End with an "Optional polish" section**, separate from the findings above: wording-level fixes where you can supply the exact replacement and the meaning doesn't change. Write each as location plus replacement (before → after), ready to apply verbatim. If an imprecision changes behavior, scope, or a testable claim, it's a finding, not polish; if you can't write the exact replacement, it isn't polish either — raise it as a finding or drop it. When nothing qualifies, say so in a line rather than manufacturing items. Delivered as concerns, wording points cost the author a reread of the whole document; delivered as ready replacements, they cost nothing.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "update-spec"
+expand = '''
+Engineering team's review feedback on your spec below. **For each point:**
+1. **Assess validity** — be honest, don't agree just to agree.
+2. **If valid:** update the spec. You may propose a better solution than suggested — explain why.
+3. **If you disagree:** explain from first principles why the spec is correct as-is.
+
+The feedback may end with an "Optional polish" section — exact before → after replacements, pre-checked to change no meaning. Apply them as given, or skip any you disagree with; they need no re-analysis, so spend the thinking on the findings above them.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "review-spec-again"
+expand = '''
+Spec updated per your review. Re-check — focus on **whether feedback was integrated or hand-waved**, and whether revisions introduced new issues.
+
+**For each previously-flagged point:**
+- Did the update address the concern, or hand-wave it?
+- Did it introduce a new problem (over-corrected, broke an unrelated section)?
+- Still wrong → restate concretely and propose the structural fix.
+
+Same altitude lens as before — spec stays high-level, don't demand line-level details, test cases, or doc plans. **New issues OK; don't relitigate settled points.**
+
+Wording-level points go in the same "Optional polish" section as before — exact before → after replacements only.
+
+---
+
+$0'''
+
+[[snippets]]
+key = "update-spec-again"
+expand = '''
+Round-2 reviewer feedback on the spec below. Apply valid points and update. Disagreements: explain briefly, don't dwell — **this round is about converging**. Major disagreement needing my input → flag clearly and **stop** instead of pushing through. "Optional polish" items apply as given (or skip) — no re-analysis.
+
+---
+
+$0'''

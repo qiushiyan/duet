@@ -63,6 +63,176 @@ import { basename, dirname, extname } from 'node:path';
 export type ConsultantCheckpoint = 'frame' | 'specGate' | 'implGate' | 'contract' | 'verify';
 
 /**
+ * The workflow vocabulary (docs/specs/2026-07-03-workflow-vocabulary.md): each
+ * phase row names WHICH BLOCK it is and the knob values that configure it, as
+ * one grouped sub-object — never scattered booleans. The vocabulary is CLOSED:
+ * a knob value exists only when duet ships hand-written prompt support for it
+ * and a shipped arc exercises it, so these unions grow only with a shipping
+ * arc (relay adds `fixer`/`fresh-seed` with its own commit). The grouping is
+ * the clean compile target for a deferred external-arc compiler; values below
+ * are set to reproduce the current arcs exactly.
+ *
+ * What deliberately does NOT live here: the verify checkpoint and the
+ * contract-author placement (both already registry data via
+ * `consultantCheckpoint` — a second copy could disagree), and the round cap
+ * (a plain row field).
+ */
+
+/** A worker role that can own a finishing tail (the build tail or the PR phase). */
+export type TailOwner = 'implementer' | 'reviewer';
+
+/** The doc-loop's artifact — sets the review lens and the snippet family. */
+export type ArtifactKind = 'spec' | 'plan' | 'design';
+
+/**
+ * How the build phase enters: full compacts the planning session down to the
+ * committed spec + plan (`compact-for-impl`), the design arc re-anchors on its
+ * one committed doc (`implement-design`), rir builds directly from the
+ * research decisions (`implement-direct`), and relay seeds a FRESH builder
+ * session from the committed design doc (`fresh-seed` — the provider-switched
+ * builder never held the planning context, so there is nothing to compact;
+ * the doc is the whole re-anchor).
+ */
+export type EntrySeed = 'compact-for-impl' | 'implement-design' | 'implement-direct' | 'fresh-seed';
+
+/**
+ * The build's review posture — the vocabulary's load-bearing axis: `critique`
+ * (reviewer critiques, implementer fixes — the reflect-then-round-2 loop),
+ * `writable` (one round, the implementer applies fixes in place), `fixer`
+ * (relay: the reviewer applies fixes directly with write access and owns the
+ * finishing tails; substance escalates to the human rather than being
+ * patched over).
+ */
+export type ReviewPosture = 'critique' | 'writable' | 'fixer';
+
+/** The worked-example set a phase's brief appends — per-arc data, keyed not inlined. */
+export type ExamplesKey = 'frame' | 'research' | 'spec' | 'plan' | 'design' | 'impl' | 'design-impl' | 'rir-impl' | 'relay-impl';
+
+/** A phase's block identity + knob values (discriminated on `block`). */
+export type PhaseSemantics =
+  | { readonly block: 'frame'; readonly examplesKey: 'frame' | 'research' }
+  | { readonly block: 'doc-loop'; readonly artifactKind: ArtifactKind; readonly examplesKey: ExamplesKey }
+  | {
+      readonly block: 'build';
+      readonly entrySeed: EntrySeed;
+      readonly reviewPosture: ReviewPosture;
+      readonly midpoint: 'judgment' | 'none';
+      /**
+       * Whether the Ship packet leads with the CEO summary (`ceo-summary`) or
+       * stays lean (rir's deliberate choice — the human reads what shipped, the
+       * docs, and the review outcome). The knob T7 predicted: the snippet
+       * derivation forces the full/design-vs-rir difference to be explicit.
+       */
+      readonly shipPacket: 'ceo-summary' | 'lean';
+      /** Who runs the build tail (reconcile-docs + ceo-summary — inside implement, strictly before verify). */
+      readonly buildTailOwner: TailOwner;
+      readonly examplesKey: ExamplesKey;
+    }
+  | { readonly block: 'finish'; readonly finishOwner: TailOwner };
+
+/**
+ * The block ↔ snippet attachment maps (T7: blocks own their snippets). Each
+ * semantic element carries its snippet family as EXPLICIT DATA — never parsed
+ * from a naming convention, because the library predates the convention
+ * (plan's draft snippet is `start-plan`, not `write-plan`). A phase's base
+ * snippet list is the union of what its semantics contribute
+ * (`snippetsForSemantics`), in canonical order; the per-row hand lists are
+ * gone, and the parity pins prove the derived lists byte-identical to them.
+ *
+ * These maps are also what CLOSES the vocabulary structurally: the knob types
+ * are checked against them at load (validateRegistry), so "a knob value ships
+ * its prompt support" is a load failure, not prose. A new knob value lands as
+ * one entry here plus its snippets in the owning snippets/ file.
+ */
+const FRAME_SNIPPETS: readonly string[] = ['think-holistic', 'compare-notes'];
+
+/** Each doc-loop artifact's draft / review / update (-again) family. */
+const ARTIFACT_SNIPPETS: Record<ArtifactKind, readonly string[]> = {
+  spec: ['write-spec', 'review-spec', 'update-spec', 'review-spec-again', 'update-spec-again'],
+  plan: ['start-plan', 'review-plan', 'update-plan', 'review-plan-again', 'update-plan-again'],
+  design: ['write-design', 'review-design', 'update-design', 'review-design-again', 'update-design-again'],
+};
+
+/**
+ * What each entry seed brings to the build's front: the persistent-session
+ * arcs enter through the design→implementation boundary compaction
+ * (compact-for-impl), and the design arc adds its doc seed on top —
+ * implement-design re-anchors the build on the ONE committed doc, NOT rir's
+ * implement-direct (that body assumes no design artifact exists). rir enters
+ * directly from the research decisions, no compaction ceremony.
+ */
+const ENTRY_SEED_SNIPPETS: Record<EntrySeed, readonly string[]> = {
+  'compact-for-impl': ['compact-for-impl'],
+  'implement-design': ['compact-for-impl', 'implement-design'],
+  'implement-direct': ['implement-direct'],
+  // The fresh builder seeds from the committed doc alone — implement-design's
+  // body is cold-safe (it anchors on the doc and the vendored lessons, never
+  // on prior session context), and there is no planning session to compact.
+  'fresh-seed': ['implement-design'],
+};
+
+const MIDPOINT_SNIPPETS: readonly string[] = ['midpoint-status', 'review-midpoint', 'respond-midpoint'];
+
+/**
+ * Each review posture's loop family. The critique loop opens with the
+ * build→review boundary compaction (compact-for-review) — the multi-round
+ * reflect-then-round-2 discipline reviews a long persistent build, and the
+ * boundary compaction is its entry ritual; the writable one-round arc
+ * deliberately drops that ceremony along with the -again rounds.
+ */
+const REVIEW_POSTURE_SNIPPETS: Record<ReviewPosture, readonly string[]> = {
+  critique: [
+    'compact-for-review',
+    'implementation-handoff',
+    'review-implementation',
+    'respond-review',
+    'review-implementation-again',
+    'respond-review-again',
+  ],
+  writable: ['handoff-direct', 'review-direct', 'apply-review'],
+  // The handoff stays with the BUILDER — whoever wrote the code authors the
+  // map — and review-and-fix is the fixer's one writable round. No boundary
+  // compaction: the fixer's session is born fresh at the handoff.
+  fixer: ['implementation-handoff', 'review-and-fix'],
+};
+
+const FINISH_SNIPPETS: readonly string[] = ['pr-description', 'compact-for-cleanup'];
+
+/**
+ * A phase's base snippet list, derived from its semantics — the union of what
+ * each semantic element contributes, in canonical order (build: entry seed →
+ * midpoint → review posture → tail). These are the run's ALWAYS-ON templates;
+ * the consultant checkpoint snippet is deliberately NOT part of the
+ * derivation — it is separate registry data (consultantCheckpoint) folded in
+ * per-run by phaseSnippetsFor only when a consultant is bound, so
+ * list_snippets never exposes it on an unbound run (the default-off
+ * byte-for-byte invariant).
+ *
+ * In the build tail, reconcile-docs is universal — docs reconcile as the LAST
+ * build step (before the consultant verify, which stays last) so the Ship
+ * gate reviews code + docs together and `finish` stays a mechanical PR open —
+ * and ceo-summary rides only a `ceo-summary` ship packet.
+ */
+function snippetsForSemantics(s: PhaseSemantics): readonly string[] {
+  switch (s.block) {
+    case 'frame':
+      return FRAME_SNIPPETS;
+    case 'doc-loop':
+      return ARTIFACT_SNIPPETS[s.artifactKind];
+    case 'build':
+      return [
+        ...ENTRY_SEED_SNIPPETS[s.entrySeed],
+        ...(s.midpoint === 'judgment' ? MIDPOINT_SNIPPETS : []),
+        ...REVIEW_POSTURE_SNIPPETS[s.reviewPosture],
+        'reconcile-docs',
+        ...(s.shipPacket === 'ceo-summary' ? ['ceo-summary'] : []),
+      ];
+    case 'finish':
+      return FINISH_SNIPPETS;
+  }
+}
+
+/**
  * The gate a phase exits through (registry input shape). String-typed at input
  * time, then narrowed by `as const`. Every phase gates, so this is non-optional.
  */
@@ -85,7 +255,12 @@ interface GateInput {
  */
 interface PhaseSpecInput<Name extends string = string> {
   readonly name: Name;
-  readonly snippets: readonly string[];
+  /**
+   * The phase's block identity + knob values (the workflow vocabulary). The
+   * phase's snippet list is DERIVED from this (snippetsForSemantics) — rows
+   * carry no hand list.
+   */
+  readonly semantics: PhaseSemantics;
   readonly gate: GateInput;
   readonly artifactLabel: string;
   readonly reviewLoop: boolean;
@@ -143,12 +318,7 @@ export const WORKFLOWS = {
     phases: [
       {
         name: 'frame',
-        // Base snippets are the run's ALWAYS-ON templates. The consultant
-        // checkpoint snippet is NOT listed here — it is registry data
-        // (consultantCheckpoint, below) folded in per-run by phaseSnippetsFor
-        // only when a consultant is bound, so list_snippets never exposes it on
-        // an unbound run (the default-off byte-for-byte invariant).
-        snippets: ['think-holistic', 'compare-notes'],
+        semantics: { block: 'frame', examplesKey: 'frame' },
         gate: {
           state: 'directionGate',
           heading: 'DIRECTION gate — the synthesized direction',
@@ -165,7 +335,7 @@ export const WORKFLOWS = {
       },
       {
         name: 'spec',
-        snippets: ['write-spec', 'review-spec', 'update-spec', 'review-spec-again', 'update-spec-again'],
+        semantics: { block: 'doc-loop', artifactKind: 'spec', examplesKey: 'spec' },
         gate: {
           state: 'commitSpecGate',
           heading: "SPEC gate — the orchestrator's summary",
@@ -182,7 +352,7 @@ export const WORKFLOWS = {
       },
       {
         name: 'plan',
-        snippets: ['start-plan', 'review-plan', 'update-plan', 'review-plan-again', 'update-plan-again'],
+        semantics: { block: 'doc-loop', artifactKind: 'plan', examplesKey: 'plan' },
         gate: {
           state: 'planApprovalGate',
           heading: "PLAN gate — the orchestrator's summary",
@@ -202,25 +372,15 @@ export const WORKFLOWS = {
       },
       {
         name: 'implement',
-        snippets: [
-          'compact-for-impl',
-          'midpoint-status',
-          'review-midpoint',
-          'respond-midpoint',
-          'compact-for-review',
-          'implementation-handoff',
-          'review-implementation',
-          'respond-review',
-          'review-implementation-again',
-          'respond-review-again',
-          // Docs reconcile as the LAST build step — after the review loop settles
-          // and before the ship packet — so the Ship gate reviews code + docs
-          // together and `finish` is left a mechanical PR open. Runs before the
-          // consultant verify (which stays last), so the verification certifies the
-          // exact shipped state.
-          'reconcile-docs',
-          'ceo-summary',
-        ],
+        semantics: {
+          block: 'build',
+          entrySeed: 'compact-for-impl',
+          reviewPosture: 'critique',
+          midpoint: 'judgment',
+          shipPacket: 'ceo-summary',
+          buildTailOwner: 'implementer',
+          examplesKey: 'impl',
+        },
         gate: {
           state: 'shipGate',
           heading: 'SHIP gate — the orchestrator’s packet (CEO summary first)',
@@ -261,7 +421,7 @@ export const WORKFLOWS = {
         // implement, so it is not a default step). Mirror of rir's `finish` — same
         // shape, same entry brief (openPrPhaseEntryPrompt).
         name: 'finish',
-        snippets: ['pr-description', 'compact-for-cleanup'],
+        semantics: { block: 'finish', finishOwner: 'implementer' },
         gate: {
           state: 'openPrGate',
           heading: 'OPEN-PR gate — docs reconciled, PR open',
@@ -323,7 +483,7 @@ export const WORKFLOWS = {
         // Identical in substance to full's frame — only the arc that follows
         // differs (the synthesized direction lands on one design doc, not a spec).
         name: 'frame',
-        snippets: ['think-holistic', 'compare-notes'],
+        semantics: { block: 'frame', examplesKey: 'frame' },
         gate: {
           state: 'directionGate',
           heading: 'DIRECTION gate — the synthesized direction',
@@ -345,7 +505,7 @@ export const WORKFLOWS = {
         // re-growing plan-depth rounds. Its gate is the handoff AND the
         // ratification — the arc's one attended stop by default.
         name: 'design',
-        snippets: ['write-design', 'review-design', 'update-design', 'review-design-again', 'update-design-again'],
+        semantics: { block: 'doc-loop', artifactKind: 'design', examplesKey: 'design' },
         gate: {
           state: 'designGate',
           heading: "DESIGN gate — the orchestrator's summary",
@@ -379,21 +539,15 @@ export const WORKFLOWS = {
         // prompt. NOT rir's implement-direct — that body assumes no design
         // artifact exists.
         name: 'implement',
-        snippets: [
-          'compact-for-impl',
-          'implement-design',
-          'midpoint-status',
-          'review-midpoint',
-          'respond-midpoint',
-          'compact-for-review',
-          'implementation-handoff',
-          'review-implementation',
-          'respond-review',
-          'review-implementation-again',
-          'respond-review-again',
-          'reconcile-docs',
-          'ceo-summary',
-        ],
+        semantics: {
+          block: 'build',
+          entrySeed: 'implement-design',
+          reviewPosture: 'critique',
+          midpoint: 'judgment',
+          shipPacket: 'ceo-summary',
+          buildTailOwner: 'implementer',
+          examplesKey: 'design-impl',
+        },
         gate: {
           state: 'shipGate',
           heading: 'SHIP gate — the orchestrator’s packet (CEO summary first)',
@@ -411,7 +565,7 @@ export const WORKFLOWS = {
       {
         // Byte-for-byte full's finish — the shared PR-only finishing tail.
         name: 'finish',
-        snippets: ['pr-description', 'compact-for-cleanup'],
+        semantics: { block: 'finish', finishOwner: 'implementer' },
         gate: {
           state: 'openPrGate',
           heading: 'OPEN-PR gate — docs reconciled, PR open',
@@ -441,15 +595,126 @@ export const WORKFLOWS = {
     forceAttend: [],
     defaultPreAuthorized: ['frame', 'implement', 'finish'],
   },
+  relay: {
+    // The plan-smart / build-cheap / judge-strong arc
+    // (docs/specs/2026-07-03-workflow-vocabulary.md §"The relay arc"): design's
+    // shape with two substitutions — the build's review posture is `fixer`
+    // (the reviewer applies fixes directly and owns the tails) and both tail
+    // owners move to the reviewer. The provider criss-cross (plan on claude
+    // with a codex reviewer; build on codex with a claude judge-fixer) is
+    // CONFIG-tier — the `build` override on each worker binding — never
+    // registry data; this arc works on any binding.
+    name: 'relay',
+    displayName: 'Relay (frame → design → codex build → fixer review → PR)',
+    phases: [
+      {
+        name: 'frame',
+        semantics: { block: 'frame', examplesKey: 'frame' },
+        gate: {
+          state: 'directionGate',
+          heading: 'DIRECTION gate — the synthesized direction',
+          ready: 'Direction gate — synthesized direction ready',
+          hint: null,
+        },
+        artifactLabel: 'direction analysis',
+        reviewLoop: false,
+        roundCap: 2,
+        orchestratorBudgetUsd: 15,
+        workerBudgetUsd: 10,
+        workerTurnTimeoutMs: 30 * 60_000,
+        consultantCheckpoint: 'frame',
+      },
+      {
+        // Byte-for-byte the design arc's one artifact phase — same loop, same
+        // late-authored contract, same handoff-and-ratification gate.
+        name: 'design',
+        semantics: { block: 'doc-loop', artifactKind: 'design', examplesKey: 'design' },
+        gate: {
+          state: 'designGate',
+          heading: "DESIGN gate — the orchestrator's summary",
+          ready: 'Design gate — design doc ready for review',
+          hint: '(approving hands off to AFK implementation — the design doc is the single design artifact; there is no separate spec or plan)',
+        },
+        artifactLabel: 'design doc',
+        reviewLoop: true,
+        roundCap: 2,
+        orchestratorBudgetUsd: 15,
+        workerBudgetUsd: 10,
+        workerTurnTimeoutMs: 30 * 60_000,
+        consultantCheckpoint: 'contract',
+      },
+      {
+        // The fixer build: a fresh builder seeds from the committed design doc
+        // (fresh-seed — a provider-switched builder held no planning context),
+        // the reviewer reviews WITH write access (one review-and-fix round,
+        // cap 1 like rir's writable round — the verify self-heal's fix
+        // follow-ups ride the established frame, not new rounds) and owns the
+        // build tail. Verify matters MORE here: the maker-vs-critic
+        // adversariality collapses into build-then-judge, so the consultant's
+        // fresh-session contract verify is the one fully independent pass.
+        name: 'implement',
+        semantics: {
+          block: 'build',
+          entrySeed: 'fresh-seed',
+          reviewPosture: 'fixer',
+          midpoint: 'judgment',
+          shipPacket: 'ceo-summary',
+          buildTailOwner: 'reviewer',
+          examplesKey: 'relay-impl',
+        },
+        gate: {
+          state: 'shipGate',
+          heading: 'SHIP gate — the orchestrator’s packet (CEO summary first)',
+          ready: 'Ship gate — implementation packet ready',
+          hint: '(verify in your environment before deciding — migrations, smoke tests; docs are reconciled here too, so approving enters FINISH = open the PR)',
+        },
+        artifactLabel: 'implementation',
+        reviewLoop: true,
+        roundCap: 1,
+        orchestratorBudgetUsd: 30,
+        workerBudgetUsd: 25,
+        workerTurnTimeoutMs: 90 * 60_000,
+        consultantCheckpoint: 'verify',
+      },
+      {
+        // The shared PR-only finishing tail, owned by the REVIEWER — the
+        // judge-fixer that already owns the docs and the summary writes the
+        // description and opens the PR; pure data (renderFinishBrief reads
+        // finishOwner).
+        name: 'finish',
+        semantics: { block: 'finish', finishOwner: 'reviewer' },
+        gate: {
+          state: 'openPrGate',
+          heading: 'OPEN-PR gate — docs reconciled, PR open',
+          ready: 'Open-PR gate — PR open, ready for your review',
+          hint: '(the PR is already open and auto-crosses to done by default; list `finish` in gates_at for a post-open review stop — approve marks it done, reject amends the open PR. The merge is always yours.)',
+        },
+        artifactLabel: 'PR',
+        reviewLoop: false,
+        roundCap: 2,
+        orchestratorBudgetUsd: 15,
+        workerBudgetUsd: 15,
+        workerTurnTimeoutMs: 30 * 60_000,
+      },
+    ],
+    entry: { firstPhase: 'frame', specSkipsTo: 'design' },
+    // The design gate is the interactive→headless handoff AND the session
+    // boundary: a provider-switched role's next turn derives a fresh session
+    // (sessionIdFor), re-anchored on the committed doc.
+    handoffGate: 'design',
+    presets: { afk: [] },
+    // design's one-interruption posture: the human reads one document, taps
+    // once, and walks away.
+    forceAttend: [],
+    defaultPreAuthorized: ['frame', 'implement', 'finish'],
+  },
   rir: {
     name: 'rir',
     displayName: 'Research → Implement → Review',
     phases: [
       {
         name: 'research',
-        // Shared with Full's frame. Library-choice guidance lives in implement-direct
-        // (rir's plan-discipline home), not here — research is the direction phase.
-        snippets: ['think-holistic', 'compare-notes'],
+        semantics: { block: 'frame', examplesKey: 'research' },
         gate: {
           // Gate-state name reused from Full — legal because resolution is
           // workflow-scoped (phaseOfGateState(workflow, …)).
@@ -468,11 +733,15 @@ export const WORKFLOWS = {
       },
       {
         name: 'implement',
-        // The spine order: build, orient the reviewer, one writable review round,
-        // then reconcile docs as the last build step — so the Ship gate reviews
-        // code + docs together and `finish` is left the mechanical PR open (the
-        // same docs-at-implement shape as full). Docs ride the branch into the PR.
-        snippets: ['implement-direct', 'handoff-direct', 'review-direct', 'apply-review', 'reconcile-docs'],
+        semantics: {
+          block: 'build',
+          entrySeed: 'implement-direct',
+          reviewPosture: 'writable',
+          midpoint: 'none',
+          shipPacket: 'lean',
+          buildTailOwner: 'implementer',
+          examplesKey: 'rir-impl',
+        },
         gate: {
           state: 'shipGate',
           heading: 'SHIP gate — the implementation packet',
@@ -503,7 +772,7 @@ export const WORKFLOWS = {
         // edit / more commits), never to re-open. No consultant checkpoint (the
         // implGate bet-audit already ran at implement).
         name: 'finish',
-        snippets: ['pr-description', 'compact-for-cleanup'],
+        semantics: { block: 'finish', finishOwner: 'implementer' },
         gate: {
           // Gate-state name reused from Full — legal because resolution is
           // workflow-scoped (phaseOfGateState(workflow, …)); reusing it lights up
@@ -552,13 +821,17 @@ export type GatePhase = PhaseName;
 /** The consumer-facing phase view — the registry input narrowed to `PhaseName`. */
 export interface PhaseSpec {
   name: PhaseName;
+  /** The phase's block identity + knob values (the workflow vocabulary). */
+  semantics: PhaseSemantics;
   /**
    * The snippet keys this phase's work draws on, in the order the orchestrator
-   * typically reaches for them. The phase-aware `list_snippets` shows these in
-   * full while indexing other phases by key — cross-cutting helpers live in
-   * `ANYTIME_SNIPPETS`, deliberately-archived snippets in `UNLISTED_SNIPPETS`,
-   * and the completeness test (`tests/snippets.test.ts`) asserts every library
-   * snippet is classified, so none goes silently invisible in the default view.
+   * typically reaches for them — DERIVED from the semantics at load
+   * (snippetsForSemantics), never hand-listed per row. The phase-aware
+   * `list_snippets` shows these in full while indexing other phases by key —
+   * cross-cutting helpers live in `ANYTIME_SNIPPETS`, deliberately-archived
+   * snippets in `UNLISTED_SNIPPETS`, and the completeness test
+   * (`tests/snippets.test.ts`) asserts every library snippet is classified, so
+   * none goes silently invisible in the default view.
    */
   snippets: readonly string[];
   /**
@@ -616,6 +889,66 @@ export function validateRegistry(workflows: Record<string, WorkflowSpecInput>): 
         );
       }
       gateStates.add(p.gate.state);
+      // Vocabulary coherence — the semantics grouping must agree with the row
+      // facts it sits beside, or a composition could describe one world and run
+      // another. Two structural rules:
+      //
+      // 1. reviewLoop ⇔ the block HAS a review loop (doc-loop and build do;
+      //    frame and finish don't) — the advance rail reads reviewLoop, the
+      //    briefs read the block, and they must never disagree.
+      if (p.semantics === undefined) {
+        throw new Error(
+          `registry: workflow "${wfName}" phase "${p.name}" has no semantics — every phase names its block and knob values (the workflow vocabulary)`,
+        );
+      }
+      const loopBlock = p.semantics.block === 'doc-loop' || p.semantics.block === 'build';
+      if (loopBlock !== p.reviewLoop) {
+        throw new Error(
+          `registry: workflow "${wfName}" phase "${p.name}" has reviewLoop ${p.reviewLoop} but block "${p.semantics.block}" — doc-loop and build phases are review loops, frame and finish phases are not`,
+        );
+      }
+      // 2. A consultant checkpoint fires from the block that hosts it: the
+      //    generative frame read at a frame block, the spec bet-audit and the
+      //    contract author at a doc-loop, the impl bet-audit and the contract
+      //    verify at a build. A checkpoint on a foreign block would brief a
+      //    consultant about work the phase doesn't do.
+      if (p.consultantCheckpoint !== undefined) {
+        const hostBlocks: Record<ConsultantCheckpoint, PhaseSemantics['block']> = {
+          frame: 'frame',
+          specGate: 'doc-loop',
+          contract: 'doc-loop',
+          implGate: 'build',
+          verify: 'build',
+        };
+        const host = hostBlocks[p.consultantCheckpoint];
+        if (p.semantics.block !== host) {
+          throw new Error(
+            `registry: workflow "${wfName}" phase "${p.name}" carries consultant checkpoint "${p.consultantCheckpoint}" but is a "${p.semantics.block}" block — that checkpoint fires from a "${host}" block`,
+          );
+        }
+      }
+      // 3. The closed vocabulary, structurally: every knob value a row uses
+      //    must have its snippet family in the attachment maps — "a knob value
+      //    ships its prompt support" as a load failure, not prose. (TypeScript
+      //    enforces this for the literal registry; this is the same rule for
+      //    any registry that arrives as data.)
+      if (p.semantics.block === 'doc-loop' && ARTIFACT_SNIPPETS[p.semantics.artifactKind] === undefined) {
+        throw new Error(
+          `registry: workflow "${wfName}" phase "${p.name}" uses artifactKind "${p.semantics.artifactKind}", which ships no snippet family — a knob value exists only with its prompt support (ARTIFACT_SNIPPETS)`,
+        );
+      }
+      if (p.semantics.block === 'build') {
+        if (ENTRY_SEED_SNIPPETS[p.semantics.entrySeed] === undefined) {
+          throw new Error(
+            `registry: workflow "${wfName}" phase "${p.name}" uses entrySeed "${p.semantics.entrySeed}", which ships no snippet family — a knob value exists only with its prompt support (ENTRY_SEED_SNIPPETS)`,
+          );
+        }
+        if (REVIEW_POSTURE_SNIPPETS[p.semantics.reviewPosture] === undefined) {
+          throw new Error(
+            `registry: workflow "${wfName}" phase "${p.name}" uses reviewPosture "${p.semantics.reviewPosture}", which ships no snippet family — a knob value exists only with its prompt support (REVIEW_POSTURE_SNIPPETS)`,
+          );
+        }
+      }
     }
     const gatePhases = new Set(wf.phases.map((p) => p.name));
     const requireGatePhase = (value: string, what: string): void => {
@@ -658,9 +991,29 @@ export function validateRegistry(workflows: Record<string, WorkflowSpecInput>): 
 
 validateRegistry(WORKFLOWS);
 
+/**
+ * The served registry view: the input rows with each phase's snippet list
+ * derived from its semantics (T7). Built once at load, after validation, so
+ * every consumer sees one parsed shape — the input's authoring shape (no hand
+ * lists) never leaks past this boundary.
+ */
+function servePhases(workflow: WorkflowName): readonly PhaseSpec[] {
+  return WORKFLOWS[workflow].phases.map((p): PhaseSpec => ({ ...p, snippets: snippetsForSemantics(p.semantics) }));
+}
+
+// An explicit literal (not a fromEntries loop) so the Record type proves
+// completeness: a new workflow in WORKFLOWS fails to compile until it is
+// served here too.
+const SERVED_PHASES: Record<WorkflowName, readonly PhaseSpec[]> = {
+  full: servePhases('full'),
+  design: servePhases('design'),
+  relay: servePhases('relay'),
+  rir: servePhases('rir'),
+};
+
 /** A workflow's ordered phases. */
 export function phasesOf(workflow: WorkflowName): readonly PhaseSpec[] {
-  return WORKFLOWS[workflow].phases;
+  return SERVED_PHASES[workflow];
 }
 
 /** A workflow's entry route, normalized to the optional-specSkipsTo shape. */

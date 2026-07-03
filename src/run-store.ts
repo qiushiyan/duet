@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { Snapshot } from 'xstate';
 import { bindingFor } from './config.ts';
-import type { RoleBinding, RoleBindings } from './config.ts';
+import type { RoleBinding, RoleBindings, RoleOverride } from './config.ts';
 import { WORKFLOWS, defaultPosture, defaultPreAuthorizedOf, gatePhasesOf, phaseSpec } from './phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
 import type { ContextUsage, WorkerRole } from './providers/types.ts';
@@ -216,7 +216,26 @@ export interface RunState {
    * never warm-started, so cold-interactive and headless launches are unchanged.
    */
   interactiveOrchestratorSessionId?: string;
-  workerSessions: Partial<Record<WorkerRole, string>>;
+  /**
+   * Each worker's live session, PROVIDER-QUALIFIED — the record is the single
+   * provider source for every session consumer (resume via sessionIdFor,
+   * takeover's resume-command choice, sessions.ts transcript location, the
+   * doctor/status probes), never re-derived from the base binding, which a
+   * post-handoff `build` override makes wrong for a switched role. A
+   * cross-provider resume is unrepresentable: sessionIdFor derives a fresh
+   * session on a provider mismatch. Legacy bare-string values are normalized
+   * to this shape once, at loadRunState (parse-don't-validate), so every
+   * downstream reader sees one shape.
+   */
+  workerSessions: Partial<Record<WorkerRole, WorkerSessionRecord>>;
+  /**
+   * The session-reset ledger — one entry per provider switch at a session
+   * write (settleTurn: the settling turn's effective provider differs from the
+   * prior record's), the house ledger pattern (autoApprovals/autoRetries/
+   * contextEvents), so status and takeover can explain why a role's old
+   * session is gone. ADDITIVE: absent until the first reset.
+   */
+  sessionResets?: Array<{ role: WorkerRole; phase: PhaseName; fromProvider: 'claude' | 'codex'; toProvider: 'claude' | 'codex'; at: string }>;
 
   /** Which phases have had their entry prompt sent (drives entry-vs-resume). */
   phaseStarted: Partial<Record<PhaseName, true>>;
@@ -365,6 +384,12 @@ export interface RunState {
   contextUsage?: Partial<Record<Voice, ContextUsage & { at: string; highWaterTokens?: number }>>;
   snippetProposals: Array<{ snippetKey: string; proposedBody: string; rationale: string; at: string }>;
   lastActivity?: string;
+}
+
+/** A worker's provider-qualified session — see `RunState.workerSessions`. */
+export interface WorkerSessionRecord {
+  provider: 'claude' | 'codex';
+  id: string;
 }
 
 /** The run's workflow, defaulting a missing/pre-feature value to `'full'`. */
@@ -561,7 +586,33 @@ export function createRun(opts: {
 export function loadRunState(cwd: string, runId: string): RunState {
   const path = join(runDirOf(cwd, runId), STATE_FILE);
   if (!existsSync(path)) throw new Error(`no run state at ${path} — is ${runId} a run of this project?`);
-  return JSON.parse(readFileSync(path, 'utf8')) as RunState;
+  return normalizeRunState(JSON.parse(readFileSync(path, 'utf8')) as RunState);
+}
+
+/**
+ * Parse-don't-validate at the load boundary: legacy persisted shapes normalize
+ * ONCE here, so every downstream reader sees one shape and a sibling-map drift
+ * (e.g. a separate sessionProviders record) is never representable.
+ *
+ * - A legacy bare-string worker session (pre provider-qualification) becomes a
+ *   record carrying the BASE binding's provider — correct by construction,
+ *   because no post-handoff override existed when such state was written.
+ * - A persisted implementer binding still spelling the pre-generalization
+ *   `impl` key becomes `build` (the same knob, renamed).
+ */
+function normalizeRunState(state: RunState): RunState {
+  for (const role of workerRolesFor(state)) {
+    const record: WorkerSessionRecord | string | undefined = state.workerSessions[role];
+    if (typeof record === 'string') {
+      state.workerSessions[role] = { provider: bindingFor(state.bindings, role).provider, id: record };
+    }
+  }
+  const implementer = state.bindings.implementer as RoleBinding & { impl?: RoleOverride };
+  if (implementer.impl) {
+    const { impl, ...rest } = implementer;
+    state.bindings.implementer = { ...rest, ...(rest.build ? {} : { build: impl }) };
+  }
+  return state;
 }
 
 export function saveRunState(state: RunState): void {
@@ -799,8 +850,10 @@ export function purgeRun(state: RunState, home: string = homedir()): PurgeResult
   // consultant.log is NOT a post-purge findability path; the surviving priors
   // are the provider transcripts in ~/.claude / ~/.codex.)
   for (const role of workerRolesFor(state)) {
-    const sessionId = state.workerSessions[role];
-    if (sessionId) sessions.push({ provider: bindingFor(state.bindings, role).provider, sessionId });
+    // The record's provider, never the base binding's — a build-override
+    // switch means the latest transcript lives in the OTHER provider's tree.
+    const record = state.workerSessions[role];
+    if (record) sessions.push({ provider: record.provider, sessionId: record.id });
   }
 
   const transcripts = [

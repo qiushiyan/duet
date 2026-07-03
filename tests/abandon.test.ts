@@ -129,7 +129,7 @@ describe('purgeRun', () => {
     const bystanderCodex = writeCodexRollout(h, 'unrelated');
 
     run.orchestratorSessionId = 'orch-1';
-    run.workerSessions = { implementer: 'impl-2', reviewer: 'rev-3' };
+    run.workerSessions = { implementer: { provider: 'claude', id: 'impl-2' }, reviewer: { provider: 'codex', id: 'rev-3' } };
     saveRunState(run);
 
     const result = purgeRun(loadRunState(projectDir, run.runId), h);
@@ -156,7 +156,7 @@ describe('purgeRun', () => {
     // An earlier checkpoint's session — state tracks only the latest id, so this
     // was never recorded, and purge (exact-id match, no directory sweep) leaves it.
     const prior = writeClaudeTranscript(h, '-proj', 'consult-prior');
-    consultantRun.workerSessions = { consultant: 'consult-latest' };
+    consultantRun.workerSessions = { consultant: { provider: 'claude', id: 'consult-latest' } };
     saveRunState(consultantRun);
 
     const result = purgeRun(loadRunState(projectDir, consultantRun.runId), h);

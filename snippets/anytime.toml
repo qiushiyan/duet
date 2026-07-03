@@ -1,0 +1,94 @@
+# Anytime helpers — cross-cutting templates usable in any phase
+# (ANYTIME_SNIPPETS in src/phases.ts, same order); list_snippets shows these
+# in full alongside the current phase's templates.
+
+[[snippets]]
+key = "reread-context"
+expand = '''
+Reread the files this change touches and rebuild your mental model from the actual code, not memory — trace the real data/control flow, note existing constraints, and find the seams the work will build on. **No code yet.**'''
+
+[[snippets]]
+key = "recover-context"
+expand = '''
+Your prior session was compacted unsuccessfully and reset, so you're in a fresh session with no memory of this run. Re-anchor before any work — this is a post-compact recovery from an empty session, not a routine reread of code you still hold in context: there's no prior context to lean on, so the orientation below has to carry the whole picture.
+
+Orient from what's actually on disk and in git — fill each in concretely:
+- What we're building: the change in a sentence or two, and where the authoritative design lives (the committed spec/plan, or the research decisions).
+- What's committed and green: the work that already landed and passes tests, so you don't redo it.
+- What's left: the next unit of work, plus any uncommitted in-flight edits.
+- The load-bearing seams and files: the modules this change turns on, so you reread the right code first.
+
+Then reread those files and rebuild your mental model from the actual code, not the summary — trace the real data and control flow and the constraints in play. No code yet: re-anchor first, then pick the work up from where it actually stands.'''
+
+[[snippets]]
+key = "compact-inflight"
+expand = '''
+/compact This compaction lands mid-work — the same task continues in this session immediately after it, so compact for **continuing**, not for a stage transition: keep the work's live state, drop the journey.
+
+**Preserve:**
+- The work in flight and its exact state: what's in progress, files mid-edit, the next intended step.
+- Every decision already made, with its reason.
+- The concrete repo facts in use: paths, commands, test state, the working branch.
+
+**Drop or summarize:**
+- The exploration journey, superseded drafts, and old tool output — keep conclusions, not the path.
+
+The committed artifacts survive on disk — cite their paths rather than restating them.
+'''
+
+[[snippets]]
+key = "commits-summary"
+expand = '''
+Commits summary for high-level context — what changed and why. **Don't review commit-by-commit;** review the current state of the codebase as a whole, with these commits as context.'''
+
+[[snippets]]
+key = "find-similar-bugs"
+expand = '''
+Bug just fixed. Before committing, sweep the codebase for other places likely to have the same pattern — same assumption, same missing check.
+
+**Per candidate:**
+- file + brief description
+- why same class of bug
+- confidence (high / medium / low)
+
+**Don't fix yet** — just enumerate. We'll decide what to address.'''
+
+[[snippets]]
+key = "list-assumptions"
+expand = '''
+List every non-trivial assumption you're making — about the data, system state, my actual intent, failure modes, or what "done" looks like.
+
+**Group as:**
+- **Verified** — confirmed from code or my message
+- **Likely** — reasonable inference, unconfirmed
+- **Speculative** — guessing
+
+Flag the speculative ones as questions for me before proceeding.'''
+
+[[snippets]]
+key = "trace-execution"
+expand = '''
+Walk through this code step-by-step as if you were the runtime. **Per step:**
+- variable values
+- which branch is taken and why
+- what gets called, with what arguments
+
+Use a concrete example input. **Stop and flag the moment behavior diverges from intent.** Don't summarize — actually trace.'''
+
+[[snippets]]
+key = "smart-adapt-skills"
+expand = '''
+References are **general best practices, not prescriptions**. Evaluate each suggestion against our codebase, architecture, and constraints before applying — **discard what doesn't fit, adapt what does**.
+
+Can't find a referenced skill? Tell me immediately for the exact path. **Don't search for it yourself.**'''
+
+[[snippets]]
+key = "technical-difficulty"
+expand = '''
+**Don't measure technical difficulty by lines changed.** Instead, consider:
+- complexity of the problem being solved
+- number of components affected
+- potential for unintended consequences
+- level of uncertainty involved
+
+**Most importantly:** does this solve the core UX problem while maintaining a clean technical design?'''

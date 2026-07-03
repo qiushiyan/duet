@@ -500,7 +500,7 @@ export function renderStatus(model: StatusModel): string {
         for (const p of model.snippetProposals) {
           lines.push(`\n• ${p.snippetKey} — ${p.rationale}`);
         }
-        lines.push(`\nfull bodies in .duet/runs/${model.runId}/state.json; apply the ones you accept to snippets.toml.`);
+        lines.push(`\nfull bodies in .duet/runs/${model.runId}/state.json; apply the ones you accept to the owning snippets/ file.`);
       }
       lines.push(`\ntranscripts: .duet/runs/${model.runId}/*.log (and the providers' standard session locations)`);
       lines.push(`nothing is running${opensPr(model.workflow) ? ' — merge the PR on GitHub' : ''}. To remove this run's local artifacts and session transcripts: duet abandon ${model.runId} --purge`);
