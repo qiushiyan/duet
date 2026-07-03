@@ -20,7 +20,7 @@ import {
   validateRegistry,
   workflowHasConsultantBackstop,
 } from '../src/phases.ts';
-import type { WorkflowSpecInput } from '../src/phases.ts';
+import type { PhaseSemantics, WorkflowSpecInput } from '../src/phases.ts';
 
 /**
  * The workflow registry — the source of truth the flat lookups derive from.
@@ -30,9 +30,10 @@ import type { WorkflowSpecInput } from '../src/phases.ts';
  */
 
 // A minimal phase in the registry input shape — always gated (every phase gates).
-function phase(name: string, gateState: string = `${name}Gate`) {
+function phase(name: string, gateState: string = `${name}Gate`, overrides: Record<string, unknown> = {}) {
   return {
     name,
+    semantics: { block: 'frame', examplesKey: 'frame' } as PhaseSemantics,
     snippets: [] as readonly string[],
     gate: { state: gateState, heading: 'h', ready: 'r', hint: null },
     artifactLabel: name,
@@ -41,6 +42,7 @@ function phase(name: string, gateState: string = `${name}Gate`) {
     orchestratorBudgetUsd: 1,
     workerBudgetUsd: 1,
     workerTurnTimeoutMs: 1,
+    ...overrides,
   };
 }
 
@@ -114,6 +116,35 @@ describe('validateRegistry', () => {
       name: 'an entry.specSkipsTo not in the workflow throws',
       registry: { w: workflow({ entry: { firstPhase: 'a', specSkipsTo: 'zzz' } }) },
       throws: /entry\.specSkipsTo "zzz" is not a phase/,
+    },
+    {
+      // Vocabulary coherence: reviewLoop must agree with the block — doc-loop
+      // and build phases ARE review loops; frame and finish phases are not.
+      name: 'a frame block claiming reviewLoop throws (semantics ↔ flag coherence)',
+      registry: { w: workflow({ phases: [phase('a', 'aGate', { reviewLoop: true }), phase('b', 'bGate')] }) },
+      throws: /reviewLoop true but block "frame"/,
+    },
+    {
+      name: 'a doc-loop block without reviewLoop throws',
+      registry: {
+        w: workflow({
+          phases: [
+            phase('a', 'aGate', { semantics: { block: 'doc-loop', artifactKind: 'spec', examplesKey: 'spec' } }),
+            phase('b', 'bGate'),
+          ],
+        }),
+      },
+      throws: /reviewLoop false but block "doc-loop"/,
+    },
+    {
+      // A checkpoint fires from the block that hosts its work: a contract
+      // author on a frame block would brief the consultant about a document
+      // the phase never produces.
+      name: 'a consultant checkpoint on a foreign block throws',
+      registry: {
+        w: workflow({ phases: [phase('a', 'aGate', { consultantCheckpoint: 'contract' }), phase('b', 'bGate')] }),
+      },
+      throws: /checkpoint "contract" but is a "frame" block/,
     },
   ])('$name', ({ registry, throws }) => {
     if (throws) expect(() => validateRegistry(registry)).toThrow(throws);

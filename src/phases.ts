@@ -63,6 +63,68 @@ import { basename, dirname, extname } from 'node:path';
 export type ConsultantCheckpoint = 'frame' | 'specGate' | 'implGate' | 'contract' | 'verify';
 
 /**
+ * The workflow vocabulary (docs/specs/2026-07-03-workflow-vocabulary.md): each
+ * phase row names WHICH BLOCK it is and the knob values that configure it, as
+ * one grouped sub-object — never scattered booleans. The vocabulary is CLOSED:
+ * a knob value exists only when duet ships hand-written prompt support for it
+ * and a shipped arc exercises it, so these unions grow only with a shipping
+ * arc (relay adds `fixer`/`fresh-seed` with its own commit). The grouping is
+ * the clean compile target for a deferred external-arc compiler; values below
+ * are set to reproduce the current arcs exactly.
+ *
+ * What deliberately does NOT live here: the verify checkpoint and the
+ * contract-author placement (both already registry data via
+ * `consultantCheckpoint` — a second copy could disagree), and the round cap
+ * (a plain row field).
+ */
+
+/** A worker role that can own a finishing tail (the build tail or the PR phase). */
+export type TailOwner = 'implementer' | 'reviewer';
+
+/** The doc-loop's artifact — sets the review lens and the snippet family. */
+export type ArtifactKind = 'spec' | 'plan' | 'design';
+
+/**
+ * How the build phase enters: full compacts the planning session down to the
+ * committed spec + plan (`compact-for-impl`), the design arc re-anchors on its
+ * one committed doc (`implement-design`), rir builds directly from the
+ * research decisions (`implement-direct`).
+ */
+export type EntrySeed = 'compact-for-impl' | 'implement-design' | 'implement-direct';
+
+/**
+ * The build's review posture — the vocabulary's load-bearing axis: `critique`
+ * (reviewer critiques, implementer fixes — the reflect-then-round-2 loop),
+ * `writable` (one round, the implementer applies fixes in place).
+ */
+export type ReviewPosture = 'critique' | 'writable';
+
+/** The worked-example set a phase's brief appends — per-arc data, keyed not inlined. */
+export type ExamplesKey = 'frame' | 'research' | 'spec' | 'plan' | 'design' | 'impl' | 'design-impl' | 'rir-impl';
+
+/** A phase's block identity + knob values (discriminated on `block`). */
+export type PhaseSemantics =
+  | { readonly block: 'frame'; readonly examplesKey: 'frame' | 'research' }
+  | { readonly block: 'doc-loop'; readonly artifactKind: ArtifactKind; readonly examplesKey: ExamplesKey }
+  | {
+      readonly block: 'build';
+      readonly entrySeed: EntrySeed;
+      readonly reviewPosture: ReviewPosture;
+      readonly midpoint: 'judgment' | 'none';
+      /**
+       * Whether the Ship packet leads with the CEO summary (`ceo-summary`) or
+       * stays lean (rir's deliberate choice — the human reads what shipped, the
+       * docs, and the review outcome). The knob T7 predicted: the snippet
+       * derivation forces the full/design-vs-rir difference to be explicit.
+       */
+      readonly shipPacket: 'ceo-summary' | 'lean';
+      /** Who runs the build tail (reconcile-docs + ceo-summary — inside implement, strictly before verify). */
+      readonly buildTailOwner: TailOwner;
+      readonly examplesKey: ExamplesKey;
+    }
+  | { readonly block: 'finish'; readonly finishOwner: TailOwner };
+
+/**
  * The gate a phase exits through (registry input shape). String-typed at input
  * time, then narrowed by `as const`. Every phase gates, so this is non-optional.
  */
@@ -85,6 +147,8 @@ interface GateInput {
  */
 interface PhaseSpecInput<Name extends string = string> {
   readonly name: Name;
+  /** The phase's block identity + knob values (the workflow vocabulary). */
+  readonly semantics: PhaseSemantics;
   readonly snippets: readonly string[];
   readonly gate: GateInput;
   readonly artifactLabel: string;
@@ -143,6 +207,7 @@ export const WORKFLOWS = {
     phases: [
       {
         name: 'frame',
+        semantics: { block: 'frame', examplesKey: 'frame' },
         // Base snippets are the run's ALWAYS-ON templates. The consultant
         // checkpoint snippet is NOT listed here — it is registry data
         // (consultantCheckpoint, below) folded in per-run by phaseSnippetsFor
@@ -165,6 +230,7 @@ export const WORKFLOWS = {
       },
       {
         name: 'spec',
+        semantics: { block: 'doc-loop', artifactKind: 'spec', examplesKey: 'spec' },
         snippets: ['write-spec', 'review-spec', 'update-spec', 'review-spec-again', 'update-spec-again'],
         gate: {
           state: 'commitSpecGate',
@@ -182,6 +248,7 @@ export const WORKFLOWS = {
       },
       {
         name: 'plan',
+        semantics: { block: 'doc-loop', artifactKind: 'plan', examplesKey: 'plan' },
         snippets: ['start-plan', 'review-plan', 'update-plan', 'review-plan-again', 'update-plan-again'],
         gate: {
           state: 'planApprovalGate',
@@ -202,6 +269,15 @@ export const WORKFLOWS = {
       },
       {
         name: 'implement',
+        semantics: {
+          block: 'build',
+          entrySeed: 'compact-for-impl',
+          reviewPosture: 'critique',
+          midpoint: 'judgment',
+          shipPacket: 'ceo-summary',
+          buildTailOwner: 'implementer',
+          examplesKey: 'impl',
+        },
         snippets: [
           'compact-for-impl',
           'midpoint-status',
@@ -261,6 +337,7 @@ export const WORKFLOWS = {
         // implement, so it is not a default step). Mirror of rir's `finish` — same
         // shape, same entry brief (openPrPhaseEntryPrompt).
         name: 'finish',
+        semantics: { block: 'finish', finishOwner: 'implementer' },
         snippets: ['pr-description', 'compact-for-cleanup'],
         gate: {
           state: 'openPrGate',
@@ -323,6 +400,7 @@ export const WORKFLOWS = {
         // Identical in substance to full's frame — only the arc that follows
         // differs (the synthesized direction lands on one design doc, not a spec).
         name: 'frame',
+        semantics: { block: 'frame', examplesKey: 'frame' },
         snippets: ['think-holistic', 'compare-notes'],
         gate: {
           state: 'directionGate',
@@ -345,6 +423,7 @@ export const WORKFLOWS = {
         // re-growing plan-depth rounds. Its gate is the handoff AND the
         // ratification — the arc's one attended stop by default.
         name: 'design',
+        semantics: { block: 'doc-loop', artifactKind: 'design', examplesKey: 'design' },
         snippets: ['write-design', 'review-design', 'update-design', 'review-design-again', 'update-design-again'],
         gate: {
           state: 'designGate',
@@ -379,6 +458,15 @@ export const WORKFLOWS = {
         // prompt. NOT rir's implement-direct — that body assumes no design
         // artifact exists.
         name: 'implement',
+        semantics: {
+          block: 'build',
+          entrySeed: 'implement-design',
+          reviewPosture: 'critique',
+          midpoint: 'judgment',
+          shipPacket: 'ceo-summary',
+          buildTailOwner: 'implementer',
+          examplesKey: 'design-impl',
+        },
         snippets: [
           'compact-for-impl',
           'implement-design',
@@ -411,6 +499,7 @@ export const WORKFLOWS = {
       {
         // Byte-for-byte full's finish — the shared PR-only finishing tail.
         name: 'finish',
+        semantics: { block: 'finish', finishOwner: 'implementer' },
         snippets: ['pr-description', 'compact-for-cleanup'],
         gate: {
           state: 'openPrGate',
@@ -447,6 +536,7 @@ export const WORKFLOWS = {
     phases: [
       {
         name: 'research',
+        semantics: { block: 'frame', examplesKey: 'research' },
         // Shared with Full's frame. Library-choice guidance lives in implement-direct
         // (rir's plan-discipline home), not here — research is the direction phase.
         snippets: ['think-holistic', 'compare-notes'],
@@ -468,6 +558,15 @@ export const WORKFLOWS = {
       },
       {
         name: 'implement',
+        semantics: {
+          block: 'build',
+          entrySeed: 'implement-direct',
+          reviewPosture: 'writable',
+          midpoint: 'none',
+          shipPacket: 'lean',
+          buildTailOwner: 'implementer',
+          examplesKey: 'rir-impl',
+        },
         // The spine order: build, orient the reviewer, one writable review round,
         // then reconcile docs as the last build step — so the Ship gate reviews
         // code + docs together and `finish` is left the mechanical PR open (the
@@ -503,6 +602,7 @@ export const WORKFLOWS = {
         // edit / more commits), never to re-open. No consultant checkpoint (the
         // implGate bet-audit already ran at implement).
         name: 'finish',
+        semantics: { block: 'finish', finishOwner: 'implementer' },
         snippets: ['pr-description', 'compact-for-cleanup'],
         gate: {
           // Gate-state name reused from Full — legal because resolution is
@@ -552,6 +652,8 @@ export type GatePhase = PhaseName;
 /** The consumer-facing phase view — the registry input narrowed to `PhaseName`. */
 export interface PhaseSpec {
   name: PhaseName;
+  /** The phase's block identity + knob values (the workflow vocabulary). */
+  semantics: PhaseSemantics;
   /**
    * The snippet keys this phase's work draws on, in the order the orchestrator
    * typically reaches for them. The phase-aware `list_snippets` shows these in
@@ -616,6 +718,44 @@ export function validateRegistry(workflows: Record<string, WorkflowSpecInput>): 
         );
       }
       gateStates.add(p.gate.state);
+      // Vocabulary coherence — the semantics grouping must agree with the row
+      // facts it sits beside, or a composition could describe one world and run
+      // another. Two structural rules:
+      //
+      // 1. reviewLoop ⇔ the block HAS a review loop (doc-loop and build do;
+      //    frame and finish don't) — the advance rail reads reviewLoop, the
+      //    briefs read the block, and they must never disagree.
+      if (p.semantics === undefined) {
+        throw new Error(
+          `registry: workflow "${wfName}" phase "${p.name}" has no semantics — every phase names its block and knob values (the workflow vocabulary)`,
+        );
+      }
+      const loopBlock = p.semantics.block === 'doc-loop' || p.semantics.block === 'build';
+      if (loopBlock !== p.reviewLoop) {
+        throw new Error(
+          `registry: workflow "${wfName}" phase "${p.name}" has reviewLoop ${p.reviewLoop} but block "${p.semantics.block}" — doc-loop and build phases are review loops, frame and finish phases are not`,
+        );
+      }
+      // 2. A consultant checkpoint fires from the block that hosts it: the
+      //    generative frame read at a frame block, the spec bet-audit and the
+      //    contract author at a doc-loop, the impl bet-audit and the contract
+      //    verify at a build. A checkpoint on a foreign block would brief a
+      //    consultant about work the phase doesn't do.
+      if (p.consultantCheckpoint !== undefined) {
+        const hostBlocks: Record<ConsultantCheckpoint, PhaseSemantics['block']> = {
+          frame: 'frame',
+          specGate: 'doc-loop',
+          contract: 'doc-loop',
+          implGate: 'build',
+          verify: 'build',
+        };
+        const host = hostBlocks[p.consultantCheckpoint];
+        if (p.semantics.block !== host) {
+          throw new Error(
+            `registry: workflow "${wfName}" phase "${p.name}" carries consultant checkpoint "${p.consultantCheckpoint}" but is a "${p.semantics.block}" block — that checkpoint fires from a "${host}" block`,
+          );
+        }
+      }
     }
     const gatePhases = new Set(wf.phases.map((p) => p.name));
     const requireGatePhase = (value: string, what: string): void => {
