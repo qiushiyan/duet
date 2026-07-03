@@ -61,6 +61,7 @@ describe('parseGatesAt', () => {
 describe('parseWorkflow', () => {
   plain.for([
     { input: 'full', expected: 'full' },
+    { input: 'design', expected: 'design' },
     { input: 'rir', expected: 'rir' },
     { input: '  rir  ', expected: 'rir' },
   ])('"$input" → $expected', ({ input, expected }) => {
@@ -68,7 +69,7 @@ describe('parseWorkflow', () => {
   });
 
   plain('an unknown workflow fails with the valid set', () => {
-    expect(() => parseWorkflow('xyz')).toThrow(/"xyz" is not a duet workflow.*full, rir/);
+    expect(() => parseWorkflow('xyz')).toThrow(/"xyz" is not a duet workflow.*full, design, rir/);
   });
 });
 

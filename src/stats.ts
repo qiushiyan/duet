@@ -81,11 +81,17 @@ export interface StatsModel {
 }
 
 /** Parse the orchestrator log into phase windows. `sawOpen` distinguishes "no
- *  headless phases" (an interactive run) from "no log". */
-function parsePhaseWindows(log: string): { windows: Window[]; sawOpen: boolean } {
+ *  headless phases" (an interactive run) from "no log"; `inferred` counts the
+ *  windows synthesized from a bare gate crossing (below). */
+function parsePhaseWindows(log: string, runStartMs = 0): { windows: Window[]; sawOpen: boolean; inferred: number } {
   const windows: Window[] = [];
   const openByPhase = new Map<string, number>();
   let sawOpen = false;
+  let inferred = 0;
+  // The end of the last closed window — the inferred start of a phase whose
+  // entry was never logged (below). The run's creation time floors the first
+  // such window, so its elapsed span is honest, not epoch-anchored.
+  let lastCloseMs: number | undefined;
   for (const line of log.split('\n')) {
     const open = PHASE_OPEN.exec(line);
     if (open) {
@@ -99,15 +105,28 @@ function parsePhaseWindows(log: string): { windows: Window[]; sawOpen: boolean }
     const close = PHASE_CLOSE.exec(line);
     if (close) {
       const phase = close[2]!;
-      const start = openByPhase.get(phase);
       const ms = Date.parse(close[1]!);
-      if (start !== undefined && !Number.isNaN(ms) && ms >= start) {
+      if (Number.isNaN(ms)) continue;
+      let start = openByPhase.get(phase);
+      // A close with no open: the phase ran on the INTERACTIVE host, whose tool
+      // events voice-log the advance but no harness-prompt header. The phases
+      // are sequential, so the crossing that ended the previous phase bounds
+      // this one from below — infer the window from there (from the beginning
+      // of time for the run's first phase), so the phase's worker turns
+      // attribute instead of orphaning. Elapsed spans stay approximate; the
+      // caller notes it.
+      if (start === undefined) {
+        start = lastCloseMs ?? runStartMs;
+        inferred++;
+      }
+      if (ms >= start) {
         windows.push({ phase, startMs: start, endMs: ms });
         openByPhase.delete(phase); // a later re-entry opens a fresh window
+        lastCloseMs = ms;
       }
     }
   }
-  return { windows, sawOpen };
+  return { windows, sawOpen, inferred };
 }
 
 /**
@@ -156,11 +175,18 @@ export function buildStats(
   arcOrder: readonly PhaseName[],
   /** The implementer model that ran a phase — the composer supplies the resolver; default (none) keeps the aggregate rows unlabeled. */
   implementerModelForPhase: (phase: string) => string | undefined = () => undefined,
+  /** The run's creation time — floors the first inferred window (interactive phases log no entry header). */
+  runStartMs = 0,
 ): StatsModel {
   const notes: string[] = [];
-  const { windows, sawOpen } = orchestratorLog ? parsePhaseWindows(orchestratorLog) : { windows: [], sawOpen: false };
+  const { windows, sawOpen, inferred } = orchestratorLog
+    ? parsePhaseWindows(orchestratorLog, runStartMs)
+    : { windows: [], sawOpen: false, inferred: 0 };
   if (orchestratorLog === undefined) notes.push('no orchestrator log yet — phase windows unavailable.');
-  else if (!sawOpen) notes.push('no headless phase windows found — this run may have been orchestrated interactively.');
+  else if (!sawOpen && windows.length === 0) notes.push('no headless phase windows found — this run may have been orchestrated interactively.');
+  if (inferred > 0) {
+    notes.push(`${inferred} phase window(s) inferred from gate crossings (interactively orchestrated phases log no entry header) — those elapsed spans are approximate.`);
+  }
 
   const turns: Turn[] = [];
   for (const { role, log } of workers) {
@@ -258,8 +284,14 @@ export function buildStatsModel(state: RunState): StatsModel {
   // change) has no confident resolution, so it stays unlabeled rather than force
   // `implementerModelFor` to resolve a phase its workflow doesn't own.
   const arcPhases = new Set<string>(arcOrder);
-  return buildStats(state.runId, read('orchestrator'), workers, arcOrder, (phase) =>
-    arcPhases.has(phase) ? implementerModelLabel(state.bindings, workflowOf(state), phase as PhaseName) : undefined,
+  const runStartMs = Date.parse(state.createdAt);
+  return buildStats(
+    state.runId,
+    read('orchestrator'),
+    workers,
+    arcOrder,
+    (phase) => (arcPhases.has(phase) ? implementerModelLabel(state.bindings, workflowOf(state), phase as PhaseName) : undefined),
+    Number.isNaN(runStartMs) ? 0 : runStartMs,
   );
 }
 

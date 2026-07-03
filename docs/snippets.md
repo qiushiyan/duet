@@ -6,20 +6,23 @@ Snippets are the prompt templates the orchestrator sends the workers — they *a
 
 ## How snippets map to the arc
 
-Each phase pulls a few snippets in the order the orchestrator reaches for them; the full protocol table (every snippet, both arcs, the direction of each hand-off) is in [`workflow-model.md`](workflow-model.md). The ones that matter most when customizing are the **generative drafts** — they write the *first* artifact of a phase, so an override reshapes everything downstream — and the **review** snippets that set each critique's altitude:
+Each phase pulls a few snippets in the order the orchestrator reaches for them; the full protocol table (every snippet and the direction of each hand-off) is in [`workflow-model.md`](workflow-model.md). The ones that matter most when customizing are the **generative drafts** — they write the *first* artifact of a phase, so an override reshapes everything downstream — and the **review** snippets that set each critique's altitude:
 
 | Snippet | Arc · phase | Role it goes to | What it produces |
 |---|---|---|---|
 | [`write-spec`](#write-spec) | full · spec | implementer | the first spec draft |
 | [`start-plan`](#start-plan) | full · plan | implementer | the implementation plan (vertical slices) |
+| [`write-design`](#the-design-arc-snippets) | design · design | implementer | the design doc (product tier + technical tier) |
+| [`implement-design`](#the-design-arc-snippets) | design · implement | implementer | code built from the committed design doc |
 | [`implement-direct`](#implement-direct) | rir · implement | implementer | code built straight from the research decisions |
-| [`reconcile-docs`](#reconcile-docs) | full · implement, rir · implement | implementer | docs reconciled with what shipped, then committed |
+| [`reconcile-docs`](#reconcile-docs) | every arc · implement | implementer | docs reconciled with what shipped, then committed |
 | [`review-spec`](#review-spec) | full · spec | reviewer | spec critique (at spec altitude) |
 | [`review-plan`](#review-plan) | full · plan | reviewer | plan critique |
-| [`review-implementation`](#review-implementation) | full · implement | reviewer | code review |
+| [`review-design`](#the-design-arc-snippets) | design · design | reviewer | design-doc critique (section-scoped altitude) |
+| [`review-implementation`](#review-implementation) | full · implement, design · implement | reviewer | code review |
 | [`review-direct`](#review-direct) | rir · implement | reviewer | code review (no spec/plan to measure against) |
 
-The full arc has no draft snippet for the implementation phase by design — the plan is the script, so the orchestrator composes the build prompt from it rather than from a template.
+The full arc alone has no draft snippet for its implementation phase — the plan is the script, so the orchestrator composes the build prompt from it. The design and rir arcs each seed the build from a template (`implement-design` / `implement-direct`) because no plan exists there.
 
 Beyond the phase-bound snippets above, a handful of **cross-cutting anytime helpers** are reachable in any phase (classified `ANYTIME_SNIPPETS`, listed in full by `list_snippets`) — e.g. `reread-context` (reread the touched code before continuing), `recover-context` (the post-compact fresh-session re-anchor: an orchestrator-authored status overview + reread, prescribed when a `/compact` is killed and the implementer session is reset — see `docs/automation-design.md` §"Resilience for the AFK window"), and `compact-inflight` (the mid-work compaction: where the boundary compacts keep what the *next* stage consumes, this one keeps the in-flight state — for a caution-band pause that isn't a stage boundary, and the compact-then-resume recovery after a context cut). They are not customization targets, so they live in `snippets.toml` (source of truth) rather than the curated table here.
 
@@ -167,7 +170,7 @@ If a decision turns out wrong or underspecified once you're in the code, **stop 
 
 ### `reconcile-docs`
 
-Runs at the tail of `implement` in both arcs — the docs step, the last thing before the Ship gate, so docs are reviewed with the code and then ride the branch into the PR that `finish` opens. The body is an invariant contract (commit directly — no docs gate; hold the one product boundary back to the human — deleting a documented concept, rewriting a load-bearing design claim, pruning a superseded doc) wrapped around a **method chosen by precedence**: a doc-update skill or document the framing names (the orchestrator relays it, authoritative — it outranks discovery, so a run's explicit choice is never overridden by a generic find), else the project's own doc-update skill (under `.claude/`/`.agents/`) when one exists, else a consolidate-don't-patch default pitched for a senior engineer. The orchestrator can't reach the filesystem, so it only relays a named method; the implementer (which can) locates and follows it. Self-contained — it names no vendored skill of its own. Override it to change how a project reconciles docs.
+Runs at the tail of `implement` in every arc — the docs step, the last thing before the Ship gate, so docs are reviewed with the code and then ride the branch into the PR that `finish` opens. The body is an invariant contract (commit directly — no docs gate; hold the one product boundary back to the human — deleting a documented concept, rewriting a load-bearing design claim, pruning a superseded doc) wrapped around a **method chosen by precedence**: a doc-update skill or document the framing names (the orchestrator relays it, authoritative — it outranks discovery, so a run's explicit choice is never overridden by a generic find), else the project's own doc-update skill (under `.claude/`/`.agents/`) when one exists, else a consolidate-don't-patch default pitched for a senior engineer. The orchestrator can't reach the filesystem, so it only relays a named method; the implementer (which can) locates and follows it. Self-contained — it names no vendored skill of its own. Override it to change how a project reconciles docs.
 
 ```text
 The docs ship with this change — they ride the branch (and the PR, where there is one) into the shippable record. Reconcile them with what actually shipped, in one pass.
@@ -186,9 +189,56 @@ The docs ship with this change — they ride the branch (and the PR, where there
 
 ---
 
+## The design-arc snippets
+
+The design arc's phase runs on one document, so its snippets merge what full splits. Three keys matter (the `update-design` / `-again` variants mirror their spec/plan siblings):
+
+- **`write-design`** — the arc's generative draft, reproduced below. It merges `write-spec`'s product tier (leader-facing summary, goals, behaviors, non-goals) with `start-plan`'s technical discipline (module boundaries, seams, an architecture sketch, test standards; the same `{{lessons_dir}}` citations) — and defers what the build owns: code bodies, per-case test enumeration, fixtures, commit order. Override it to reshape the whole arc, the way overriding `write-spec` or `start-plan` reshapes full.
+- **`review-design`** — the section-scoped lens: product sections review at spec altitude (a missing behavior is a gap; module design pressed there is below altitude), technical sections at design altitude (boundaries, seams, and test strategy are fair game; demanding case enumeration or code re-grows the rounds the arc deletes). Carries the same "Optional polish" output contract as the other review snippets.
+- **`implement-design`** — the build seed, `implement-direct`'s sibling: it anchors on the committed design doc as the authority for *what and why* and carries the same build discipline for *how* (vertical slices of the implementer's own choosing, right-sizing, layer choices, tests per the doc's standards).
+
+### `write-design`
+
+```text
+Now, write the design doc to the location the framing's conventions name (where design docs live is the project's call, not this template's). This one document carries the whole design — the build executes from it, and a human reads it later to understand the change — so **tight prose beats exhaustive sections**, and every section earns its place.
+
+## Read these first, then design
+Read each one and adapt it to this change — they're the bar for a good design, not optional background. If a path is missing, ask me rather than guessing.
+- `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
+- `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, the anti-patterns
+- `{{lessons_dir}}/testing/mocking-and-fixtures.md` — mock only at boundaries; `test.extend` fixtures
+- `{{lessons_dir}}/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
+
+When the design restructures an existing cluster or the interface is uncertain, also read `{{lessons_dir}}/codebase-design/deepening.md` and `{{lessons_dir}}/codebase-design/design-it-twice.md`.
+
+Ground problem and approach in actual code — read the relevant modules first if you haven't.
+
+## The document's shape
+The doc runs top-down, product to technical, each tier at its own altitude.
+
+**Product sections first — what and why.** Open with a leader-facing summary: what we're adding or fixing in product terms, the approach and its scope, and the boundary once it lands — what's fixed, what isn't, what's explicitly deferred (one-line why each). Then the goals, the user-facing behaviors, and the non-goals; distinguish current vs. desired — what's preserved vs. what's changing (a tree-style before/after often makes it crisp). Someone who reads only these sections should still know what they're getting and not getting.
+
+**Technical sections below — the shape of the build:**
+- **Module boundaries and seams:** which modules own the change, the interface each presents, and the coupling decision — an extension of an existing concept, or intentionally independent. Design deep modules: small interfaces, complexity concentrated behind them (the deletion test).
+- **The foundation decision (preparatory refactoring):** is the existing code a base this extends cleanly, or a structure that blocks the design? If it blocks, scope a *bounded* reshaping as the opening move — sized to this feature, not a module rewrite — and name what you're deliberately leaving alone.
+- **An architecture sketch:** how data and control flow through the changed system, in prose or a diagram — enough that the build starts oriented — with implementation anchors (modules, functions, files) attached to the flow, not as the main narrative.
+- **Test standards:** the behaviors that must be tested, and for each the strategy — through which interface, what gets faked at which boundary — plus the gotchas worth flagging. Name *what to test and how to think about testing it*.
+
+**Be concrete where you decide.** Vague verbs — "improve", "enhance", "polish", "streamline" — name a *direction*, not a *decision*; they quietly defer the real choice to the build. Say **what** changes: the specific behavior, state, or outcome that differs, and the rule or shape that produces it.
+
+## What the build decides later
+Leave these out — they're the build's to decide, and pinning them now would commit the design to details the code hasn't taught us yet: full code bodies, per-case test enumeration and fixtures, line-level edit plans, doc-update plans, and commit order. The design owes the *what* and the *shape*; the build owns the cases and the sequence.
+
+**Do not include any time/effort estimates** ("2 days", "~3 hours") — describe the work itself.
+
+If you have remaining product questions or major technical uncertainty, interview me before you write.
+```
+
+---
+
 ## The review snippets
 
-Each review snippet gives the reviewer a deliberate **altitude lens** — what to critique and what to leave alone for that artifact's stage. Overriding one changes how hard, and at what level of detail, your reviewer pushes.
+Each review snippet gives the reviewer a deliberate **altitude lens** — what to critique and what to leave alone for that artifact's stage. Overriding one changes how hard, and at what level of detail, your reviewer pushes. Each also ends with an **"Optional polish"** output contract: wording-level fixes are batched as exact before → after replacements (or skipped when none qualify), so the implementer applies them without re-analyzing the document — substantive findings stay findings.
 
 ### `review-spec`
 
@@ -216,6 +266,8 @@ The spec is intentionally high-level: problem, UX goal, conceptual approach, non
 
 Weigh technical merit and UX goals together. **Challenge assumptions and propose alternatives** — don't default to politeness. Don't say "not specific enough" without naming the unanswered concept.
 
+**End with an "Optional polish" section**, separate from the findings above: wording-level fixes where you can supply the exact replacement and the meaning doesn't change. Write each as location plus replacement (before → after), ready to apply verbatim. If an imprecision changes behavior, scope, or a testable claim, it's a finding, not polish; if you can't write the exact replacement, it isn't polish either — raise it as a finding or drop it. When nothing qualifies, say so in a line rather than manufacturing items. Delivered as concerns, wording points cost the author a reread of the whole document; delivered as ready replacements, they cost nothing.
+
 ---
 
 $0
@@ -235,13 +287,19 @@ Background (skim as a lens, don't recite):
 **Altitude lens:**
 - Vagueness on full code bodies (test implementations, function bodies) → **intentional, don't ask for them**.
 - Vagueness on anything else — slice boundaries, sequencing, specific test cases, helper internals, fixture shape, line-level placement, module shape, integration seams, what the spec left open → **bug, flag it**.
-- Technical content the plan DOES propose — slice choice, test cases, helper design, names, composition, deep-module shape → **fair game; propose better if a slice is wrong, a test case missing, a helper awkward, sequencing off, or a module shallow**.
+- Technical content the plan DOES propose — slice choice, test cases, helper design, names, composition, deep-module shape → **fair game; propose better if a slice is wrong, a test case missing, a helper awkward, sequencing off, a module shallow, or the design over-built**.
 
 **Per point:**
 - Agree → add technical suggestions, caveats, or risks worth flagging.
 - Disagree → give reasons and a concrete alternative. If architectural, say so and propose the structural fix.
 
-Challenge sequencing, scope, choice of vertical slices, **whether the plan deletes complexity or just rearranges it**, **whether the resulting modules are deep or shallow**, and **whether any preparatory-refactoring slice is proportionate to the feature, not quietly a rewrite** — not just surface details. The right plan should feel inevitable. Don't default to politeness.
+Challenge sequencing, scope, choice of vertical slices, **whether the plan deletes complexity or just rearranges it**, **whether the resulting modules are deep or shallow**, and **whether any preparatory-refactoring slice is proportionate to the feature, not quietly a rewrite** — not just surface details.
+
+**Watch for over-building** — the plan's likelier failure is too much code, not too little: defensive handling for states it could make unrepresentable, fallbacks for cases that can't occur, speculative features or config the spec didn't ask for, or a shared abstraction pulled out too early. Flag these the way you'd flag a missing case. And steer the other way when you catch yourself wanting *more* — prefer pushing a bad state to where it's unrepresentable, or validation to a single boundary, over adding error handling at every call site.
+
+The right plan should feel inevitable. Don't default to politeness.
+
+**End with an "Optional polish" section**, separate from the findings above: wording-level fixes where you can supply the exact replacement and the meaning doesn't change. Write each as location plus replacement (before → after), ready to apply verbatim. If an imprecision changes behavior, scope, or a testable claim, it's a finding, not polish; if you can't write the exact replacement, it isn't polish either — raise it as a finding or drop it. When nothing qualifies, say so in a line rather than manufacturing items. Delivered as concerns, wording points cost the author a reread of the whole document; delivered as ready replacements, they cost nothing.
 
 ---
 

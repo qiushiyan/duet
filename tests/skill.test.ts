@@ -104,14 +104,15 @@ describe('the duet-concierge skill coheres with the CLI', () => {
   test.for([
     ['SKILL.md', skillMd],
     ['references/cli-reference.md', referenceMd],
-  ] as const)('%s documents the run-start workflow surface (both arcs)', ([, markdown]) => {
+  ] as const)('%s documents the run-start workflow surface (every arc)', ([, markdown]) => {
     // The concierge starts runs from dictation, so its run-start surface must
-    // name the arc selector and RIR — not just the Full arc. --workflow is also
-    // pinned to exist on `duet new` by the per-file verb/flag guard above.
+    // name the arc selector and every arc — not just the Full arc. --workflow is
+    // also pinned to exist on `duet new` by the per-file verb/flag guard above.
     expect.soft(markdown).toContain('--workflow');
     expect.soft(markdown).toContain('workflow:'); // the framing frontmatter key
     expect.soft(markdown.toLowerCase()).toContain('rir');
-    expect.soft(markdown).toContain('afk'); // RIR's pre-authorization preset
+    expect.soft(markdown.toLowerCase()).toContain('design'); // the middle arc
+    expect.soft(markdown).toContain('afk'); // the walk-away preset
   });
 });
 
@@ -215,12 +216,13 @@ describe('the duet-frame skill coheres with the CLI', () => {
 
   test('the framing author picks the workflow and emits the --workflow selector', () => {
     // Slice 7: duet-frame settles the arc and emits it; --workflow must be a
-    // real flag of `duet new`, and the skill must name both arcs so the author
+    // real flag of `duet new`, and the skill must name every arc so the author
     // can choose between them.
     expect.soft(duetFrameMd).toContain('--workflow');
     expect.soft(publicCommands.get('new')?.options.some((o) => o.long === '--workflow')).toBe(true);
     expect.soft(duetFrameMd.toLowerCase()).toContain('rir');
-    expect.soft(duetFrameMd).toContain('afk'); // RIR's pre-authorization preset
+    expect.soft(duetFrameMd).toContain('`design`'); // the middle arc, named as a choosable workflow
+    expect.soft(duetFrameMd).toContain('afk'); // the walk-away preset
   });
 });
 
@@ -289,20 +291,24 @@ describe('no CLI help / template copy carries a Full-only-arc claim', () => {
     }
   });
 
-  test('the arc-bearing surfaces name both arcs (the finding-1 residual sites)', () => {
+  test('the arc-bearing surfaces name every arc (the finding-1 residual sites)', () => {
     const opt = (cmd: string, long: string) =>
       (publicCommands.get(cmd)?.options.find((o) => o.long === long)?.description ?? '').toLowerCase();
-    // --gates-at: both arcs' presets, including rir's afk.
+    // --gates-at: every arc's presets, including the walk-away afk.
     expect.soft(opt('new', '--gates-at')).toContain('rir');
+    expect.soft(opt('new', '--gates-at')).toContain('design');
     expect.soft(opt('new', '--gates-at')).toContain('afk');
     // --interactive and orchestrate: the handoff gate per arc.
     expect.soft(opt('new', '--interactive')).toContain('rir');
+    expect.soft(opt('new', '--interactive')).toContain('design');
     expect.soft(publicCommands.get('orchestrate')?.description().toLowerCase()).toContain('rir');
+    expect.soft(publicCommands.get('orchestrate')?.description().toLowerCase()).toContain('design');
   });
 
-  test('the framing template seed names both arcs (workflow:, rir, afk)', () => {
+  test('the framing template seed names every arc (workflow:, design, rir, afk)', () => {
     expect.soft(FRAMING_TEMPLATE).toContain('workflow:');
     expect.soft(FRAMING_TEMPLATE.toLowerCase()).toContain('rir');
+    expect.soft(FRAMING_TEMPLATE.toLowerCase()).toContain('design:');
     expect.soft(FRAMING_TEMPLATE).toContain('afk');
     // No Full-only-arc claim survives in the seed.
     for (const marker of FULL_ONLY_MARKERS) {

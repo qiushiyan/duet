@@ -7,10 +7,10 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | Command | What it does |
 |---|---|
 | `duet new --framing <file>` | Start a run from a framing file (the project briefing — the only place project knowledge enters). Returns immediately; the first phase runs in a detached driver. Runs the **full** arc unless `--workflow` says otherwise. |
-| `duet new --workflow <full\|rir> --framing <file>` | Pick the arc. **full** (default): frame → spec → plan → implementation → PR. **rir**: research → implement (build, review, reconcile docs) → `finish` (open the PR), with no spec or plan — for small, well-understood work. Also settable as `workflow:` in the framing frontmatter; the flag wins. |
-| `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates; the rest are pre-authorized and auto-cross with their packets recorded. Phases and presets are **workflow-specific**. full: gates `frame, spec, plan, implement, finish` — **default `overnight` (= frame,spec)**; presets `skip-plan` (= walk away at spec approval, return at the Ship gate) and `afk` (= attend none from the start — every gate pre-authorized, the consultant's safety nets intact). The Open-PR gate (end of `finish`) sits *after* the open — the PR auto-opens and the gate auto-crosses to done; list `finish` to attend a post-open review stop. rir: gates `research, implement, finish` — or the preset `afk` (= attend none, run straight to done with the PR open). |
+| `duet new --workflow <full\|design\|rir> --framing <file>` | Pick the arc. **full** (default): frame → spec → plan → implementation → PR. **design**: frame → design (one committed design doc replaces spec + plan) → implementation → PR — for serious work on a trusted frontier-model implementer. **rir**: research → implement (build, review, reconcile docs) → `finish` (open the PR), with no spec or plan — for small, well-understood work. Also settable as `workflow:` in the framing frontmatter; the flag wins. |
+| `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates; the rest are pre-authorized and auto-cross with their packets recorded. Phases and presets are **workflow-specific**. full: gates `frame, spec, plan, implement, finish` — **default `overnight` (= frame,spec)**; presets `skip-plan` (= walk away at spec approval, return at the Ship gate) and `afk` (= attend none from the start — every gate pre-authorized, the consultant's safety nets intact). The Open-PR gate (end of `finish`) sits *after* the open — the PR auto-opens and the gate auto-crosses to done; list `finish` to attend a post-open review stop. design: gates `frame, design, implement, finish` — **default attend `design` only** (one interruption: the Direction gate auto-crosses, the human ratifies the design doc, then the run is AFK to done); preset `afk` (= attend none). rir: gates `research, implement, finish` — or the preset `afk` (= attend none, run straight to done with the PR open). |
 | `duet new --framing <file> --gateless` | Walk away from the **start**: pre-authorize every gate (the run flows to an open PR with no attended stop) and, if a consultant is bound, keep only its **non-holding** work — its framing third-opinion still folds into the direction and the acceptance-contract **verify** still guards the build, with its mid-run bet audits off. A genuine product `high` or a contract that can't be met still stops it; `ask_human` and the merge stay the human's. Conflicts with `--gates-at` and `--interactive`. Also settable as `gateless:` in the framing frontmatter (the flag wins). |
-| `duet new --spec <path>` | Start at the spec review loop from a draft spec (skips the FRAME phase). **full-only** — rir has no spec phase and rejects `--spec`. |
+| `duet new --spec <path>` | Start at the primary-document review loop from a draft (skips the FRAME phase) — full takes a draft spec, design a draft design doc. rir has no such document and rejects `--spec`. |
 | `duet new --framing <file> --retry-infra <n>` | Set the headless run's bounded auto-retry budget for transient infra failures (network/server/rate-limit) — **default 3** for a new run, `--retry-infra 0` disables, an old run started without the field stays off; or set `retry_infra:` in the framing frontmatter (the flag wins). `auth` retries once then escalates; login/quota/dns/unknown never retry; exhaustion flags. |
 | `duet new --framing <file> --consultant <provider[:model]>` | Bind the optional **consultant** for the run — a read-only second reviewer that questions the *bet* (assumptions, product fit), ideally on a different model family from the reviewer. Off by default; relay it only when the user asks for it. Also settable for every run via `[roles.consultant]` in config; `--no-consultant` disables a config-bound one for this run. |
 | `duet continue <run-id> --approve` | Approve the current gate. |
@@ -36,7 +36,7 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | `duet logs [run-id]` | Stream the driver narration — replays from the start, then follows. Ctrl-C detaches; the run is unaffected. |
 | `duet view [run-id]` | Open a tmux viewer (one pane per voice). Terminal-side; not useful remotely. |
 | `duet takeover <role> [run-id]` | Hand a role's session to the human in the provider's own interactive CLI. Terminal-only by nature — never the concierge's verb. |
-| `duet orchestrate [run-id]` | Bring up the human's local interactive `/duet` orchestrator for a run over its attended arc (full: FRAME → PLAN; rir: RESEARCH). Terminal-only — never the concierge's verb. Relevant to know about: a run started with `duet new --interactive` is driven by that local session until the handoff gate (full: plan-approval; rir: Direction), after which AFK implementation runs headless and the concierge supervises it exactly as any other run. |
+| `duet orchestrate [run-id]` | Bring up the human's local interactive `/duet` orchestrator for a run over its attended arc (full: FRAME → PLAN; design: FRAME → DESIGN; rir: RESEARCH). Terminal-only — never the concierge's verb. Relevant to know about: a run started with `duet new --interactive` is driven by that local session until the handoff gate (full: plan-approval; design: the Design gate; rir: Direction), after which AFK implementation runs headless and the concierge supervises it exactly as any other run. |
 | `duet afk [preset] [run-id] [--gateless]` | The human's one-tap mid-session handoff from an interactive gate: re-set the downstream gate posture (bare = attend none; a preset/list otherwise) and drop the run to the headless driver. `--gateless` narrows the consultant to its non-holding work (its framing read and the acceptance-contract verify stay; its mid-run bet audits go) and full-sends the bet/product `high`s at this gate (still preserving the contract backstop), conflicting with a posture argument. Terminal-only — never the concierge's verb. Relevant to know about: after it runs, the run is an ordinary headless run the concierge supervises like any other, auto-crossing the now-pre-authorized gates and stopping only at a still-attended gate, a queued question, or done. |
 
 Every command defaults to the latest run in the project when `[run-id]` is omitted.
@@ -132,17 +132,22 @@ A markdown file: an optional `---`-fenced frontmatter block holding only fixed m
 
 ```markdown
 ---
-# workflow: full           — full (default) or rir. full: frame → spec → plan →
-#                             implement → PR. rir: research → implement → finish
-#                             (a PR; no spec/plan), for small work.
+# workflow: full           — full (default), design, or rir. full: frame → spec →
+#                             plan → implement → PR. design: frame → design (one
+#                             design doc replaces spec + plan) → implement → PR,
+#                             for serious work on a trusted implementer. rir:
+#                             research → implement → finish (a PR; no spec/plan),
+#                             for small work.
 # gates_at: overnight       — phases whose gates the human attends; the rest
-#                             auto-cross. full's default is overnight. Presets
-#                             are workflow-specific: full → skip-plan (walk away
-#                             at spec approval, return at the Ship gate) /
-#                             overnight (= frame,spec) / afk (attend none); rir →
-#                             afk (attend none).
+#                             auto-cross. full's default is overnight; design's is
+#                             attend the design gate only (one interruption).
+#                             Presets are workflow-specific: full → skip-plan
+#                             (walk away at spec approval, return at the Ship
+#                             gate) / overnight (= frame,spec) / afk (attend
+#                             none); design/rir → afk (attend none).
 #                             Or a list, e.g. "frame, spec, finish".
-# spec: path/to/draft.md    — enter at the spec review loop (skips FRAME). full-only.
+# spec: path/to/draft.md    — enter at the primary-document review loop, skipping
+#                             FRAME (full: a spec; design: a design doc). Not rir.
 # gateless: true            — walk away from the START: pre-authorize every gate;
 #                             consultant keeps its framing read + backstop, bet
 #                             audits off. Conflicts with gates_at and interactive.
@@ -172,7 +177,7 @@ A markdown file: an optional `---`-fenced frontmatter block holding only fixed m
 - Environment-only actions (migrations, deploys): flag the human — never attempt.
 
 # Docs
-<for reconciling docs at the end of the implement phase (both arcs — docs are
+<for reconciling docs at the end of the implement phase (every arc — docs are
  reconciled as the last build step, before the Ship gate): a docs-update skill if
  one exists, else where docs live and what a change like this should update>
 ```

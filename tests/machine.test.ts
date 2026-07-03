@@ -25,7 +25,7 @@ function startActor(machine: ReturnType<typeof scriptedMachine>['machine'], hasS
 // The arcs under test. The coherence + spine-walk assertions derive from
 // `phasesOf(workflow)`, so every workflow's machine is checked against its own
 // registry entry, not a single hardcoded arc.
-const ARCS: WorkflowName[] = ['full', 'rir'];
+const ARCS: WorkflowName[] = ['full', 'design', 'rir'];
 
 describe('phase table ⇄ machine coherence (per workflow)', () => {
   test.each(ARCS)('%s: every phase contributes its loop, flag-wait, and gate, with the right tags', (wf) => {
@@ -90,6 +90,14 @@ describe('entry routing', () => {
     const snap = await waitFor(actor, quiescent);
     expect(snap.value).toBe('commitSpecGate');
     expect(calls).toEqual(['spec']);
+  });
+
+  test('a design-arc spec entry skips frame and starts at the design loop (--spec = a draft of the primary artifact)', async () => {
+    const { machine, calls } = scriptedMachine([{ type: 'phase.advance' }], 'design');
+    const actor = startActor(machine, true);
+    const snap = await waitFor(actor, quiescent);
+    expect(snap.value).toBe('designGate');
+    expect(calls).toEqual(['design']);
   });
 });
 
@@ -302,6 +310,53 @@ describe('the full arc', () => {
     expect(snap.value).toBe('done');
 
     expect(calls).toEqual(['frame', 'frame', 'frame', 'spec', 'plan', 'implement', 'implement', 'finish', 'finish']);
+  });
+});
+
+describe('the design arc', () => {
+  test('frame → Direction → design → Design → implement → Ship → finish → Open-PR → done; no spec/plan state leaks in', async () => {
+    const { machine, calls } = scriptedMachine(
+      [
+        { type: 'phase.advance' }, // frame → direction gate
+        { type: 'phase.advance' }, // design → design gate
+        { type: 'phase.advance' }, // design re-entry after gate reject → gate again
+        { type: 'phase.advance' }, // implement → ship gate
+        { type: 'phase.advance' }, // finish (open the PR) → open-pr gate
+      ],
+      'design',
+    );
+    const actor = startActor(machine);
+
+    let snap = await waitFor(actor, quiescent);
+    expect.soft(snap.value).toBe('directionGate');
+
+    actor.send({ type: 'human.approve' });
+    snap = await waitFor(actor, quiescent);
+    expect.soft(snap.value).toBe('designGate');
+
+    // Reject re-enters the design loop (the review-loop phase the gate gates).
+    actor.send({ type: 'human.reject' });
+    snap = await waitFor(actor, quiescent);
+    expect.soft(snap.value).toBe('designGate');
+
+    actor.send({ type: 'human.approve' });
+    snap = await waitFor(actor, quiescent);
+    expect.soft(snap.value).toBe('shipGate');
+
+    actor.send({ type: 'human.approve' });
+    snap = await waitFor(actor, quiescent);
+    expect.soft(snap.value).toBe('openPrGate');
+
+    actor.send({ type: 'human.approve' });
+    snap = await waitFor(actor, (s) => s.status === 'done');
+    expect.soft(snap.value).toBe('done');
+
+    expect.soft(calls).toEqual(['frame', 'design', 'design', 'implement', 'finish']);
+    // No full-only artifact state leaks into the design machine — the arc's whole
+    // point is that spec and plan don't exist as phases here.
+    for (const s of ['specLoop', 'planLoop', 'commitSpecGate', 'planApprovalGate']) {
+      expect.soft(machine.states[s], s).toBeUndefined();
+    }
   });
 });
 

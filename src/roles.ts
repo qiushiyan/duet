@@ -98,10 +98,13 @@ export function shouldResetAfterCompactAbort(role: WorkerRole, isCompactTurn: bo
  * Whether a turn counts as a review round against the phase's backstop cap: the
  * reviewer on a `review*`-tagged prompt, and only the reviewer. A consultant
  * turn NEVER counts — it is additive, never substitutive, so advance_phase's
- * "needs a review round" rule keeps requiring an embedded reviewer round.
+ * "needs a review round" rule keeps requiring an embedded reviewer round. The
+ * midpoint checkpoint is exempt too: it is one-shot mid-build guidance, not a
+ * round of the post-implementation review loop, so counting it would burn a
+ * third of the implement cap on a pause the cap wasn't budgeting for.
  */
 export function countsReviewRound(role: WorkerRole, tag: string): boolean {
-  return role === 'reviewer' && tag.startsWith('review');
+  return role === 'reviewer' && tag.startsWith('review') && tag !== 'review-midpoint';
 }
 
 /**

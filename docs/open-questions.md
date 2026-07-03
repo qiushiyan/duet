@@ -46,17 +46,11 @@ Role–provider decoupling makes orchestrator-on-codex a legal configuration, bu
 
 The bridge is the host-neutral kernel served over stdio MCP (`duet _mcp`) — the same server a codex orchestrator would connect to; the harness-side half exists. Two codex-specific unknowns gate it: **pause/resume at a tool call** (codex has no `canUseTool` callback, and what `codex exec resume` does with a turn ended mid-tool-call is unknown — the hard part), and **tool-call faithfulness** under codex's MCP client. It stays deliberately unbuilt because nobody has wanted the configuration — the interface allows it, no one pays for it. If wanted: a half-day spike mirroring the claude substrate spike, against the same tools.
 
-## Deferred small defects (forensics)
-
-Not design questions — two real, small implementation defects surfaced while tracing an AFK run, kept here only so the prune of their origin spec doesn't lose them. Independent of any feature; fix when convenient.
-
-- **Resume-brief narration of a held gate.** The orchestrator's resume brief can narrate a gate that was *held* (a `high` withheld its auto-cross) as "auto-crossed" — the narration doesn't distinguish the held case from the crossed one (observed in an overnight run's `orchestrator.log`).
-- **`autoApprovals` omits the first gate.** The "while you were away" auto-cross ledger doesn't record the frame/Direction gate, so a morning review of a fully pre-authorized run under-counts by one.
-
 ## Settled, still watched
 
 Resolved by decision, kept only for a live revisit trigger; the substance lives in the named design doc.
 
+- **The design arc, first live run** (`automation-design.md` §"Phases and gates", §"Consultant checkpoints"). Built from the 2026-07-02 telemetry pass over the run corpus — the spec and plan loops marched to round 2 unconditionally, and round-1 update turns spent ~7 min re-deriving wording feedback — but not yet live-run. The first serious design-arc run watches four bets: the design loop converges within its cap of 2 without the reviewer re-growing plan-depth rounds (the section-scoped lens's job); contract assertions seeded from the merged doc stay behavioral, not implementation-echoing (the late-author blindness trade made observable); the one-interruption default never leaves a morning-after wish that Direction had been attended (the same watch overnight carries below); and reviewers actually use the polish split — update turns shrinking from that 7-minute median.
 - **Overnight as full's default posture** (`automation-design.md` §"Gate pre-authorization"). Pre-authorization is the out-of-the-box behavior — a new full run attends only frame and spec. Watch each run's notes for a *recurring* morning reversal at one gate (that argues for restoring its attendance), or for the throwaway-test escape hatch failing to fire (flag when proceeding unanswered would make most downstream work throwaway).
 - **Fire-and-collect interactive `send_prompt`** (`engineering.md` §"Fire-and-collect worker turns"). The in-process dispatch-and-collect path, live-verified. Revisit only if mid-turn session quits become common or overnight orphans misfire — then a detached-child-per-turn model earns its cost.
 - **AFK-resilience caps & the native-watchdog dependency** (`automation-design.md` §"Resilience for the AFK window"). The build caps (90 min, `impl`/`implement`) are 3× the longest measured healthy build, and the forced stream-watchdog facts are pinned to **claude v2.1.196**. Watch run notes for a *healthy* build that legitimately exceeds the cap — raise it, don't let the cap become a scope signal — and re-verify `API_FORCE_IDLE_TIMEOUT` on a claude CLI upgrade: the native half of the native-vs-own partition is the part that can silently regress under us.

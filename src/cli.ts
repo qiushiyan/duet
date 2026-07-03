@@ -247,10 +247,12 @@ program
     'after',
     `
 The shape of a run (pick the arc with --workflow on duet new):
-  full:  frame → DIRECTION gate → spec → COMMIT-SPEC gate → plan → PLAN gate (walk away)
-         → implement (AFK, often hours) → SHIP gate → finish (reconcile docs → PR) → OPEN-PR gate → done
-  rir:   research → DIRECTION gate (walk away) → implement (AFK) → SHIP gate
-         → finish (reconcile docs → PR) → OPEN-PR gate → done
+  full:   frame → DIRECTION gate → spec → COMMIT-SPEC gate → plan → PLAN gate (walk away)
+          → implement (AFK, often hours) → SHIP gate → finish (reconcile docs → PR) → OPEN-PR gate → done
+  design: frame → DIRECTION gate → design (one design doc) → DESIGN gate (walk away)
+          → implement (AFK) → SHIP gate → finish (PR) → OPEN-PR gate → done
+  rir:    research → DIRECTION gate (walk away) → implement (AFK) → SHIP gate
+          → finish (reconcile docs → PR) → OPEN-PR gate → done
 
 Each phase runs in a detached background driver; every command above returns
 immediately, and nothing runs between stops. A stop is a gate (decision), a
@@ -270,14 +272,14 @@ Run state: .duet/runs/<id>/ — state.json is a hint; the JSONL transcripts are 
 
 program
   .command('new')
-  .description('Start a run on the chosen arc (--workflow): full (spec → plan → implement → ship → PR) or rir (research → implement → review → ship).')
-  .option('--spec <path>', 'path to a draft spec file; omit to start from the framing alone (the FRAME phase drafts it)')
+  .description('Start a run on the chosen arc (--workflow): full (spec → plan → implement → ship → PR), design (one design doc → implement → ship → PR), or rir (research → implement → review → ship).')
+  .option('--spec <path>', 'path to a draft of the primary artifact (full: the spec; design: the design doc); omit to start from the framing alone (the FRAME phase drafts it)')
   .option('--framing <file>', 'project briefing file — the only place project knowledge enters; omit both flags to write it in your editor')
   .option('--template <name>', 'seed the editor draft from .duet/templates/<name>.md (bare `duet new` uses .duet/templates/default.md when present); conflicts with --spec/--framing')
-  .option('--workflow <name>', 'which arc to run: full (spec → plan → implement → ship → PR) or rir (research → implement → review); default full. Also settable via a workflow: framing key (flag wins)')
+  .option('--workflow <name>', 'which arc to run: full (spec → plan → implement → ship → PR), design (one design doc replaces spec + plan), or rir (research → implement → review); default full. Also settable via a workflow: framing key (flag wins)')
   .option(
     '--gates-at <phases>',
-    'phases whose gates you attend — the set and presets are workflow-specific (full gates: frame, spec, plan, implement, finish; presets "skip-plan" = walk away at spec approval and return at the Ship gate, "overnight" = frame,spec, "afk" = attend none from the start, keeping every safety net — the consultant nets stay on, which --gateless drops. rir gates: research, implement, finish; preset "afk" = attend none). The rest are pre-authorized and auto-cross with their packets recorded. Default for full: overnight (frame,spec) — plan, Ship, and the Open-PR gate all auto-cross; list `finish` for a post-open review stop on the opened PR. rir attends all three of its gates',
+    'phases whose gates you attend — the set and presets are workflow-specific (full gates: frame, spec, plan, implement, finish; presets "skip-plan" = walk away at spec approval and return at the Ship gate, "overnight" = frame,spec, "afk" = attend none from the start, keeping every safety net — the consultant nets stay on, which --gateless drops. design gates: frame, design, implement, finish; preset "afk". rir gates: research, implement, finish; preset "afk" = attend none). The rest are pre-authorized and auto-cross with their packets recorded. Default for full: overnight (frame,spec) — plan, Ship, and the Open-PR gate all auto-cross; list `finish` for a post-open review stop on the opened PR. Default for design: attend the design gate only (one interruption — read the doc, tap once, walk away). rir attends all three of its gates',
   )
   .option(
     '--retry-infra <n>',
@@ -304,7 +306,7 @@ program
     "walk away from the START: pre-authorize every gate so the run flows to an open PR, AND narrow the consultant to its NON-HOLDING work — its framing third-opinion still informs the direction and the acceptance-contract verify still self-heals and holds a contract that stays broken, but its holding bet audits don't fire. A genuine product/direction high (or a missing contract) can still stop the run; ask_human and the merge stay yours. Conflicts with --gates-at; also settable via a gateless: framing key (flag wins)",
   )
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
-  .option('--interactive', "orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over the attended arc up to the workflow's handoff gate (full: through the plan gate; rir: through the Direction gate); implementation onward runs headless after that handoff")
+  .option('--interactive', "orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over the attended arc up to the workflow's handoff gate (full: through the plan gate; design: through the design gate; rir: through the Direction gate); implementation onward runs headless after that handoff")
   .option('--no-interactive', 'force headless orchestration even when the framing carries interactive: true (the flag wins over the frontmatter)')
   .option('--resume-session <id>', 'warm-start the interactive orchestrator from an existing Claude Code session: resume that session (its discussion context intact) as this run’s orchestrator instead of opening a fresh one. Needs --interactive; capture the id with `printenv CLAUDE_CODE_SESSION_ID` inside the session you want to continue')
   .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; budget?: string; orchestrator?: string; impl?: string; implModel?: string; reviewer?: string; consultant?: string | boolean; gateless?: boolean; tmux?: boolean; interactive?: boolean; resumeSession?: string }) => {
@@ -403,20 +405,24 @@ program
       // of the headless driver — no auto-spawnDrive. runOrchestrate marks the run
       // interactive and launches the wired claude session (it blocks until that
       // session ends). --gates-at still applies to the headless tail after the
-      // workflow's handoff gate (full: plan; rir: Direction).
+      // workflow's handoff gate (full: plan; design: design; rir: Direction).
       console.log(`bringing up the interactive orchestrator for run ${state.runId} …`);
       const launched = runOrchestrate(state, { ...(opts.resumeSession ? { resumeSessionId: opts.resumeSession } : {}) });
       if (launched.error) fail(launched.error.message);
       return;
     }
     const pid = spawnDrive(state);
-    printWatchHints(state, pid, state.specPath ? 'SPEC review loop' : `${entryOf(workflowOf(state)).firstPhase.toUpperCase()} phase`);
+    const entry = entryOf(workflowOf(state));
+    const startLabel = state.specPath && entry.specSkipsTo
+      ? `${entry.specSkipsTo.toUpperCase()} review loop`
+      : `${entry.firstPhase.toUpperCase()} phase`;
+    printWatchHints(state, pid, startLabel);
   });
 
 program
   .command('orchestrate')
   .description(
-    'Bring up the interactive orchestrator for a run: a Claude Code session wired to drive it over the attended arc up to the handoff gate (full: FRAME → PLAN; rir: RESEARCH → Direction), with the single gate-safety ask rule applied. Relaunch to reconnect after a dropped session (it re-anchors on disk via get_task).',
+    'Bring up the interactive orchestrator for a run: a Claude Code session wired to drive it over the attended arc up to the handoff gate (full: FRAME → PLAN; design: FRAME → DESIGN; rir: RESEARCH → Direction), with the single gate-safety ask rule applied. Relaunch to reconnect after a dropped session (it re-anchors on disk via get_task).',
   )
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
   .option('--resume-session <id>', 'warm-start from an existing Claude Code session: resume it (its context intact) as this run’s orchestrator. Capture the id with `printenv CLAUDE_CODE_SESSION_ID` inside that session. Omit to reconnect the orchestrator’s own session after a drop (its id is remembered) or to open a fresh one')

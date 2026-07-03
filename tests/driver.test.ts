@@ -102,9 +102,26 @@ describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)
   // still surface here. Each phase is built against a run of its own arc.
   test.for([
     ...phasesOf('full').map((p) => ['full', p.name] as const),
+    ...phasesOf('design').map((p) => ['design', p.name] as const),
     ...phasesOf('rir').map((p) => ['rir', p.name] as const),
   ])('%s builds a non-empty brief', ([workflow, phase], { projectDir }) => {
     expect(buildPhaseBrief(runOf(projectDir, workflow), phase).trim().length).toBeGreaterThan(0);
+  });
+
+  test('the design-arc briefs anchor on the design doc — no plan vocabulary reaches a design-arc worker prompt', ({ projectDir }) => {
+    const design = runOf(projectDir, 'design');
+    const designBrief = buildPhaseBrief(design, 'design');
+    expect.soft(designBrief).toContain('write-design');
+    expect.soft(designBrief).toContain('review-design');
+    // The design phase brief describes the one-document arc, never a plan step.
+    expect.soft(designBrief).not.toContain('start-plan');
+    const implBrief = buildPhaseBrief(design, 'implement');
+    // The build seeds from implement-design and commits the design doc — full's
+    // "commit the approved plan file" must not leak into this arc.
+    expect.soft(implBrief).toContain('implement-design');
+    expect.soft(implBrief).toContain('commit the approved design doc');
+    expect.soft(implBrief).not.toContain('plan file');
+    expect.soft(implBrief).not.toContain('the whole plan');
   });
 
   // The two load-bearing contracts of the shared openPr brief (full's finish,
@@ -114,7 +131,7 @@ describe('buildPhaseBrief (the shared entry-prompt dispatch — headless parity)
   // — and the `Verification (pending)` checklist that carries the env-verify
   // reminder onto a PR opened after an auto-crossed Ship gate. (The old literal
   // tests pinned the surrounding prose and were brittle; these pin the contract.)
-  test.for([['full', 'finish'], ['rir', 'finish']] as const)(
+  test.for([['full', 'finish'], ['design', 'finish'], ['rir', 'finish']] as const)(
     '%s opens the PR idempotently and leads with the verification checklist',
     ([workflow, phase], { projectDir }) => {
       const brief = buildPhaseBrief(runOf(projectDir, workflow), phase);
@@ -146,15 +163,20 @@ describe('feedbackResumePrompt — the human feedback reaches the worker', () =>
 });
 
 describe('the orchestrator system prompt is arc-neutral', () => {
-  test('the review-loop language defers to the phase rather than universalizing -again/round-2', () => {
-    // It still names Full's mechanisms (discipline preserved) but scopes them to
-    // the phase, and names RIR's single writable round alongside.
-    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('the phase brief names which');
-    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('apply-review');
+  test('the review-loop language defers to the phase rather than enumerating arcs', () => {
+    // The durable prompt teaches the loop discipline in phase-generic terms and
+    // leaves the phase's own snippets to the brief — an arc enumeration there
+    // went stale the moment a third arc landed (the design arc was the second
+    // time; "spec and plan loops" under-described the system it governs).
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('the phase brief names them');
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('writable round');
     expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('single-round phase');
-    // Full's discipline is not weakened — review-*/update-*/respond-*/-again still taught.
+    // The loop discipline is not weakened — review-*/update-*/respond-*/-again still taught.
     expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('update-*');
     expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('-again');
+    // No arc names in the always-on prompt — arcs live in the registry and briefs.
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT.toLowerCase()).not.toContain('rir');
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).not.toContain('spec and plan loops');
   });
 });
 

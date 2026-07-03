@@ -897,6 +897,20 @@ describe('enterAfk — the mid-session AFK handoff (#1)', () => {
     await expect.soft(enterAfk(run, [])).rejects.toThrow(/not orchestrated interactively/);
   });
 
+  test('a bare afk RECORDS its gate crossing in the morning ledger; --gateless (the explicit full-send) does not', async ({
+    projectDir,
+    interactiveRun,
+  }) => {
+    // The forensics gap: `duet afk` crossed the parked gate without a ledger
+    // entry, so the morning review of a handed-off run under-counted by one.
+    // Bare afk is a NON-explicit crossing (the class the severity hold guards
+    // and this ledger exists for) → recorded; --gateless is the explicit
+    // substitute → not ledgered, like an explicit --approve.
+    const parked = atFrameGate(projectDir, interactiveRun);
+    await enterAfk(parked, []);
+    expect.soft(loadRunState(projectDir, interactiveRun.runId).autoApprovals?.map((a) => a.gate)).toEqual(['directionGate']);
+  });
+
   test('the posture survives a co-staged approval rider (the stale-save guard)', async ({ projectDir, interactiveRun }) => {
     const parked = atFrameGate(projectDir, interactiveRun);
     // The hazard: setGatesAt then a whole-state save (a staged rider) must not
@@ -996,6 +1010,7 @@ describe('the severity hold — a high human decision withholds a NON-EXPLICIT c
     await enterAfk(parked, [], { gateless: true }); // an explicit full-send crosses the high, like --approve
     const after = loadRunState(projectDir, interactiveRun.runId);
     expect.soft(after.gateless).toBe(true); // the consultant axis persisted for the headless tail
+    expect.soft(after.autoApprovals).toBeUndefined(); // explicit crossings are never ledgered
     expect.soft(after.gatesAt).toEqual([]); // attend nothing downstream
     expect.soft(after.orchestrationHost).toBeUndefined(); // handed off to headless
     expect.soft(probeRunPosition(after)).not.toEqual({ kind: 'gate', phase: 'frame' }); // frame crossed
@@ -1083,7 +1098,7 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
    */
   const contractRun = async (
     projectDir: string,
-    opts: { consultant?: boolean; writeContract?: boolean; draft?: boolean } = {},
+    opts: { consultant?: boolean; writeContract?: boolean; draft?: boolean; workflow?: 'full' | 'design'; draftPath?: string | null } = {},
   ): Promise<{ state: RunState; specPath: string; contractPath: string }> => {
     await initGit(projectDir);
     const specPath = 'docs/specs/test.md';
@@ -1096,13 +1111,17 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
       bindings: opts.consultant === false ? DEFAULT_BINDINGS : consultantBindings,
       framing: 'f',
       specPath,
+      ...(opts.workflow ? { workflow: opts.workflow } : {}),
     });
     const contractPath = acceptanceContractPathForSpec(specPath);
     if (opts.writeContract !== false) {
       writeFileSync(join(projectDir, contractPath), '[A1] When X, the system SHALL Y.\n  Verify by: run the tests\n');
     }
     if (opts.draft !== false && opts.consultant !== false) {
-      state.acceptanceContractDraft = { path: contractPath, sessionId: 'c-author', authoredAt: '2026-06-24T00:00:00.000Z' };
+      // draftPath: null models the late-author arc's path-less marker (the
+      // consultant settled before advance_phase recorded spec_path).
+      const path = opts.draftPath === null ? {} : { path: opts.draftPath ?? contractPath };
+      state.acceptanceContractDraft = { ...path, sessionId: 'c-author', authoredAt: '2026-06-24T00:00:00.000Z' };
       saveRunState(state);
     }
     return { state, specPath, contractPath };
@@ -1173,6 +1192,39 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
     await freezeContractAt(state, 'plan');
 
     expect.soft(state.acceptanceContract).toBeUndefined(); // not frozen — no authorship proof
+    expect.soft(await headOf(projectDir)).toBe(head);
+  });
+
+  test('no-ops on a marker whose recorded path does not match the derived path (respec drift)', async ({ projectDir }) => {
+    const { state } = await contractRun(projectDir, { draftPath: 'docs/specs/other.acceptance.md' });
+    const head = await headOf(projectDir);
+
+    await freezeContractAt(state, 'plan');
+
+    expect.soft(state.acceptanceContract).toBeUndefined();
+    expect.soft(await headOf(projectDir)).toBe(head);
+  });
+
+  test('design arc: freezes at the design gate on a PATH-LESS marker (late-author — spec_path lands after the consultant settles)', async ({ projectDir }) => {
+    // The design arc's draft flow authors the contract in the same phase that
+    // writes the doc, so the settle-time marker carries no path; the freeze
+    // derives the path at crossing time and verifies the file there.
+    const { state, contractPath } = await contractRun(projectDir, { workflow: 'design', draftPath: null });
+
+    await freezeContractAt(state, 'design');
+
+    const head = await headOf(projectDir);
+    expect.soft(state.acceptanceContract).toEqual({ path: contractPath, commit: head });
+    expect.soft(await inHead(projectDir, contractPath)).toBe(true);
+  });
+
+  test('design arc: the plan gate name does nothing — only the design gate freezes', async ({ projectDir }) => {
+    const { state } = await contractRun(projectDir, { workflow: 'design' });
+    const head = await headOf(projectDir);
+
+    await freezeContractAt(state, 'implement'); // not the design arc's contract gate
+
+    expect.soft(state.acceptanceContract).toBeUndefined();
     expect.soft(await headOf(projectDir)).toBe(head);
   });
 

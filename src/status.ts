@@ -1,5 +1,5 @@
 import type { RunPosition } from './harness/lifecycle.ts';
-import { WORKFLOWS, gateOf, phaseOfGateState, phasesOf } from './phases.ts';
+import { WORKFLOWS, entryOf, gateOf, phaseOfGateState, phasesOf } from './phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
 import type { WorkerRole } from './providers/types.ts';
 import { voicesFor, workerRolesFor } from './roles.ts';
@@ -34,9 +34,14 @@ function completionLine(workflow: WorkflowName): string {
   return opensPr(workflow) ? 'run complete — the PR is open' : 'run complete';
 }
 
-/** Whether a workflow has a spec phase (so a missing spec is worth reporting). */
+/**
+ * Whether a workflow's arc fills the spec slot (so a missing spec is worth
+ * reporting). Keyed on the entry route, not a phase literally named `spec`:
+ * any arc that admits a `--spec` draft entry (full's spec, design's design doc)
+ * produces a primary artifact at specPath; rir has no such slot.
+ */
 function hasSpecPhase(workflow: WorkflowName): boolean {
-  return phasesOf(workflow).some((p) => p.name === 'spec');
+  return entryOf(workflow).specSkipsTo !== undefined;
 }
 
 /** One line describing why the run stopped — the notification body. */

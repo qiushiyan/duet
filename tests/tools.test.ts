@@ -249,6 +249,52 @@ describe('rails (the #1-deep internal-seam surface)', () => {
     expect(text(verify!)).toContain('has not been verified');
   });
 
+  test('contractCheckpointRail: a path-less draft needs a resolvable document path — recorded earlier, or carried by THIS call', ({
+    designConsultantRun,
+  }) => {
+    // Late-author (design's draft flow): the marker proves authorship but holds no
+    // path, and the freeze derives it from specPath at crossing — so an advance
+    // that leaves specPath unresolvable would let the freeze silently no-op and
+    // the run ship contract-less (fail-open). The rail fails closed instead.
+    designConsultantRun.acceptanceContractDraft = { sessionId: 's', authoredAt: 'now' };
+    const bare = contractCheckpointRail({ verb: 'advance the phase' }, railCtx(designConsultantRun, { phase: 'design' }));
+    expect.soft(bare?.isError).toBe(true);
+    expect.soft(text(bare!)).toContain('spec_path');
+    // The refusal's named recovery: the same call carrying spec_path passes.
+    expect.soft(
+      contractCheckpointRail({ verb: 'advance the phase', specPath: 'docs/design/x.md' }, railCtx(designConsultantRun, { phase: 'design' })),
+    ).toBeNull();
+    // A path recorded by an earlier phase (full: the spec gate) also satisfies it.
+    designConsultantRun.specPath = 'docs/design/x.md';
+    expect.soft(contractCheckpointRail({ verb: 'advance the phase' }, railCtx(designConsultantRun, { phase: 'design' }))).toBeNull();
+    // And a draft that carries its own path (full's early-author) never needs one.
+    delete designConsultantRun.specPath;
+    designConsultantRun.acceptanceContractDraft = { path: 'docs/design/x.acceptance.md', sessionId: 's', authoredAt: 'now' };
+    expect.soft(contractCheckpointRail({ verb: 'advance the phase' }, railCtx(designConsultantRun, { phase: 'design' }))).toBeNull();
+  });
+
+  test('verifyCheckpointRail: authored-but-never-froze refuses (a silent freeze failure holds, not ships); never-authored passes', ({
+    consultantRun,
+  }) => {
+    // Never authored: the author gate already held its high for the absence —
+    // there is nothing to verify, so the rail stays out of the way.
+    expect.soft(verifyCheckpointRail({ verb: 'advance the phase' }, railCtx(consultantRun, { phase: 'implement' }))).toBeNull();
+    // Authored, but nothing froze: the freeze's silent no-op paths (document moved
+    // after the contract turn, contract file gone by crossing time) must surface
+    // here rather than erase the backstop with nothing recorded anywhere.
+    consultantRun.acceptanceContractDraft = { sessionId: 's', authoredAt: 'now' };
+    const escaped = verifyCheckpointRail({ verb: 'advance the phase' }, railCtx(consultantRun, { phase: 'implement' }));
+    expect.soft(escaped?.isError).toBe(true);
+    expect.soft(text(escaped!)).toContain('never froze');
+    // The high escape hatch still crosses — recorded, and it holds the AFK crossing.
+    expect.soft(
+      verifyCheckpointRail(
+        { verb: 'advance the phase', humanDecisions: [{ title: 'no frozen target', severity: 'high' }] },
+        railCtx(consultantRun, { phase: 'implement' }),
+      ),
+    ).toBeNull();
+  });
+
   test('the ORDERING invariant: a turn both in-flight and orphaned refuses as in-flight, not orphan', ({ run }) => {
     const r = firstRefusal(
       { role: 'reviewer', tag: 'x', isReviewRound: false },
@@ -1874,6 +1920,48 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     expect.soft(persisted.acceptanceContractDraft?.sessionId).toBeDefined();
   });
 
+  test('a design-arc contract turn records a PATH-LESS marker when spec_path is not yet known (late-author)', async ({
+    projectDir,
+    designConsultantRun,
+  }) => {
+    // The design draft flow authors in the same phase that writes the doc —
+    // spec_path lands only at advance_phase, after this turn settles. The marker
+    // still proves this-run authorship; the freeze derives the path at crossing.
+    const { call } = harness(designConsultantRun, { phase: 'design', consultant: new FakeWorker('claude') });
+
+    await call('send_prompt', { role: 'consultant', tag: 'consultant-contract', body: 'author the contract' });
+
+    const persisted = loadRunState(projectDir, designConsultantRun.runId);
+    expect.soft(persisted.acceptanceContractDraft).toBeDefined();
+    expect.soft(persisted.acceptanceContractDraft?.path).toBeUndefined();
+    expect.soft(persisted.acceptanceContractDraft?.sessionId).toBeDefined();
+  });
+
+  test('design draft flow: an advance omitting spec_path after a path-less contract turn is refused; the re-call WITH it passes', async ({
+    designConsultantRun,
+  }) => {
+    // The fail-open chain this closes: path-less marker satisfies the contract
+    // rail → spec_path never recorded → freezeContractAt silently no-ops at the
+    // crossing → the verify rail sees no contract → the run ships with no frozen
+    // target. The advance that crosses the author gate must leave the path
+    // resolvable, and the refusal must be recoverable in ONE re-call (main's
+    // pre-fix shape — refusing with no way to supply the path — would deadlock
+    // the design draft flow instead).
+    const { call } = harness(designConsultantRun, { phase: 'design', consultant: new FakeWorker('claude') });
+    await call('send_prompt', { role: 'consultant', tag: 'consultant-contract', body: 'author the contract' });
+    designConsultantRun.rounds.design = 1; // reviewLoopRail: the design loop ran
+
+    const bare = await call('advance_phase', { summary: 's', artifacts: ['docs/design/x.md'] });
+    expect.soft(bare.isError).toBe(true);
+    expect.soft(text(bare)).toContain('spec_path');
+    expect.soft(designConsultantRun.terminalMarker).toBeUndefined(); // the phase did NOT end
+
+    const carried = await call('advance_phase', { summary: 's', artifacts: ['docs/design/x.md'], spec_path: 'docs/design/x.md' });
+    expect.soft(carried.isError).toBeUndefined();
+    expect.soft(designConsultantRun.specPath).toBe('docs/design/x.md'); // the freeze can now derive the contract's home
+    expect.soft(designConsultantRun.terminalMarker).toEqual({ phase: 'design', kind: 'advance' });
+  });
+
   test('a consultant turn at the verify phase stamps verifiedAt on the frozen contract (the impl-rail evidence)', async ({
     projectDir,
     consultantRun,
@@ -2153,6 +2241,47 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
 
     // Unbound → byte-for-byte clean.
     expect.soft(buildPhaseBrief(run, 'plan').toLowerCase()).not.toContain('consultant');
+  });
+
+  test('the design brief AUTHORS the contract LATE — after the review loop, before advance; unbound is clean', ({
+    designRun,
+    designConsultantRun,
+  }) => {
+    // The design arc authors after the loop converges (the runs-last pattern),
+    // seeded with the converged doc — the inverse of full's early placement.
+    // Draft flow (no specPath yet): the target path is described by convention.
+    const bound = buildPhaseBrief(designConsultantRun, 'design');
+    expect.soft(bound).toContain('Consultant checkpoint');
+    expect.soft(bound).toContain('consultant-contract');
+    expect.soft(bound).toContain('run this LAST');
+    expect.soft(bound).toContain('.acceptance.md'); // the naming convention, path unknown pre-draft
+    expect.soft(bound).toContain('NOT commit');
+    expect.soft(bound).toContain('human_decision');
+    const reviewLoopAt = bound.indexOf('review-design');
+    const authorAt = bound.indexOf('author the acceptance contract');
+    const advanceAt = bound.indexOf('call advance_phase');
+    expect.soft(reviewLoopAt).toBeGreaterThanOrEqual(0);
+    expect.soft(authorAt).toBeGreaterThan(reviewLoopAt);
+    expect.soft(advanceAt).toBeGreaterThan(authorAt);
+
+    // A --spec entry knows the doc's path, so the derived contract path is literal.
+    designConsultantRun.specPath = 'docs/specs/d.md';
+    mkdirSync(join(designConsultantRun.cwd, 'docs/specs'), { recursive: true });
+    writeFileSync(join(designConsultantRun.cwd, 'docs/specs/d.md'), '# design\n');
+    expect.soft(buildPhaseBrief(designConsultantRun, 'design')).toContain('docs/specs/d.acceptance.md');
+
+    // Unbound → byte-for-byte clean.
+    expect.soft(buildPhaseBrief(designRun, 'design').toLowerCase()).not.toContain('consultant');
+  });
+
+  test('the design implement brief VERIFIES the frozen contract when bound + frozen (full’s registry-driven tail)', ({
+    designConsultantRun,
+  }) => {
+    designConsultantRun.acceptanceContract = { path: 'docs/specs/d.acceptance.md', commit: 'abc123' };
+    const frozen = buildPhaseBrief(designConsultantRun, 'implement');
+    expect.soft(frozen).toContain('consultant-verify');
+    expect.soft(frozen).toContain('docs/specs/d.acceptance.md');
+    expect.soft(frozen).toContain('high human_decision');
   });
 });
 
