@@ -1,5 +1,5 @@
 <snippet_library phase="spec">
-Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in arc order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).
+Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in workflow order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).
 <phase_templates phase="spec">
 <snippet key="write-spec">
 Now, write the spec to the location the framing's conventions name (where specs live is the project's call, not this template's). Ground problem and approach in actual code — read the relevant modules first if you haven't. **Tight prose beats exhaustive sections.**
@@ -185,7 +185,7 @@ Can't find a referenced skill? Tell me immediately for the exact path. **Don't s
 **Most importantly:** does this solve the core UX problem while maintaining a clean technical design?
 </snippet>
 </anytime_helpers>
-<coming_next note="the nominal arc — gate rejects loop back and pre-authorized gates skip the stop; orientation for forward-looking work, not a cue to reach ahead">
+<coming_next note="the workflow’s nominal order — gate rejects loop back and pre-authorized gates skip the stop; orientation for forward-looking work, not a cue to reach ahead">
 <phase name="plan">start-plan, review-plan, update-plan, review-plan-again, update-plan-again</phase>
 <phase name="implement">compact-for-impl, midpoint-status, review-midpoint, respond-midpoint, compact-for-review, implementation-handoff, review-implementation, respond-review, review-implementation-again, respond-review-again, reconcile-docs, ceo-summary</phase>
 <phase name="finish">pr-description, compact-for-cleanup</phase>

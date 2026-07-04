@@ -103,36 +103,36 @@ const CASES: Array<{ name: string; phase: PhaseName; opts: ParityRunOpts }> = [
   },
 
   // ---- design: the one-doc arc (frame pre-authorized by default) ----
-  { name: 'design-frame.default', phase: 'frame', opts: { workflow: 'blueprint' } },
-  { name: 'design-design.draft', phase: 'design', opts: { workflow: 'blueprint', warmSessions: true } },
+  { name: 'blueprint-frame.default', phase: 'frame', opts: { workflow: 'blueprint' } },
+  { name: 'blueprint-design.draft', phase: 'design', opts: { workflow: 'blueprint', warmSessions: true } },
   {
-    name: 'design-design.draft-autocrossed',
+    name: 'blueprint-design.draft-autocrossed',
     phase: 'design',
     opts: { workflow: 'blueprint', warmSessions: true, autoApprovals: ['directionGate'] },
   },
-  { name: 'design-design.review', phase: 'design', opts: { workflow: 'blueprint', spec: true } },
+  { name: 'blueprint-design.review', phase: 'design', opts: { workflow: 'blueprint', spec: true } },
   {
-    name: 'design-design.review-consultant',
+    name: 'blueprint-design.review-consultant',
     phase: 'design',
     opts: { workflow: 'blueprint', spec: true, consultant: true },
   },
   {
-    name: 'design-design.draft-consultant',
+    name: 'blueprint-design.draft-consultant',
     phase: 'design',
     opts: { workflow: 'blueprint', warmSessions: true, consultant: true },
   },
-  { name: 'design-implement.default', phase: 'implement', opts: { workflow: 'blueprint', spec: true, warmSessions: true } },
+  { name: 'blueprint-implement.default', phase: 'implement', opts: { workflow: 'blueprint', spec: true, warmSessions: true } },
   {
-    name: 'design-implement.codex',
+    name: 'blueprint-implement.codex',
     phase: 'implement',
     opts: { workflow: 'blueprint', spec: true, warmSessions: true, codexImplementer: true },
   },
   {
-    name: 'design-implement.consultant-frozen',
+    name: 'blueprint-implement.consultant-frozen',
     phase: 'implement',
     opts: { workflow: 'blueprint', spec: true, warmSessions: true, consultant: true, contract: 'frozen' },
   },
-  { name: 'design-finish.default', phase: 'finish', opts: { workflow: 'blueprint', spec: true, warmSessions: true } },
+  { name: 'blueprint-finish.default', phase: 'finish', opts: { workflow: 'blueprint', spec: true, warmSessions: true } },
 
   // ---- relay: the fixer arc (design's shape; writing reviewer owns the tails) ----
   { name: 'relay-frame.default', phase: 'frame', opts: { workflow: 'relay' } },
@@ -156,23 +156,23 @@ const CASES: Array<{ name: string; phase: PhaseName; opts: ParityRunOpts }> = [
   { name: 'relay-finish.default', phase: 'finish', opts: { workflow: 'relay', spec: true, warmSessions: true } },
 
   // ---- rir: the lighter arc (attend-all by default; one writable round) ----
-  { name: 'rir-research.default', phase: 'research', opts: { workflow: 'short' } },
-  { name: 'rir-research.consultant', phase: 'research', opts: { workflow: 'short', consultant: true } },
-  { name: 'rir-implement.default', phase: 'implement', opts: { workflow: 'short', warmSessions: true } },
-  { name: 'rir-implement.consultant', phase: 'implement', opts: { workflow: 'short', warmSessions: true, consultant: true } },
+  { name: 'short-research.default', phase: 'research', opts: { workflow: 'short' } },
+  { name: 'short-research.consultant', phase: 'research', opts: { workflow: 'short', consultant: true } },
+  { name: 'short-implement.default', phase: 'implement', opts: { workflow: 'short', warmSessions: true } },
+  { name: 'short-implement.consultant', phase: 'implement', opts: { workflow: 'short', warmSessions: true, consultant: true } },
   {
-    name: 'rir-implement.consultant-gateless',
+    name: 'short-implement.consultant-gateless',
     phase: 'implement',
     opts: { workflow: 'short', warmSessions: true, consultant: true, gateless: true, gatesAt: [] },
   },
   {
-    name: 'rir-implement.autocrossed',
+    name: 'short-implement.autocrossed',
     phase: 'implement',
     opts: { workflow: 'short', warmSessions: true, gatesAt: [], autoApprovals: ['directionGate'] },
   },
-  { name: 'rir-finish.default', phase: 'finish', opts: { workflow: 'short', warmSessions: true } },
+  { name: 'short-finish.default', phase: 'finish', opts: { workflow: 'short', warmSessions: true } },
   {
-    name: 'rir-finish.preauthorized',
+    name: 'short-finish.preauthorized',
     phase: 'finish',
     opts: { workflow: 'short', warmSessions: true, gatesAt: [], autoApprovals: ['directionGate', 'shipGate'] },
   },

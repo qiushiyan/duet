@@ -33,8 +33,8 @@ import { LESSONS_DIR } from '../src/snippets.ts';
 import { createTurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import type { TurnDispatcher } from '../src/harness/turn-dispatcher.ts';
 import { BudgetCutoffError } from '../src/providers/types.ts';
-import type { WorkerRole } from '../src/providers/types.ts';
-import { phaseSpec } from '../src/phases.ts';
+import type { VoiceAddress } from '../src/providers/types.ts';
+import { checkerDutyOf, makerDutyOf, phaseSpec, stageOf } from '../src/phases.ts';
 import type { PhaseName } from '../src/phases.ts';
 import { contextSafetyPercent, createRun, loadRunState, markPendingTurn, recordContextUsage, runDirOf, saveRunState, stageHumanInput, workflowOf } from '../src/run-store.ts';
 import { listPendingSteers, stageSteer } from '../src/steer-store.ts';
@@ -51,28 +51,38 @@ import { claudeApiRetry, claudeToolUse, claudeUserToolResult, codexExecCommand, 
 
 type ToolResult = Awaited<ReturnType<KernelTool['handler']>>;
 
+type TestWorker = FakeWorker | DeferredWorker | SyncThrowWorker;
+
 interface HarnessOpts {
   phase?: PhaseName;
   stagedAnswer?: string;
-  implementer?: FakeWorker | DeferredWorker | SyncThrowWorker;
-  reviewer?: FakeWorker | DeferredWorker | SyncThrowWorker;
+  /** The phase-stage MAKER duty's worker (planning: architect; delivery: builder). */
+  maker?: TestWorker;
+  /** The phase-stage CHECKER duty's worker (planning: analyst; delivery: critic or judge). */
+  checker?: TestWorker;
   /** The optional consultant worker — present only when the run binds one. */
-  consultant?: FakeWorker | DeferredWorker | SyncThrowWorker;
+  consultant?: TestWorker;
   home?: string;
   /** Turn on the interactive async path: send_prompt dispatches, check_turns collects. */
   async?: boolean;
   /** The dispatcher's lease check (the background-settle fence); defaults to always-held. */
   holdsLease?: () => boolean;
-  /** Seed the in-memory same-role-in-flight set (the `rails` injection seam). Test-only:
+  /** Seed the in-memory same-address-in-flight set (the `rails` injection seam). Test-only:
    *  absent → the factory gets no `rails` and owns a fresh pair, exactly as production. */
-  turnsInFlight?: Set<WorkerRole>;
+  turnsInFlight?: Set<VoiceAddress>;
 }
 
 function harness(run: RunState, opts: HarnessOpts = {}) {
-  const implementer = opts.implementer ?? new FakeWorker('claude');
-  const reviewer = opts.reviewer ?? new FakeWorker('codex');
-  const providers = { implementer, reviewer, ...(opts.consultant ? { consultant: opts.consultant } : {}) };
   const phase = opts.phase ?? 'spec';
+  const workflow = workflowOf(run);
+  const stage = stageOf(workflow, phase);
+  const maker = opts.maker ?? new FakeWorker('claude');
+  const checker = opts.checker ?? new FakeWorker('codex');
+  const providers = {
+    [makerDutyOf(workflow, stage)]: maker,
+    [checkerDutyOf(workflow, stage)]: checker,
+    ...(opts.consultant ? { consultant: opts.consultant } : {}),
+  };
   const lines: string[] = [];
   const log = (line: string) => lines.push(line);
   // The interactive host injects a real dispatcher (the same module production
@@ -105,7 +115,7 @@ function harness(run: RunState, opts: HarnessOpts = {}) {
   };
   // The terminal decision now lives on the run state the handlers mutate (the
   // persisted marker), not a returned outcome flag — assertions read run.terminalMarker.
-  return { call, implementer, reviewer, consultant: opts.consultant, lines, dispatcher };
+  return { call, maker, checker, consultant: opts.consultant, lines, dispatcher };
 }
 
 /** Let a DeferredWorker's just-resolved settle continuation drain (microtask flush). */
@@ -180,41 +190,41 @@ describe('isCompactBody / perTurnTimeoutFor (S7 — the body-derived compact rul
 describe('rails (the #1-deep internal-seam surface)', () => {
 
   test('sameRoleInFlightRail refuses a live same-role send, passes otherwise', ({ run }) => {
-    const live = sameRoleInFlightRail({ role: 'reviewer', tag: 'x', isReviewRound: false }, railCtx(run, { inFlight: () => true }));
+    const live = sameRoleInFlightRail({ duty: 'analyst', tag: 'x', isReviewRound: false }, railCtx(run, { inFlight: () => true }));
     expect(live?.isError).toBe(true);
     expect(text(live!)).toContain('already in flight');
-    expect(sameRoleInFlightRail({ role: 'reviewer', tag: 'x', isReviewRound: false }, railCtx(run))).toBeNull();
+    expect(sameRoleInFlightRail({ duty: 'analyst', tag: 'x', isReviewRound: false }, railCtx(run))).toBeNull();
   });
 
   test('orphanRail refuses a takeover-policy orphan WITHOUT clearing it', ({ run }) => {
     const clearOrphan = vi.fn();
-    const r = orphanRail({ role: 'reviewer', tag: 'x', isReviewRound: false }, railCtx(run, { orphanedOnDisk: () => true, clearOrphan }));
+    const r = orphanRail({ duty: 'analyst', tag: 'x', isReviewRound: false }, railCtx(run, { orphanedOnDisk: () => true, clearOrphan }));
     expect(r?.isError).toBe(true);
     expect(clearOrphan).not.toHaveBeenCalled();
   });
 
   test('orphanRail clears a discard-and-reseed orphan and returns null (its lone side effect)', ({ consultantRun }) => {
     const clearOrphan = vi.fn();
-    const r = orphanRail({ role: 'consultant', tag: 'x', isReviewRound: false }, railCtx(consultantRun, { orphanedOnDisk: () => true, clearOrphan }));
+    const r = orphanRail({ duty: 'consultant', tag: 'x', isReviewRound: false }, railCtx(consultantRun, { orphanedOnDisk: () => true, clearOrphan }));
     expect(r).toBeNull();
     expect(clearOrphan).toHaveBeenCalledWith('consultant'); // driven by orphanRecoveryFor, not a role literal
   });
 
   test('reviewCapRail refuses at the cap, passes below it or on a non-review send', ({ run }) => {
     run.rounds.spec = 3;
-    const r = reviewCapRail({ role: 'reviewer', tag: 'review-spec', isReviewRound: true }, railCtx(run, { phase: 'spec', cap: 3 }));
+    const r = reviewCapRail({ duty: 'analyst', tag: 'review-spec', isReviewRound: true }, railCtx(run, { phase: 'spec', cap: 3 }));
     expect(r?.isError).toBe(true);
     expect(text(r!)).toContain('backstop cap of 3 review rounds');
     run.rounds.spec = 2;
-    expect(reviewCapRail({ role: 'reviewer', tag: 'review-spec', isReviewRound: true }, railCtx(run, { phase: 'spec', cap: 3 }))).toBeNull();
+    expect(reviewCapRail({ duty: 'analyst', tag: 'review-spec', isReviewRound: true }, railCtx(run, { phase: 'spec', cap: 3 }))).toBeNull();
     run.rounds.spec = 3;
-    expect(reviewCapRail({ role: 'reviewer', tag: 'custom', isReviewRound: false }, railCtx(run, { phase: 'spec', cap: 3 }))).toBeNull();
+    expect(reviewCapRail({ duty: 'analyst', tag: 'custom', isReviewRound: false }, railCtx(run, { phase: 'spec', cap: 3 }))).toBeNull();
   });
 
   test('warnOnceTemplateRail refuses the first identical resend, then allows the deliberate retry', ({ run }) => {
     const ctx = railCtx(run, { sentThisPhase: () => ['review-spec'], resendWarned: new Set() });
-    expect(warnOnceTemplateRail({ role: 'reviewer', tag: 'review-spec', isReviewRound: true }, ctx)?.isError).toBe(true);
-    expect(warnOnceTemplateRail({ role: 'reviewer', tag: 'review-spec', isReviewRound: true }, ctx)).toBeNull();
+    expect(warnOnceTemplateRail({ duty: 'analyst', tag: 'review-spec', isReviewRound: true }, ctx)?.isError).toBe(true);
+    expect(warnOnceTemplateRail({ duty: 'analyst', tag: 'review-spec', isReviewRound: true }, ctx)).toBeNull();
   });
 
   test('the shared terminal group refuses a second terminal call and a stranded phase-exit', ({ run }) => {
@@ -297,7 +307,7 @@ describe('rails (the #1-deep internal-seam surface)', () => {
 
   test('the ORDERING invariant: a turn both in-flight and orphaned refuses as in-flight, not orphan', ({ run }) => {
     const r = firstRefusal(
-      { role: 'reviewer', tag: 'x', isReviewRound: false },
+      { duty: 'analyst', tag: 'x', isReviewRound: false },
       railCtx(run, { inFlight: () => true, orphanedOnDisk: () => true }),
       sameRoleInFlightRail,
       orphanRail,
@@ -310,73 +320,73 @@ describe('rails (the #1-deep internal-seam surface)', () => {
   });
 
   test('contextPressureRail: emergency hard-refuses a non-compact send; a /compact body always passes', ({ run }) => {
-    recordContextUsage(run, 'implementer', { usedTokens: 870_000, windowTokens: 1_000_000 });
-    const r = contextPressureRail({ role: 'implementer', tag: 'custom', isReviewRound: false }, railCtx(run));
+    recordContextUsage(run, 'architect', { usedTokens: 870_000, windowTokens: 1_000_000 });
+    const r = contextPressureRail({ duty: 'architect', tag: 'custom', isReviewRound: false }, railCtx(run));
     expect.soft(r?.isError).toBe(true);
     expect.soft(text(r!)).toContain('87% of its context window');
     expect.soft(text(r!)).toContain('/compact');
     // The named recovery passes the rail — and a repeat non-compact send is
     // still refused (no warn-once at emergency: there is no legitimate override).
-    expect.soft(contextPressureRail({ role: 'implementer', tag: 'custom', isReviewRound: false, isCompactTurn: true }, railCtx(run))).toBeNull();
-    expect.soft(contextPressureRail({ role: 'implementer', tag: 'custom', isReviewRound: false }, railCtx(run))?.isError).toBe(true);
+    expect.soft(contextPressureRail({ duty: 'architect', tag: 'custom', isReviewRound: false, isCompactTurn: true }, railCtx(run))).toBeNull();
+    expect.soft(contextPressureRail({ duty: 'architect', tag: 'custom', isReviewRound: false }, railCtx(run))?.isError).toBe(true);
   });
 
   test('contextPressureRail: caution warns once per role per phase, then judgment overrides', ({ run }) => {
-    recordContextUsage(run, 'implementer', { usedTokens: 780_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 780_000, windowTokens: 1_000_000 });
     const warned = new Set<string>();
-    const first = contextPressureRail({ role: 'implementer', tag: 'custom', isReviewRound: false }, railCtx(run, { resendWarned: warned }));
+    const first = contextPressureRail({ duty: 'architect', tag: 'custom', isReviewRound: false }, railCtx(run, { resendWarned: warned }));
     expect.soft(first?.isError).toBe(true);
     expect.soft(text(first!)).toContain('Compaction is due');
-    expect.soft(contextPressureRail({ role: 'implementer', tag: 'custom', isReviewRound: false }, railCtx(run, { resendWarned: warned }))).toBeNull();
+    expect.soft(contextPressureRail({ duty: 'architect', tag: 'custom', isReviewRound: false }, railCtx(run, { resendWarned: warned }))).toBeNull();
   });
 
   test('contextPressureRail: the high-water mark trips it even when the LAST reading looks low', ({ run }) => {
     // The wedge shape: the death-turn's settle recorded nothing (garbage was
     // rejected), so the last reading is stale-low — but the mid-turn sampler's
     // high-water survived. Safety reads the mark, not the display number.
-    recordContextUsage(run, 'implementer', { usedTokens: 900_000, windowTokens: 1_000_000 });
-    recordContextUsage(run, 'implementer', { usedTokens: 300_000, windowTokens: 1_000_000 });
-    const r = contextPressureRail({ role: 'implementer', tag: 'custom', isReviewRound: false }, railCtx(run));
+    recordContextUsage(run, 'architect', { usedTokens: 900_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 300_000, windowTokens: 1_000_000 });
+    const r = contextPressureRail({ duty: 'architect', tag: 'custom', isReviewRound: false }, railCtx(run));
     expect.soft(r?.isError).toBe(true);
     expect.soft(text(r!)).toContain('90%');
   });
 
   test('contextPressureRail: codex and the ephemeral consultant are structurally out of scope', ({ run, consultantRun }) => {
-    recordContextUsage(run, 'reviewer', { usedTokens: 250_000, windowTokens: 258_400 }); // codex at 97%
-    expect.soft(contextPressureRail({ role: 'reviewer', tag: 'custom', isReviewRound: false }, railCtx(run))).toBeNull();
+    recordContextUsage(run, 'analyst', { usedTokens: 250_000, windowTokens: 258_400 }); // codex at 97%
+    expect.soft(contextPressureRail({ duty: 'analyst', tag: 'custom', isReviewRound: false }, railCtx(run))).toBeNull();
     recordContextUsage(consultantRun, 'consultant', { usedTokens: 950_000, windowTokens: 1_000_000 });
-    expect.soft(contextPressureRail({ role: 'consultant', tag: 'custom', isReviewRound: false }, railCtx(consultantRun))).toBeNull();
+    expect.soft(contextPressureRail({ duty: 'consultant', tag: 'custom', isReviewRound: false }, railCtx(consultantRun))).toBeNull();
   });
 });
 
 describe('send_prompt', () => {
   test('routes to the addressed worker and returns its response', async ({ run }) => {
-    const { call, reviewer } = harness(run);
-    const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review this' });
+    const { call, checker } = harness(run);
+    const result = await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review this' });
 
     expect(result.isError).toBeUndefined();
     expect(text(result)).toBe('scripted response');
-    expect(reviewer.calls).toEqual([
+    expect(checker.calls).toEqual([
       { prompt: 'review this', sessionId: undefined, readOnly: true, cwd: run.cwd, onSessionId: expect.any(Function) },
     ]);
   });
 
-  test('continues the same worker session across calls and lets the implementer write', async ({ run }) => {
-    const { call, implementer } = harness(run);
-    await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft it' });
-    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+  test('continues the same worker session across calls and lets the architect write', async ({ run }) => {
+    const { call, maker } = harness(run);
+    await call('send_prompt', { duty: 'architect', tag: 'write-spec', body: 'draft it' });
+    await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'continue' });
 
-    expect(implementer.calls[0]?.readOnly).toBe(false);
-    expect(implementer.calls[1]?.sessionId).toBe('session-1');
+    expect(maker.calls[0]?.readOnly).toBe(false);
+    expect(maker.calls[1]?.sessionId).toBe('session-1');
   });
 
   test('accumulates claude cost in dollars and codex cost in tokens', async ({ projectDir, run }) => {
-    const implementer = new FakeWorker('claude', [{ costUsd: 1.25 }]);
-    const reviewer = new FakeWorker('codex', [{ tokens: { input: 1000, output: 50 } }]);
-    const { call } = harness(run, { implementer, reviewer });
+    const maker = new FakeWorker('claude', [{ costUsd: 1.25 }]);
+    const checker = new FakeWorker('codex', [{ tokens: { input: 1000, output: 50 } }]);
+    const { call } = harness(run, { maker, checker });
 
-    await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
-    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    await call('send_prompt', { duty: 'architect', tag: 'write-spec', body: 'draft' });
+    await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
 
     const persisted = loadRunState(projectDir, run.runId);
     expect.soft(persisted.costs.claudeWorkersUsd).toBe(1.25);
@@ -390,9 +400,9 @@ describe('send_prompt', () => {
     projectDir,
     run,
   }) => {
-    const implementer = new FakeWorker('claude'); // default script → no costUsd, like an interactive turn
-    const { call } = harness(run, { implementer });
-    await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+    const maker = new FakeWorker('claude'); // default script → no costUsd, like an interactive turn
+    const { call } = harness(run, { maker });
+    await call('send_prompt', { duty: 'architect', tag: 'write-spec', body: 'draft' });
 
     const persisted = loadRunState(projectDir, run.runId);
     expect.soft(persisted.costs.claudeWorkersCostPartial).toBe(true);
@@ -401,9 +411,9 @@ describe('send_prompt', () => {
 
   test('logs both sides of the exchange into the voice log', async ({ projectDir, run }) => {
     const { call } = harness(run);
-    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review the spec' });
+    await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review the spec' });
 
-    const log = readFileSync(join(runDirOf(projectDir, run.runId), 'reviewer.log'), 'utf8');
+    const log = readFileSync(join(runDirOf(projectDir, run.runId), 'analyst.log'), 'utf8');
     expect.soft(log).toContain('◀ prompt (tag=review-spec, from orchestrator)');
     expect.soft(log).toContain('review the spec');
     expect.soft(log).toContain('▶ response (session session-1)');
@@ -413,25 +423,25 @@ describe('send_prompt', () => {
     projectDir,
     run,
   }) => {
-    const reviewer = new FakeWorker('codex', [{ context: { usedTokens: 62_228, windowTokens: 258_400 } }]);
-    const { call } = harness(run, { reviewer });
-    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    const checker = new FakeWorker('codex', [{ context: { usedTokens: 62_228, windowTokens: 258_400 } }]);
+    const { call } = harness(run, { checker });
+    await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
 
     const persisted = loadRunState(projectDir, run.runId);
-    expect.soft(persisted.contextUsage?.reviewer).toMatchObject({ usedTokens: 62_228, windowTokens: 258_400 });
+    expect.soft(persisted.contextUsage?.analyst).toMatchObject({ usedTokens: 62_228, windowTokens: 258_400 });
     expect
-      .soft(readFileSync(join(runDirOf(projectDir, run.runId), 'context', 'reviewer'), 'utf8'))
+      .soft(readFileSync(join(runDirOf(projectDir, run.runId), 'context', 'analyst'), 'utf8'))
       .toBe('24%\n');
     expect
-      .soft(readFileSync(join(runDirOf(projectDir, run.runId), 'reviewer.log'), 'utf8'))
+      .soft(readFileSync(join(runDirOf(projectDir, run.runId), 'analyst.log'), 'utf8'))
       .toContain('▶ response (session session-1) · context 24%');
   });
 
   test('the footer reports a claude turn in dollars — context, cost, round (F5)', async ({ run }) => {
-    // A claude worker (the implementer) reports costUsd — the footer's $ figure.
-    const implementer = new FakeWorker('claude', [{ costUsd: 1.25, context: { usedTokens: 50, windowTokens: 200 } }]);
-    const { call } = harness(run, { implementer });
-    const result = await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+    // A claude worker (the maker) reports costUsd — the footer's $ figure.
+    const maker = new FakeWorker('claude', [{ costUsd: 1.25, context: { usedTokens: 50, windowTokens: 200 } }]);
+    const { call } = harness(run, { maker });
+    const result = await call('send_prompt', { duty: 'architect', tag: 'write-spec', body: 'draft' });
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
     expect.soft(joined).toContain('context 25%'); // 50/200
     expect.soft(joined).toMatch(/claude \$1\.25/);
@@ -439,12 +449,12 @@ describe('send_prompt', () => {
   });
 
   test('the footer reports a codex turn in TOKENS, never a phantom $0.00 (F5 — the codex fix)', async ({ run }) => {
-    // A real codex worker (the default reviewer) reports tokens and NO costUsd —
+    // A real codex worker (the default checker) reports tokens and NO costUsd —
     // the pre-fix footer read only claudeWorkersUsd and showed "workers $0.00"
     // while codex tokens accumulated. The footer must surface the tokens instead.
-    const reviewer = new FakeWorker('codex', [{ tokens: { input: 1500, output: 300 }, context: { usedTokens: 50, windowTokens: 200 } }]);
-    const { call } = harness(run, { reviewer });
-    const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    const checker = new FakeWorker('codex', [{ tokens: { input: 1500, output: 300 }, context: { usedTokens: 50, windowTokens: 200 } }]);
+    const { call } = harness(run, { checker });
+    const result = await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
     expect.soft(joined).toContain('codex 2k/300 tok'); // fmtTokens(1500)=2k, 300
     expect.soft(joined).not.toContain('$0.00'); // no phantom claude dollars
@@ -456,20 +466,20 @@ describe('send_prompt', () => {
     // A budget cutoff only happens on a claude worker (the cap is a claude flag),
     // so the checkpoint turn settles its claude cost and the footer reports it
     // alongside the checkpoint note.
-    const implementer = new FakeWorker('claude', [
+    const maker = new FakeWorker('claude', [
       { budgetTruncated: true, sessionId: 'sess-b', costUsd: 0.18, text: 'committed work', context: { usedTokens: 80, windowTokens: 200 } },
     ]);
-    const { call } = harness(run, { implementer });
-    const result = await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+    const { call } = harness(run, { maker });
+    const result = await call('send_prompt', { duty: 'architect', tag: 'write-spec', body: 'draft' });
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
     expect.soft(joined).toContain('budget reached'); // the checkpoint note still rides
     expect.soft(joined).toMatch(/\[context 40% · claude \$0\.18 · round 0\/\d+\]/); // and the footer too
   });
 
   test('a mid-response interruption surfaces the partial work + a continue-not-resend note, and captures the session', async ({ projectDir, run }) => {
-    const implementer = new FakeWorker('claude', [{ interrupted: true, sessionId: 'sess-mid', text: 'partial spec content' }]);
-    const { call } = harness(run, { implementer });
-    const result = await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+    const maker = new FakeWorker('claude', [{ interrupted: true, sessionId: 'sess-mid', text: 'partial spec content' }]);
+    const { call } = harness(run, { maker });
+    const result = await call('send_prompt', { duty: 'architect', tag: 'write-spec', body: 'draft' });
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
     expect.soft(result.isError).toBeUndefined(); // a settled checkpoint, not an error
     expect.soft(joined).toContain('partial spec content'); // the resumable partial work
@@ -494,42 +504,42 @@ describe('send_prompt', () => {
     };
     run.sessions = { 'planning.architect': { provider: 'claude', id: 'planning-era-sess' } };
     saveRunState(run);
-    const implementer = new FakeWorker('codex', [{ sessionId: 'codex-build-sess', text: 'built' }]);
-    const { call } = harness(run, { implementer, phase: 'implement' });
-    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build it' });
+    const maker = new FakeWorker('codex', [{ sessionId: 'codex-build-sess', text: 'built' }]);
+    const { call } = harness(run, { maker, phase: 'implement' });
+    await call('send_prompt', { duty: 'builder', tag: 'custom', body: 'build it' });
     // The dispatch minted fresh — no cross-provider resume reached the worker.
-    expect.soft(implementer.calls[0]?.sessionId).toBeUndefined();
+    expect.soft(maker.calls[0]?.sessionId).toBeUndefined();
     const persisted = loadRunState(projectDir, run.runId);
     expect.soft(persisted.sessions['delivery.builder']).toEqual({ provider: 'codex', id: 'codex-build-sess' });
     expect.soft(persisted.sessions['planning.architect']).toEqual({ provider: 'claude', id: 'planning-era-sess' });
   });
 
   test('a worker failure names the layer, prescribes retry-then-flag, and counts nothing', async ({ run }) => {
-    const reviewer = new FakeWorker('codex', [new Error('spawn codex ENOENT')]);
-    const { call } = harness(run, { reviewer });
-    const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    const checker = new FakeWorker('codex', [new Error('spawn codex ENOENT')]);
+    const { call } = harness(run, { checker });
+    const result = await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
 
     expect(result.isError).toBe(true);
     expect.soft(text(result)).toContain('infrastructure layer (spawn codex ENOENT)');
     expect.soft(text(result)).toContain('Retry this same send_prompt call once');
     expect.soft(run.rounds.spec ?? 0).toBe(0);
-    expect.soft(run.sentSnippets?.spec?.reviewer ?? []).toEqual([]);
+    expect.soft(run.sentSnippets?.spec?.analyst ?? []).toEqual([]);
   });
 
   test('the settle step persists no round and no sent tag on an infra failure (the success-only rule the async path leans on)', async ({
     projectDir,
     run,
   }) => {
-    const reviewer = new FakeWorker('codex', [new Error('spawn codex ENOENT')]);
-    const { call } = harness(run, { reviewer });
-    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    const checker = new FakeWorker('codex', [new Error('spawn codex ENOENT')]);
+    const { call } = harness(run, { checker });
+    await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
 
     // Asserted against DISK, not the in-memory copy: settleTurn's failure path
     // must commit nothing — a failed turn is no round, and its tag stays
     // un-sent so the prescribed retry is clean (no duplicate-template warning).
     const persisted = loadRunState(projectDir, run.runId);
     expect.soft(persisted.rounds.spec ?? 0).toBe(0);
-    expect.soft(persisted.sentSnippets?.spec?.reviewer ?? []).toEqual([]);
+    expect.soft(persisted.sentSnippets?.spec?.analyst ?? []).toEqual([]);
   });
 
   test('a budget-truncated turn settles normally (session, cost, round) and renders a checkpoint, not infra', async ({
@@ -537,11 +547,11 @@ describe('send_prompt', () => {
     run,
   }) => {
     // A budget cutoff only happens on a claude worker (the cap is a claude flag),
-    // so the cut role here is a claude-bound reviewer (a valid config) — the
+    // so the cut role here is a claude-bound checker (a valid config) — the
     // settlement test must model the provider that can actually hit the cap.
-    const reviewer = new FakeWorker('claude', [{ budgetTruncated: true, sessionId: 'sess-b', costUsd: 0.18, text: 'committed work' }]);
-    const { call } = harness(run, { reviewer });
-    const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    const checker = new FakeWorker('claude', [{ budgetTruncated: true, sessionId: 'sess-b', costUsd: 0.18, text: 'committed work' }]);
+    const { call } = harness(run, { checker });
+    const result = await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
 
     expect.soft(result.isError).toBeFalsy(); // a checkpoint is not an error
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
@@ -556,13 +566,13 @@ describe('send_prompt', () => {
     expect.soft(persisted.rounds.spec).toBe(1);
   });
 
-  test('S5: an aborted reviewer turn settles as a resumable checkpoint — session kept, base snippet sent, NO round, abort marker, resume-not-resend', async ({
+  test('S5: an aborted analyst turn settles as a resumable checkpoint — session kept, base snippet sent, NO round, abort marker, resume-not-resend', async ({
     projectDir,
     run,
   }) => {
-    const reviewer = new FakeWorker('codex', [{ aborted: true, sessionId: 'sess-ab' }]);
-    const { call } = harness(run, { reviewer });
-    const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    const checker = new FakeWorker('codex', [{ aborted: true, sessionId: 'sess-ab' }]);
+    const { call } = harness(run, { checker });
+    const result = await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
 
     expect.soft(result.isError).toBeFalsy(); // a settled checkpoint, not an infra error
@@ -572,9 +582,9 @@ describe('send_prompt', () => {
     const persisted = loadRunState(projectDir, run.runId);
     expect.soft(persisted.sessions['planning.analyst']?.id).toBe('sess-ab'); // the resumable handle is captured
     expect.soft(persisted.rounds.spec ?? 0).toBe(0); // NO review round — the abort delivered none
-    expect.soft(persisted.sentSnippets?.spec?.reviewer ?? []).toContain('review-spec'); // base snippet marked sent (a later full re-send must warn)
+    expect.soft(persisted.sentSnippets?.spec?.analyst ?? []).toContain('review-spec'); // base snippet marked sent (a later full re-send must warn)
 
-    const log = readFileSync(join(runDirOf(projectDir, run.runId), 'reviewer.log'), 'utf8');
+    const log = readFileSync(join(runDirOf(projectDir, run.runId), 'analyst.log'), 'utf8');
     expect.soft(log).toContain('⚠ turn aborted (resumable)'); // the abort marker, not a ▶ response
     expect.soft(log).not.toContain('▶ response');
   });
@@ -589,7 +599,7 @@ describe('send_prompt', () => {
     saveRunState(consultantRun);
     const consultant = new FakeWorker('claude', [{ aborted: true, sessionId: 'sess-c' }]);
     const { call } = harness(consultantRun, { consultant, phase: 'plan' });
-    await call('send_prompt', { role: 'consultant', tag: 'consultant-contract', body: 'audit' });
+    await call('send_prompt', { duty: 'consultant', tag: 'consultant-contract', body: 'audit' });
 
     const persisted = loadRunState(projectDir, consultantRun.runId);
     expect.soft(persisted.acceptanceContractDraft).toBeUndefined(); // checkpoint NOT recorded
@@ -599,23 +609,23 @@ describe('send_prompt', () => {
   test('S7: a /compact send carries the short 8-min cap; a normal send carries no override (blocking host)', async ({
     run,
   }) => {
-    const implementer = new FakeWorker('claude');
-    const { call } = harness(run, { implementer });
-    await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact keep the spec, drop the journey' });
-    await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft the spec' });
+    const maker = new FakeWorker('claude');
+    const { call } = harness(run, { maker });
+    await call('send_prompt', { duty: 'architect', tag: 'custom', body: '/compact keep the spec, drop the journey' });
+    await call('send_prompt', { duty: 'architect', tag: 'write-spec', body: 'draft the spec' });
 
-    expect.soft(implementer.calls[0]?.timeoutMs).toBe(8 * 60_000); // the /compact send
-    expect.soft(implementer.calls[1]?.timeoutMs).toBeUndefined(); // the normal send
+    expect.soft(maker.calls[0]?.timeoutMs).toBe(8 * 60_000); // the /compact send
+    expect.soft(maker.calls[1]?.timeoutMs).toBeUndefined(); // the normal send
   });
 
-  test('S7: an accepted-but-failed /compact resets the implementer session and prescribes recover-context (body-derived, tag=custom)', async ({
+  test('S7: an accepted-but-failed /compact resets the architect session and prescribes recover-context (body-derived, tag=custom)', async ({
     projectDir,
     run,
   }) => {
     // tag=custom proves the reset is BODY-derived, never tag-derived.
-    const implementer = new FakeWorker('claude', [{ aborted: true, sessionId: 'sess-compact' }]);
-    const { call } = harness(run, { implementer });
-    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact drop the journey' });
+    const maker = new FakeWorker('claude', [{ aborted: true, sessionId: 'sess-compact' }]);
+    const { call } = harness(run, { maker });
+    const result = await call('send_prompt', { duty: 'architect', tag: 'custom', body: '/compact drop the journey' });
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
 
     // The bloated session is reset (not resumed) so the next send mints fresh.
@@ -633,37 +643,37 @@ describe('send_prompt', () => {
     // discarded, so recording the template "sent" would make a legitimate
     // same-phase re-compact hit the false "already sent this phase" warn-once —
     // it must NOT be recorded against the session that no longer exists.
-    const implementer = new FakeWorker('claude', [{ aborted: true, sessionId: 'sess-compact' }]);
-    const { call } = harness(run, { implementer });
-    await call('send_prompt', { role: 'implementer', tag: 'compact-for-impl', body: '/compact drop the journey' });
+    const maker = new FakeWorker('claude', [{ aborted: true, sessionId: 'sess-compact' }]);
+    const { call } = harness(run, { maker });
+    await call('send_prompt', { duty: 'architect', tag: 'compact-for-impl', body: '/compact drop the journey' });
 
     const after = loadRunState(projectDir, run.runId);
     expect.soft(after.sessions['planning.architect']).toBeUndefined(); // the bloated session was reset
-    expect.soft(after.sentSnippets?.spec?.implementer ?? []).not.toContain('compact-for-impl'); // …so nothing is marked sent to it
+    expect.soft(after.sentSnippets?.spec?.architect ?? []).not.toContain('compact-for-impl'); // …so nothing is marked sent to it
   });
 
   test('contextCapFor: the emergency band of the known window, only where the hazard exists', ({ run, consultantRun }) => {
     // A persistent claude role with a known window gets the cap…
-    recordContextUsage(run, 'implementer', { usedTokens: 170_000, windowTokens: 1_000_000 });
-    expect.soft(contextCapFor(run, 'spec', 'implementer', false)).toBe(850_000);
+    recordContextUsage(run, 'architect', { usedTokens: 170_000, windowTokens: 1_000_000 });
+    expect.soft(contextCapFor(run, 'architect', false)).toBe(850_000);
     // …a /compact turn never does (its whole job is running at high fill)…
-    expect.soft(contextCapFor(run, 'spec', 'implementer', true)).toBeUndefined();
-    // …codex self-compacts (the default reviewer binding)…
-    recordContextUsage(run, 'reviewer', { usedTokens: 100_000, windowTokens: 258_400 });
-    expect.soft(contextCapFor(run, 'spec', 'reviewer', false)).toBeUndefined();
+    expect.soft(contextCapFor(run, 'architect', true)).toBeUndefined();
+    // …codex self-compacts (the default checker binding)…
+    recordContextUsage(run, 'analyst', { usedTokens: 100_000, windowTokens: 258_400 });
+    expect.soft(contextCapFor(run, 'analyst', false)).toBeUndefined();
     // …an unknown window (no reading yet) is honest absence, not a guess…
-    expect.soft(contextCapFor(consultantRun, 'spec', 'implementer', false)).toBeUndefined();
+    expect.soft(contextCapFor(consultantRun, 'architect', false)).toBeUndefined();
     // …and the ephemeral consultant seeds fresh every turn, so even with a
     // reading it accumulates nothing.
     recordContextUsage(consultantRun, 'consultant', { usedTokens: 100_000, windowTokens: 1_000_000 });
-    expect.soft(contextCapFor(consultantRun, 'spec', 'consultant', false)).toBeUndefined();
+    expect.soft(contextCapFor(consultantRun, 'consultant', false)).toBeUndefined();
   });
 
-  test('the pressure policy follows the PHASE-EFFECTIVE binding, not the base (relay criss-cross)', ({ projectDir }) => {
-    // relay's post-handoff reviewer is claude via the build override — its
-    // session is metered like any persistent claude session, even though the
-    // base reviewer binding is codex; and the post-handoff implementer
-    // (codex via its override) leaves the policy despite its claude base.
+  test("the pressure policy follows each DUTY's frozen binding (relay criss-cross)", ({ projectDir }) => {
+    // relay's judge binds claude — its session is metered like any persistent
+    // claude session even though its stage-mate builder runs codex, which
+    // self-compacts and leaves the policy. A duty names its own binding, so no
+    // phase parameter is needed to say which session a reading governs.
     const relay = createRun({
       cwd: projectDir,
       workflow: 'relay',
@@ -678,34 +688,36 @@ describe('send_prompt', () => {
         },
       },
     });
-    recordContextUsage(relay, 'reviewer', { usedTokens: 100_000, windowTokens: 1_000_000 });
-    recordContextUsage(relay, 'implementer', { usedTokens: 100_000, windowTokens: 1_000_000 });
-    // Pre-handoff: the base pair — claude implementer metered, codex reviewer not.
-    expect.soft(contextCapFor(relay, 'design', 'implementer', false)).toBe(850_000);
-    expect.soft(contextCapFor(relay, 'design', 'reviewer', false)).toBeUndefined();
-    // Post-handoff: the criss-cross — the claude fixer metered, the codex builder not.
-    expect.soft(contextCapFor(relay, 'implement', 'reviewer', false)).toBe(850_000);
-    expect.soft(contextCapFor(relay, 'implement', 'implementer', false)).toBeUndefined();
+    recordContextUsage(relay, 'architect', { usedTokens: 100_000, windowTokens: 1_000_000 });
+    recordContextUsage(relay, 'analyst', { usedTokens: 100_000, windowTokens: 1_000_000 });
+    recordContextUsage(relay, 'judge', { usedTokens: 100_000, windowTokens: 1_000_000 });
+    recordContextUsage(relay, 'builder', { usedTokens: 100_000, windowTokens: 1_000_000 });
+    // Planning: the claude architect is metered, the codex analyst is not.
+    expect.soft(contextCapFor(relay, 'architect', false)).toBe(850_000);
+    expect.soft(contextCapFor(relay, 'analyst', false)).toBeUndefined();
+    // Delivery: the criss-cross — the claude judge metered, the codex builder not.
+    expect.soft(contextCapFor(relay, 'judge', false)).toBe(850_000);
+    expect.soft(contextCapFor(relay, 'builder', false)).toBeUndefined();
   });
 
   test('a blocking send threads the context cap into the worker turn; a /compact send does not', async ({ run }) => {
-    recordContextUsage(run, 'implementer', { usedTokens: 400_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 400_000, windowTokens: 1_000_000 });
     saveRunState(run);
-    const implementer = new FakeWorker('claude');
-    const { call } = harness(run, { implementer });
-    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build the next slice' });
-    await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact keep the model, drop the journey' });
+    const maker = new FakeWorker('claude');
+    const { call } = harness(run, { maker });
+    await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'build the next slice' });
+    await call('send_prompt', { duty: 'architect', tag: 'custom', body: '/compact keep the model, drop the journey' });
 
-    expect.soft(implementer.calls[0]?.contextCapTokens).toBe(850_000);
-    expect.soft(implementer.calls[1]?.contextCapTokens).toBeUndefined();
+    expect.soft(maker.calls[0]?.contextCapTokens).toBe(850_000);
+    expect.soft(maker.calls[1]?.contextCapTokens).toBeUndefined();
   });
 
   test('a context-cut turn (aborted + exhausted) prescribes compact-then-resume, never a bare resume', async ({ run }) => {
-    const implementer = new FakeWorker('claude', [
+    const maker = new FakeWorker('claude', [
       { text: '', sessionId: 'sess-cut', aborted: true, contextExhausted: true },
     ]);
-    const { call } = harness(run, { implementer });
-    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build' });
+    const { call } = harness(run, { maker });
+    const result = await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'build' });
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
 
     expect.soft(result.isError).toBeFalsy(); // a settled checkpoint
@@ -716,22 +728,22 @@ describe('send_prompt', () => {
   });
 
   test('the footer carries a band marker for in-scope roles — glanceable state, no repeated procedure', async ({ run }) => {
-    // caution band on the implementer (claude, persistent): the fill gets the
-    // marker; a codex reviewer at a higher fill gets the bare number (it
+    // caution band on the maker (claude, persistent): the fill gets the
+    // marker; a codex checker at a higher fill gets the bare number (it
     // compacts itself, so pressure language would be noise).
-    const implementer = new FakeWorker('claude', [
+    const maker = new FakeWorker('claude', [
       { text: 'built it', sessionId: 's1', context: { usedTokens: 780_000, windowTokens: 1_000_000 } },
     ]);
-    const reviewer = new FakeWorker('codex', [
+    const checker = new FakeWorker('codex', [
       { text: 'reviewed', sessionId: 'r1', context: { usedTokens: 250_000, windowTokens: 258_400 } },
     ]);
-    const { call } = harness(run, { implementer, reviewer });
+    const { call } = harness(run, { maker, checker });
 
-    const built = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build' });
+    const built = await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'build' });
     const builtText = built.content.map((c) => (c as { text: string }).text).join('\n');
     expect.soft(builtText).toContain('context 78% — compaction due');
 
-    const reviewed = await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'review' });
+    const reviewed = await call('send_prompt', { duty: 'analyst', tag: 'custom', body: 'review' });
     const reviewedText = reviewed.content.map((c) => (c as { text: string }).text).join('\n');
     expect.soft(reviewedText).toContain('context 97%');
     expect.soft(reviewedText).not.toContain('compaction due');
@@ -741,21 +753,21 @@ describe('send_prompt', () => {
     // The whole recovery loop through the real handler: a near-full session
     // refuses the work send, the /compact passes and clears the reading, and
     // the re-sent work prompt then dispatches normally.
-    recordContextUsage(run, 'implementer', { usedTokens: 870_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 870_000, windowTokens: 1_000_000 });
     saveRunState(run);
-    const implementer = new FakeWorker('claude');
-    const { call } = harness(run, { implementer });
+    const maker = new FakeWorker('claude');
+    const { call } = harness(run, { maker });
 
-    const refused = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'keep building' });
+    const refused = await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'keep building' });
     expect.soft(refused.isError).toBe(true);
-    expect.soft(implementer.calls.length).toBe(0); // nothing dispatched
+    expect.soft(maker.calls.length).toBe(0); // nothing dispatched
 
-    const compacted = await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact keep the model' });
+    const compacted = await call('send_prompt', { duty: 'architect', tag: 'custom', body: '/compact keep the model' });
     expect.soft(compacted.isError).toBeFalsy();
 
-    const resumed = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'keep building' });
+    const resumed = await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'keep building' });
     expect.soft(resumed.isError).toBeFalsy(); // the reading cleared with the compact — the rail stands down
-    expect.soft(implementer.calls.length).toBe(2);
+    expect.soft(maker.calls.length).toBe(2);
   });
 
   test('a context-overflow failure prescribes /compact, never "retry this same call" (the wedge’s futile-retry fix)', async ({
@@ -767,11 +779,11 @@ describe('send_prompt', () => {
     // obeyed it into a 10-hour park. (No prior session here, so the salvage
     // ladder stays out — the prompt itself was over-window — and the
     // prescription renders.)
-    const implementer = new FakeWorker('claude', [
+    const maker = new FakeWorker('claude', [
       new Error('claude worker turn failed (success): Prompt is too long'),
     ]);
-    const { call } = harness(run, { implementer });
-    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue the keystone' });
+    const { call } = harness(run, { maker });
+    const result = await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'continue the keystone' });
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
 
     expect.soft(result.isError).toBe(true);
@@ -788,20 +800,20 @@ describe('send_prompt', () => {
   }) => {
     // One run through the intervention kinds, asserting the durable ledger the
     // morning review reads (status's third while-you-were-away section).
-    recordContextUsage(run, 'implementer', { usedTokens: 410_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 410_000, windowTokens: 1_000_000 });
     run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-1' } };
     saveRunState(run);
-    const implementer = new FakeWorker('claude', [
+    const maker = new FakeWorker('claude', [
       { text: 'compacted', sessionId: 'sess-1' }, // an orchestrator-authored /compact
       { text: '', sessionId: 'sess-1', aborted: true, contextExhausted: true }, // a context-deadline cutoff
     ]);
-    const { call } = harness(run, { implementer });
-    await call('send_prompt', { role: 'implementer', tag: 'compact-for-impl', body: '/compact keep the plan' });
-    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build' });
+    const { call } = harness(run, { maker });
+    await call('send_prompt', { duty: 'architect', tag: 'compact-for-impl', body: '/compact keep the plan' });
+    await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'build' });
 
     const events = loadRunState(projectDir, run.runId).contextEvents ?? [];
     expect.soft(events.map((e) => e.kind)).toEqual(['compact', 'cutoff']);
-    expect.soft(events[0]?.role).toBe('implementer');
+    expect.soft(events[0]?.voice).toBe('architect');
     expect.soft(events[0]?.preTokens).toBe(410_000); // captured before the clear
     expect.soft(events[0]?.windowTokens).toBe(1_000_000);
   });
@@ -812,14 +824,14 @@ describe('send_prompt', () => {
   }) => {
     run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-wedged' } };
     saveRunState(run);
-    const implementer = new FakeWorker('claude', [
+    const maker = new FakeWorker('claude', [
       new Error('claude worker turn failed (success): Prompt is too long'),
       { text: 'compacted', sessionId: 'sess-wedged' }, // the salvage succeeds
       new Error('claude worker turn failed (success): Prompt is too long'), // then the floor proves too high
     ]);
-    const { call } = harness(run, { implementer });
-    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
-    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+    const { call } = harness(run, { maker });
+    await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'continue' });
+    await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'continue' });
 
     const kinds = (loadRunState(projectDir, run.runId).contextEvents ?? []).map((e) => e.kind);
     expect(kinds).toEqual(['salvage-compact', 'session-reset']);
@@ -831,12 +843,12 @@ describe('send_prompt', () => {
   }) => {
     run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-wedged' } };
     saveRunState(run);
-    const implementer = new FakeWorker('claude', [
+    const maker = new FakeWorker('claude', [
       new Error('claude worker turn failed (success): Prompt is too long'),
       { text: 'compacted', sessionId: 'sess-wedged' },
     ]);
-    const { call } = harness(run, { implementer });
-    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue the keystone' });
+    const { call } = harness(run, { maker });
+    const result = await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'continue the keystone' });
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
 
     expect.soft(result.isError).toBe(true); // the SEND failed — but recovery already ran
@@ -844,12 +856,12 @@ describe('send_prompt', () => {
     expect.soft(joined).toContain('re-send this same prompt');
     // The salvage turn itself: a /compact with the generic seeded instructions
     // and the short compact cap, into the same session.
-    expect.soft(implementer.calls[1]?.prompt).toMatch(/^\/compact /);
-    expect.soft(implementer.calls[1]?.prompt).toContain('automatic recovery step');
-    expect.soft(implementer.calls[1]?.timeoutMs).toBe(COMPACT_TIMEOUT_MS);
-    expect.soft(implementer.calls[1]?.sessionId).toBe('sess-wedged');
+    expect.soft(maker.calls[1]?.prompt).toMatch(/^\/compact /);
+    expect.soft(maker.calls[1]?.prompt).toContain('automatic recovery step');
+    expect.soft(maker.calls[1]?.timeoutMs).toBe(COMPACT_TIMEOUT_MS);
+    expect.soft(maker.calls[1]?.sessionId).toBe('sess-wedged');
     // The compact settle cleared the reading — the pressure rail stands down.
-    expect.soft(loadRunState(projectDir, run.runId).contextUsage?.implementer).toBeUndefined();
+    expect.soft(loadRunState(projectDir, run.runId).contextUsage?.architect).toBeUndefined();
   });
 
   test('the salvage ladder: a salvage that also fails resets the session and prescribes recover-context', async ({
@@ -858,15 +870,15 @@ describe('send_prompt', () => {
   }) => {
     run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-wedged' } };
     saveRunState(run);
-    const implementer = new FakeWorker('claude', [
+    const maker = new FakeWorker('claude', [
       new Error('claude worker turn failed (success): Prompt is too long'),
       new Error('claude worker turn failed (success): Prompt is too long'), // the compact bounces too
     ]);
-    const { call } = harness(run, { implementer });
-    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+    const { call } = harness(run, { maker });
+    const result = await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'continue' });
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
 
-    expect.soft(joined).toContain('RESET the implementer');
+    expect.soft(joined).toContain('RESET the architect');
     expect.soft(joined).toContain('recover-context');
     expect.soft(joined).not.toContain('re-send this same prompt'); // a fresh session must be re-anchored, not re-sent
     expect.soft(loadRunState(projectDir, run.runId).sessions['planning.architect']).toBeUndefined();
@@ -878,19 +890,19 @@ describe('send_prompt', () => {
   }) => {
     run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-wedged' } };
     saveRunState(run);
-    const implementer = new FakeWorker('claude', [
+    const maker = new FakeWorker('claude', [
       new Error('claude worker turn failed (success): Prompt is too long'),
       { text: 'compacted', sessionId: 'sess-wedged' }, // the salvage succeeds…
       new Error('claude worker turn failed (success): Prompt is too long'), // …but the floor is too high
     ]);
-    const { call } = harness(run, { implementer });
-    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
-    const second = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+    const { call } = harness(run, { maker });
+    await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'continue' });
+    const second = await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'continue' });
     const joined = second.content.map((c) => (c as { text: string }).text).join('\n');
 
     expect.soft(joined).toContain('again after an automatic salvage compaction');
     expect.soft(joined).toContain('recover-context');
-    expect.soft(implementer.calls.length).toBe(3); // no second salvage /compact was dispatched
+    expect.soft(maker.calls.length).toBe(3); // no second salvage /compact was dispatched
     expect.soft(loadRunState(projectDir, run.runId).sessions['planning.architect']).toBeUndefined();
   });
 
@@ -900,12 +912,12 @@ describe('send_prompt', () => {
   }) => {
     run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-wedged' } };
     saveRunState(run);
-    const implementer = new FakeWorker('claude', [
+    const maker = new FakeWorker('claude', [
       new Error('claude worker turn failed (success): Prompt is too long'),
       { aborted: true, sessionId: 'sess-wedged' }, // the salvage compact hits its 8-min cap
     ]);
-    const { call } = harness(run, { implementer });
-    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+    const { call } = harness(run, { maker });
+    const result = await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'continue' });
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
 
     expect.soft(joined).toContain('cut at its cap');
@@ -918,11 +930,11 @@ describe('send_prompt', () => {
   }) => {
     // Overflow evidence dominates the generic mid-response prescription: a
     // continuation into a ceiling-full session bounces off the same ceiling.
-    const implementer = new FakeWorker('claude', [
+    const maker = new FakeWorker('claude', [
       { text: 'partial keystone work', sessionId: 'sess-wedge', interrupted: true, contextExhausted: true },
     ]);
-    const { call } = harness(run, { implementer });
-    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'continue' });
+    const { call } = harness(run, { maker });
+    const result = await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'continue' });
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
 
     expect.soft(result.isError).toBeFalsy(); // a settled checkpoint, not an error
@@ -941,56 +953,56 @@ describe('send_prompt', () => {
     // pre-compact conversation) — recording it would pin the high-water at the
     // very size the compact just removed. The reading clears instead; the next
     // honest turn re-establishes it.
-    recordContextUsage(run, 'implementer', { usedTokens: 410_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 410_000, windowTokens: 1_000_000 });
     saveRunState(run);
-    const implementer = new FakeWorker('claude', [
+    const maker = new FakeWorker('claude', [
       { sessionId: 'sess-1', context: { usedTokens: 405_000, windowTokens: 1_000_000 } },
     ]);
-    const { call } = harness(run, { implementer });
-    await call('send_prompt', { role: 'implementer', tag: 'compact-for-impl', body: '/compact keep the plan, drop the journey' });
+    const { call } = harness(run, { maker });
+    await call('send_prompt', { duty: 'architect', tag: 'compact-for-impl', body: '/compact keep the plan, drop the journey' });
 
     const after = loadRunState(projectDir, run.runId);
-    expect.soft(after.contextUsage?.implementer).toBeUndefined();
-    expect.soft(existsSync(join(runDirOf(projectDir, run.runId), 'context', 'implementer'))).toBe(false);
+    expect.soft(after.contextUsage?.architect).toBeUndefined();
+    expect.soft(existsSync(join(runDirOf(projectDir, run.runId), 'context', 'architect'))).toBe(false);
   });
 
   test('an aborted /compact’s session reset clears the context reading with the session', async ({
     projectDir,
     run,
   }) => {
-    recordContextUsage(run, 'implementer', { usedTokens: 978_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 978_000, windowTokens: 1_000_000 });
     saveRunState(run);
-    const implementer = new FakeWorker('claude', [{ aborted: true, sessionId: 'sess-compact' }]);
-    const { call } = harness(run, { implementer });
-    await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact drop the journey' });
+    const maker = new FakeWorker('claude', [{ aborted: true, sessionId: 'sess-compact' }]);
+    const { call } = harness(run, { maker });
+    await call('send_prompt', { duty: 'architect', tag: 'custom', body: '/compact drop the journey' });
 
     const after = loadRunState(projectDir, run.runId);
     expect.soft(after.sessions['planning.architect']).toBeUndefined(); // the reset (existing behavior)
-    expect.soft(after.contextUsage?.implementer).toBeUndefined(); // the fresh session starts near-empty
+    expect.soft(after.contextUsage?.architect).toBeUndefined(); // the fresh session starts near-empty
   });
 
-  test('S7 / Finding-2: an aborted /compact resets the PERSISTENT reviewer too, and the copy names the reviewer (not the implementer)', async ({
+  test('S7 / Finding-2: an aborted /compact resets the PERSISTENT analyst too, and the copy names the analyst (not the architect)', async ({
     projectDir,
     run,
   }) => {
     // The reset is role-policy-gated (shouldResetAfterCompactAbort), NOT hard-coded
-    // to the implementer: a reviewer's /compact aborts identically, so settleTurn
-    // must reset the REVIEWER session and renderTurnResult must name the reviewer.
-    // The bug this pins: render claimed "duet has RESET the implementer" for ANY
-    // aborted compact while settle reset nobody but the implementer — the two sites
+    // to the maker: a checker's /compact aborts identically, so settleTurn
+    // must reset the REVIEWER session and renderTurnResult must name the checker.
+    // The bug this pins: render claimed "duet has RESET the architect" for ANY
+    // aborted compact while settle reset nobody but the maker — the two sites
     // disagreeing. Both now read the one predicate, so they move together.
     run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-keep' }, 'planning.analyst': { provider: 'codex', id: 'rev-old' } };
     saveRunState(run);
-    const reviewer = new FakeWorker('claude', [{ aborted: true, sessionId: 'rev-compact' }]);
-    const { call } = harness(run, { reviewer });
-    const result = await call('send_prompt', { role: 'reviewer', tag: 'custom', body: '/compact drop the journey' });
+    const checker = new FakeWorker('claude', [{ aborted: true, sessionId: 'rev-compact' }]);
+    const { call } = harness(run, { checker });
+    const result = await call('send_prompt', { duty: 'analyst', tag: 'custom', body: '/compact drop the journey' });
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
 
     const after = loadRunState(projectDir, run.runId);
-    expect.soft(after.sessions['planning.analyst']).toBeUndefined(); // the persistent reviewer was reset
+    expect.soft(after.sessions['planning.analyst']).toBeUndefined(); // the persistent checker was reset
     expect.soft(after.sessions['planning.architect']?.id).toBe('impl-keep'); // the OTHER role untouched
-    expect.soft(joined).toContain('RESET the reviewer'); // the copy names the ACTUAL role…
-    expect.soft(joined).not.toContain('RESET the implementer'); // …never the old hard-coded implementer
+    expect.soft(joined).toContain('RESET the analyst'); // the copy names the ACTUAL role…
+    expect.soft(joined).not.toContain('RESET the architect'); // …never the old hard-coded maker
     expect.soft(joined).toContain('recover-context'); // the same recovery prescription
   });
 
@@ -1002,9 +1014,9 @@ describe('send_prompt', () => {
     // compact and is still the one to compact, so it must NOT be reset.
     run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-prior' } };
     saveRunState(run);
-    const implementer = new FakeWorker('claude', [new Error('spawn claude ENOENT')]);
-    const { call } = harness(run, { implementer });
-    const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact drop the journey' });
+    const maker = new FakeWorker('claude', [new Error('spawn claude ENOENT')]);
+    const { call } = harness(run, { maker });
+    const result = await call('send_prompt', { duty: 'architect', tag: 'custom', body: '/compact drop the journey' });
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
 
     expect.soft(loadRunState(projectDir, run.runId).sessions['planning.architect']?.id).toBe('sess-prior'); // unchanged
@@ -1018,9 +1030,9 @@ describe('send_prompt', () => {
   }) => {
     // A normal aborted turn carrying tag=compact-for-impl: the BODY isn't /compact,
     // so it's a plain resumable checkpoint — no reset, the generic resume note.
-    const implementer = new FakeWorker('claude', [{ aborted: true, sessionId: 'sess-x' }]);
-    const { call } = harness(run, { implementer });
-    const result = await call('send_prompt', { role: 'implementer', tag: 'compact-for-impl', body: 'build the next slice' });
+    const maker = new FakeWorker('claude', [{ aborted: true, sessionId: 'sess-x' }]);
+    const { call } = harness(run, { maker });
+    const result = await call('send_prompt', { duty: 'architect', tag: 'compact-for-impl', body: 'build the next slice' });
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
 
     expect.soft(loadRunState(projectDir, run.runId).sessions['planning.architect']?.id).toBe('sess-x'); // resumable, not reset
@@ -1032,9 +1044,9 @@ describe('send_prompt', () => {
     projectDir,
     run,
   }) => {
-    const reviewer = new FakeWorker('codex', [new BudgetCutoffError('cap reached with no recoverable session')]);
-    const { call } = harness(run, { reviewer });
-    const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    const checker = new FakeWorker('codex', [new BudgetCutoffError('cap reached with no recoverable session')]);
+    const { call } = harness(run, { checker });
+    const result = await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
 
     expect.soft(text(result)).toContain('budget-control stop');
     expect.soft(text(result)).not.toContain('infrastructure layer'); // not the infra envelope
@@ -1056,11 +1068,11 @@ describe('send_prompt', () => {
     const slow = new FakeWorker('codex');
     slow.runTurn = () => new Promise((resolve) => (finish = resolve));
 
-    const { call, lines } = harness(run, { reviewer: slow });
-    const pending = call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    const { call, lines } = harness(run, { checker: slow });
+    const pending = call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
 
     await vi.advanceTimersByTimeAsync(5 * 60_000);
-    expect(lines.some((l) => l.includes('⏳ reviewer turn running — 5m elapsed'))).toBe(true);
+    expect(lines.some((l) => l.includes('⏳ analyst turn running — 5m elapsed'))).toBe(true);
 
     finish({ text: 'done', sessionId: 's' });
     await pending;
@@ -1071,9 +1083,9 @@ describe('send_prompt fan-out (role array — the framing analysis pass)', () =>
   test('headless: fans one body to both build-analysts and returns a combined, role-labeled result', async ({ projectDir, run }) => {
     const impl = new FakeWorker('claude');
     const rev = new FakeWorker('codex');
-    const { call } = harness(run, { phase: 'frame', implementer: impl, reviewer: rev });
+    const { call } = harness(run, { phase: 'frame', maker: impl, checker: rev });
 
-    const result = await call('send_prompt', { role: ['implementer', 'reviewer'], tag: 'think-holistic', body: 'analyze the problem' });
+    const result = await call('send_prompt', { duty: ['architect', 'analyst'], tag: 'think-holistic', body: 'analyze the problem' });
 
     // One body reaches each worker verbatim — the whole point of the fan-out.
     expect.soft(impl.calls).toHaveLength(1);
@@ -1083,8 +1095,8 @@ describe('send_prompt fan-out (role array — the framing analysis pass)', () =>
 
     // The combined result labels each role's blocks under its own header.
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
-    expect.soft(joined).toContain('── implementer ──');
-    expect.soft(joined).toContain('── reviewer ──');
+    expect.soft(joined).toContain('── architect ──');
+    expect.soft(joined).toContain('── analyst ──');
     expect.soft(result.isError).toBeUndefined();
 
     // Both turns settled (each session persisted) and each tag registered — the
@@ -1092,16 +1104,16 @@ describe('send_prompt fan-out (role array — the framing analysis pass)', () =>
     const persisted = loadRunState(projectDir, run.runId);
     expect.soft(persisted.sessions['planning.architect']).toBeDefined();
     expect.soft(persisted.sessions['planning.analyst']).toBeDefined();
-    expect.soft(persisted.sentSnippets?.frame?.implementer).toContain('think-holistic');
-    expect.soft(persisted.sentSnippets?.frame?.reviewer).toContain('think-holistic');
+    expect.soft(persisted.sentSnippets?.frame?.architect).toContain('think-holistic');
+    expect.soft(persisted.sentSnippets?.frame?.analyst).toContain('think-holistic');
   });
 
   test('headless: the two worker turns run concurrently, not one-after-the-other', async ({ run }) => {
     const impl = new DeferredWorker('claude');
     const rev = new DeferredWorker('codex');
-    const { call } = harness(run, { phase: 'frame', implementer: impl, reviewer: rev });
+    const { call } = harness(run, { phase: 'frame', maker: impl, checker: rev });
 
-    const pending = call('send_prompt', { role: ['implementer', 'reviewer'], tag: 'think-holistic', body: 'analyze' });
+    const pending = call('send_prompt', { duty: ['architect', 'analyst'], tag: 'think-holistic', body: 'analyze' });
     await flush();
     // Both turns are in flight before EITHER has resolved — the fan-out launched
     // them concurrently rather than awaiting the first before starting the second
@@ -1117,32 +1129,32 @@ describe('send_prompt fan-out (role array — the framing analysis pass)', () =>
   test('interactive: a fan-out dispatches each role into the background; check_turns collects them', async ({ run }) => {
     const impl = new FakeWorker('claude');
     const rev = new FakeWorker('codex');
-    const { call } = harness(run, { phase: 'frame', implementer: impl, reviewer: rev, async: true });
+    const { call } = harness(run, { phase: 'frame', maker: impl, checker: rev, async: true });
 
-    const dispatched = await call('send_prompt', { role: ['implementer', 'reviewer'], tag: 'think-holistic', body: 'analyze' });
-    expect.soft(text(dispatched)).toContain('Dispatched to the implementer and reviewer');
+    const dispatched = await call('send_prompt', { duty: ['architect', 'analyst'], tag: 'think-holistic', body: 'analyze' });
+    expect.soft(text(dispatched)).toContain('Dispatched to the architect and analyst');
     expect.soft(impl.calls).toHaveLength(1);
     expect.soft(rev.calls).toHaveLength(1);
 
     await flush();
     const collected = await call('check_turns');
     const joined = collected.content.map((c) => (c as { text?: string }).text ?? '').join('\n');
-    expect.soft(joined).toContain('── implementer ──');
-    expect.soft(joined).toContain('── reviewer ──');
+    expect.soft(joined).toContain('── architect ──');
+    expect.soft(joined).toContain('── analyst ──');
   });
 
   test('a busy role anywhere in the array refuses the whole fan-out — no turn is dispatched (validate-all-first)', async ({ run }) => {
     const impl = new DeferredWorker('claude');
     const rev = new FakeWorker('codex');
-    const { call } = harness(run, { phase: 'frame', implementer: impl, reviewer: rev, async: true });
+    const { call } = harness(run, { phase: 'frame', maker: impl, checker: rev, async: true });
 
-    // The implementer is dispatched and uncollected (running) on the interactive host.
-    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'first' });
-    const refused = await call('send_prompt', { role: ['implementer', 'reviewer'], tag: 'think-holistic', body: 'analyze' });
+    // The maker is dispatched and uncollected (running) on the interactive host.
+    await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'first' });
+    const refused = await call('send_prompt', { duty: ['architect', 'analyst'], tag: 'think-holistic', body: 'analyze' });
 
     expect.soft(refused.isError).toBe(true);
     expect.soft(text(refused)).toContain('already in flight');
-    // The reviewer was never sent — validation runs over every target before any dispatch.
+    // The checker was never sent — validation runs over every target before any dispatch.
     expect.soft(rev.calls).toHaveLength(0);
 
     impl.resolve(); // let the in-flight turn settle so no interval leaks
@@ -1151,7 +1163,7 @@ describe('send_prompt fan-out (role array — the framing analysis pass)', () =>
 
   test('an empty role array is refused with a prescribed fix', async ({ run }) => {
     const { call } = harness(run, { phase: 'frame' });
-    const refused = await call('send_prompt', { role: [], tag: 'think-holistic', body: 'x' });
+    const refused = await call('send_prompt', { duty: [], tag: 'think-holistic', body: 'x' });
     expect.soft(refused.isError).toBe(true);
     expect.soft(text(refused)).toContain('at least one worker');
   });
@@ -1165,7 +1177,7 @@ describe('projectDetail (the check_turns context guard)', () => {
     { type: 'assistant', uuid: 'msg-uuid', message: { content: [{ type: 'text', text: 'z'.repeat(500) }] } },
     { type: 'result', subtype: 'success', is_error: true, session_id: 's-1', result: 'API Error: Connection closed mid-response' },
   ]);
-  const leaked = `The reviewer worker's turn failed at the infrastructure layer (Command failed with exit code 1: claude -p\n\n${envelope}). Retry once, then ask_human.`;
+  const leaked = `The analyst worker's turn failed at the infrastructure layer (Command failed with exit code 1: claude -p\n\n${envelope}). Retry once, then ask_human.`;
 
   test('projects a leaked envelope to its high-value fields — signal kept, noise and framing-recovery preserved', () => {
     const out = projectDetail(leaked);
@@ -1192,16 +1204,16 @@ describe('projectDetail (the check_turns context guard)', () => {
 
   test('check_turns projects a leaked dump by default and returns it whole with raw=true', async ({ run }) => {
     const rev = new FakeWorker('codex', [new Error(envelope), new Error(envelope)]);
-    const { call } = harness(run, { phase: 'frame', reviewer: rev, async: true });
+    const { call } = harness(run, { phase: 'frame', checker: rev, async: true });
 
-    await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'go' });
+    await call('send_prompt', { duty: 'analyst', tag: 'custom', body: 'go' });
     await flush();
     const def = await call('check_turns');
     const dtext = def.content.map((c) => (c as { text?: string }).text ?? '').join('\n');
     expect.soft(dtext).toContain('API Error: Connection closed mid-response'); // signal kept
     expect.soft(dtext).not.toContain('SomeNoisyToolName'); // noise dropped by default
 
-    await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'again' });
+    await call('send_prompt', { duty: 'analyst', tag: 'custom', body: 'again' });
     await flush();
     const rawOut = await call('check_turns', { raw: true });
     const rtext = rawOut.content.map((c) => (c as { text?: string }).text ?? '').join('\n');
@@ -1214,22 +1226,22 @@ describe('send_prompt activeTurns hint (the persisted in-flight signal, #2)', ()
     let finish!: (t: { text: string; sessionId: string }) => void;
     const slow = new FakeWorker('claude');
     slow.runTurn = () => new Promise((r) => (finish = r));
-    const { call } = harness(run, { implementer: slow });
+    const { call } = harness(run, { maker: slow });
 
-    const pending = call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+    const pending = call('send_prompt', { duty: 'architect', tag: 'write-spec', body: 'draft' });
     // Mid-turn: a separate doctor process can read the in-flight role off disk.
-    expect.soft(loadRunState(projectDir, run.runId).activeTurns?.implementer).toMatchObject({ tag: 'write-spec' });
+    expect.soft(loadRunState(projectDir, run.runId).activeTurns?.architect).toMatchObject({ tag: 'write-spec' });
 
     finish({ text: 'done', sessionId: 's' });
     await pending;
-    expect.soft(loadRunState(projectDir, run.runId).activeTurns?.implementer).toBeUndefined();
+    expect.soft(loadRunState(projectDir, run.runId).activeTurns?.architect).toBeUndefined();
   });
 
   test('clears activeTurns even when the turn fails', async ({ run, projectDir }) => {
     const boom = new FakeWorker('claude', [new Error('spawn claude ENOENT')]);
-    const { call } = harness(run, { implementer: boom });
-    await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
-    expect(loadRunState(projectDir, run.runId).activeTurns?.implementer).toBeUndefined();
+    const { call } = harness(run, { maker: boom });
+    await call('send_prompt', { duty: 'architect', tag: 'write-spec', body: 'draft' });
+    expect(loadRunState(projectDir, run.runId).activeTurns?.architect).toBeUndefined();
   });
 
   test('parallel cross-role sends each set their own entry without clobbering (fresh-merge)', async ({ run, projectDir }) => {
@@ -1239,20 +1251,20 @@ describe('send_prompt activeTurns hint (the persisted in-flight signal, #2)', ()
     impl.runTurn = () => new Promise((r) => (finishImpl = r));
     const rev = new FakeWorker('codex');
     rev.runTurn = () => new Promise((r) => (finishRev = r));
-    const { call } = harness(run, { implementer: impl, reviewer: rev });
+    const { call } = harness(run, { maker: impl, checker: rev });
 
-    const a = call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'x' });
-    const b = call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'y' });
+    const a = call('send_prompt', { duty: 'architect', tag: 'write-spec', body: 'x' });
+    const b = call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'y' });
     const mid = loadRunState(projectDir, run.runId).activeTurns;
-    expect.soft(mid?.implementer).toMatchObject({ tag: 'write-spec' });
-    expect.soft(mid?.reviewer).toMatchObject({ tag: 'review-spec' });
+    expect.soft(mid?.architect).toMatchObject({ tag: 'write-spec' });
+    expect.soft(mid?.analyst).toMatchObject({ tag: 'review-spec' });
 
     finishImpl({ text: 'i', sessionId: 'si' });
     finishRev({ text: 'r', sessionId: 'sr' });
     await Promise.all([a, b]);
     const after = loadRunState(projectDir, run.runId).activeTurns ?? {};
-    expect.soft(after.implementer).toBeUndefined();
-    expect.soft(after.reviewer).toBeUndefined();
+    expect.soft(after.architect).toBeUndefined();
+    expect.soft(after.analyst).toBeUndefined();
   });
 });
 
@@ -1279,11 +1291,11 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
       opts.onSessionId?.('impl-1');
       return new Promise((r) => (finish = r));
     };
-    const { call, lines } = harness(run, { implementer: slow, home });
-    const pending = call('send_prompt', { role: 'implementer', tag: 'start-plan', body: 'plan' });
+    const { call, lines } = harness(run, { maker: slow, home });
+    const pending = call('send_prompt', { duty: 'architect', tag: 'start-plan', body: 'plan' });
     await vi.advanceTimersByTimeAsync(5 * 60_000);
 
-    const hb = lines.find((l) => l.includes('⏳ implementer turn running — 5m elapsed'));
+    const hb = lines.find((l) => l.includes('⏳ architect turn running — 5m elapsed'));
     expect.soft(hb).toContain('last activity');
     expect.soft(hb).toContain('RETRYING (1 retries)'); // the count, never a fabricated class
 
@@ -1299,7 +1311,7 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
     const home = join(projectDir, 'home');
     // The window half comes from the last settled reading; the growing usage
     // comes from the transcript the turn is writing.
-    recordContextUsage(run, 'implementer', { usedTokens: 170_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 170_000, windowTokens: 1_000_000 });
     saveRunState(run);
     plantClaudeTranscript(
       home,
@@ -1313,12 +1325,12 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
       opts.onSessionId?.('impl-1');
       return new Promise((r) => (finish = r));
     };
-    const { call, lines } = harness(run, { implementer: slow, home });
-    const pending = call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build the keystone' });
+    const { call, lines } = harness(run, { maker: slow, home });
+    const pending = call('send_prompt', { duty: 'architect', tag: 'custom', body: 'build the keystone' });
 
     await vi.advanceTimersByTimeAsync(30_000); // one sampler tick
     let persisted = loadRunState(projectDir, run.runId);
-    expect.soft(persisted.contextUsage?.implementer?.usedTokens).toBe(400_500);
+    expect.soft(persisted.contextUsage?.architect?.usedTokens).toBe(400_500);
 
     // The turn keeps growing; the transcript's latest request is bigger.
     plantClaudeTranscript(
@@ -1331,11 +1343,11 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
     );
     await vi.advanceTimersByTimeAsync(30_000);
     persisted = loadRunState(projectDir, run.runId);
-    expect.soft(persisted.contextUsage?.implementer?.usedTokens).toBe(960_400);
-    expect.soft(contextSafetyPercent(persisted, 'implementer')).toBe(96);
+    expect.soft(persisted.contextUsage?.architect?.usedTokens).toBe(960_400);
+    expect.soft(contextSafetyPercent(persisted, 'architect')).toBe(96);
 
     await vi.advanceTimersByTimeAsync(4 * 60_000); // reach the 5-minute heartbeat
-    const hb = lines.find((l) => l.includes('⏳ implementer turn running — 5m elapsed'));
+    const hb = lines.find((l) => l.includes('⏳ architect turn running — 5m elapsed'));
     expect.soft(hb).toContain('· context 96%'); // the heartbeat carries the live fill
 
     finish({ text: 'done', sessionId: 'impl-1' });
@@ -1356,11 +1368,11 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
       opts.onSessionId?.('impl-1');
       return new Promise((r) => (finish = r));
     };
-    const { call } = harness(run, { implementer: slow, home });
-    const pending = call('send_prompt', { role: 'implementer', tag: 'custom', body: 'first ever turn' });
+    const { call } = harness(run, { maker: slow, home });
+    const pending = call('send_prompt', { duty: 'architect', tag: 'custom', body: 'first ever turn' });
     await vi.advanceTimersByTimeAsync(60_000);
 
-    expect.soft(loadRunState(projectDir, run.runId).contextUsage?.implementer).toBeUndefined();
+    expect.soft(loadRunState(projectDir, run.runId).contextUsage?.architect).toBeUndefined();
 
     finish({ text: 'done', sessionId: 'impl-1' });
     await pending;
@@ -1381,7 +1393,7 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
       vi.useRealTimers();
     });
     const home = join(projectDir, 'home');
-    recordContextUsage(run, 'implementer', { usedTokens: 170_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 170_000, windowTokens: 1_000_000 });
     saveRunState(run);
     plantClaudeTranscript(
       home,
@@ -1395,23 +1407,23 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
       opts.onSessionId?.('impl-1');
       return new Promise((r) => (finishImpl = r));
     };
-    const reviewer = new DeferredWorker('codex');
-    const { call } = harness(run, { implementer: slow, reviewer, home, async: true });
+    const checker = new DeferredWorker('codex');
+    const { call } = harness(run, { maker: slow, checker, home, async: true });
 
     // Implementer first — its heartbeat captures the state as of now — then the
-    // reviewer, whose records post-date the capture.
-    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'build the keystone' });
-    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review it' });
+    // checker, whose records post-date the capture.
+    await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'build the keystone' });
+    await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review it' });
 
-    await vi.advanceTimersByTimeAsync(30_000); // the implementer's first sampler tick (always a change)
+    await vi.advanceTimersByTimeAsync(30_000); // the maker's first sampler tick (always a change)
 
     const persisted = loadRunState(projectDir, run.runId);
-    expect.soft(persisted.contextUsage?.implementer?.usedTokens).toBe(400_500); // the reading landed…
-    expect.soft(persisted.pendingTurns?.reviewer).toBeDefined(); // …and the sibling's dispatch records survived
-    expect.soft(persisted.activeTurns?.reviewer).toBeDefined();
+    expect.soft(persisted.contextUsage?.architect?.usedTokens).toBe(400_500); // the reading landed…
+    expect.soft(persisted.pendingTurns?.analyst).toBeDefined(); // …and the sibling's dispatch records survived
+    expect.soft(persisted.activeTurns?.analyst).toBeDefined();
 
     finishImpl({ text: 'done', sessionId: 'impl-1' });
-    reviewer.resolve({ sessionId: 'rev-1' });
+    checker.resolve({ sessionId: 'rev-1' });
     await vi.advanceTimersByTimeAsync(0); // drain the background settles
     await call('check_turns');
   });
@@ -1424,11 +1436,11 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
     let finish!: (t: { text: string; sessionId: string }) => void;
     const slow = new FakeWorker('claude');
     slow.runTurn = () => new Promise((r) => (finish = r)); // never announces an id
-    const { call, lines } = harness(run, { implementer: slow });
-    const pending = call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+    const { call, lines } = harness(run, { maker: slow });
+    const pending = call('send_prompt', { duty: 'architect', tag: 'write-spec', body: 'draft' });
     await vi.advanceTimersByTimeAsync(5 * 60_000);
 
-    const hb = lines.find((l) => l.includes('⏳ implementer turn running — 5m elapsed'));
+    const hb = lines.find((l) => l.includes('⏳ architect turn running — 5m elapsed'));
     expect.soft(hb).toBeDefined();
     expect.soft(hb).not.toContain('last activity');
     expect.soft(hb).not.toContain('retries');
@@ -1450,11 +1462,11 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
       opts.onSessionId?.('missing-id'); // id known, but no transcript on disk
       return new Promise((r) => (finish = r));
     };
-    const { call, lines } = harness(run, { implementer: slow, home });
-    const pending = call('send_prompt', { role: 'implementer', tag: 'start-plan', body: 'x' });
+    const { call, lines } = harness(run, { maker: slow, home });
+    const pending = call('send_prompt', { duty: 'architect', tag: 'start-plan', body: 'x' });
     await vi.advanceTimersByTimeAsync(5 * 60_000);
 
-    const hb = lines.find((l) => l.includes('⏳ implementer turn running — 5m elapsed'));
+    const hb = lines.find((l) => l.includes('⏳ architect turn running — 5m elapsed'));
     expect.soft(hb).toBeDefined();
     expect.soft(hb).not.toContain('last activity'); // no readable transcript → no suffix, no throw
 
@@ -1475,15 +1487,15 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
     let finish!: (t: { text: string; sessionId: string }) => void;
     const slow = new FakeWorker('claude');
     slow.runTurn = () => new Promise((r) => (finish = r));
-    const { call } = harness(run, { implementer: slow, home });
-    const pending = call('send_prompt', { role: 'implementer', tag: 'start-plan', body: 'plan' });
+    const { call } = harness(run, { maker: slow, home });
+    const pending = call('send_prompt', { duty: 'architect', tag: 'start-plan', body: 'plan' });
     await vi.advanceTimersByTimeAsync(5 * 60_000);
 
     // Voice-log only (no driver-log dup) — the orchestrator pane otherwise
     // freezes while it blocks on the worker turn it reads no files during. This
     // is the HEADLESS host (no dispatcher) where the orchestrator truly blocks.
     const orchestratorLog = readFileSync(join(runDirOf(run.cwd, run.runId), 'orchestrator.log'), 'utf8');
-    expect(orchestratorLog).toContain('⏳ awaiting implementer — 5m');
+    expect(orchestratorLog).toContain('⏳ awaiting architect — 5m');
 
     finish({ text: 'done', sessionId: 'impl-1' });
     await pending;
@@ -1498,13 +1510,13 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
     run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-1' } };
     saveRunState(run);
     const worker = new DeferredWorker('claude'); // stays in flight so the 5-min heartbeat fires
-    const { call, dispatcher } = harness(run, { implementer: worker, home, async: true });
-    await call('send_prompt', { role: 'implementer', tag: 'start-plan', body: 'plan' }); // dispatches and returns
+    const { call, dispatcher } = harness(run, { maker: worker, home, async: true });
+    await call('send_prompt', { duty: 'architect', tag: 'start-plan', body: 'plan' }); // dispatches and returns
     await vi.advanceTimersByTimeAsync(5 * 60_000);
 
     // The worker heartbeat DID fire (the test isn't vacuous) — but no orchestrator
     // mirror, because on the async host the orchestrator never blocks awaiting it.
-    expect.soft(readFileSync(join(runDirOf(run.cwd, run.runId), 'implementer.log'), 'utf8')).toContain('⏳ turn running');
+    expect.soft(readFileSync(join(runDirOf(run.cwd, run.runId), 'architect.log'), 'utf8')).toContain('⏳ turn running');
     const orchPath = join(runDirOf(run.cwd, run.runId), 'orchestrator.log');
     const orchestratorLog = existsSync(orchPath) ? readFileSync(orchPath, 'utf8') : '';
     expect.soft(orchestratorLog).not.toContain('awaiting');
@@ -1536,8 +1548,8 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
       opts.onSessionId?.('impl-1');
       return new Promise((r) => (finish = r));
     };
-    const { call, lines } = harness(run, { implementer: slow, home });
-    const pending = call('send_prompt', { role: 'implementer', tag: 'start-plan', body: 'build' });
+    const { call, lines } = harness(run, { maker: slow, home });
+    const pending = call('send_prompt', { duty: 'architect', tag: 'start-plan', body: 'build' });
     await vi.advanceTimersByTimeAsync(advanceMs);
     return {
       lines: lines.filter((l) => l.includes('⋯')),
@@ -1597,7 +1609,7 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
   });
 
   test('a FIRST turn surfaces activity once the provider announces its id (the regression)', async ({ run, projectDir, onTestFinished }) => {
-    // The headline: a fresh run with NO workerSessions for the implementer — the
+    // The headline: a fresh run with NO workerSessions for the maker — the
     // exact state that used to go dark for a whole turn. The worker announces its
     // id at turn start and the poll finds the transcript planted at it.
     vi.useFakeTimers();
@@ -1624,8 +1636,8 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
     let finish!: (t: { text: string; sessionId: string }) => void;
     const slow = new FakeWorker('claude');
     slow.runTurn = () => new Promise((r) => (finish = r)); // never announces an id
-    const { call, lines } = harness(run, { implementer: slow });
-    const pending = call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+    const { call, lines } = harness(run, { maker: slow });
+    const pending = call('send_prompt', { duty: 'architect', tag: 'write-spec', body: 'draft' });
     await vi.advanceTimersByTimeAsync(60_000);
     expect(lines.some((l) => l.includes('⋯'))).toBe(false);
     finish({ text: 'done', sessionId: 'impl-1' });
@@ -1644,8 +1656,8 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
       opts.onSessionId?.('missing');
       return new Promise((r) => (finish = r));
     };
-    const { call, lines } = harness(run, { implementer: slow, home });
-    const pending = call('send_prompt', { role: 'implementer', tag: 'start-plan', body: 'x' });
+    const { call, lines } = harness(run, { maker: slow, home });
+    const pending = call('send_prompt', { duty: 'architect', tag: 'start-plan', body: 'x' });
     await vi.advanceTimersByTimeAsync(60_000);
     expect(lines.some((l) => l.includes('⋯'))).toBe(false);
     finish({ text: 'done', sessionId: 'impl-1' });
@@ -1661,7 +1673,7 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
     const base = Date.parse('2026-06-20T12:00:00.000Z');
     vi.setSystemTime(base);
     const home = join(projectDir, 'home');
-    // The reviewer is codex by default — plant a codex rollout at the announced id.
+    // The checker is codex by default — plant a codex rollout at the announced id.
     plantCodexRollout(home, 'rev-1', jsonl(codexExecCommand('rg --files-with-matches needle src', { callId: 'call_x', ts: new Date(base).toISOString() })));
     let finish!: (t: { text: string; sessionId: string }) => void;
     const slow = new FakeWorker('codex');
@@ -1669,10 +1681,10 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
       opts.onSessionId?.('rev-1');
       return new Promise((r) => (finish = r));
     };
-    const { call, lines } = harness(run, { reviewer: slow, home });
-    const pending = call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    const { call, lines } = harness(run, { checker: slow, home });
+    const pending = call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(lines.some((l) => l.includes('⋯ searching') && l.includes('reviewer'))).toBe(true);
+    expect(lines.some((l) => l.includes('⋯ searching') && l.includes('analyst'))).toBe(true);
     finish({ text: 'done', sessionId: 'rev-1' });
     await pending;
   });
@@ -1692,8 +1704,8 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
       opts.onSessionId?.('live-async');
       return new Promise((r) => (finish = r));
     };
-    const { call, lines, dispatcher } = harness(run, { implementer: worker, home, async: true });
-    await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' }); // dispatches and returns
+    const { call, lines, dispatcher } = harness(run, { maker: worker, home, async: true });
+    await call('send_prompt', { duty: 'architect', tag: 'write-spec', body: 'draft' }); // dispatches and returns
     await vi.advanceTimersByTimeAsync(30_000);
     expect(lines.some((l) => l.includes('⋯ reading /repo/async.ts'))).toBe(true);
     finish({ text: 'done', sessionId: 'live-async' });
@@ -1724,7 +1736,7 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
       return new Promise((r) => (finish = r));
     };
     const { call, lines } = harness(consultantRun, { consultant: slow, home, phase: 'plan' });
-    const pending = call('send_prompt', { role: 'consultant', tag: 'consultant-contract', body: 'audit' });
+    const pending = call('send_prompt', { duty: 'consultant', tag: 'consultant-contract', body: 'audit' });
     await vi.advanceTimersByTimeAsync(30_000);
     const activity = lines.filter((l) => l.includes('⋯'));
     expect.soft(activity.some((l) => l.includes('current.ts'))).toBe(true); // the live transcript
@@ -1753,8 +1765,8 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
       setTimeout(() => opts.onSessionId?.('sess-new'), 40_000); // a mid-turn re-announce
       return new Promise((r) => (finish = r));
     };
-    const { call, lines } = harness(run, { implementer: worker, home });
-    const pending = call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'x' });
+    const { call, lines } = harness(run, { maker: worker, home });
+    const pending = call('send_prompt', { duty: 'architect', tag: 'write-spec', body: 'x' });
     await vi.advanceTimersByTimeAsync(30_000); // tick 1: locates + emits old
     await vi.advanceTimersByTimeAsync(30_000); // re-announce at 40s; tick 2 at 60s re-locates new
     const activity = lines.filter((l) => l.includes('⋯'));
@@ -1772,7 +1784,7 @@ describe('stageSessionId (the best-effort telemetry guard)', () => {
     // Remove the run dir so recordTurnSessionId's loadRunState throws.
     const logs: string[] = [];
     rmSync(runDirOf(run.cwd, run.runId), { recursive: true, force: true });
-    const stage = stageSessionId(run, 'implementer', (l) => logs.push(l));
+    const stage = stageSessionId(run, 'architect', (l) => logs.push(l));
     expect.soft(() => stage('some-id')).not.toThrow();
     expect.soft(logs.some((l) => l.includes('could not stage'))).toBe(true);
   });
@@ -1793,10 +1805,10 @@ describe('parallel worker turns (cross-role concurrent, same-role serial)', () =
   test('turns to different roles genuinely overlap', async ({ run }) => {
     const impl = slowWorker('claude');
     const rev = slowWorker('codex');
-    const { call } = harness(run, { implementer: impl.worker, reviewer: rev.worker });
+    const { call } = harness(run, { maker: impl.worker, checker: rev.worker });
 
-    const implTurn = call('send_prompt', { role: 'implementer', tag: 'think-holistic', body: 'analyze' });
-    const revTurn = call('send_prompt', { role: 'reviewer', tag: 'think-holistic', body: 'analyze' });
+    const implTurn = call('send_prompt', { duty: 'architect', tag: 'think-holistic', body: 'analyze' });
+    const revTurn = call('send_prompt', { duty: 'analyst', tag: 'think-holistic', body: 'analyze' });
     await new Promise((r) => setTimeout(r, 0));
 
     // Both workers received their prompt while neither turn has finished.
@@ -1814,11 +1826,11 @@ describe('parallel worker turns (cross-role concurrent, same-role serial)', () =
     run,
   }) => {
     const impl = slowWorker('claude');
-    const { call } = harness(run, { implementer: impl.worker });
+    const { call } = harness(run, { maker: impl.worker });
 
-    const first = call('send_prompt', { role: 'implementer', tag: 'custom', body: 'turn one' });
+    const first = call('send_prompt', { duty: 'architect', tag: 'custom', body: 'turn one' });
     await new Promise((r) => setTimeout(r, 0));
-    const refused = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'turn two' });
+    const refused = await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'turn two' });
 
     expect.soft(refused.isError).toBe(true);
     expect.soft(text(refused)).toContain('already in flight');
@@ -1827,7 +1839,7 @@ describe('parallel worker turns (cross-role concurrent, same-role serial)', () =
 
     impl.finish();
     await first;
-    const after = call('send_prompt', { role: 'implementer', tag: 'custom', body: 'turn two, again' });
+    const after = call('send_prompt', { duty: 'architect', tag: 'custom', body: 'turn two, again' });
     await new Promise((r) => setTimeout(r, 0));
     impl.finish(1);
     expect((await after).isError).toBeUndefined();
@@ -1840,7 +1852,7 @@ describe('parallel worker turns (cross-role concurrent, same-role serial)', () =
     const { tools } = createPhaseTools({
       state: run,
       phase: 'frame',
-      providers: { implementer: new FakeWorker('claude'), reviewer: new FakeWorker('codex') },
+      providers: { architect: new FakeWorker('claude'), analyst: new FakeWorker('codex') },
       log: () => {},
     });
     for (const name of ['send_prompt', 'list_snippets']) {
@@ -1851,25 +1863,25 @@ describe('parallel worker turns (cross-role concurrent, same-role serial)', () =
 
 describe('template economy (once per phase per worker)', () => {
   test('re-sending a base template gets one steering refusal, then the identical call passes', async ({ run }) => {
-    const { call, reviewer } = harness(run);
-    const args = { role: 'reviewer', tag: 'review-spec', body: 'full template' };
+    const { call, checker } = harness(run);
+    const args = { duty: 'analyst', tag: 'review-spec', body: 'full template' };
 
     await call('send_prompt', args);
     const warned = await call('send_prompt', args);
     expect(warned.isError).toBe(true);
-    expect.soft(text(warned)).toContain('already sent review-spec to the reviewer this phase');
+    expect.soft(text(warned)).toContain('already sent review-spec to the analyst this phase');
     expect.soft(text(warned)).toContain('repeat this exact call and it will go through');
 
     const allowed = await call('send_prompt', args);
     expect(allowed.isError).toBeUndefined();
-    expect(reviewer.calls).toHaveLength(2);
+    expect(checker.calls).toHaveLength(2);
   });
 
   test.for(['review-spec-again', 'custom'])(
     'tag "%s" is a delta, never warned',
     async (tag, { run }) => {
       const { call } = harness(run);
-      const args = { role: 'reviewer', tag, body: 'delta' };
+      const args = { duty: 'analyst', tag, body: 'delta' };
       await call('send_prompt', args);
       const second = await call('send_prompt', args);
       expect(second.isError).toBeUndefined();
@@ -1878,35 +1890,35 @@ describe('template economy (once per phase per worker)', () => {
 
   test('the discipline survives a new driver invocation (persisted send history)', async ({ projectDir, run }) => {
     const first = harness(run);
-    await first.call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'template' });
+    await first.call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'template' });
 
     // A later invocation loads its own state copy and builds fresh tools.
     const reloaded = loadRunState(projectDir, run.runId);
     const second = harness(reloaded);
-    const warned = await second.call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'template' });
+    const warned = await second.call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'template' });
     expect(warned.isError).toBe(true);
   });
 });
 
 describe('review-round backstop cap', () => {
-  test('review prompts to the reviewer count rounds; other prompts never do', async ({ run }) => {
+  test('review prompts to the analyst count rounds; other prompts never do', async ({ run }) => {
     const { call } = harness(run);
-    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'round 1' });
-    await call('send_prompt', { role: 'implementer', tag: 'update-spec', body: 'not a round' });
-    await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'not a round either' });
+    await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'round 1' });
+    await call('send_prompt', { duty: 'architect', tag: 'update-spec', body: 'not a round' });
+    await call('send_prompt', { duty: 'analyst', tag: 'custom', body: 'not a round either' });
     expect(run.rounds.spec).toBe(1);
   });
 
   test('at the cap, a new round is refused toward advance_phase or ask_human', async ({ run }) => {
     run.rounds.spec = 3;
-    const { call, reviewer } = harness(run);
-    const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec-again', body: 'one more' });
+    const { call, checker } = harness(run);
+    const result = await call('send_prompt', { duty: 'analyst', tag: 'review-spec-again', body: 'one more' });
 
     expect(result.isError).toBe(true);
     expect.soft(text(result)).toContain('backstop cap of 3 review rounds');
     expect.soft(text(result)).toContain('advance_phase');
     expect.soft(text(result)).toContain('ask_human');
-    expect.soft(reviewer.calls).toHaveLength(0);
+    expect.soft(checker.calls).toHaveLength(0);
   });
 });
 
@@ -1915,8 +1927,8 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     const consultant = new FakeWorker('claude');
     const { call } = harness(consultantRun, { phase: 'spec', consultant });
 
-    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'bet audit 1' });
-    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'bet audit 2' });
+    await call('send_prompt', { duty: 'consultant', tag: 'custom', body: 'bet audit 1' });
+    await call('send_prompt', { duty: 'consultant', tag: 'custom', body: 'bet audit 2' });
 
     // The first settle recorded a session id, yet the second turn still launches
     // fresh — ephemerality by construction, not by forgetting to track it.
@@ -1929,11 +1941,11 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     const consultant = new DeferredWorker('claude');
     const { call } = harness(consultantRun, { phase: 'spec', consultant, async: true });
 
-    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit 1' });
+    await call('send_prompt', { duty: 'consultant', tag: 'custom', body: 'audit 1' });
     consultant.resolve({ sessionId: 'c-1' });
     await flush();
     await call('check_turns'); // collect → re-opens the role
-    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit 2' });
+    await call('send_prompt', { duty: 'consultant', tag: 'custom', body: 'audit 2' });
 
     // Both launches went out with no resume id, even though the first settle
     // tracked 'c-1' — the dispatcher reads sessionIdFor, not workerSessions.
@@ -1948,8 +1960,8 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     const consultant = new FakeWorker('claude');
     const { call } = harness(consultantRun, { phase: 'spec', consultant });
 
-    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit 1' });
-    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit 2' });
+    await call('send_prompt', { duty: 'consultant', tag: 'custom', body: 'audit 1' });
+    await call('send_prompt', { duty: 'consultant', tag: 'custom', body: 'audit 2' });
 
     const persisted = loadRunState(projectDir, consultantRun.runId);
     expect.soft(persisted.sessions['consultant']?.id).toBe('session-2'); // the latest, not the first
@@ -1968,7 +1980,7 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     saveRunState(consultantRun);
     const { call } = harness(consultantRun, { phase: 'plan', consultant: new FakeWorker('claude') });
 
-    await call('send_prompt', { role: 'consultant', tag: 'consultant-contract', body: 'author the contract' });
+    await call('send_prompt', { duty: 'consultant', tag: 'consultant-contract', body: 'author the contract' });
 
     const persisted = loadRunState(projectDir, consultantRun.runId);
     expect.soft(persisted.acceptanceContractDraft?.path).toBe('docs/specs/x.acceptance.md'); // derived from specPath
@@ -1984,7 +1996,7 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     // still proves this-run authorship; the freeze derives the path at crossing.
     const { call } = harness(blueprintConsultantRun, { phase: 'design', consultant: new FakeWorker('claude') });
 
-    await call('send_prompt', { role: 'consultant', tag: 'consultant-contract', body: 'author the contract' });
+    await call('send_prompt', { duty: 'consultant', tag: 'consultant-contract', body: 'author the contract' });
 
     const persisted = loadRunState(projectDir, blueprintConsultantRun.runId);
     expect.soft(persisted.acceptanceContractDraft).toBeDefined();
@@ -2003,7 +2015,7 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     // pre-fix shape — refusing with no way to supply the path — would deadlock
     // the design draft flow instead).
     const { call } = harness(blueprintConsultantRun, { phase: 'design', consultant: new FakeWorker('claude') });
-    await call('send_prompt', { role: 'consultant', tag: 'consultant-contract', body: 'author the contract' });
+    await call('send_prompt', { duty: 'consultant', tag: 'consultant-contract', body: 'author the contract' });
     blueprintConsultantRun.rounds.design = 1; // reviewLoopRail: the design loop ran
 
     const bare = await call('advance_phase', { summary: 's', artifacts: ['docs/design/x.md'] });
@@ -2025,7 +2037,7 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     saveRunState(consultantRun);
     const { call } = harness(consultantRun, { phase: 'implement', consultant: new FakeWorker('claude') });
 
-    await call('send_prompt', { role: 'consultant', tag: 'consultant-verify', body: 'verify the contract' });
+    await call('send_prompt', { duty: 'consultant', tag: 'consultant-verify', body: 'verify the contract' });
 
     const persisted = loadRunState(projectDir, consultantRun.runId);
     expect.soft(persisted.acceptanceContract?.verifiedAt).toBeDefined(); // verification RAN
@@ -2037,14 +2049,14 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     consultantRun,
   }) => {
     // The self-heal loop: a verify ran, the orchestrator routed the failing assertion
-    // to the implementer; that fix must invalidate the stale verification so the impl
+    // to the maker; that fix must invalidate the stale verification so the impl
     // rail can't auto-cross Ship on the pre-fix verify (the Codex adversarial-review
     // window). Closing it structurally, not by trusting the orchestrator to re-verify.
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc', verifiedAt: 'now' };
     saveRunState(consultantRun);
-    const { call } = harness(consultantRun, { phase: 'implement', implementer: new FakeWorker('claude') });
+    const { call } = harness(consultantRun, { phase: 'implement', maker: new FakeWorker('claude') });
 
-    await call('send_prompt', { role: 'implementer', tag: 'respond-review', body: 'fix the failing assertion' });
+    await call('send_prompt', { duty: 'builder', tag: 'respond-review', body: 'fix the failing assertion' });
 
     const persisted = loadRunState(projectDir, consultantRun.runId);
     expect.soft(persisted.acceptanceContract?.verifiedAt).toBeUndefined(); // stale verify dropped by the fix
@@ -2054,15 +2066,15 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     expect.soft(verify).not.toBeNull();
   });
 
-  test('a read-only (reviewer) turn at verify leaves verifiedAt intact — only a code change invalidates it', async ({
+  test('a read-only (critic) turn at verify leaves verifiedAt intact — only a code change invalidates it', async ({
     projectDir,
     consultantRun,
   }) => {
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc', verifiedAt: 'now' };
     saveRunState(consultantRun);
-    const { call } = harness(consultantRun, { phase: 'implement', reviewer: new FakeWorker('codex') });
+    const { call } = harness(consultantRun, { phase: 'implement', checker: new FakeWorker('codex') });
 
-    await call('send_prompt', { role: 'reviewer', tag: 'review-implementation', body: 'look again' });
+    await call('send_prompt', { duty: 'critic', tag: 'review-implementation', body: 'look again' });
 
     const persisted = loadRunState(projectDir, consultantRun.runId);
     expect.soft(persisted.acceptanceContract?.verifiedAt).toBe('now'); // a read-only turn doesn't change code, so no invalidation
@@ -2076,11 +2088,11 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
 
     // Even a review-prefixed tag to the CONSULTANT does not count — countsReviewRound
     // gates on the role, so the consultant is additive, never substitutive.
-    await call('send_prompt', { role: 'consultant', tag: 'review-spec', body: 'bet audit' });
+    await call('send_prompt', { duty: 'consultant', tag: 'review-spec', body: 'bet audit' });
     expect.soft(consultantRun.rounds.spec ?? 0).toBe(0);
 
     // spec is a review-loop phase; with only a consultant turn run, advance_phase
-    // still refuses — the embedded reviewer round is still owed.
+    // still refuses — the embedded checker round is still owed.
     const refused = await call('advance_phase', { summary: 'looks fine', artifacts: [] });
     expect.soft(refused.isError).toBe(true);
     expect.soft(text(refused)).toContain('No review round has run');
@@ -2089,7 +2101,7 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
   test('a consultant turn runs read-only', async ({ consultantRun }) => {
     const consultant = new FakeWorker('claude');
     const { call } = harness(consultantRun, { phase: 'spec', consultant });
-    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit' });
+    await call('send_prompt', { duty: 'consultant', tag: 'custom', body: 'audit' });
     expect(consultant.calls[0]?.readOnly).toBe(true);
   });
 });
@@ -2097,8 +2109,8 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
 describe('send_prompt enum visibility (consultant only when bound)', () => {
   const sendPromptTool = (run: RunState, withConsultant: boolean) => {
     const providers = {
-      implementer: new FakeWorker('claude'),
-      reviewer: new FakeWorker('codex'),
+      maker: new FakeWorker('claude'),
+      checker: new FakeWorker('codex'),
       ...(withConsultant ? { consultant: new FakeWorker('claude') } : {}),
     };
     const { tools } = createPhaseTools({ state: run, phase: 'spec', providers, log: () => {} });
@@ -2108,25 +2120,25 @@ describe('send_prompt enum visibility (consultant only when bound)', () => {
   test('unbound: the schema is byte-for-byte today’s — consultant is not a routable role', ({ run }) => {
     const tool = sendPromptTool(run, false);
     const schema = z.object(tool.inputSchema);
-    expect.soft(schema.safeParse({ role: 'consultant', tag: 't', body: 'b' }).success).toBe(false);
-    expect.soft(schema.safeParse({ role: 'reviewer', tag: 't', body: 'b' }).success).toBe(true);
+    expect.soft(schema.safeParse({ duty: 'consultant', tag: 't', body: 'b' }).success).toBe(false);
+    expect.soft(schema.safeParse({ duty: 'analyst', tag: 't', body: 'b' }).success).toBe(true);
     expect.soft(tool.description).not.toContain('consultant');
     expect.soft(tool.description).not.toContain('ephemeral');
     // The description teaches the array fan-out; unbound, the canonical case is
     // the two build-analysts and the consultant is never named.
-    expect.soft(tool.description).toContain('role as an array');
-    expect.soft(tool.description).toContain('["implementer", "reviewer"]');
+    expect.soft(tool.description).toContain('duty as an array');
+    expect.soft(tool.description).toContain('["architect", "analyst"]');
   });
 
   test('bound: consultant becomes a routable role and the description names its ephemerality', ({ consultantRun }) => {
     const tool = sendPromptTool(consultantRun, true);
     const schema = z.object(tool.inputSchema);
-    expect.soft(schema.safeParse({ role: 'consultant', tag: 't', body: 'b' }).success).toBe(true);
+    expect.soft(schema.safeParse({ duty: 'consultant', tag: 't', body: 'b' }).success).toBe(true);
     expect.soft(tool.description).toContain('consultant');
     expect.soft(tool.description.toLowerCase()).toContain('ephemeral');
     // Bound: the description still teaches the fan-out, and adds that the
     // consultant is a SEPARATE send, never inside the array.
-    expect.soft(tool.description).toContain('["implementer", "reviewer"]');
+    expect.soft(tool.description).toContain('["architect", "analyst"]');
     expect.soft(tool.description).toContain('never inside the array');
   });
 });
@@ -2176,7 +2188,7 @@ describe('consultant enumeration (both hosts surface it)', () => {
 
     // A consultant turn IS a worker prompt — and it can settle before create_branch
     // runs, the case the async workerDispatched flag doesn't cover.
-    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'frame analysis' });
+    await call('send_prompt', { duty: 'consultant', tag: 'custom', body: 'frame analysis' });
 
     const refused = await call('create_branch', { name: 'feat/too-late' });
     expect.soft(refused.isError).toBe(true);
@@ -2188,7 +2200,7 @@ describe('consultant enumeration (both hosts surface it)', () => {
   test('check_turns enumerates a still-running consultant turn on the interactive host', async ({ consultantRun }) => {
     const consultant = new DeferredWorker('claude');
     const { call } = harness(consultantRun, { phase: 'spec', consultant, async: true });
-    await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit' });
+    await call('send_prompt', { duty: 'consultant', tag: 'custom', body: 'audit' });
 
     const checked = await call('check_turns');
     const joined = checked.content.map((c) => (c as { text?: string }).text ?? '').join('\n');
@@ -2216,7 +2228,7 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
     expect.soft(unbound.toLowerCase()).not.toContain('consultant');
     // Unbound: the fan-out to the two build-analysts, no consultant send.
     expect.soft(unbound).toContain('one fan-out call');
-    expect.soft(unbound).toContain('["implementer", "reviewer"]');
+    expect.soft(unbound).toContain('["architect", "analyst"]');
   });
 
   test('the RIR research brief takes the same conditional shape', ({ shortRun, shortConsultantRun }) => {
@@ -2503,7 +2515,7 @@ describe('consultant orphan recovery (discard-and-reseed)', () => {
     const consultant = new DeferredWorker('claude');
     const { call } = harness(consultantRun, { phase: 'spec', consultant, async: true });
 
-    const result = await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'reseeded body' });
+    const result = await call('send_prompt', { duty: 'consultant', tag: 'custom', body: 'reseeded body' });
 
     expect.soft(result.isError).toBeUndefined();
     expect.soft(allText(result)).toContain('Dispatched to the consultant'); // dispatched, not refused
@@ -2544,15 +2556,15 @@ describe('consultant orphan recovery (discard-and-reseed)', () => {
   test('a persistent-role orphan still gets the takeover recovery (the policy branch is real)', async ({
     run,
   }) => {
-    // A reviewer orphan on disk (persistent role) → takeover, not reseed.
-    markPendingTurn(run, 'reviewer', 'review-spec');
+    // A checker orphan on disk (persistent role) → takeover, not reseed.
+    markPendingTurn(run, 'analyst', 'review-spec');
     const { call } = harness(run, { phase: 'spec', async: true });
 
     const blocked = await call('advance_phase', { summary: 's', artifacts: [] });
     expect.soft(blocked.isError).toBe(true);
-    expect.soft(text(blocked)).toContain('duet takeover reviewer');
+    expect.soft(text(blocked)).toContain('duet takeover analyst');
     expect.soft(text(blocked).toLowerCase()).toContain('resumable');
-    // The reviewer is not ephemeral — the reseed framing must NOT appear for it.
+    // The checker is not ephemeral — the reseed framing must NOT appear for it.
     expect.soft(text(blocked)).not.toContain('reseeds');
   });
 
@@ -2658,7 +2670,7 @@ describe('advance_phase human_decisions (the tool stays signal-only; the hold li
   });
 
   test('the schema rejects a severity outside low|high', ({ run }) => {
-    const { tools } = createPhaseTools({ state: run, phase: 'frame', providers: { implementer: new FakeWorker('claude'), reviewer: new FakeWorker('codex') }, log: () => {} });
+    const { tools } = createPhaseTools({ state: run, phase: 'frame', providers: { architect: new FakeWorker('claude'), analyst: new FakeWorker('codex') }, log: () => {} });
     const schema = z.object(tools.find((t) => t.name === 'advance_phase')!.inputSchema);
     expect.soft(schema.safeParse({ summary: 's', artifacts: [], human_decisions: [{ title: 't', severity: 'urgent' }] }).success).toBe(false);
     expect.soft(schema.safeParse({ summary: 's', artifacts: [], human_decisions: [{ title: 't', severity: 'high' }] }).success).toBe(true);
@@ -2680,7 +2692,7 @@ describe('create_branch (the branch policy)', () => {
   test('is structurally unavailable once a worker has been prompted', async ({ projectDir, run }) => {
     await execa('git', ['init', '-b', 'main'], { cwd: projectDir });
     const { call } = harness(run);
-    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'hello' });
+    await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'hello' });
 
     const result = await call('create_branch', { name: 'feat/too-late' });
     expect(result.isError).toBe(true);
@@ -2713,7 +2725,7 @@ describe('advance_phase (the gate packet)', () => {
     run.rounds.spec = 2;
     const { call } = harness(run, { phase: 'spec' });
     const result = await call('advance_phase', {
-      summary: 'reviewer flagged X, fixed; Y rejected with rationale',
+      summary: 'analyst flagged X, fixed; Y rejected with rationale',
       artifacts: ['docs/specs/feature.md'],
       spec_path: 'docs/specs/feature.md',
     });
@@ -2721,7 +2733,7 @@ describe('advance_phase (the gate packet)', () => {
     expect.soft(run.terminalMarker).toEqual({ phase: 'spec', kind: 'advance' });
     expect.soft(text(result)).toContain('the run moves to the human gate');
     const persisted = loadRunState(projectDir, run.runId);
-    expect.soft(persisted.phaseSummaries.spec?.summary).toContain('reviewer flagged X');
+    expect.soft(persisted.phaseSummaries.spec?.summary).toContain('analyst flagged X');
     expect.soft(persisted.specPath).toBe('docs/specs/feature.md');
     // The advance marker is persisted atomically with the gate packet.
     expect.soft(persisted.terminalMarker).toEqual({ phase: 'spec', kind: 'advance' });
@@ -2794,7 +2806,7 @@ describe('steer delivery (every phase-continuing tool result)', () => {
 
   test('delivery rides refusal results too', async ({ run }) => {
     const { call } = harness(run);
-    const args = { role: 'reviewer', tag: 'review-spec', body: 'full template' };
+    const args = { duty: 'analyst', tag: 'review-spec', body: 'full template' };
     await call('send_prompt', args);
 
     stageSteer(run, 'mid-phase note');
@@ -2818,9 +2830,9 @@ describe('steer delivery (every phase-continuing tool result)', () => {
     let finish!: (turn: { text: string; sessionId: string }) => void;
     const slow = new FakeWorker('codex');
     slow.runTurn = () => new Promise((resolve) => (finish = resolve));
-    const { call } = harness(run, { reviewer: slow });
+    const { call } = harness(run, { checker: slow });
 
-    const pending = call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    const pending = call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
     await new Promise((r) => setTimeout(r, 0)); // let the turn start
     stageSteer(run, 'staged mid-turn');
     finish({ text: 'done', sessionId: 's' });
@@ -2934,7 +2946,7 @@ describe('get_task (the brief surface, side-effecting exactly-once)', () => {
     const { tools } = createPhaseTools({
       state: run,
       phase: 'spec',
-      providers: { implementer: new FakeWorker('claude'), reviewer: new FakeWorker('codex') },
+      providers: { architect: new FakeWorker('claude'), analyst: new FakeWorker('codex') },
       log: () => {},
     });
     expect(tools.find((t) => t.name === 'get_task')?.annotations?.readOnlyHint).toBeUndefined();
@@ -2948,12 +2960,12 @@ describe('the post-terminal quiescence rail', () => {
   }) => {
     await execa('git', ['init', '-b', 'main'], { cwd: projectDir });
     run.terminalMarker = { phase: 'spec', kind: 'advance' };
-    const implementer = new FakeWorker('claude');
-    const reviewer = new FakeWorker('codex');
-    const { call } = harness(run, { phase: 'spec', implementer, reviewer });
+    const maker = new FakeWorker('claude');
+    const checker = new FakeWorker('codex');
+    const { call } = harness(run, { phase: 'spec', maker, checker });
 
     for (const [name, args] of [
-      ['send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'x' }],
+      ['send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'x' }],
       ['list_snippets', {}],
       ['create_branch', { name: 'feat/nope' }],
       ['propose_snippet_edit', { snippet_key: 'k', proposed_body: 'b', rationale: 'r' }],
@@ -2963,8 +2975,8 @@ describe('the post-terminal quiescence rail', () => {
       expect.soft(text(result), name).toContain(`${name} is refused here`);
     }
     // None of them ran: no worker turn, no branch, no proposal.
-    expect.soft(implementer.calls).toHaveLength(0);
-    expect.soft(reviewer.calls).toHaveLength(0);
+    expect.soft(maker.calls).toHaveLength(0);
+    expect.soft(checker.calls).toHaveLength(0);
     expect.soft(run.branch).toBeUndefined();
     const persisted = loadRunState(projectDir, run.runId);
     expect.soft(persisted.snippetProposals).toHaveLength(0);
@@ -2985,7 +2997,7 @@ describe('the post-terminal quiescence rail', () => {
 
     run.terminalMarker = { phase: 'frame', kind: 'advance' }; // foreign to spec
     const stale = harness(run, { phase: 'spec' });
-    const result = await stale.call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'x' });
+    const result = await stale.call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'x' });
     expect.soft(result.isError).toBeUndefined(); // the stale marker does not refuse this phase's work
     expect.soft(text(result)).toBe('scripted response');
   });
@@ -2994,10 +3006,10 @@ describe('the post-terminal quiescence rail', () => {
 describe('the library and the journal', () => {
   test('list_snippets annotates templates already sent this phase', async ({ run }) => {
     const { call } = harness(run);
-    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'template' });
+    await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'template' });
 
     const library = text(await call('list_snippets'));
-    expect(library).toContain('<snippet key="review-spec" already_sent_this_phase_to="reviewer">');
+    expect(library).toContain('<snippet key="review-spec" already_sent_this_phase_to="analyst">');
   });
 
   test('list_snippets renders the run’s own arc (a RIR run sees RIR phases, not Full’s)', async ({ projectDir }) => {
@@ -3076,130 +3088,130 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
 
   test('send_prompt returns BEFORE the worker turn completes — the session stays live', async ({ run }) => {
     expect.assertions(3);
-    const reviewer = new DeferredWorker('codex');
-    const { call } = harness(run, { reviewer, async: true });
+    const checker = new DeferredWorker('codex');
+    const { call } = harness(run, { checker, async: true });
 
-    const result = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    const result = await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
     // The dispatch returned while the worker turn is still pending — the whole point.
-    expect.soft(reviewer.pending).toBe(1);
+    expect.soft(checker.pending).toBe(1);
     expect.soft(result.isError).toBeUndefined();
-    expect.soft(allText(result)).toContain('Dispatched to the reviewer');
+    expect.soft(allText(result)).toContain('Dispatched to the analyst');
   });
 
   test('check_turns reports still-running, then delivers the text and commits the durable bookkeeping at settle', async ({
     projectDir,
     run,
   }) => {
-    const reviewer = new DeferredWorker('codex');
-    const { call } = harness(run, { reviewer, async: true });
-    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    const checker = new DeferredWorker('codex');
+    const { call } = harness(run, { checker, async: true });
+    await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
 
     // Before the worker settles: nothing to deliver, the role is still running.
     const early = await call('check_turns');
     expect.soft(allText(early)).toContain('still running');
     expect.soft(allText(early)).not.toContain('scripted response');
 
-    reviewer.resolve({ sessionId: 'rev-1' });
+    checker.resolve({ sessionId: 'rev-1' });
     await flush();
     // Settle committed the durable bookkeeping (round, sent tag, session id) — even
     // before collect, so duet status stays truthful the instant the worker finished.
     const settled = loadRunState(projectDir, run.runId);
     expect.soft(settled.rounds.spec).toBe(1);
-    expect.soft(settled.sentSnippets?.spec?.reviewer).toEqual(['review-spec']);
+    expect.soft(settled.sentSnippets?.spec?.analyst).toEqual(['review-spec']);
     expect.soft(settled.sessions['planning.analyst']?.id).toBe('rev-1');
 
     // Collect delivers the worker's text and clears the pending record.
     const collected = await call('check_turns');
     expect.soft(allText(collected)).toContain('scripted response');
-    expect.soft(loadRunState(projectDir, run.runId).pendingTurns?.reviewer).toBeUndefined();
+    expect.soft(loadRunState(projectDir, run.runId).pendingTurns?.analyst).toBeUndefined();
   });
 
-  test('S7: an accepted-but-failed /compact resets the implementer and prescribes recover-context, on the async path', async ({
+  test('S7: an accepted-but-failed /compact resets the architect and prescribes recover-context, on the async path', async ({
     projectDir,
     run,
   }) => {
     run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-prior' } };
     saveRunState(run);
-    const implementer = new DeferredWorker('claude');
-    const { call } = harness(run, { implementer, async: true });
-    await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact drop the journey' });
+    const maker = new DeferredWorker('claude');
+    const { call } = harness(run, { maker, async: true });
+    await call('send_prompt', { duty: 'architect', tag: 'custom', body: '/compact drop the journey' });
 
     // The short /compact cap rode the dispatched turn (dispatcher path).
-    expect.soft(implementer.calls[0]?.timeoutMs).toBe(8 * 60_000);
+    expect.soft(maker.calls[0]?.timeoutMs).toBe(8 * 60_000);
 
     // The compact aborts (accepted-but-failed) — it stays collectible, the reset
     // lands at settle, and collect renders the recover-context prescription.
-    implementer.resolve({ aborted: true, sessionId: 'sess-compact' });
+    maker.resolve({ aborted: true, sessionId: 'sess-compact' });
     await flush();
     expect.soft(loadRunState(projectDir, run.runId).sessions['planning.architect']).toBeUndefined(); // reset at settle
 
     const collected = await call('check_turns');
     expect.soft(allText(collected)).toContain('recover-context');
-    expect.soft(loadRunState(projectDir, run.runId).pendingTurns?.implementer).toBeUndefined(); // collected clean
+    expect.soft(loadRunState(projectDir, run.runId).pendingTurns?.architect).toBeUndefined(); // collected clean
 
-    // The next send to the (re-opened) implementer mints fresh — no resume of the bloated session.
-    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'reread and continue' });
-    expect.soft(implementer.calls[1]?.sessionId).toBeUndefined();
+    // The next send to the (re-opened) maker mints fresh — no resume of the bloated session.
+    await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'reread and continue' });
+    expect.soft(maker.calls[1]?.sessionId).toBeUndefined();
   });
 
   test('the same-role guard spans the lifecycle: running and ready-uncollected refuse; collecting re-opens', async ({
     run,
   }) => {
-    const reviewer = new DeferredWorker('codex');
-    const { call } = harness(run, { reviewer, async: true });
-    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'r1' });
+    const checker = new DeferredWorker('codex');
+    const { call } = harness(run, { checker, async: true });
+    await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'r1' });
 
     // running → refused
-    const whileRunning = await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'x' });
+    const whileRunning = await call('send_prompt', { duty: 'analyst', tag: 'custom', body: 'x' });
     expect.soft(whileRunning.isError).toBe(true);
     expect.soft(allText(whileRunning)).toContain('already in flight');
-    expect.soft(reviewer.calls).toHaveLength(1); // never reached the worker
+    expect.soft(checker.calls).toHaveLength(1); // never reached the worker
 
     // ready-uncollected → still refused (must read the prior answer + land the merge first)
-    reviewer.resolve({ sessionId: 'rev-1' });
+    checker.resolve({ sessionId: 'rev-1' });
     await flush();
-    expect.soft((await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'x' })).isError).toBe(true);
+    expect.soft((await call('send_prompt', { duty: 'analyst', tag: 'custom', body: 'x' })).isError).toBe(true);
 
     // collect → re-opens; a fresh dispatch now reaches the worker
     await call('check_turns');
-    expect.soft((await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'x2' })).isError).toBeUndefined();
-    expect.soft(reviewer.calls).toHaveLength(2);
+    expect.soft((await call('send_prompt', { duty: 'analyst', tag: 'custom', body: 'x2' })).isError).toBeUndefined();
+    expect.soft(checker.calls).toHaveLength(2);
   });
 
   test('a failed turn also holds the guard until collected, then re-opens', async ({ run }) => {
-    const reviewer = new DeferredWorker('codex');
-    const { call } = harness(run, { reviewer, async: true });
-    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'r1' });
-    reviewer.reject(new Error('spawn codex ENOENT'));
+    const checker = new DeferredWorker('codex');
+    const { call } = harness(run, { checker, async: true });
+    await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'r1' });
+    checker.reject(new Error('spawn codex ENOENT'));
     await flush();
 
     // failed-uncollected → refused
-    expect.soft((await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'x' })).isError).toBe(true);
+    expect.soft((await call('send_prompt', { duty: 'analyst', tag: 'custom', body: 'x' })).isError).toBe(true);
     // collect the failure → re-opens
     await call('check_turns');
-    expect.soft((await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'x2' })).isError).toBeUndefined();
+    expect.soft((await call('send_prompt', { duty: 'analyst', tag: 'custom', body: 'x2' })).isError).toBeUndefined();
   });
 
   test('cross-role turns run concurrently — check_turns returns both, with cost and tokens merged', async ({
     projectDir,
     run,
   }) => {
-    const implementer = new DeferredWorker('claude');
-    const reviewer = new DeferredWorker('codex');
-    const { call } = harness(run, { implementer, reviewer, async: true });
+    const maker = new DeferredWorker('claude');
+    const checker = new DeferredWorker('codex');
+    const { call } = harness(run, { maker, checker, async: true });
 
-    await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
-    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
-    expect.soft(implementer.pending).toBe(1);
-    expect.soft(reviewer.pending).toBe(1); // both in flight at once
+    await call('send_prompt', { duty: 'architect', tag: 'write-spec', body: 'draft' });
+    await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
+    expect.soft(maker.pending).toBe(1);
+    expect.soft(checker.pending).toBe(1); // both in flight at once
 
-    implementer.resolve({ sessionId: 'impl-1', costUsd: 1.25 });
-    reviewer.resolve({ sessionId: 'rev-1', tokens: { input: 1000, output: 50 } });
+    maker.resolve({ sessionId: 'impl-1', costUsd: 1.25 });
+    checker.resolve({ sessionId: 'rev-1', tokens: { input: 1000, output: 50 } });
     await flush();
 
     const both = allText(await call('check_turns'));
-    expect.soft(both).toContain('── implementer ──');
-    expect.soft(both).toContain('── reviewer ──');
+    expect.soft(both).toContain('── architect ──');
+    expect.soft(both).toContain('── analyst ──');
 
     const disk = loadRunState(projectDir, run.runId);
     expect.soft(disk.costs.claudeWorkersUsd).toBe(1.25);
@@ -3208,10 +3220,10 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
   });
 
   test('check_turns delivers the per-turn footer too (F5 covers the async host)', async ({ run }) => {
-    const reviewer = new DeferredWorker('codex');
-    const { call } = harness(run, { reviewer, async: true });
-    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
-    reviewer.resolve({ sessionId: 'rev-1', tokens: { input: 2000, output: 400 }, context: { usedTokens: 100, windowTokens: 200 } });
+    const checker = new DeferredWorker('codex');
+    const { call } = harness(run, { checker, async: true });
+    await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
+    checker.resolve({ sessionId: 'rev-1', tokens: { input: 2000, output: 400 }, context: { usedTokens: 100, windowTokens: 200 } });
     await flush();
     const collected = allText(await call('check_turns'));
     expect.soft(collected).toMatch(/\[context 50% · codex 2k\/400 tok · round 1\/\d+\]/);
@@ -3221,10 +3233,10 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     projectDir,
     run,
   }) => {
-    const reviewer = new DeferredWorker('codex');
-    const { call } = harness(run, { reviewer, async: true });
-    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
-    reviewer.reject(new Error('spawn codex ENOENT'));
+    const checker = new DeferredWorker('codex');
+    const { call } = harness(run, { checker, async: true });
+    await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
+    checker.reject(new Error('spawn codex ENOENT'));
     await flush();
 
     // check_turns delivers the prescribed-recovery infra error.
@@ -3234,10 +3246,10 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
 
     const disk = loadRunState(projectDir, run.runId);
     expect.soft(disk.rounds.spec ?? 0).toBe(0); // no round
-    expect.soft(disk.sentSnippets?.spec?.reviewer ?? []).toEqual([]); // no sent tag
+    expect.soft(disk.sentSnippets?.spec?.analyst ?? []).toEqual([]); // no sent tag
 
     // The prescribed retry of the SAME tag does not trip the duplicate-template warning.
-    const retry = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    const retry = await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
     expect.soft(retry.isError).toBeUndefined();
     expect.soft(allText(retry)).toContain('Dispatched');
   });
@@ -3245,17 +3257,17 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
   test('the branch-fixed flag is durable and one-way: a dispatch fixes the branch, a failed-then-collected turn keeps it fixed', async ({
     run,
   }) => {
-    const implementer = new DeferredWorker('claude');
-    const { call } = harness(run, { implementer, async: true });
+    const maker = new DeferredWorker('claude');
+    const { call } = harness(run, { maker, async: true });
 
-    await call('send_prompt', { role: 'implementer', tag: 'write-spec', body: 'draft' });
+    await call('send_prompt', { duty: 'architect', tag: 'write-spec', body: 'draft' });
     const afterDispatch = await call('create_branch', { name: 'feat/too-late' });
     expect.soft(afterDispatch.isError).toBe(true);
     expect.soft(allText(afterDispatch)).toContain('branch is fixed');
 
     // The turn FAILS and is collected (its pending record is cleared) — but the
     // branch stays fixed, because workerDispatched is one-way and never cleared.
-    implementer.reject(new Error('spawn claude ENOENT'));
+    maker.reject(new Error('spawn claude ENOENT'));
     await flush();
     await call('check_turns');
     const afterFailure = await call('create_branch', { name: 'feat/still-too-late' });
@@ -3266,23 +3278,23 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
   test('phase-exit (advance_phase & ask_human) is refused while a turn is running/failed/ready, allowed once drained', async ({
     run,
   }) => {
-    const implementer = new DeferredWorker('claude');
-    const { call } = harness(run, { phase: 'frame', implementer, async: true });
+    const maker = new DeferredWorker('claude');
+    const { call } = harness(run, { phase: 'frame', maker, async: true });
 
-    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'x' });
+    await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'x' });
     // running
     expect.soft((await call('advance_phase', { summary: 's', artifacts: [] })).isError).toBe(true);
     expect.soft((await call('ask_human', { question: 'q?' })).isError).toBe(true);
 
     // failed-uncollected
-    implementer.reject(new Error('boom'));
+    maker.reject(new Error('boom'));
     await flush();
     expect.soft((await call('advance_phase', { summary: 's', artifacts: [] })).isError).toBe(true);
     await call('check_turns'); // drain the failure
 
     // ready-uncollected
-    await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'y' });
-    implementer.resolve({ sessionId: 'i1' });
+    await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'y' });
+    maker.resolve({ sessionId: 'i1' });
     await flush();
     expect.soft((await call('advance_phase', { summary: 's', artifacts: [] })).isError).toBe(true);
 
@@ -3302,7 +3314,7 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     // turnsInFlight set (which the same-role send guard, not this gate, owns). Seed that
     // set live and confirm neither terminal tool is refused — the preservation oracle for
     // the base's unconditional `if (!dispatcher) return null`.
-    const turnsInFlight = new Set<WorkerRole>(['implementer']);
+    const turnsInFlight = new Set<VoiceAddress>(['architect']);
     const { call } = harness(run, { phase: 'frame', turnsInFlight }); // async omitted → blocking host
 
     const adv = await call('advance_phase', { summary: 's', artifacts: [] });
@@ -3315,11 +3327,11 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
   });
 
   test('the settle is lease-fenced: a superseded server (holdsLease false) writes nothing', async ({ projectDir, run }) => {
-    const reviewer = new DeferredWorker('codex');
-    const { call } = harness(run, { reviewer, async: true, holdsLease: () => false });
-    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    const checker = new DeferredWorker('codex');
+    const { call } = harness(run, { checker, async: true, holdsLease: () => false });
+    await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
 
-    reviewer.resolve({ sessionId: 'rev-1' });
+    checker.resolve({ sessionId: 'rev-1' });
     await flush();
 
     // The background settle ran but the lease was lost — so it committed nothing:
@@ -3327,7 +3339,7 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     const disk = loadRunState(projectDir, run.runId);
     expect.soft(disk.rounds.spec ?? 0).toBe(0);
     expect.soft(disk.sessions['planning.analyst']).toBeUndefined();
-    expect.soft(disk.pendingTurns?.reviewer?.status).toBe('running');
+    expect.soft(disk.pendingTurns?.analyst?.status).toBe('running');
   });
 
   // Round-2: the lease gate is non-throwing. The production holdsLease does a
@@ -3346,16 +3358,16 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     };
     process.on('unhandledRejection', onRejection);
     try {
-      const reviewer = new DeferredWorker('codex');
+      const checker = new DeferredWorker('codex');
       const { call, dispatcher } = harness(run, {
-        reviewer,
+        checker,
         async: true,
         holdsLease: () => {
           throw new Error('state-file fault during lease check');
         },
       });
-      await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
-      reviewer.resolve({ sessionId: 'rev-1' });
+      await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
+      checker.resolve({ sessionId: 'rev-1' });
       await flush();
       await flush(); // let any stray rejection surface
 
@@ -3365,19 +3377,19 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
       const disk = loadRunState(projectDir, run.runId);
       expect.soft(disk.rounds.spec ?? 0).toBe(0);
       expect.soft(disk.sessions['planning.analyst']).toBeUndefined();
-      expect.soft(disk.pendingTurns?.reviewer?.status).toBe('running'); // disk untouched
+      expect.soft(disk.pendingTurns?.analyst?.status).toBe('running'); // disk untouched
       // …but on a LIVE server whose check merely faulted, the in-memory record is
       // NOT stranded `running` — it flipped failed, so check_turns can drain it.
-      expect.soft(dispatcher!.statusOf('reviewer')).toBe('failed');
+      expect.soft(dispatcher!.statusOf('analyst')).toBe('failed');
 
       const collected = await call('check_turns');
       expect.soft(allText(collected)).toContain('infrastructure layer'); // drained as a failed turn
-      expect.soft(dispatcher!.statusOf('reviewer')).toBeUndefined(); // collected → role re-opened
+      expect.soft(dispatcher!.statusOf('analyst')).toBeUndefined(); // collected → role re-opened
       // The drain cleared the pending record but committed NO settle bookkeeping.
       const after = loadRunState(projectDir, run.runId);
       expect.soft(after.rounds.spec ?? 0).toBe(0);
       expect.soft(after.sessions['planning.analyst']).toBeUndefined();
-      expect.soft(after.pendingTurns?.reviewer).toBeUndefined();
+      expect.soft(after.pendingTurns?.analyst).toBeUndefined();
     } finally {
       process.off('unhandledRejection', onRejection);
     }
@@ -3390,16 +3402,16 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
   }) => {
     // Seed a pending record on disk, then build a FRESH dispatcher (empty
     // in-memory) over the run — exactly the post-reconnect state.
-    run.pendingTurns = { reviewer: { tag: 'review-spec', startedAt: '2026-06-21T00:00:00.000Z', status: 'running' } };
+    run.pendingTurns = { analyst: { tag: 'review-spec', startedAt: '2026-06-21T00:00:00.000Z', status: 'running' } };
     saveRunState(run);
-    const { call, reviewer, dispatcher } = harness(run, { async: true });
+    const { call, checker, dispatcher } = harness(run, { async: true });
     expect.soft(dispatcher?.hasPending()).toBe(false); // the fresh dispatcher owns nothing
 
     // (a) a same-role send is refused with the orphan copy and never reaches the worker
-    const send = await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'x' });
+    const send = await call('send_prompt', { duty: 'analyst', tag: 'custom', body: 'x' });
     expect.soft(send.isError).toBe(true);
     expect.soft(allText(send)).toContain('orphaned');
-    expect.soft((reviewer as FakeWorker).calls).toHaveLength(0);
+    expect.soft((checker as FakeWorker).calls).toHaveLength(0);
 
     // (b) advance_phase AND ask_human are refused (the disk half of the gate)
     expect.soft((await call('advance_phase', { summary: 's', artifacts: [] })).isError).toBe(true);
@@ -3410,35 +3422,35 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     expect.soft(allText(checked)).toContain('orphaned');
     expect.soft(allText(checked)).not.toContain('No worker turns are in flight');
     // The orphan persists — never auto-collected, never auto-cleared.
-    expect.soft(loadRunState(projectDir, run.runId).pendingTurns?.reviewer?.status).toBe('running');
+    expect.soft(loadRunState(projectDir, run.runId).pendingTurns?.analyst?.status).toBe('running');
   });
 
   test('the orphan refusal is session-aware: a SESSION orphan points at takeover and names the resume race', async ({
     run,
   }) => {
     run.sessions = { 'planning.analyst': { provider: 'codex', id: 'rev-prev' } }; // a session was captured before the crash
-    run.pendingTurns = { reviewer: { tag: 'review-spec', startedAt: 't', status: 'running' } };
+    run.pendingTurns = { analyst: { tag: 'review-spec', startedAt: 't', status: 'running' } };
     saveRunState(run);
     const { call } = harness(run, { async: true });
 
-    const send = await call('send_prompt', { role: 'reviewer', tag: 'custom', body: 'x' });
+    const send = await call('send_prompt', { duty: 'analyst', tag: 'custom', body: 'x' });
     expect.soft(send.isError).toBe(true);
-    expect.soft(allText(send)).toContain('duet takeover reviewer');
+    expect.soft(allText(send)).toContain('duet takeover analyst');
     expect.soft(allText(send)).toContain('race the orphaned worker'); // the resume-race hazard
   });
 
   test('a NO-SESSION orphan refusal states the race honestly (old worker may still be editing the repo; dropping abandons)', async ({
     run,
   }) => {
-    run.pendingTurns = { implementer: { tag: 'write-spec', startedAt: 't', status: 'running' } }; // no workerSessions.implementer
+    run.pendingTurns = { architect: { tag: 'write-spec', startedAt: 't', status: 'running' } }; // no session slot for the architect
     saveRunState(run);
     const { call } = harness(run, { async: true });
 
-    const send = await call('send_prompt', { role: 'implementer', tag: 'custom', body: 'x' });
+    const send = await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'x' });
     expect.soft(send.isError).toBe(true);
     expect.soft(allText(send)).toContain('editing the repo');
     expect.soft(allText(send)).toContain('ABANDONS');
-    expect.soft(allText(send)).toContain('duet takeover implementer');
+    expect.soft(allText(send)).toContain('duet takeover architect');
   });
 
   test('the heartbeat stops at settle — no further "running" lines accrue before collect', async ({ run, onTestFinished }) => {
@@ -3446,26 +3458,26 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     onTestFinished(() => {
       vi.useRealTimers();
     });
-    const reviewer = new DeferredWorker('codex');
-    const { call, lines } = harness(run, { reviewer, async: true });
-    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+    const checker = new DeferredWorker('codex');
+    const { call, lines } = harness(run, { checker, async: true });
+    await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
 
     await vi.advanceTimersByTimeAsync(5 * 60_000);
-    const beforeSettle = lines.filter((l) => l.includes('⏳ reviewer turn running')).length;
+    const beforeSettle = lines.filter((l) => l.includes('⏳ analyst turn running')).length;
     expect.soft(beforeSettle).toBeGreaterThanOrEqual(1);
 
-    reviewer.resolve({ sessionId: 'rev-1' });
+    checker.resolve({ sessionId: 'rev-1' });
     await vi.advanceTimersByTimeAsync(0); // let the settle continuation run (clears the interval)
     await vi.advanceTimersByTimeAsync(10 * 60_000);
-    const afterSettle = lines.filter((l) => l.includes('⏳ reviewer turn running')).length;
+    const afterSettle = lines.filter((l) => l.includes('⏳ analyst turn running')).length;
     expect.soft(afterSettle).toBe(beforeSettle); // settle stopped the heartbeat
   });
 
   test('steers ride a check_turns result (the phase-continuing steer surface)', async ({ run }) => {
-    const reviewer = new DeferredWorker('codex');
-    const { call } = harness(run, { reviewer, async: true });
-    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
-    reviewer.resolve({ sessionId: 'rev-1' });
+    const checker = new DeferredWorker('codex');
+    const { call } = harness(run, { checker, async: true });
+    await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
+    checker.resolve({ sessionId: 'rev-1' });
     await flush();
 
     stageSteer(run, 'narrow the scope');
@@ -3491,23 +3503,23 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     };
     process.on('unhandledRejection', onRejection);
     try {
-      const reviewer = new SyncThrowWorker('codex');
-      const { call, dispatcher } = harness(run, { reviewer, async: true });
+      const checker = new SyncThrowWorker('codex');
+      const { call, dispatcher } = harness(run, { checker, async: true });
       // Pre-fix this threw out of dispatch (the bare runTurn() call) and rejected
       // the handler; post-fix the launch rides Promise.resolve().then, so the
       // throw is normalized in the background and dispatch returns cleanly.
-      const dispatched = await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
+      const dispatched = await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
       expect.soft(dispatched.isError).toBeFalsy();
-      expect.soft(text(dispatched)).toContain('Dispatched to the reviewer');
+      expect.soft(text(dispatched)).toContain('Dispatched to the analyst');
       await flush();
       // The role is NOT stranded running — the failure path flipped it, in memory
       // and on disk, so check_turns / status --wait can never hang on it.
-      expect.soft(dispatcher!.statusOf('reviewer')).toBe('failed');
-      expect.soft(loadRunState(run.cwd, run.runId).pendingTurns?.reviewer?.status).toBe('failed');
+      expect.soft(dispatcher!.statusOf('analyst')).toBe('failed');
+      expect.soft(loadRunState(run.cwd, run.runId).pendingTurns?.analyst?.status).toBe('failed');
       // check_turns delivers the prescribed infra-failure recovery and re-opens the role.
       const collected = await call('check_turns');
       expect.soft(allText(collected)).toContain('infrastructure layer');
-      expect.soft(dispatcher!.statusOf('reviewer')).toBeUndefined();
+      expect.soft(dispatcher!.statusOf('analyst')).toBeUndefined();
     } finally {
       process.off('unhandledRejection', onRejection);
     }
@@ -3517,28 +3529,28 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
   test('a mixed batch — one role ready, one failed — collects in a single check_turns, each record handled independently', async ({
     run,
   }) => {
-    const implementer = new DeferredWorker('claude');
-    const reviewer = new DeferredWorker('codex');
-    const { call, dispatcher } = harness(run, { implementer, reviewer, async: true });
-    await call('send_prompt', { role: 'implementer', tag: 'draft', body: 'draft the spec' });
-    await call('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'review' });
-    implementer.resolve({ text: 'the draft', sessionId: 'impl-1' });
-    reviewer.reject(new Error('codex exec boom'));
+    const maker = new DeferredWorker('claude');
+    const checker = new DeferredWorker('codex');
+    const { call, dispatcher } = harness(run, { maker, checker, async: true });
+    await call('send_prompt', { duty: 'architect', tag: 'draft', body: 'draft the spec' });
+    await call('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'review' });
+    maker.resolve({ text: 'the draft', sessionId: 'impl-1' });
+    checker.reject(new Error('codex exec boom'));
     await flush();
-    expect.soft(dispatcher!.statusOf('implementer')).toBe('ready');
-    expect.soft(dispatcher!.statusOf('reviewer')).toBe('failed');
+    expect.soft(dispatcher!.statusOf('architect')).toBe('ready');
+    expect.soft(dispatcher!.statusOf('analyst')).toBe('failed');
 
     const collected = await call('check_turns');
     const out = allText(collected);
-    expect.soft(out).toContain('── implementer ──');
+    expect.soft(out).toContain('── architect ──');
     expect.soft(out).toContain('the draft'); // the success delivered
-    expect.soft(out).toContain('── reviewer ──');
+    expect.soft(out).toContain('── analyst ──');
     expect.soft(out).toContain('infrastructure layer'); // the failure's recovery, NOT suppressed by the sibling
     // Both records collected and re-opened in the one pass.
-    expect.soft(dispatcher!.statusOf('implementer')).toBeUndefined();
-    expect.soft(dispatcher!.statusOf('reviewer')).toBeUndefined();
+    expect.soft(dispatcher!.statusOf('architect')).toBeUndefined();
+    expect.soft(dispatcher!.statusOf('analyst')).toBeUndefined();
     const after = loadRunState(run.cwd, run.runId).pendingTurns ?? {};
-    expect.soft(after.implementer).toBeUndefined();
-    expect.soft(after.reviewer).toBeUndefined();
+    expect.soft(after.architect).toBeUndefined();
+    expect.soft(after.analyst).toBeUndefined();
   });
 });

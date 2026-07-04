@@ -1,17 +1,16 @@
-import { DEFAULT_CLAUDE_MODEL, effectiveBindingFor } from '../config.ts';
+import { DEFAULT_CLAUDE_MODEL, voiceBindingFor } from '../config.ts';
 import type { VoiceBindings } from '../config.ts';
+import { dutiesOf, stageOf } from '../phases.ts';
 import type { PhaseName, WorkflowName } from '../phases.ts';
 import { ClaudeWorker } from './claude.ts';
 import { CodexWorker } from './codex.ts';
 import { InteractiveClaudeWorker } from './interactive-claude.ts';
-import type { WorkerProvider, WorkerProviders, WorkerRole } from './types.ts';
+import type { VoiceAddress, WorkerProvider, WorkerProviders } from './types.ts';
 
 /**
- * Build the worker providers from the run's role bindings and the phase's
- * rails. The always-present base (implementer, reviewer) is built every run;
- * the consultant is built ONLY when its binding is present, so an un-enabled run
- * constructs exactly today's two providers. The claude provider takes the
- * per-role model and the per-turn budget cap; the codex provider deliberately
+ * Build the phase's worker providers from the frozen bindings and the phase's
+ * rails — the stage's two duty voices, plus the consultant ONLY when its
+ * binding is present. The claude provider takes the per-voice model and the per-turn budget cap; the codex provider deliberately
  * takes neither (~/.codex/config.toml governs the model, and codex has no budget
  * flag).
  *
@@ -20,13 +19,11 @@ import type { WorkerProvider, WorkerProviders, WorkerRole } from './types.ts';
  * model and the deadline but no budget cap — the flat quota has no per-turn
  * dollar ceiling to pass.
  *
- * Every worker's binding is PHASE-EFFECTIVE: `effectiveBindingFor` looks it up
- * in the frozen manifest by the phase's stage + duty — a provider switch
- * across the stage boundary included — so the same run can plan on one
- * binding and build on another. It resolves BEFORE the provider branch, which
- * is what makes the codex-vs-claude construction fall out per phase — hence
- * the `workflow`+`phase` parameters (the stage split is workflow-specific,
- * and this is already the per-phase construction site for budget/timeout).
+ * Each duty's binding is a frozen-manifest lookup (`voiceBindingFor`) — a
+ * provider switch across the stage boundary included — so the same run plans
+ * on one binding and builds on another. The lookup resolves BEFORE the
+ * provider branch, which is what makes the codex-vs-claude construction fall
+ * out per phase.
  */
 export function createWorkers(
   bindings: VoiceBindings,
@@ -34,8 +31,8 @@ export function createWorkers(
   phase: PhaseName,
   rails: { workerBudgetUsd: number | undefined; timeoutMs: number },
 ): WorkerProviders {
-  const forRole = (role: WorkerRole): WorkerProvider => {
-    const binding = effectiveBindingFor(bindings, role, workflow, phase);
+  const forAddress = (address: VoiceAddress): WorkerProvider => {
+    const binding = voiceBindingFor(bindings, address);
     if (binding.provider !== 'claude') return new CodexWorker({ timeoutMs: rails.timeoutMs });
     const model = binding.model ?? DEFAULT_CLAUDE_MODEL;
     if (binding.transport === 'interactive') {
@@ -43,10 +40,11 @@ export function createWorkers(
     }
     return new ClaudeWorker({ model, maxBudgetUsd: rails.workerBudgetUsd, timeoutMs: rails.timeoutMs });
   };
+  const [maker, checker] = dutiesOf(workflow, stageOf(workflow, phase));
   return {
-    implementer: forRole('implementer'),
-    reviewer: forRole('reviewer'),
-    ...(bindings.consultant ? { consultant: forRole('consultant') } : {}),
+    [maker]: forAddress(maker),
+    [checker]: forAddress(checker),
+    ...(bindings.consultant ? { consultant: forAddress('consultant') } : {}),
   };
 }
 
@@ -58,11 +56,11 @@ export function createWorkers(
  * The send_prompt enum gates the consultant role to bound runs, so the throw is
  * defensive: reaching it means a consultant turn was routed on an un-enabled run.
  */
-export function providerFor(providers: WorkerProviders, role: WorkerRole): WorkerProvider {
-  const provider = providers[role];
+export function providerFor(providers: WorkerProviders, address: VoiceAddress): WorkerProvider {
+  const provider = providers[address];
   if (!provider) {
     throw new Error(
-      `no ${role} worker is built for this run — send_prompt advertises a role only when it is bound, so the orchestrator should not have routed to an unbound consultant.`,
+      `no ${address} worker is built for this phase — send_prompt advertises an address only when it is live here, so the orchestrator should not have routed to ${address}.`,
     );
   }
   return provider;

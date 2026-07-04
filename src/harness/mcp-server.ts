@@ -5,7 +5,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { phaseSpec, phasesOf } from '../phases.ts';
 import type { PhaseName } from '../phases.ts';
 import { createWorkers } from '../providers/index.ts';
-import type { WorkerProviders, WorkerRole } from '../providers/types.ts';
+import type { WorkerProviders, VoiceAddress } from '../providers/types.ts';
 import { acquireMcpOwner, budgetFor, holdsMcpOwner, loadRunState, workflowOf } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
 import { probeRunPosition } from './lifecycle.ts';
@@ -172,7 +172,7 @@ export function createRunScopedKernel(
   const leaseHeld = (): boolean => holdsMcpOwner(loadRunState(cwd, runId), ownerNonce);
 
   let ctx:
-    | { phase: PhaseName; providers: WorkerProviders; rails: { turnsInFlight: Set<WorkerRole>; resendWarned: Set<string> }; dispatcher: TurnDispatcher }
+    | { phase: PhaseName; providers: WorkerProviders; rails: { turnsInFlight: Set<VoiceAddress>; resendWarned: Set<string> }; dispatcher: TurnDispatcher }
     | null = null;
 
   const toolsFor = (): Array<KernelTool<any>> => {

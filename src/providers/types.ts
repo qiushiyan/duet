@@ -1,16 +1,21 @@
+import type { Duty } from '../phases.ts';
+
 /**
- * Role–provider decoupling (docs/automation-design.md §"Roles are decoupled
- * from providers"): a role is a capability contract; a provider is an
- * implementation that can serve one or more roles. Exactly two providers
- * exist — `claude` and `codex`. A third provider means forking the code.
+ * Duty–provider decoupling (docs/automation-design.md §"Roles are decoupled
+ * from providers"): a duty is an identity within a stage; a provider is an
+ * implementation that can serve any of them. Exactly two providers exist —
+ * `claude` and `codex`. A third provider means forking the code.
  */
 
 /**
- * The worker roles the orchestrator routes between. `implementer` and
- * `reviewer` are the always-present base; `consultant` is the optional second
- * reviewer — an independent cross-family voice, bound only when configured.
+ * The protocol addresses the orchestrator routes between (CONTEXT.md: Voice):
+ * a stage's two duty voices, plus the optional consultant — an independent
+ * cross-family advisor, bound only when configured. The one surface key for
+ * send_prompt/check_turns, the in-flight records, orphan recovery, takeover,
+ * logs, and the sent-snippet bookkeeping. The orchestrator is never a
+ * protocol address (it routes; nothing prompts it).
  */
-export type WorkerRole = 'implementer' | 'reviewer' | 'consultant';
+export type VoiceAddress = Duty | 'consultant';
 
 /**
  * What currently fills a session's context window, captured at a turn
@@ -102,12 +107,13 @@ export interface RunTurnOptions {
   /** Resume an existing session; omit to start a new one. */
   sessionId?: string;
   /**
-   * Marks the read-only reviewer role. A role-intent HINT, not an OS guarantee
-   * (2026-06-22): the headless providers run full-permission — codex defers to
-   * `~/.codex/config.toml` (no `--sandbox`), claude uses `bypassPermissions` —
-   * and the reviewer's review-only behavior rests on the review-* snippets, not
-   * a sandbox. The interactive claude transport is the lone consumer that still
-   * acts on it: being implementer-only, it refuses a read-only (reviewer) turn.
+   * Marks a read-only (checker-lane or consultant) turn. An intent HINT, not
+   * an OS guarantee (2026-06-22): the headless providers run full-permission —
+   * codex defers to `~/.codex/config.toml` (no `--sandbox`), claude uses
+   * `bypassPermissions` — and the checker's review-only behavior rests on the
+   * review-* snippets, not a sandbox. The interactive claude transport is the
+   * lone consumer that still acts on it: being maker-only, it refuses a
+   * read-only turn.
    */
   readOnly?: boolean;
   cwd?: string;
@@ -149,20 +155,17 @@ export interface RunTurnOptions {
   onSessionId?: (id: string) => void;
 }
 
-/** A provider serving a worker role (implementer, reviewer, or consultant). */
+/** A provider serving a worker voice (a duty, or the consultant). */
 export interface WorkerProvider {
   readonly name: 'claude' | 'codex';
   runTurn(opts: RunTurnOptions): Promise<WorkerTurn>;
 }
 
 /**
- * The run's built worker providers: the always-present base pair plus the
- * optional consultant, built only when a consultant is bound. Required-base
- * over a closed `Record<WorkerRole, …>` keeps the unbound run's map byte-for-byte
- * today's; the optional consultant is why dynamic access goes through
- * `providerFor` (src/providers/index.ts), never `providers[role]` directly
- * (indexing this by a `WorkerRole` variable yields `WorkerProvider | undefined`).
+ * A phase's built worker providers, keyed by address: the phase's stage's two
+ * duty voices, plus the consultant only when bound. Partial by nature (a
+ * planning phase builds no delivery providers), so dynamic access goes
+ * through `providerFor` (src/providers/index.ts), never `providers[address]`
+ * directly (a bare index yields `WorkerProvider | undefined`).
  */
-export type WorkerProviders = Record<'implementer' | 'reviewer', WorkerProvider> & {
-  consultant?: WorkerProvider;
-};
+export type WorkerProviders = Partial<Record<VoiceAddress, WorkerProvider>>;

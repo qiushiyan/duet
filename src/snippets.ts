@@ -278,7 +278,7 @@ export interface SnippetRenderOpts {
    */
   phase?: PhaseName;
   /**
-   * The run's workflow — scopes the coming-next / already-done arc slicing.
+   * The run's workflow — scopes the coming-next / already-done phase slicing.
    * Omitted, it is inferred from `phase` (phase names are globally unique).
    */
   workflow?: WorkflowName;
@@ -331,7 +331,7 @@ export function renderSnippetLibrary(opts: SnippetRenderOpts = {}): string {
   // array, so the override layering is invisible past this line.
   const library: Snippet[] = opts.libraryContext ? loadEffectiveSnippets(opts.libraryContext) : loadSnippets();
   if (opts.all || !opts.phase) return renderFlat(library, opts.sentTo, opts.all, consultantBound, opts.workflow, gateless);
-  // A phase-scoped render needs the arc: phase names are workflow-scoped, so the
+  // A phase-scoped render needs the workflow: phase names are workflow-scoped, so the
   // phase alone can't resolve its templates. The one boundary check (parse, don't
   // validate) — the real caller (list_snippets) always supplies workflowOf(state).
   if (!opts.workflow) throw new Error('renderSnippetLibrary: a phase-scoped render needs the run workflow — phase names are workflow-scoped');
@@ -346,8 +346,8 @@ function snippetBlock(s: Snippet, sentTo?: Record<string, string[]>): string {
 
 function renderFlat(library: Snippet[], sentTo?: Record<string, string[]>, all?: boolean, consultantBound = false, workflow?: WorkflowName, gateless = false): string {
   // The flat library is the whole file, so the checkpoint snippets must be filtered
-  // here: unbound shows NONE; bound shows only the consultant snippets THIS arc's
-  // checkpoints reach (per-arc honesty — a bound rir run never sees full's contract
+  // here: unbound shows NONE; bound shows only the consultant snippets THIS
+  // workflow's checkpoints reach (per-workflow honesty — a bound short run never sees full's contract
   // snippets, the leak the workflow filter closes), narrowed to the gateless-surviving
   // set (generative frame + backstop, never the bet-audit) on a gateless run. With no
   // workflow (defensive, outside the tool path), a bound run falls back to every
@@ -393,7 +393,7 @@ function renderForPhase(
   const current = snippetsOf(phase);
   const lines: string[] = [
     `<snippet_library phase="${phase}">`,
-    'Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in arc order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).',
+    'Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in workflow order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).',
     `<phase_templates phase="${phase}">`,
     ...(current.length > 0
       ? fullBodies(byKey, current, sentTo)
@@ -409,7 +409,7 @@ function renderForPhase(
   const next = phases.slice(i + 1).filter((p) => snippetsOf(p.name).length > 0);
   if (next.length > 0) {
     lines.push(
-      '<coming_next note="the nominal arc — gate rejects loop back and pre-authorized gates skip the stop; orientation for forward-looking work, not a cue to reach ahead">',
+      '<coming_next note="the workflow’s nominal order — gate rejects loop back and pre-authorized gates skip the stop; orientation for forward-looking work, not a cue to reach ahead">',
       ...next.map(indexLine),
       '</coming_next>',
     );

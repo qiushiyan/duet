@@ -17,7 +17,6 @@ import {
   handoffGateOf,
   handoffWatchLabel,
   isBackstopCheckpoint,
-  isPostHandoffPhase,
   makerDutyOf,
   phaseOfGateState,
   stageOf,
@@ -431,11 +430,11 @@ describe('the design workflow (the middle arc — one design doc between framing
     expect.soft(handoffWatchLabel('blueprint')).toBe('design approved — AFK implement');
   });
 
-  test('isPostHandoffPhase splits at the design gate — the impl-model swap kicks in at the AFK build', () => {
-    expect.soft(isPostHandoffPhase('blueprint', 'frame')).toBe(false);
-    expect.soft(isPostHandoffPhase('blueprint', 'design')).toBe(false); // the handoff gate itself is NOT after itself
-    expect.soft(isPostHandoffPhase('blueprint', 'implement')).toBe(true);
-    expect.soft(isPostHandoffPhase('blueprint', 'finish')).toBe(true);
+  test('the stage partition splits at the design gate — delivery begins at the AFK build', () => {
+    expect.soft(stageOf('blueprint', 'frame')).toBe('planning');
+    expect.soft(stageOf('blueprint', 'design')).toBe('planning'); // the handoff gate itself is planning's last phase
+    expect.soft(stageOf('blueprint', 'implement')).toBe('delivery');
+    expect.soft(stageOf('blueprint', 'finish')).toBe('delivery');
   });
 
   test('the one-interruption posture: a new run materializes gatesAt = ["design"]', () => {
@@ -642,25 +641,25 @@ describe('handoffWatchLabel — the interactive→headless handoff hint, per arc
   });
 });
 
-describe('isPostHandoffPhase — the "doing" set strictly after the handoff gate', () => {
-  // full's handoffGate is `plan`; rir's is `research`. The planning phases up to
-  // and INCLUDING the handoff gate are pre-handoff; the build + finishing tail are
-  // post-handoff — this is the boundary the per-phase implementer-model swap keys on.
-  test('full: planning phases (through the plan handoff gate) are pre-handoff', () => {
-    expect.soft(isPostHandoffPhase('full', 'frame')).toBe(false);
-    expect.soft(isPostHandoffPhase('full', 'spec')).toBe(false);
-    expect.soft(isPostHandoffPhase('full', 'plan')).toBe(false); // the handoff gate itself is NOT after itself
+describe('stageOf — the stage partition at the handoff boundary', () => {
+  // full's handoff gate is `plan`; short's is `research`. The phases up to and
+  // INCLUDING the handoff gate are planning; the build + finishing tail are
+  // delivery — the boundary every duty-keyed lookup (bindings, sessions) rides.
+  test('full: the phases through the plan handoff gate are planning', () => {
+    expect.soft(stageOf('full', 'frame')).toBe('planning');
+    expect.soft(stageOf('full', 'spec')).toBe('planning');
+    expect.soft(stageOf('full', 'plan')).toBe('planning'); // the handoff gate is planning's last phase
   });
 
-  test('full: the build and finishing tail are post-handoff', () => {
-    expect.soft(isPostHandoffPhase('full', 'implement')).toBe(true);
-    expect.soft(isPostHandoffPhase('full', 'finish')).toBe(true);
+  test('full: the build and finishing tail are delivery', () => {
+    expect.soft(stageOf('full', 'implement')).toBe('delivery');
+    expect.soft(stageOf('full', 'finish')).toBe('delivery');
   });
 
-  test('rir: research (the handoff gate) is pre-handoff; implement and publish are post', () => {
-    expect.soft(isPostHandoffPhase('short', 'research')).toBe(false);
-    expect.soft(isPostHandoffPhase('short', 'implement')).toBe(true);
-    expect.soft(isPostHandoffPhase('short', 'finish')).toBe(true);
+  test('short: research (the handoff gate) is planning; implement and finish are delivery', () => {
+    expect.soft(stageOf('short', 'research')).toBe('planning');
+    expect.soft(stageOf('short', 'implement')).toBe('delivery');
+    expect.soft(stageOf('short', 'finish')).toBe('delivery');
   });
 });
 
@@ -748,7 +747,7 @@ describe('validateRegistry — posture/seed coherence on a delivery build phase'
         reviewPosture: 'fixer',
         midpoint: 'none',
         shipPacket: 'lean',
-        buildTailOwner: 'reviewer',
+        buildTailOwner: 'checker',
         examplesKey: 'relay-impl',
         ...semantics,
       } as PhaseSemantics,

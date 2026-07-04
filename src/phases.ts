@@ -79,8 +79,8 @@ export type ConsultantCheckpoint = 'frame' | 'specGate' | 'implGate' | 'contract
  * (a plain row field).
  */
 
-/** A worker role that can own a finishing tail (the build tail or the PR phase). */
-export type TailOwner = 'implementer' | 'reviewer';
+/** The lane that owns a finishing tail (the build tail or the PR phase). */
+export type TailOwner = 'maker' | 'checker';
 
 /** The doc-loop's artifact — sets the review lens and the snippet family. */
 export type ArtifactKind = 'spec' | 'plan' | 'design';
@@ -98,15 +98,15 @@ export type EntrySeed = 'compact-for-impl' | 'implement-design' | 'implement-dir
 
 /**
  * The build's review posture — the vocabulary's load-bearing axis: `critique`
- * (reviewer critiques, implementer fixes — the reflect-then-round-2 loop),
- * `writable` (one round, the implementer applies fixes in place), `fixer`
- * (relay: the reviewer applies fixes directly with write access and owns the
+ * (the critic critiques, the builder fixes — the reflect-then-round-2 loop),
+ * `writable` (one round, the builder applies fixes in place), `fixer`
+ * (relay: the judge applies fixes directly with write access and owns the
  * finishing tails; substance escalates to the human rather than being
  * patched over).
  */
 export type ReviewPosture = 'critique' | 'writable' | 'fixer';
 
-/** The worked-example set a phase's brief appends — per-arc data, keyed not inlined. */
+/** The worked-example set a phase's brief appends — per-workflow data, keyed not inlined. */
 export type ExamplesKey = 'frame' | 'research' | 'spec' | 'plan' | 'design' | 'impl' | 'blueprint-impl' | 'short-impl' | 'relay-impl';
 
 /** A phase's block identity + knob values (discriminated on `block`). */
@@ -270,9 +270,17 @@ const DUTY_INFO: Record<Duty, { stage: StageName; lane: 'maker' | 'checker' }> =
   judge: { stage: 'delivery', lane: 'checker' },
 };
 
+/** The closed duty vocabulary, in table order — for surfaces that enumerate it without a run in hand. */
+export const DUTIES = Object.keys(DUTY_INFO) as readonly Duty[];
+
 /** The stage a duty names — total, from the closed vocabulary's own table. */
 export function stageOfDuty(duty: Duty): StageName {
   return DUTY_INFO[duty].stage;
+}
+
+/** The lane a duty fills — makers (architect, builder) make; checkers (analyst, critic, judge) check. */
+export function stageOfDutyLane(duty: Duty): 'maker' | 'checker' {
+  return DUTY_INFO[duty].lane;
 }
 
 /**
@@ -446,7 +454,7 @@ export const WORKFLOWS = {
           reviewPosture: 'critique',
           midpoint: 'judgment',
           shipPacket: 'ceo-summary',
-          buildTailOwner: 'implementer',
+          buildTailOwner: 'maker',
           examplesKey: 'impl',
         },
         gate: {
@@ -489,7 +497,7 @@ export const WORKFLOWS = {
         // implement, so it is not a default step). Mirror of short's `finish` — same
         // shape, same entry brief (openPrPhaseEntryPrompt).
         name: 'finish',
-        semantics: { block: 'finish', finishOwner: 'implementer' },
+        semantics: { block: 'finish', finishOwner: 'maker' },
         gate: {
           state: 'openPrGate',
           heading: 'OPEN-PR gate — docs reconciled, PR open',
@@ -551,8 +559,8 @@ export const WORKFLOWS = {
     defaultPreAuthorized: ['plan', 'implement', 'finish'],
   },
   blueprint: {
-    // The middle arc (docs/specs/2026-07-02-design-arc.md): for serious work on
-    // a trusted frontier-model implementer, ONE committed design document —
+    // The middle workflow (docs/specs/2026-07-02-design-arc.md): for serious
+    // work on a trusted frontier-model builder, ONE committed design document —
     // product sections on top (spec altitude), technical sections below (plan
     // altitude minus enumeration) — replaces full's spec + plan pair. One review
     // loop, one attended gate by default, then full's AFK build and finishing
@@ -626,7 +634,7 @@ export const WORKFLOWS = {
           reviewPosture: 'critique',
           midpoint: 'judgment',
           shipPacket: 'ceo-summary',
-          buildTailOwner: 'implementer',
+          buildTailOwner: 'maker',
           examplesKey: 'blueprint-impl',
         },
         gate: {
@@ -646,7 +654,7 @@ export const WORKFLOWS = {
       {
         // Byte-for-byte full's finish — the shared PR-only finishing tail.
         name: 'finish',
-        semantics: { block: 'finish', finishOwner: 'implementer' },
+        semantics: { block: 'finish', finishOwner: 'maker' },
         gate: {
           state: 'openPrGate',
           heading: 'OPEN-PR gate — docs reconciled, PR open',
@@ -687,14 +695,15 @@ export const WORKFLOWS = {
     defaultPreAuthorized: ['frame', 'implement', 'finish'],
   },
   relay: {
-    // The plan-smart / build-cheap / judge-strong arc
-    // (docs/specs/2026-07-03-workflow-vocabulary.md §"The relay arc"): design's
-    // shape with two substitutions — the build's review posture is `fixer`
-    // (the reviewer applies fixes directly and owns the tails) and both tail
-    // owners move to the reviewer. The provider criss-cross (plan on claude
-    // with a codex reviewer; build on codex with a claude judge-fixer) is
-    // CONFIG-tier — the `build` override on each worker binding — never
-    // registry data; this arc works on any binding.
+    // The plan-smart / build-cheap / judge-strong workflow
+    // (docs/specs/2026-07-03-workflow-vocabulary.md §"The relay arc"):
+    // blueprint's shape with two substitutions — the build's review posture is
+    // `fixer` (the judge applies fixes directly and owns the tails) and both
+    // tail owners move to the checker. The provider criss-cross (planning on
+    // claude; a codex builder under a claude judge) is MANIFEST-tier — per-duty
+    // bindings (--bind builder=… --bind judge=…) — never registry data; this
+    // workflow works on any binding, and it declares no continuity edges (its
+    // whole delivery is born fresh).
     name: 'relay',
     displayName: 'Relay (frame → design doc → fresh build → judge review-and-fix → PR)',
     phases: [
@@ -736,11 +745,11 @@ export const WORKFLOWS = {
       },
       {
         // The fixer build: a fresh builder seeds from the committed design doc
-        // (fresh-seed — a provider-switched builder held no planning context),
-        // the reviewer reviews WITH write access (one review-and-fix round,
-        // cap 1 like short's writable round — the verify self-heal's fix
+        // (fresh-seed — no continuity edge, so the builder holds no planning
+        // context), the judge reviews WITH write access (one review-and-fix
+        // round, cap 1 like short's writable round — the verify self-heal's fix
         // follow-ups ride the established frame, not new rounds) and owns the
-        // build tail. Verify matters MORE here: the maker-vs-critic
+        // build tail. Verify matters MORE here: the maker-vs-checker
         // adversariality collapses into build-then-judge, so the consultant's
         // fresh-session contract verify is the one fully independent pass.
         name: 'implement',
@@ -750,7 +759,7 @@ export const WORKFLOWS = {
           reviewPosture: 'fixer',
           midpoint: 'judgment',
           shipPacket: 'ceo-summary',
-          buildTailOwner: 'reviewer',
+          buildTailOwner: 'checker',
           examplesKey: 'relay-impl',
         },
         gate: {
@@ -768,12 +777,11 @@ export const WORKFLOWS = {
         consultantCheckpoint: 'verify',
       },
       {
-        // The shared PR-only finishing tail, owned by the REVIEWER — the
-        // judge-fixer that already owns the docs and the summary writes the
-        // description and opens the PR; pure data (renderFinishBrief reads
-        // finishOwner).
+        // The shared PR-only finishing tail, owned by the CHECKER — the judge
+        // that already owns the docs and the summary writes the description
+        // and opens the PR; pure data (renderFinishBrief reads finishOwner).
         name: 'finish',
-        semantics: { block: 'finish', finishOwner: 'reviewer' },
+        semantics: { block: 'finish', finishOwner: 'checker' },
         gate: {
           state: 'openPrGate',
           heading: 'OPEN-PR gate — docs reconciled, PR open',
@@ -836,7 +844,7 @@ export const WORKFLOWS = {
           reviewPosture: 'writable',
           midpoint: 'none',
           shipPacket: 'lean',
-          buildTailOwner: 'implementer',
+          buildTailOwner: 'maker',
           examplesKey: 'short-impl',
         },
         gate: {
@@ -869,7 +877,7 @@ export const WORKFLOWS = {
         // edit / more commits), never to re-open. No consultant checkpoint (the
         // implGate bet-audit already ran at implement).
         name: 'finish',
-        semantics: { block: 'finish', finishOwner: 'implementer' },
+        semantics: { block: 'finish', finishOwner: 'maker' },
         gate: {
           // Gate-state name reused from Full — legal because resolution is
           // workflow-scoped (phaseOfGateState(workflow, …)); reusing it lights up
@@ -959,7 +967,7 @@ export interface PhaseSpec {
   /**
    * Whether the phase's substance IS the review loop — advance_phase refuses
    * with zero rounds there. The others (synthesis, docs mechanics, PR
-   * mechanics) may legitimately advance without the reviewer.
+   * mechanics) may legitimately advance without a review round.
    */
   reviewLoop: boolean;
   /** Runaway backstop, not an exit mechanism — kept tight by design (a couple rounds, not many). */
@@ -1343,24 +1351,8 @@ export function handoffWatchLabel(workflow: WorkflowName): string {
 export function priorPhaseOf(workflow: WorkflowName, phase: PhaseName): PhaseName {
   const phases = phasesOf(workflow);
   const prior = phases[phases.findIndex((p) => p.name === phase) - 1];
-  if (!prior) throw new Error(`phase "${phase}" is first in the "${workflow}" arc — it has no predecessor`);
+  if (!prior) throw new Error(`phase "${phase}" is first in the "${workflow}" workflow — it has no predecessor`);
   return prior.name;
-}
-
-/**
- * Whether `phase` sits strictly AFTER its workflow's handoff gate — the "doing"
- * set that begins once the run crosses into the AFK build. full's handoffGate is
- * `plan`, so its post-handoff phases are {implement, finish}; short's is `research`,
- * so its are {implement, finish}. Pure arc topology (registry-derived), the twin
- * of `priorPhaseOf`.
- *
- * The per-phase implementer-model swap keys off this: the base model plans (frame,
- * spec, plan), the impl model builds and finishes. Now an alias of the stage
- * partition (post-handoff ≡ delivery) — slated for deletion when binding
- * resolution re-keys onto `stageOf` directly (the remodel's slice 2).
- */
-export function isPostHandoffPhase(workflow: WorkflowName, phase: PhaseName): boolean {
-  return stageOf(workflow, phase) === 'delivery';
 }
 
 /**

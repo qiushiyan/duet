@@ -1,7 +1,7 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { PhaseName } from '../phases.ts';
 import { providerFor } from '../providers/index.ts';
-import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
+import type { WorkerProviders, VoiceAddress, WorkerTurn } from '../providers/types.ts';
 import { sessionIdFor, writeAuthorityFor } from '../roles.ts';
 import {
   clearPendingTurn,
@@ -13,7 +13,7 @@ import {
   settlePendingTurn,
 } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
-import { contextCapFor, renderTurnResult, settleTurn, stageSessionId, startHeartbeat } from './tools.ts';
+import { contextCapFor, noteEdgeContinuation, renderTurnResult, settleTurn, stageSessionId, startHeartbeat } from './tools.ts';
 
 /**
  * The interactive host's pending-turn engine — what makes send_prompt async.
@@ -52,7 +52,7 @@ import { contextCapFor, renderTurnResult, settleTurn, stageSessionId, startHeart
 export type PendingStatus = 'running' | 'ready' | 'failed';
 
 interface PendingRecord {
-  meta: { role: WorkerRole; tag: string; isReviewRound: boolean; isCompactTurn: boolean };
+  meta: { role: VoiceAddress; tag: string; isReviewRound: boolean; isCompactTurn: boolean };
   status: PendingStatus;
   /** The settled outcome, present once status leaves `running` (for collect). */
   outcome?: WorkerTurn | Error;
@@ -61,7 +61,7 @@ interface PendingRecord {
 export interface TurnDispatcher {
   /** Fire a worker turn into the background and return at once (record → running). */
   dispatch(args: {
-    role: WorkerRole;
+    role: VoiceAddress;
     tag: string;
     body: string;
     isReviewRound: boolean;
@@ -71,9 +71,9 @@ export interface TurnDispatcher {
     timeoutMs?: number;
   }): void;
   /** This role's live record status, or undefined when it owns no live record. */
-  statusOf(role: WorkerRole): PendingStatus | undefined;
+  statusOf(role: VoiceAddress): PendingStatus | undefined;
   /** Render + clear every settled (ready/failed) record; leaves running ones. */
-  collectReady(): Array<{ role: WorkerRole; result: CallToolResult }>;
+  collectReady(): Array<{ role: VoiceAddress; result: CallToolResult }>;
   /** Whether any live record is non-collected (running/ready/failed). */
   hasPending(): boolean;
 }
@@ -98,7 +98,7 @@ export interface TurnDispatcherDeps {
 
 export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
   const { state, phase, cap, providers, log, home, holdsLease } = deps;
-  const records = new Map<WorkerRole, PendingRecord>();
+  const records = new Map<VoiceAddress, PendingRecord>();
 
   // A NON-THROWING lease check. The production thunk (mcp-server.ts) does a
   // loadRunState, which can fault — and finalize/failSafe both gate on it, so a
@@ -122,7 +122,7 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
   // faulted (disk, lease check), so statusOf/collectReady stop reporting
   // `running` and check_turns can drain it. Disk writes are a SEPARATE,
   // lease-gated concern (the caller decides); this touches only memory.
-  const markRecordFailed = (role: WorkerRole, err: Error): void => {
+  const markRecordFailed = (role: VoiceAddress, err: Error): void => {
     const rec = records.get(role);
     if (rec) {
       rec.status = 'failed';
@@ -139,7 +139,7 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
   // lease-gated through the non-throwing leaseHeld (a superseded server still
   // writes nothing). Logs rather than rethrowing, so nothing escapes as an
   // unhandled rejection — failSafe is itself total.
-  const failSafe = (role: WorkerRole, err: unknown): void => {
+  const failSafe = (role: VoiceAddress, err: unknown): void => {
     const detail = err instanceof Error ? err.message : String(err);
     log(`[check_turns] ${role} turn lifecycle failed (${detail}) — marking it failed so the role is not stranded`);
     markRecordFailed(role, err instanceof Error ? err : new Error(detail));
@@ -179,8 +179,9 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
         // session id must reflect what prior settles persisted, not a stale copy.
         const fresh = loadRunState(state.cwd, state.runId);
         const startedAt = Date.now();
+        noteEdgeContinuation(fresh, role, log);
         stopHeartbeat = startHeartbeat(
-          { state: fresh, phase, log, ...(home !== undefined ? { home } : {}) },
+          { state: fresh, log, ...(home !== undefined ? { home } : {}) },
           { role, tag, startedAt },
         );
         const stop = stopHeartbeat;
@@ -215,12 +216,12 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
         // 5-minute interval can never leak, on any exit.
         // The context deadline, gated exactly as on the blocking host (one
         // helper, two call sites): claude-persistent-headless, never a /compact.
-        const contextCapTokens = contextCapFor(fresh, phase, role, isCompactTurn === true);
+        const contextCapTokens = contextCapFor(fresh, role, isCompactTurn === true);
         Promise.resolve()
           .then(() =>
             providerFor(providers, role).runTurn({
               prompt: body,
-              sessionId: sessionIdFor(fresh, role, phase),
+              sessionId: sessionIdFor(fresh, role),
               readOnly: !writeAuthorityFor(fresh, phase, role, tag),
               cwd: fresh.cwd,
               ...(timeoutMs !== undefined ? { timeoutMs } : {}),
@@ -248,7 +249,7 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
     },
 
     collectReady() {
-      const out: Array<{ role: WorkerRole; result: CallToolResult }> = [];
+      const out: Array<{ role: VoiceAddress; result: CallToolResult }> = [];
       for (const [role, rec] of [...records]) {
         if (rec.status === 'running') continue;
         // Per-record isolation (the deletion path is part of the non-throwing

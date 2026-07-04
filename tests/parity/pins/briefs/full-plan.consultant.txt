@@ -4,7 +4,7 @@
 
 A fixed document the parity pins read through documentsBlock. Its content is
 frozen so the rendered briefs are byte-stable; it stands in for a real spec,
-plan seed, or design doc depending on the arc under pin.
+plan seed, or design doc depending on the workflow under pin.
 
 </document>
 </documents>
@@ -14,12 +14,12 @@ The human approved the spec at the commit-spec gate. Run the PLAN phase:
 
 This phase's exit gate is pre-authorized: the human granted approval at run start, so advance_phase records your packet for their later review and the run continues immediately — no live gate decision arrives, and the human is away from the terminal. Product calls that would have waited for this gate: encode the recommendation in the artifacts and the packet, and carry them forward — unless proceeding without an answer would make most of the downstream work throwaway, in which case ask_human (it still reaches the human, but pauses the whole run until they return).
 
-1. Have the implementer commit the approved spec file (docs/specs/parity-fixture.md) with a conventional message, as its own commit.
+1. Have the architect commit the approved spec file (docs/specs/parity-fixture.md) with a conventional message, as its own commit.
 
-Consultant checkpoint — author the acceptance contract (the consultant is bound for this run): do this NOW — immediately after the spec commit and BEFORE you draft or review the plan — so the consultant authors blind to the plan and the code; it runs concurrently, so do not wait for it before starting the plan loop. Send it a consultant-contract prompt as its own independent dispatch, never folded into another worker's prompt. It authors a short, frozen list of falsifiable behavioral assertions pinning what success MEANS: the runtime behavior that would drift from the settled design in ways the implementer's own tests would miss. Seed it with the committed spec ONLY (docs/specs/parity-fixture.md); never put any plan or implementation detail into its prompt — that blindness is what makes the contract independent. Have it write the contract to docs/specs/parity-fixture.acceptance.md and NOT commit it (duet freezes it when you cross the plan gate). The consultant is ephemeral and never counts a review round. At advance_phase, list the contract file among the artifacts so the human ratifies it by approving the plan; if the consultant could not author one, record a high human_decision ("acceptance contract not authored — proceeding freezes no target"). The plan gate will not advance without an authored contract or that high.
-2. Decide where the plan file lives: the framing names the project's plan location (path or directory convention). The plan must be a file in the repo — implementation may compact the implementer's context, and the plan file is what later turns re-anchor on. If the framing doesn't name a plan location, ask_human for one before drafting.
-3. Send the implementer a planning prompt based on the start-plan snippet. The implementer writes the plan to the file and reports it.
-4. Run the plan review loop: review-plan to the reviewer (point it at the plan file's path as well as the content), update-plan to the implementer, -again variants for later rounds. Plans are reviewable at a finer altitude than specs — test cases, fixtures, and line-level references are fair game; only full code bodies are deferred.
+Consultant checkpoint — author the acceptance contract (the consultant is bound for this run): do this NOW — immediately after the spec commit and BEFORE you draft or review the plan — so the consultant authors blind to the plan and the code; it runs concurrently, so do not wait for it before starting the plan loop. Send it a consultant-contract prompt as its own independent dispatch, never folded into another worker's prompt. It authors a short, frozen list of falsifiable behavioral assertions pinning what success MEANS: the runtime behavior that would drift from the settled design in ways the build's own tests would miss. Seed it with the committed spec ONLY (docs/specs/parity-fixture.md); never put any plan or implementation detail into its prompt — that blindness is what makes the contract independent. Have it write the contract to docs/specs/parity-fixture.acceptance.md and NOT commit it (duet freezes it when you cross the plan gate). The consultant is ephemeral and never counts a review round. At advance_phase, list the contract file among the artifacts so the human ratifies it by approving the plan; if the consultant could not author one, record a high human_decision ("acceptance contract not authored — proceeding freezes no target"). The plan gate will not advance without an authored contract or that high.
+2. Decide where the plan file lives: the framing names the project's plan location (path or directory convention). The plan must be a file in the repo — the build may compact a worker's context, and the plan file is what later turns re-anchor on. If the framing doesn't name a plan location, ask_human for one before drafting.
+3. Send the architect a planning prompt based on the start-plan snippet. The architect writes the plan to the file and reports it.
+4. Run the plan review loop: review-plan to the analyst (point it at the plan file's path as well as the content), update-plan to the architect, -again variants for later rounds. Plans are reviewable at a finer altitude than specs — test cases, fixtures, and line-level references are fair game; only full code bodies are deferred.
 5. The backstop cap for this phase is 3 review rounds; converge well before it.
 6. When converged, call advance_phase with a summary, listing the plan file among the artifacts. Implementation runs AFK after this gate, so the summary should give the human confidence the plan is workable end to end.
 
@@ -32,6 +32,6 @@ This phase's call is the altitude the plan owes — finer than the spec's. Apply
 The plan's verification story is just "we'll add tests for this slice." In a spec that vagueness was fine; in a plan it is not — test cases, fixtures, and line-level anchors for existing code are the plan's altitude. Route it back: the plan should name the cases and the fixtures before it is workable.
 </example>
 <example type="avoid" name="reviewing below the plan's altitude">
-Pressing the implementer to write full function bodies into the plan. Code bodies are the one thing the plan defers — that is the implementation phase's work. Keep the plan review at test-cases-and-anchors altitude, not at code.
+Pressing the architect to write full function bodies into the plan. Code bodies are the one thing the plan defers — that is the implementation phase's work. Keep the plan review at test-cases-and-anchors altitude, not at code.
 </example>
 </task>

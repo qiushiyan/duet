@@ -7,7 +7,7 @@ import type { VoiceBindings } from './config.ts';
 import type { Duty, StageName } from './phases.ts';
 import { WORKFLOWS, defaultPosture, defaultPreAuthorizedOf, gatePhasesOf, phaseSpec } from './phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
-import type { ContextUsage, WorkerRole } from './providers/types.ts';
+import type { ContextUsage, VoiceAddress } from './providers/types.ts';
 import { locateSessionTranscripts } from './sessions.ts';
 import type { ErrorClass, RetryState } from './worker-health.ts';
 
@@ -29,14 +29,15 @@ import type { ErrorClass, RetryState } from './worker-health.ts';
  * a loaded copy as stale once you hand control away.
  */
 
-export type Voice = 'orchestrator' | 'implementer' | 'reviewer' | 'consultant';
+/** Any speaking party of a run — the umbrella for the per-voice surfaces (logs, panes, context, health). */
+export type Voice = 'orchestrator' | VoiceAddress;
 
 /**
  * A structured echo of a genuine human decision a gate carries (#3) — what the
  * orchestrator would otherwise write only in prose. `high` = a real
  * product/direction call the human must make; `low` = notable, not blocking.
  *
- * A `high` WITHHOLDS a non-explicit crossing (consultant reviewer, slice 5): the
+ * A `high` WITHHOLDS a non-explicit crossing (consultant spec, slice 5): the
  * headless `driveToQuiescence` auto-cross and the one-tap `duet afk` handoff both
  * refuse to manufacture an approval over a `high`, converting it to an attended
  * stop. An EXPLICIT human approval (`duet continue --approve`, crossInteractive)
@@ -60,7 +61,7 @@ export interface HumanDecision {
  */
 export interface ContextEvent {
   kind: 'cutoff' | 'compact' | 'salvage-compact' | 'session-reset';
-  role: WorkerRole;
+  voice: VoiceAddress;
   at: string;
   /** The safety reading (tokens) just before the intervention, when one existed. */
   preTokens?: number;
@@ -240,7 +241,7 @@ export interface RunState {
    * template discipline: a duplicate full-template send gets a warn-once
    * steering refusal, and list_snippets annotates already-sent snippets.
    */
-  sentSnippets?: Partial<Record<PhaseName, Partial<Record<WorkerRole, string[]>>>>;
+  sentSnippets?: Partial<Record<PhaseName, Partial<Record<VoiceAddress, string[]>>>>;
   /** advance_phase outputs, shown at gates. */
   phaseSummaries: Partial<Record<PhaseName, { summary: string; artifacts: string[]; humanDecisions?: HumanDecision[] }>>;
   /**
@@ -287,7 +288,7 @@ export interface RunState {
    * consultant turn, whose settled `workerSessions` id is the *prior* session) is
    * no longer blind. Absent until the announce; never load-bearing.
    */
-  activeTurns?: Partial<Record<WorkerRole, { tag: string; startedAt: string; sessionId?: string }>>;
+  activeTurns?: Partial<Record<VoiceAddress, { tag: string; startedAt: string; sessionId?: string }>>;
   /**
    * The interactive-host pending-turn lifecycle projection (async send_prompt):
    * a dispatched worker turn carried through `running` → `ready`|`failed` →
@@ -300,7 +301,7 @@ export interface RunState {
    * discipline of markTurnActive). Absent on the headless host, which never
    * leaves a turn in flight.
    */
-  pendingTurns?: Partial<Record<WorkerRole, { tag: string; startedAt: string; status: 'running' | 'ready' | 'failed' }>>;
+  pendingTurns?: Partial<Record<VoiceAddress, { tag: string; startedAt: string; status: 'running' | 'ready' | 'failed' }>>;
   /**
    * The branch-fixed-after-first-prompt flag, durable and ONE-WAY: set at the
    * first async dispatch, never cleared. create_branch reads it so the branch
@@ -412,7 +413,7 @@ export function gateAttended(state: RunState, phase: GatePhase): boolean {
 
 /**
  * The `high`-severity human decisions a gate's packet carries — the single
- * resolver for the severity hold (consultant reviewer, slice 5), beside
+ * resolver for the severity hold (consultant spec, slice 5), beside
  * gateAttended. A non-explicit crossing (driveToQuiescence's auto-cross,
  * enterAfk's handoff) is withheld when this is non-empty; the status renderer
  * reads the same list to name the hold. Returns the decisions (not a boolean) so
@@ -484,7 +485,7 @@ export function scratchDirOf(cwd: string, runId: string): string {
  * the run dir. Every run-dir write routes through here so a stray deletion of
  * `.duet/` mid-run self-heals instead of stranding the run: a worker runs with
  * full permissions in the run's own cwd, and one *did* delete the live run —
- * an implementer cleaning its scratch ran `rm -rf .duet` and the next voice-log
+ * a builder cleaning its scratch ran `rm -rf .duet` and the next voice-log
  * append threw ENOENT, ending the phase with no advance and no flag (the missing
  * docs/PR were downstream of exactly that). Restoring the dir (and its
  * `.gitignore`) here turns that into a recovered write, not a silent death.
@@ -573,7 +574,7 @@ export function createRun(opts: {
     snippetProposals: [],
   };
   const dir = ensureRunDir(opts.cwd, runId);
-  // Pre-create the run's scratch dir so the impl brief can hand the implementer
+  // Pre-create the run's scratch dir so the impl brief can hand the builder
   // a path that already exists (under the run dir, removed with the run).
   mkdirSync(scratchDirOf(opts.cwd, runId), { recursive: true });
   saveRunState(state);
@@ -680,7 +681,7 @@ function mutate(state: RunState, fn: (s: RunState) => boolean): void {
  * role's entry. The `entry` (with its generated timestamp) is built ONCE here and
  * closed over, honoring the replayable-callback contract.
  */
-export function markTurnActive(state: RunState, role: WorkerRole, tag: string): void {
+export function markTurnActive(state: RunState, role: VoiceAddress, tag: string): void {
   const entry = { tag, startedAt: new Date().toISOString() };
   mutate(state, (s) => {
     (s.activeTurns ??= {})[role] = entry;
@@ -688,7 +689,7 @@ export function markTurnActive(state: RunState, role: WorkerRole, tag: string): 
   });
 }
 
-export function clearTurnActive(state: RunState, role: WorkerRole): void {
+export function clearTurnActive(state: RunState, role: VoiceAddress): void {
   mutate(state, (s) => {
     if (!s.activeTurns?.[role]) return false;
     delete s.activeTurns[role];
@@ -705,7 +706,7 @@ export function clearTurnActive(state: RunState, role: WorkerRole): void {
  * no-op when the role has no active-turn entry (a settle already cleared it), so
  * a late announce can't resurrect a finished turn.
  */
-export function recordTurnSessionId(state: RunState, role: WorkerRole, sessionId: string): void {
+export function recordTurnSessionId(state: RunState, role: VoiceAddress, sessionId: string): void {
   mutate(state, (s) => {
     const entry = s.activeTurns?.[role];
     if (!entry) return false;
@@ -720,7 +721,7 @@ export function recordTurnSessionId(state: RunState, role: WorkerRole, sessionId
  * | `failed`, at worker-settle) · clearPendingTurn (at collect, or to resolve an
  * orphan). markWorkerDispatched sets the one-way branch-fixed flag.
  */
-export function markPendingTurn(state: RunState, role: WorkerRole, tag: string): void {
+export function markPendingTurn(state: RunState, role: VoiceAddress, tag: string): void {
   const entry = { tag, startedAt: new Date().toISOString(), status: 'running' as const };
   mutate(state, (s) => {
     (s.pendingTurns ??= {})[role] = entry;
@@ -728,7 +729,7 @@ export function markPendingTurn(state: RunState, role: WorkerRole, tag: string):
   });
 }
 
-export function settlePendingTurn(state: RunState, role: WorkerRole, status: 'ready' | 'failed'): void {
+export function settlePendingTurn(state: RunState, role: VoiceAddress, status: 'ready' | 'failed'): void {
   mutate(state, (s) => {
     const entry = s.pendingTurns?.[role];
     if (!entry) return false;
@@ -737,7 +738,7 @@ export function settlePendingTurn(state: RunState, role: WorkerRole, status: 're
   });
 }
 
-export function clearPendingTurn(state: RunState, role: WorkerRole): void {
+export function clearPendingTurn(state: RunState, role: VoiceAddress): void {
   mutate(state, (s) => {
     if (!s.pendingTurns?.[role]) return false;
     delete s.pendingTurns[role];

@@ -17,8 +17,8 @@ import {
   phasesOf,
 } from '../phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from '../phases.ts';
-import type { WorkerRole } from '../providers/types.ts';
-import { workerRolesFor } from '../roles.ts';
+import type { VoiceAddress } from '../providers/types.ts';
+
 import {
   gateAttended,
   highDecisionsAt,
@@ -358,7 +358,7 @@ export async function waitForRunStop(
 }
 
 /** A pending worker turn settled — what `duet status --wait` wakes on, beside a run stop. */
-export type TurnReady = { kind: 'turn-ready'; roles: WorkerRole[] };
+export type TurnReady = { kind: 'turn-ready'; roles: VoiceAddress[] };
 
 /**
  * The turn-aware wait behind `duet status --wait`: wake on a worker turn
@@ -382,14 +382,14 @@ export async function waitForTurnOrStop(
   const intervalMs = opts.intervalMs ?? 5_000;
   for (;;) {
     const state = loadRunState(cwd, runId);
-    // The run's bound worker roles — the consultant included when bound, so a
-    // dispatched consultant turn wakes `duet status --wait` like any other.
-    const roles = workerRolesFor(state);
+    // Every pending-turn record on disk, whatever its address — a dispatched
+    // consultant turn wakes `duet status --wait` like any duty's.
     const pending = state.pendingTurns ?? {};
-    const ready = roles.filter((r) => pending[r]?.status === 'ready' || pending[r]?.status === 'failed');
+    const addresses = Object.keys(pending) as VoiceAddress[];
+    const ready = addresses.filter((r) => pending[r]?.status === 'ready' || pending[r]?.status === 'failed');
     if (ready.length > 0) return { kind: 'turn-ready', roles: ready };
     const position = probeRunPosition(state);
-    const turnRunning = roles.some((r) => pending[r]?.status === 'running');
+    const turnRunning = addresses.some((r) => pending[r]?.status === 'running');
     const keepPolling = position.kind === 'running' || (position.kind === 'interactive' && turnRunning);
     if (!keepPolling) return position;
     await new Promise((resolve) => setTimeout(resolve, intervalMs));

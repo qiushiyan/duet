@@ -1,4 +1,4 @@
-import { allBindings, effectiveBindingFor } from './config.ts';
+import { allBindings, voiceBindingFor } from './config.ts';
 import { entryOf } from './phases.ts';
 import { aliveDriverPid, probeRunPosition } from './harness/lifecycle.ts';
 import { sessionRecordFor, voicesFor } from './roles.ts';
@@ -36,8 +36,8 @@ import {
  * idle/elapsed row, never a thrown health command.
  */
 
-export interface RoleHealthRow {
-  role: Voice;
+export interface VoiceHealthRow {
+  voice: Voice;
   provider: Schema;
   /** The resolved transcript path the probe read (absent when no session yet / unlocatable). */
   sessionPath?: string;
@@ -62,7 +62,7 @@ export interface DoctorModel {
   machineState?: string;
   position: string;
   driverPid?: number;
-  roles: RoleHealthRow[];
+  voices: VoiceHealthRow[];
   connectivity: Connectivity;
 }
 
@@ -107,7 +107,7 @@ function inFlightFor(
   return { inFlightSince: startedAt, retriesSince: startedAt };
 }
 
-function roleRow(role: Voice, state: RunState, opts: { now: number; home?: string; driverAlive: boolean; phaseMidFlight: boolean; phase: PhaseName }): RoleHealthRow {
+function voiceRow(role: Voice, state: RunState, opts: { now: number; home?: string; driverAlive: boolean; phaseMidFlight: boolean; phase: PhaseName }): VoiceHealthRow {
   // The session a voice's next turn would continue at the run's current
   // position — the duty's own record or its live continuity edge's
   // (sessionRecordFor); the phase-effective binding is only the fallback
@@ -116,8 +116,8 @@ function roleRow(role: Voice, state: RunState, opts: { now: number; home?: strin
     ? state.orchestratorSessionId
       ? { provider: state.bindings.orchestrator.provider, id: state.orchestratorSessionId }
       : undefined
-    : sessionRecordFor(state, role, opts.phase);
-  const provider = known?.provider ?? effectiveBindingFor(state.bindings, role, workflowOf(state), opts.phase).provider;
+    : sessionRecordFor(state, role);
+  const provider = known?.provider ?? voiceBindingFor(state.bindings, role).provider;
   const { inFlightSince, retriesSince } = inFlightFor(role, state, opts.now, opts.driverAlive, opts.phaseMidFlight);
   const inFlight = inFlightSince !== undefined;
 
@@ -125,7 +125,7 @@ function roleRow(role: Voice, state: RunState, opts: { now: number; home?: strin
     // No session id yet — nothing to read; report idle (or working-by-turn-age
     // if somehow mid-flight with no transcript, which probeRole handles below).
     const health = probeRole('', { schema: provider, now: opts.now, ...(inFlightSince !== undefined ? { inFlightSince } : {}), ...(retriesSince !== undefined ? { retriesSince } : {}) });
-    return { role, provider, verdict: health.verdict, retries: health.retries, recentErrors: health.recentErrors, inFlight };
+    return { voice: role, provider, verdict: health.verdict, retries: health.retries, recentErrors: health.recentErrors, inFlight };
   }
 
   // Fail-soft: a disappearing transcript degrades to an empty read, never throws.
@@ -142,7 +142,7 @@ function roleRow(role: Voice, state: RunState, opts: { now: number; home?: strin
     ...(retriesSince !== undefined ? { retriesSince } : {}),
   });
   return {
-    role,
+    voice: role,
     provider,
     ...(tail?.path ? { sessionPath: tail.path } : {}),
     verdict: health.verdict,
@@ -170,7 +170,7 @@ export async function buildDoctorModel(
 
   const voices = voicesFor(state);
   const phase = 'phase' in position ? position.phase : entryOf(workflowOf(state)).firstPhase;
-  const roles = voices.map((role) => roleRow(role, state, { now: opts.now, ...(opts.home !== undefined ? { home: opts.home } : {}), driverAlive, phaseMidFlight, phase }));
+  const rows = voices.map((voice) => voiceRow(voice, state, { now: opts.now, ...(opts.home !== undefined ? { home: opts.home } : {}), driverAlive, phaseMidFlight, phase }));
 
   const hasClaude = allBindings(state.bindings).some((b) => b.binding.provider === 'claude');
   let connectivity: Connectivity;
@@ -187,7 +187,7 @@ export async function buildDoctorModel(
     ...(state.machineState ? { machineState: state.machineState } : {}),
     position: position.kind,
     ...(pid !== undefined ? { driverPid: pid } : {}),
-    roles,
+    voices: rows,
     connectivity,
   };
 }
@@ -212,10 +212,10 @@ export function renderDoctor(model: DoctorModel): string {
   lines.push(`phase:    ${model.machineState ?? '(not started)'} — ${model.position}${model.driverPid ? ` (driver pid ${model.driverPid})` : ''}`);
   lines.push(`network:  ${connectivityLine(model.connectivity)}`);
   lines.push(`voices:`);
-  for (const r of model.roles) {
+  for (const r of model.voices) {
     const age = r.lastActivityAgeMs !== undefined ? `last ${formatAge(r.lastActivityAgeMs)} ago` : 'no activity';
     const retries = r.retries > 0 ? ` · ${r.retries} retries` : '';
-    lines.push(`  ${VERDICT_MARK[r.verdict]} ${r.role.padEnd(12)} (${r.provider})  ${r.verdict.padEnd(14)} ${age}${retries}`);
+    lines.push(`  ${VERDICT_MARK[r.verdict]} ${r.voice.padEnd(12)} (${r.provider})  ${r.verdict.padEnd(14)} ${age}${retries}`);
     if (r.sessionPath) lines.push(`      ${r.sessionPath}`);
     for (const e of r.recentErrors.slice(-2)) {
       lines.push(`      ⛔ ${localStamp(e.ts)}  ${e.errorClass}: ${e.text.slice(0, 70)}`);

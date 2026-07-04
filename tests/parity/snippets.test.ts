@@ -109,7 +109,7 @@ describe('served library pins — phase-scoped', () => {
       renderSnippetLibrary({
         phase: 'frame',
         workflow: 'full',
-        sentTo: { 'think-holistic': ['implementer', 'reviewer'], 'compare-notes': ['implementer'] },
+        sentTo: { 'think-holistic': ['architect', 'analyst'], 'compare-notes': ['architect'] },
       }),
     ).toMatchFileSnapshot('./pins/snippets/phase-full-frame.sent-to.txt');
   });

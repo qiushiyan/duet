@@ -315,7 +315,7 @@ describe('consultant identity composition (parity with the headless clause)', ()
     // the consultant clause verbatim — the SAME clause the headless system prompt
     // appends, so the two hosts gain it identically.
     const body = readFileSync(composed, 'utf8');
-    expect.soft(body).toContain('two-agent engineering workflow'); // the shipped base survived
+    expect.soft(body).toContain('two-worker engineering workflow'); // the shipped base survived
     expect.soft(body).toContain(CONSULTANT_IDENTITY_CLAUSE); // the appended clause, byte-identical to headless
   });
 

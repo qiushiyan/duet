@@ -45,51 +45,51 @@ describe('recordPhaseLabel — the view-only tmux phase sidecar', () => {
 
 describe('context readings — last honest reading + high-water since compact', () => {
   test('a later lower reading keeps the high-water for safety, the last reading for display', ({ run }) => {
-    recordContextUsage(run, 'implementer', { usedTokens: 170_000, windowTokens: 1_000_000 });
-    recordContextUsage(run, 'implementer', { usedTokens: 500_000, windowTokens: 1_000_000 });
-    recordContextUsage(run, 'implementer', { usedTokens: 300_000, windowTokens: 1_000_000 });
-    const reading = run.contextUsage?.implementer;
+    recordContextUsage(run, 'architect', { usedTokens: 170_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 500_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 300_000, windowTokens: 1_000_000 });
+    const reading = run.contextUsage?.architect;
     expect.soft(reading?.usedTokens).toBe(300_000); // display: the last honest reading
     expect.soft(reading?.highWaterTokens).toBe(500_000); // safety: the mark holds through the drop
-    expect.soft(contextSafetyPercent(run, 'implementer')).toBe(50);
+    expect.soft(contextSafetyPercent(run, 'architect')).toBe(50);
     expect.soft(contextPercent(reading!)).toBe(30);
   });
 
   test('a climbing reading needs no separate mark — usedTokens IS the high-water', ({ run }) => {
-    recordContextUsage(run, 'implementer', { usedTokens: 170_000, windowTokens: 1_000_000 });
-    recordContextUsage(run, 'implementer', { usedTokens: 500_000, windowTokens: 1_000_000 });
-    expect.soft(run.contextUsage?.implementer?.highWaterTokens).toBeUndefined();
-    expect.soft(contextSafetyPercent(run, 'implementer')).toBe(50);
+    recordContextUsage(run, 'architect', { usedTokens: 170_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 500_000, windowTokens: 1_000_000 });
+    expect.soft(run.contextUsage?.architect?.highWaterTokens).toBeUndefined();
+    expect.soft(contextSafetyPercent(run, 'architect')).toBe(50);
   });
 
   test('a window change (mid-run model swap) restarts the mark — cross-window token math is meaningless', ({ run }) => {
-    recordContextUsage(run, 'implementer', { usedTokens: 800_000, windowTokens: 1_000_000 });
-    recordContextUsage(run, 'implementer', { usedTokens: 100_000, windowTokens: 200_000 });
-    expect.soft(run.contextUsage?.implementer?.highWaterTokens).toBeUndefined();
-    expect.soft(contextSafetyPercent(run, 'implementer')).toBe(50); // 100k of the NEW 200k window
+    recordContextUsage(run, 'architect', { usedTokens: 800_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 100_000, windowTokens: 200_000 });
+    expect.soft(run.contextUsage?.architect?.highWaterTokens).toBeUndefined();
+    expect.soft(contextSafetyPercent(run, 'architect')).toBe(50); // 100k of the NEW 200k window
   });
 
   test('clearContextUsage drops the reading and the sidecar; the safety percent stands down', ({ projectDir, run }) => {
-    recordContextUsage(run, 'implementer', { usedTokens: 978_000, windowTokens: 1_000_000 });
-    const sidecar = join(runDirOf(projectDir, run.runId), 'context', 'implementer');
+    recordContextUsage(run, 'architect', { usedTokens: 978_000, windowTokens: 1_000_000 });
+    const sidecar = join(runDirOf(projectDir, run.runId), 'context', 'architect');
     expect.soft(existsSync(sidecar)).toBe(true);
-    clearContextUsage(run, 'implementer');
-    expect.soft(run.contextUsage?.implementer).toBeUndefined();
+    clearContextUsage(run, 'architect');
+    expect.soft(run.contextUsage?.architect).toBeUndefined();
     expect.soft(existsSync(sidecar)).toBe(false);
-    expect.soft(contextSafetyPercent(run, 'implementer')).toBeUndefined();
+    expect.soft(contextSafetyPercent(run, 'architect')).toBeUndefined();
   });
 });
 
 describe('a vanished .duet self-heals on the next harness write (ensureRunDir)', () => {
-  // Regression for the observed failure: an implementer cleaning its scratch ran
+  // Regression for the observed failure: an architect cleaning its scratch ran
   // `rm -rf .duet` mid-run, and the next voice-log append threw ENOENT, ending
   // the phase with no advance and no flag. The write must now recover the dir.
   test('appendVoiceLog recreates a deleted .duet (with its .gitignore) and writes', ({ projectDir, run }) => {
     rmSync(join(projectDir, '.duet'), { recursive: true, force: true });
     expect(existsSync(join(projectDir, '.duet'))).toBe(false);
 
-    appendVoiceLog(run, 'implementer', 'build complete'); // would have thrown ENOENT before the fix
-    const log = join(runDirOf(projectDir, run.runId), 'implementer.log');
+    appendVoiceLog(run, 'architect', 'build complete'); // would have thrown ENOENT before the fix
+    const log = join(runDirOf(projectDir, run.runId), 'architect.log');
     expect.soft(readFileSync(log, 'utf8')).toContain('build complete');
     expect.soft(readFileSync(join(projectDir, '.duet', '.gitignore'), 'utf8')).toBe('*\n'); // self-ignore restored
   });
@@ -185,12 +185,12 @@ describe('run creation', () => {
     run,
   }) => {
     // Hand-write a seat-keyed state file, exactly as a pre-remodel run on disk
-    // would carry it: bindings keyed implementer/reviewer, no duties map.
+    // would carry it: bindings keyed architect/analyst, no duties map.
     const legacy = JSON.parse(readFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), 'utf8'));
     legacy.bindings = {
       orchestrator: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' },
-      implementer: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' },
-      reviewer: { provider: 'codex' },
+      architect: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' },
+      analyst: { provider: 'codex' },
     };
     writeFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), JSON.stringify(legacy, null, 2));
 
@@ -286,22 +286,22 @@ describe('the mutate discipline (concurrency-safe crash-state)', () => {
     // Two in-memory copies of the same on-disk run, each unaware of the other.
     const copyA = loadRunState(projectDir, run.runId);
     const copyB = loadRunState(projectDir, run.runId);
-    markTurnActive(copyA, 'implementer', 'impl-tag');
+    markTurnActive(copyA, 'architect', 'impl-tag');
     // copyB was loaded before A's write, but markTurnActive reloads fresh and
-    // merges its own role surgically — so the implementer entry survives.
-    markTurnActive(copyB, 'reviewer', 'rev-tag');
+    // merges its own role surgically — so the architect entry survives.
+    markTurnActive(copyB, 'analyst', 'rev-tag');
     const disk = loadRunState(projectDir, run.runId);
-    expect(disk.activeTurns?.implementer?.tag).toBe('impl-tag');
-    expect(disk.activeTurns?.reviewer?.tag).toBe('rev-tag');
+    expect(disk.activeTurns?.architect?.tag).toBe('impl-tag');
+    expect(disk.activeTurns?.analyst?.tag).toBe('rev-tag');
   });
 
   test('a no-op clear does not save its stale copy over a concurrent sibling write', ({ projectDir, run }) => {
     const stale = loadRunState(projectDir, run.runId); // captured before the sibling write
-    markTurnActive(run, 'reviewer', 'rev-tag'); // a sibling writes the reviewer entry to disk
-    // The implementer entry is absent for `stale`, so the clear is a no-op — and
-    // must NOT save `stale`'s (reviewer-less) snapshot over the live write.
-    clearTurnActive(stale, 'implementer');
-    expect(loadRunState(projectDir, run.runId).activeTurns?.reviewer?.tag).toBe('rev-tag');
+    markTurnActive(run, 'analyst', 'rev-tag'); // a sibling writes the analyst entry to disk
+    // The architect entry is absent for `stale`, so the clear is a no-op — and
+    // must NOT save `stale`'s (analyst-less) snapshot over the live write.
+    clearTurnActive(stale, 'architect');
+    expect(loadRunState(projectDir, run.runId).activeTurns?.analyst?.tag).toBe('rev-tag');
   });
 });
 

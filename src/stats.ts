@@ -1,13 +1,13 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { DEFAULT_CLAUDE_MODEL, effectiveBindingFor } from './config.ts';
+import { DEFAULT_CLAUDE_MODEL, voiceBindingFor } from './config.ts';
 import type { VoiceBindings } from './config.ts';
-import { phasesOf, stagesOf } from './phases.ts';
+import { makerDutyOf, phasesOf, stageOf } from './phases.ts';
 import type { PhaseName, WorkflowName } from './phases.ts';
-import { sessionKeyFor, workerRolesFor } from './roles.ts';
+import { sessionKeyFor, voicesFor } from './roles.ts';
 import { runDirOf, workflowOf } from './run-store.ts';
 import type { RunState, Voice } from './run-store.ts';
-import type { WorkerRole } from './providers/types.ts';
+import type { VoiceAddress } from './providers/types.ts';
 import { formatDuration } from './timefmt.ts';
 
 /**
@@ -58,12 +58,13 @@ export interface PhaseStat {
   /** Worker turns attributed to this phase. */
   turns: number;
   /**
-   * The implementer model that ran this phase (the per-phase model dimension the
-   * corpus timing needs) — re-derived from the run's bindings by the same pure
-   * resolver, so it needs no new recorded state. Absent for a phase outside the
-   * run's arc (no confident resolution); a codex implementer labels as "codex".
+   * The maker model that ran this phase (the per-phase model dimension the
+   * corpus timing needs) — re-derived from the run's frozen bindings by the
+   * same pure resolver, so it needs no new recorded state. Absent for a phase
+   * outside the run's workflow (no confident resolution); a codex maker labels
+   * as "codex".
    */
-  implementerModel?: string;
+  makerModel?: string;
 }
 export interface TagStat {
   tag: string;
@@ -163,19 +164,19 @@ function parseTurns(log: string): { turns: Turn[]; dangling: number } {
 
 /**
  * Assemble the stats model from already-read log strings — the pure core. The
- * orchestrator log may be undefined (no log). Each worker is role-tagged so a
+ * orchestrator log may be undefined (no log). Each worker is voice-tagged so a
  * missing-but-EXPECTED log (`log` undefined) becomes a note rather than a silent
- * undercount, and a role's in-flight/truncated turns are named; the composer
+ * undercount, and a voice's in-flight/truncated turns are named; the composer
  * decides which absent logs are expected (it omits never-run workers entirely).
  * `arcOrder` is the workflow's phase order for the display sort.
  */
 export function buildStats(
   runId: string,
   orchestratorLog: string | undefined,
-  workers: Array<{ role: string; log?: string }>,
+  workers: Array<{ voice: string; log?: string }>,
   arcOrder: readonly PhaseName[],
-  /** The implementer model that ran a phase — the composer supplies the resolver; default (none) keeps the aggregate rows unlabeled. */
-  implementerModelForPhase: (phase: string) => string | undefined = () => undefined,
+  /** The maker model that ran a phase — the composer supplies the resolver; default (none) keeps the aggregate rows unlabeled. */
+  makerModelForPhase: (phase: string) => string | undefined = () => undefined,
   /** The run's creation time — floors the first inferred window (interactive phases log no entry header). */
   runStartMs = 0,
 ): StatsModel {
@@ -190,15 +191,15 @@ export function buildStats(
   }
 
   const turns: Turn[] = [];
-  for (const { role, log } of workers) {
+  for (const { voice, log } of workers) {
     if (log === undefined) {
-      notes.push(`${role} log missing — its turns aren't counted.`);
+      notes.push(`${voice} log missing — its turns aren't counted.`);
       continue;
     }
     const parsed = parseTurns(log);
     turns.push(...parsed.turns);
     if (parsed.dangling > 0) {
-      notes.push(`${role}: ${parsed.dangling} turn(s) still open (in flight, or a truncated log) — not counted.`);
+      notes.push(`${voice}: ${parsed.dangling} turn(s) still open (in flight, or a truncated log) — not counted.`);
     }
   }
 
@@ -232,13 +233,13 @@ export function buildStats(
   const seen = [...windowMs.keys()];
   const ordered = [...arcOrder.filter((p) => windowMs.has(p)), ...seen.filter((p) => !arcOrder.includes(p as PhaseName))];
   const phases: PhaseStat[] = ordered.map((phase) => {
-    const implementerModel = implementerModelForPhase(phase);
+    const makerModel = makerModelForPhase(phase);
     return {
       phase,
       windowMs: windowMs.get(phase) ?? 0,
       workerMs: workerMs.get(phase) ?? 0,
       turns: turnCount.get(phase) ?? 0,
-      ...(implementerModel !== undefined ? { implementerModel } : {}),
+      ...(makerModel !== undefined ? { makerModel } : {}),
     };
   });
   const tags: TagStat[] = [...tagAgg.entries()]
@@ -249,14 +250,14 @@ export function buildStats(
 }
 
 /**
- * The maker model label for a phase — the phase-EFFECTIVE binding's claude
- * model (the stage's maker duty in the frozen manifest), or the provider name
- * ("codex") when the effective binding is codex, which has no model. The
- * single view-time reuse of `effectiveBindingFor` for the stats column, so
- * the label can never drift from what actually ran.
+ * The maker model label for a phase — the stage's maker duty looked up in the
+ * frozen manifest: its claude model, or the provider name ("codex") when the
+ * binding is codex, which has no model. The single view-time reuse of
+ * `voiceBindingFor` for the stats column, so the label can never drift from
+ * what actually ran.
  */
-function implementerModelLabel(bindings: VoiceBindings, workflow: WorkflowName, phase: PhaseName): string {
-  const binding = effectiveBindingFor(bindings, 'implementer', workflow, phase);
+function makerModelLabel(bindings: VoiceBindings, workflow: WorkflowName, phase: PhaseName): string {
+  const binding = voiceBindingFor(bindings, makerDutyOf(workflow, stageOf(workflow, phase)));
   return binding.provider === 'claude' ? binding.model ?? DEFAULT_CLAUDE_MODEL : binding.provider;
 }
 
@@ -275,30 +276,27 @@ export function buildStatsModel(state: RunState): StatsModel {
   // A worker with a session but no log is an EXPECTED-missing log (a real
   // undercount → buildStats notes it); a never-prompted worker (no session) is
   // simply absent and omitted, so the note fires only when it means something.
-  const laneHasSession = (role: WorkerRole): boolean => {
-    if (role === 'consultant') return Boolean(state.sessions['consultant']);
-    return stagesOf(workflowOf(state)).some((s) => {
-      const duty = role === 'implementer' ? s.duties.maker : s.duties.checker;
-      return Boolean(state.sessions[sessionKeyFor(duty)]);
+  const hasSession = (voice: VoiceAddress): boolean =>
+    Boolean(voice === 'consultant' ? state.sessions['consultant'] : state.sessions[sessionKeyFor(voice)]);
+  const workers = voicesFor(state)
+    .filter((v): v is VoiceAddress => v !== 'orchestrator')
+    .flatMap((voice) => {
+      const log = read(voice);
+      if (log !== undefined) return [{ voice, log }];
+      return hasSession(voice) ? [{ voice }] : [];
     });
-  };
-  const workers = workerRolesFor(state).flatMap((role) => {
-    const log = read(role);
-    if (log !== undefined) return [{ role, log }];
-    return laneHasSession(role) ? [{ role }] : [];
-  });
-  const arcOrder = phasesOf(workflowOf(state)).map((p) => p.name);
-  // Label only phases of THIS run's arc — a foreign phase (a run predating an arc
-  // change) has no confident resolution, so it stays unlabeled rather than force
-  // `implementerModelFor` to resolve a phase its workflow doesn't own.
-  const arcPhases = new Set<string>(arcOrder);
+  const phaseOrder = phasesOf(workflowOf(state)).map((p) => p.name);
+  // Label only phases of THIS run's workflow — a foreign phase (a run predating
+  // a workflow change) has no confident resolution, so it stays unlabeled rather
+  // than force the labeler to resolve a phase its workflow doesn't own.
+  const ownPhases = new Set<string>(phaseOrder);
   const runStartMs = Date.parse(state.createdAt);
   return buildStats(
     state.runId,
     read('orchestrator'),
     workers,
-    arcOrder,
-    (phase) => (arcPhases.has(phase) ? implementerModelLabel(state.bindings, workflowOf(state), phase as PhaseName) : undefined),
+    phaseOrder,
+    (phase) => (ownPhases.has(phase) ? makerModelLabel(state.bindings, workflowOf(state), phase as PhaseName) : undefined),
     Number.isNaN(runStartMs) ? 0 : runStartMs,
   );
 }
@@ -310,10 +308,10 @@ export function renderStats(model: StatsModel): string {
   if (model.phases.length === 0) {
     lines.push('no phase activity recorded yet.');
   } else {
-    lines.push(`  ${'phase'.padEnd(10)} ${'elapsed'.padEnd(9)} ${'worker (turns)'.padEnd(16)} impl model`);
+    lines.push(`  ${'phase'.padEnd(10)} ${'elapsed'.padEnd(9)} ${'worker (turns)'.padEnd(16)} maker model`);
     for (const p of model.phases) {
       const worker = `${formatDuration(p.workerMs)} (${p.turns})`;
-      lines.push(`  ${p.phase.padEnd(10)} ${formatDuration(p.windowMs).padEnd(9)} ${worker.padEnd(16)} ${p.implementerModel ?? ''}`);
+      lines.push(`  ${p.phase.padEnd(10)} ${formatDuration(p.windowMs).padEnd(9)} ${worker.padEnd(16)} ${p.makerModel ?? ''}`);
     }
     lines.push(`  ${'total'.padEnd(10)} ${formatDuration(model.totalWindowMs)}`);
   }

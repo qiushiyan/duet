@@ -53,7 +53,7 @@ function registryFor(run: RunState, phase: Parameters<typeof createPhaseTools>[0
   return createPhaseTools({
     state: run,
     phase,
-    providers: { implementer: new FakeWorker('claude'), reviewer: new FakeWorker('codex') },
+    providers: { architect: new FakeWorker('claude'), analyst: new FakeWorker('codex') },
     log: () => {},
   }).tools;
 }
@@ -190,13 +190,13 @@ describe('the run-scoped, phase-less kernel server (Stage 1)', () => {
   }) => {
     const slow = slowWorker('claude');
     const kernel = createRunScopedKernel(projectDir, interactiveRun.runId, () => ({
-      implementer: slow.worker,
-      reviewer: new FakeWorker('codex'),
+      architect: slow.worker,
+      analyst: new FakeWorker('codex'),
     }));
 
-    const first = kernel.callTool('send_prompt', { role: 'implementer', tag: 'custom', body: 'one' }, {});
+    const first = kernel.callTool('send_prompt', { duty: 'architect', tag: 'custom', body: 'one' }, {});
     await new Promise((r) => setTimeout(r, 0)); // let the first turn enter flight
-    const refused = await kernel.callTool('send_prompt', { role: 'implementer', tag: 'custom', body: 'two' }, {});
+    const refused = await kernel.callTool('send_prompt', { duty: 'architect', tag: 'custom', body: 'two' }, {});
 
     // The rail only refuses if turnsInFlight is shared across the per-call tool
     // rebuilds — which is the cache's whole point.
@@ -229,16 +229,16 @@ describe('the run-scoped, phase-less kernel server (Stage 1)', () => {
     // The price the rails-only cache must pay: each call loads its own RunState,
     // so without the fresh-load/merge/save the later post-await save would erase
     // the other role's session/cost/sent-snippets/rounds. FRAME fans out exactly
-    // this way (implementer + reviewer in parallel).
+    // this way (architect + analyst in parallel).
     const impl = controllableWorker('claude');
     const rev = controllableWorker('codex');
     const kernel = createRunScopedKernel(projectDir, interactiveRun.runId, () => ({
-      implementer: impl.worker,
-      reviewer: rev.worker,
+      architect: impl.worker,
+      analyst: rev.worker,
     }));
 
-    const implSend = kernel.callTool('send_prompt', { role: 'implementer', tag: 'think-holistic', body: 'analyze' }, {});
-    const revSend = kernel.callTool('send_prompt', { role: 'reviewer', tag: 'review-spec', body: 'critique' }, {});
+    const implSend = kernel.callTool('send_prompt', { duty: 'architect', tag: 'think-holistic', body: 'analyze' }, {});
+    const revSend = kernel.callTool('send_prompt', { duty: 'analyst', tag: 'review-spec', body: 'critique' }, {});
     await new Promise((r) => setTimeout(r, 0)); // both turns in flight
 
     impl.finish({ sessionId: 'impl-session', costUsd: 1.5 });
@@ -246,13 +246,13 @@ describe('the run-scoped, phase-less kernel server (Stage 1)', () => {
     await Promise.all([implSend, revSend]);
 
     const disk = loadRunState(projectDir, interactiveRun.runId);
-    expect.soft(disk.sessions['planning.architect']?.id).toBe('impl-session'); // not clobbered by the reviewer's save
+    expect.soft(disk.sessions['planning.architect']?.id).toBe('impl-session'); // not clobbered by the analyst's save
     expect.soft(disk.sessions['planning.analyst']?.id).toBe('rev-session');
-    expect.soft(disk.sentSnippets?.frame?.implementer).toEqual(['think-holistic']);
-    expect.soft(disk.sentSnippets?.frame?.reviewer).toEqual(['review-spec']);
+    expect.soft(disk.sentSnippets?.frame?.architect).toEqual(['think-holistic']);
+    expect.soft(disk.sentSnippets?.frame?.analyst).toEqual(['review-spec']);
     expect.soft(disk.costs.claudeWorkersUsd).toBe(1.5);
     expect.soft(disk.costs.codexTokens).toEqual({ input: 100, output: 20 });
-    expect.soft(disk.rounds.frame).toBe(1); // the reviewer's review-* send counted a round
+    expect.soft(disk.rounds.frame).toBe(1); // the analyst's review-* send counted a round
   });
 
   test('crossing to a new phase resets the warn-once rail — a re-sent base template warns fresh', async ({
@@ -260,10 +260,10 @@ describe('the run-scoped, phase-less kernel server (Stage 1)', () => {
     interactiveRun,
   }) => {
     const kernel = createRunScopedKernel(projectDir, interactiveRun.runId, () => ({
-      implementer: new FakeWorker('claude'),
-      reviewer: new FakeWorker('codex'),
+      architect: new FakeWorker('claude'),
+      analyst: new FakeWorker('codex'),
     }));
-    const t = { role: 'implementer', tag: 'think-holistic', body: 'x' };
+    const t = { duty: 'architect', tag: 'think-holistic', body: 'x' };
     // send_prompt is async here: dispatch, let the FakeWorker turn settle, then
     // collect (which re-opens the role). The warn-once rail is unchanged — it
     // just runs once the same-role guard is clear.

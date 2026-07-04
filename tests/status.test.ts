@@ -185,7 +185,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     run.gatesAt = ['implement', 'finish'];
     run.autoApprovals = [{ gate: 'directionGate', at: '2026-06-12T03:14:00.000Z' }];
     run.autoRetries = [{ phase: 'implement', errorClass: 'network', attempt: 1, at: '2026-06-12T03:15:00.000Z' }];
-    run.lastActivity = 'send_prompt → reviewer';
+    run.lastActivity = 'send_prompt → critic';
     const model = buildStatusModel(run, { kind: 'gate', phase: 'implement' }, [
       { file: 'f.json', text: 'note', stagedAt: 'now' },
     ]);
@@ -316,13 +316,13 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
   test('context fill per voice carries the computed percent', ({ run }) => {
     run.contextUsage = {
       orchestrator: { usedTokens: 83_000, windowTokens: 200_000, at: 't1' },
-      reviewer: { usedTokens: 62_228, windowTokens: 258_400, at: 't2' },
+      critic: { usedTokens: 62_228, windowTokens: 258_400, at: 't2' },
     };
     const model = buildStatusModel(run, { kind: 'running', pid: 1, phase: 'implement' }, []);
 
     expect.soft(model.context).toEqual([
-      { role: 'orchestrator', usedTokens: 83_000, windowTokens: 200_000, percent: 42, at: 't1' },
-      { role: 'reviewer', usedTokens: 62_228, windowTokens: 258_400, percent: 24, at: 't2' },
+      { voice: 'orchestrator', usedTokens: 83_000, windowTokens: 200_000, percent: 42, at: 't1' },
+      { voice: 'critic', usedTokens: 62_228, windowTokens: 258_400, percent: 24, at: 't2' },
     ]);
   });
 
@@ -335,27 +335,27 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
 
   test('pendingTurns surfaces the interactive in-flight/settled turns, and the text names check_turns', ({ run }) => {
     run.pendingTurns = {
-      implementer: { tag: 'write-spec', startedAt: 't1', status: 'running' },
-      reviewer: { tag: 'review-spec', startedAt: 't2', status: 'ready' },
+      architect: { tag: 'write-spec', startedAt: 't1', status: 'running' },
+      analyst: { tag: 'review-spec', startedAt: 't2', status: 'ready' },
     };
     const model = buildStatusModel(run, { kind: 'interactive', phase: 'spec' }, []);
     expect.soft(model.pendingTurns).toEqual([
-      { role: 'implementer', tag: 'write-spec', status: 'running', startedAt: 't1' },
-      { role: 'reviewer', tag: 'review-spec', status: 'ready', startedAt: 't2' },
+      { duty: 'architect', tag: 'write-spec', status: 'running', startedAt: 't1' },
+      { duty: 'analyst', tag: 'review-spec', status: 'ready', startedAt: 't2' },
     ]);
     const out = renderStatus(model);
-    expect.soft(out).toContain('implementer (write-spec): running in the background');
-    expect.soft(out).toContain('reviewer (review-spec): ready — collect with check_turns');
+    expect.soft(out).toContain('architect (write-spec): running in the background');
+    expect.soft(out).toContain('analyst (review-spec): ready — collect with check_turns');
 
     // The lean --brief path surfaces them too (review finding 2): narrowed to
     // role/tag/status (startedAt dropped), with a concise role/status render —
     // so the remote/concierge supervisor sees the turn to collect.
     const brief = buildBrief(model);
     expect.soft(brief.pendingTurns).toEqual([
-      { role: 'implementer', tag: 'write-spec', status: 'running' },
-      { role: 'reviewer', tag: 'review-spec', status: 'ready' },
+      { duty: 'architect', tag: 'write-spec', status: 'running' },
+      { duty: 'analyst', tag: 'review-spec', status: 'ready' },
     ]);
-    expect.soft(renderBrief(brief)).toContain('pending turns: implementer running · reviewer ready');
+    expect.soft(renderBrief(brief)).toContain('pending turns: architect running · analyst ready');
   });
 
   test('pendingTurns is absent when no turn is in flight, in both the full model and the brief (additive — omitted, not empty)', ({
@@ -390,7 +390,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
       orchestrator: { usedTokens: 83_000, windowTokens: 200_000, at: 't1' },
       consultant: { usedTokens: 50_000, windowTokens: 200_000, at: 't2' },
     };
-    const ctxRoles = buildStatusModel(consultantRun, { kind: 'running', pid: 1, phase: 'spec' }, []).context.map((c) => c.role);
+    const ctxRoles = buildStatusModel(consultantRun, { kind: 'running', pid: 1, phase: 'spec' }, []).context.map((c) => c.voice);
     expect.soft(ctxRoles).toContain('orchestrator');
     expect.soft(ctxRoles).toContain('consultant');
 
@@ -398,7 +398,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     consultantRun.pendingTurns = { consultant: { tag: 'consultant-spec', startedAt: 't3', status: 'ready' } };
     expect
       .soft(buildStatusModel(consultantRun, { kind: 'interactive', phase: 'spec' }, []).pendingTurns)
-      .toContainEqual({ role: 'consultant', tag: 'consultant-spec', status: 'ready', startedAt: 't3' });
+      .toContainEqual({ duty: 'consultant', tag: 'consultant-spec', status: 'ready', startedAt: 't3' });
   });
 
   test('rounds run against their caps; auto-approvals carry packet headlines', ({ run }) => {
@@ -417,11 +417,11 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
 describe('renderStatus', () => {
   test('a gate stop shows the packet, the heading, and the decide-with commands', ({ run }) => {
     run.machineState = 'commitSpecGate';
-    run.phaseSummaries.spec = { summary: 'reviewer flagged the data model; fixed', artifacts: ['docs/spec.md'] };
+    run.phaseSummaries.spec = { summary: 'analyst flagged the data model; fixed', artifacts: ['docs/spec.md'] };
     const out = render(run, { kind: 'gate', phase: 'spec' });
 
     expect.soft(out).toContain('SPEC gate'); // the load-bearing tokens, not the box-drawing decoration
-    expect.soft(out).toContain('reviewer flagged the data model; fixed');
+    expect.soft(out).toContain('analyst flagged the data model; fixed');
     expect.soft(out).toContain('artifacts: docs/spec.md');
     expect.soft(out).toContain(`duet continue ${run.runId} --approve`);
     expect.soft(out).toContain(`duet continue ${run.runId} --reject "<feedback>"`);
@@ -491,12 +491,12 @@ describe('renderStatus', () => {
   test('the while-you-were-away section lists context interventions with a per-kind tally, and the brief projects them', ({ run }) => {
     run.machineState = 'shipGate';
     run.contextEvents = [
-      { kind: 'cutoff', role: 'implementer', at: '2026-07-02T03:50:00.000Z', preTokens: 870_000, windowTokens: 1_000_000 },
-      { kind: 'salvage-compact', role: 'implementer', at: '2026-07-02T03:55:00.000Z', preTokens: 900_000, windowTokens: 1_000_000 },
+      { kind: 'cutoff', voice: 'builder', at: '2026-07-02T03:50:00.000Z', preTokens: 870_000, windowTokens: 1_000_000 },
+      { kind: 'salvage-compact', voice: 'builder', at: '2026-07-02T03:55:00.000Z', preTokens: 900_000, windowTokens: 1_000_000 },
     ];
     const out = render(run, { kind: 'gate', phase: 'implement' });
     expect.soft(out).toContain('while you were away — context interventions: 2 (cutoff ×1, salvage-compact ×1):');
-    expect.soft(out).toContain(`◔ implementer cutoff at 87%  ${localStamp('2026-07-02T03:50:00.000Z')}`);
+    expect.soft(out).toContain(`◔ builder cutoff at 87%  ${localStamp('2026-07-02T03:50:00.000Z')}`);
 
     const brief = renderBrief(buildBrief(buildStatusModel(run, { kind: 'gate', phase: 'implement' }, [])));
     expect.soft(brief).toContain('context: cutoff ×1, salvage-compact ×1');
@@ -551,10 +551,10 @@ describe('renderStatus', () => {
     run.machineState = 'implementFlagWait';
     run.contextUsage = {
       orchestrator: { usedTokens: 83_000, windowTokens: 200_000, at: 't1' },
-      implementer: { usedTokens: 134_000, windowTokens: 200_000, at: 't2' },
+      builder: { usedTokens: 134_000, windowTokens: 200_000, at: 't2' },
     };
     const out = render(run, { kind: 'running', pid: 1, phase: 'implement' });
-    expect.soft(out).toContain('context:  orchestrator 42% (83k/200k) · implementer 67% (134k/200k)');
+    expect.soft(out).toContain('context:  orchestrator 42% (83k/200k) · builder 67% (134k/200k)');
 
     delete run.contextUsage;
     expect.soft(render(run, { kind: 'running', pid: 1, phase: 'implement' })).not.toContain('context:');

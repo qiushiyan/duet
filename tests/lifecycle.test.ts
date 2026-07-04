@@ -716,23 +716,23 @@ describe('waitForTurnOrStop (the turn-aware wait behind status --wait)', () => {
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   test('wakes turn-ready when a pending record flips to ready mid-poll', async ({ projectDir, interactiveRun }) => {
-    interactiveRun.pendingTurns = { reviewer: { tag: 'review-spec', startedAt: 't', status: 'running' } };
+    interactiveRun.pendingTurns = { analyst: { tag: 'review-spec', startedAt: 't', status: 'running' } };
     saveRunState(interactiveRun);
     const waiting = waitForTurnOrStop(projectDir, interactiveRun.runId, { intervalMs: 15 });
 
     await sleep(30); // a couple polls while still running
     const s = loadRunState(projectDir, interactiveRun.runId);
-    s.pendingTurns!.reviewer!.status = 'ready';
+    s.pendingTurns!.analyst!.status = 'ready';
     saveRunState(s);
 
-    expect(await waiting).toEqual({ kind: 'turn-ready', roles: ['reviewer'] });
+    expect(await waiting).toEqual({ kind: 'turn-ready', roles: ['analyst'] });
   });
 
   test('an interactive run with a RUNNING turn does NOT wake until it settles (the immediate-wake regression guard)', async ({
     projectDir,
     interactiveRun,
   }) => {
-    interactiveRun.pendingTurns = { implementer: { tag: 'write-spec', startedAt: 't', status: 'running' } };
+    interactiveRun.pendingTurns = { architect: { tag: 'write-spec', startedAt: 't', status: 'running' } };
     saveRunState(interactiveRun);
     let resolved = false;
     const waiting = waitForTurnOrStop(projectDir, interactiveRun.runId, { intervalMs: 15 }).then((r) => {
@@ -744,9 +744,9 @@ describe('waitForTurnOrStop (the turn-aware wait behind status --wait)', () => {
     expect(resolved).toBe(false);
 
     const s = loadRunState(projectDir, interactiveRun.runId);
-    s.pendingTurns!.implementer!.status = 'failed';
+    s.pendingTurns!.architect!.status = 'failed';
     saveRunState(s);
-    expect(await waiting).toEqual({ kind: 'turn-ready', roles: ['implementer'] });
+    expect(await waiting).toEqual({ kind: 'turn-ready', roles: ['architect'] });
   });
 
   test('an interactive run with no pending turn returns immediately (the rest is itself the answer)', async ({
@@ -764,7 +764,7 @@ describe('waitForTurnOrStop (the turn-aware wait behind status --wait)', () => {
   });
 
   test('is read-only — polling while a turn runs mutates nothing on disk', async ({ projectDir, interactiveRun }) => {
-    interactiveRun.pendingTurns = { reviewer: { tag: 'review-spec', startedAt: 't', status: 'running' } };
+    interactiveRun.pendingTurns = { analyst: { tag: 'review-spec', startedAt: 't', status: 'running' } };
     saveRunState(interactiveRun);
     const statePath = join(runDirOf(projectDir, interactiveRun.runId), 'state.json');
     const before = readFileSync(statePath, 'utf8');
@@ -775,7 +775,7 @@ describe('waitForTurnOrStop (the turn-aware wait behind status --wait)', () => {
 
     // Resolve to clean up the pending timer.
     const s = loadRunState(projectDir, interactiveRun.runId);
-    s.pendingTurns!.reviewer!.status = 'ready';
+    s.pendingTurns!.analyst!.status = 'ready';
     saveRunState(s);
     await waiting;
   });
@@ -1130,7 +1130,7 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
   test('commits the authored contract path-scoped and records {path, commit}', async ({ projectDir }) => {
     const { state, contractPath } = await contractRun(projectDir);
     // An in-progress plan in the same worktree must NOT be swept into the commit —
-    // even when the implementer has STAGED it (the harder case than merely untracked).
+    // even when the architect has STAGED it (the harder case than merely untracked).
     const planPath = 'docs/plan.md';
     writeFileSync(join(projectDir, planPath), '# plan WIP\n');
     await execa('git', ['add', '--', planPath], { cwd: projectDir });

@@ -102,7 +102,34 @@ describe('buildPhaseBrief (the shared entry-prompt renderer — headless parity)
     expect.soft(implBrief).toContain('implement-design');
     expect.soft(implBrief).toContain('commit the approved design doc');
     expect.soft(implBrief).not.toContain('plan file');
-    expect.soft(implBrief).not.toContain('the whole plan');
+    // "implement the whole plan" is full's build step; "the whole planning
+    // stage" (blueprint's compaction anchor) is stage vocabulary and fine.
+    expect.soft(implBrief).not.toContain('implement the whole plan');
+  });
+
+  test('a DEGRADED continuity edge adapts the build ritual — seed from the committed artifacts, never /compact a session the builder does not have', ({
+    projectDir,
+  }) => {
+    // full plans on claude (architect) and builds on codex (builder): the
+    // builder←architect edge degraded at manifest freeze, so the brief must
+    // speak to a FRESH builder — a cold commit prompt and an artifact seed —
+    // instead of claiming it "still holds" the planning session.
+    const base = defaultBindingsFor('full');
+    const crossed = createRun({
+      cwd: projectDir,
+      workflow: 'full',
+      framing: 'test framing',
+      bindings: { ...base, duties: { ...base.duties, builder: { provider: 'codex' } } },
+    });
+    const brief = buildPhaseBrief(crossed, 'implement');
+    expect.soft(brief).toContain('fresh session');
+    expect.soft(brief).toContain('this first prompt reads cold');
+    expect.soft(brief).not.toContain('still holds');
+    expect.soft(brief).not.toContain('compact-for-impl'); // no boundary compact on a session that never existed
+    // The LIVE edge (default all-claude bindings) keeps the compaction ritual.
+    const live = buildPhaseBrief(runOf(projectDir, 'full'), 'implement');
+    expect.soft(live).toContain('compact-for-impl');
+    expect.soft(live).toContain('still holds');
   });
 
   // The two load-bearing contracts of the shared openPr brief (full's finish,

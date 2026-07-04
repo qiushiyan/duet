@@ -11,25 +11,37 @@ import { localClock, localTime } from './timefmt.ts';
  * colorized streams onward degrades to plain text by itself.
  */
 
+// One hue per LANE (maker blue, checker yellow), so a voice's color says its
+// lane at a glance across stages; the orchestrator and consultant keep their
+// own hues.
 export const ROLE_GLYPH: Record<Voice, string> = {
   orchestrator: '◆',
-  implementer: '■',
-  reviewer: '●',
+  architect: '■',
+  builder: '■',
+  analyst: '●',
+  critic: '●',
+  judge: '●',
   consultant: '▲',
 };
 
 /** tmux color names for pane borders — same hues the colorizer uses. */
 export const ROLE_TMUX_COLOR: Record<Voice, string> = {
   orchestrator: 'cyan',
-  implementer: 'blue',
-  reviewer: 'yellow',
+  architect: 'blue',
+  builder: 'blue',
+  analyst: 'yellow',
+  critic: 'yellow',
+  judge: 'yellow',
   consultant: 'magenta',
 };
 
 const ROLE_PAINT: Record<Voice, (s: string) => string> = {
   orchestrator: pc.cyan,
-  implementer: pc.blue,
-  reviewer: pc.yellow,
+  architect: pc.blue,
+  builder: pc.blue,
+  analyst: pc.yellow,
+  critic: pc.yellow,
+  judge: pc.yellow,
   consultant: pc.magenta,
 };
 

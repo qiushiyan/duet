@@ -2,8 +2,8 @@ import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
-import { checkerDutyOf, continuityEdgeFor, makerDutyOf, stageOf, stageOfDuty, stagesOf } from './phases.ts';
-import type { Duty, PhaseName, WorkflowName } from './phases.ts';
+import { continuityEdgeFor, stageOfDuty, stagesOf } from './phases.ts';
+import type { Duty, WorkflowName } from './phases.ts';
 
 /**
  * Voice bindings — the one config duet ships (docs/automation-design.md
@@ -304,19 +304,13 @@ export function degradedEdgesFor(bindings: VoiceBindings, workflow: WorkflowName
 
 /**
  * THE binding resolver for a turn — "who runs this" as a frozen-manifest
- * lookup by the phase's stage + duty; no band logic remains. The seat-name
- * signature (implementer = the stage's maker, reviewer = its checker) is the
- * BRIDGE while the tool surface still routes by seat; it dissolves into
- * direct duty addressing with the remodel's slice 2c.
+ * lookup by address; no band logic, no phase parameter (a duty names its own
+ * stage). The one resolver worker construction, session identity, the
+ * context-pressure scope, stats, and takeover all read.
  */
-export function effectiveBindingFor(
-  bindings: VoiceBindings,
-  role: 'orchestrator' | 'implementer' | 'reviewer' | 'consultant',
-  workflow: WorkflowName,
-  phase: PhaseName,
-): Binding {
-  if (role === 'orchestrator') return bindings.orchestrator;
-  if (role === 'consultant') {
+export function voiceBindingFor(bindings: VoiceBindings, voice: 'orchestrator' | Duty | 'consultant'): Binding {
+  if (voice === 'orchestrator') return bindings.orchestrator;
+  if (voice === 'consultant') {
     if (!bindings.consultant) {
       throw new Error(
         'no consultant is bound on this run — a consultant is bound only when --bind consultant=…, a framing bind.consultant/consultant: on, or a config [consultant] table sets one, so the enumerating surface should not have reached it here.',
@@ -324,9 +318,7 @@ export function effectiveBindingFor(
     }
     return bindings.consultant;
   }
-  const stage = stageOf(workflow, phase);
-  const duty = role === 'implementer' ? makerDutyOf(workflow, stage) : checkerDutyOf(workflow, stage);
-  return dutyBindingFor(bindings, duty);
+  return dutyBindingFor(bindings, voice);
 }
 
 /** Every bound (address, binding) pair — the enumeration for echoes and provider scans. */

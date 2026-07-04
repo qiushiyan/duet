@@ -1,8 +1,8 @@
 import type { RunPosition } from './harness/lifecycle.ts';
 import { WORKFLOWS, entryOf, gateOf, phaseOfGateState, phasesOf } from './phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
-import type { WorkerRole } from './providers/types.ts';
-import { voicesFor, workerRolesFor } from './roles.ts';
+import type { VoiceAddress } from './providers/types.ts';
+import { voicesFor } from './roles.ts';
 import { contextPercent, fmtTokens, workflowOf } from './run-store.ts';
 import type { ContextEvent, HumanDecision, RunState, Voice } from './run-store.ts';
 import type { Steer } from './steer-store.ts';
@@ -136,7 +136,7 @@ export interface StatusModel {
   machineState?: string;
   stop: StopModel;
   /**
-   * The cheap exact session map (#1): each known voice's `{ role, provider,
+   * The cheap exact session map (#1): each known voice's `{ voice, provider,
    * sessionId }`, a state-only read (no transcript scan, even under --wait).
    * Always present ([] when no session yet); the resolved path + verdicts are
    * `duet doctor`'s job, off this hot path. Known sessions only.
@@ -151,7 +151,7 @@ export interface StatusModel {
   rounds: Array<{ phase: PhaseName; used: number; cap: number }>;
   costs: RunState['costs'];
   /** Context-window fill per voice, captured at turn boundaries (a hint; stale after manual takeover). */
-  context: Array<{ role: Voice; usedTokens: number; windowTokens: number; percent: number; at: string }>;
+  context: Array<{ voice: Voice; usedTokens: number; windowTokens: number; percent: number; at: string }>;
   /** Staged steers not yet delivered to the orchestrator. */
   pendingSteers: Array<{ stagedAt: string; stagedDuring?: PhaseName; text: string }>;
   /**
@@ -160,7 +160,7 @@ export interface StatusModel {
    * a `ready`/`failed` turn signals "collect with check_turns" and is what
    * `duet status --wait` (slice 5) wakes on. Additive (schema-additive-only).
    */
-  pendingTurns?: Array<{ role: WorkerRole; tag: string; status: 'running' | 'ready' | 'failed'; startedAt: string }>;
+  pendingTurns?: Array<{ duty: VoiceAddress; tag: string; status: 'running' | 'ready' | 'failed'; startedAt: string }>;
   /** Queued library edits (rationale only — full bodies stay in state.json). */
   snippetProposals: Array<{ snippetKey: string; rationale: string; at: string }>;
   lastActivity?: string;
@@ -186,9 +186,9 @@ export function buildStatusModel(state: RunState, position: RunPosition, pending
       .filter((p) => (state.rounds[p.name] ?? 0) > 0 || p.reviewLoop)
       .map((p) => ({ phase: p.name, used: state.rounds[p.name] ?? 0, cap: p.roundCap })),
     costs: state.costs,
-    context: voicesFor(state).flatMap((role) => {
-      const usage = state.contextUsage?.[role];
-      return usage ? [{ role, ...usage, percent: contextPercent(usage) }] : [];
+    context: voicesFor(state).flatMap((voice) => {
+      const usage = state.contextUsage?.[voice];
+      return usage ? [{ voice, ...usage, percent: contextPercent(usage) }] : [];
     }),
     pendingSteers: pendingSteers.map(({ stagedAt, stagedDuring, text }) => ({
       stagedAt,
@@ -197,10 +197,9 @@ export function buildStatusModel(state: RunState, position: RunPosition, pending
     })),
     ...(state.pendingTurns && Object.keys(state.pendingTurns).length > 0
       ? {
-          pendingTurns: workerRolesFor(state).flatMap((role) => {
-            const t = state.pendingTurns?.[role];
-            return t ? [{ role, tag: t.tag, status: t.status, startedAt: t.startedAt }] : [];
-          }),
+          pendingTurns: (Object.entries(state.pendingTurns) as Array<[VoiceAddress, NonNullable<RunState['pendingTurns']>[VoiceAddress]]>).flatMap(([duty, t]) =>
+            t ? [{ duty, tag: t.tag, status: t.status, startedAt: t.startedAt }] : [],
+          ),
         }
       : {}),
     snippetProposals: state.snippetProposals.map(({ snippetKey, rationale, at }) => ({ snippetKey, rationale, at })),
@@ -332,13 +331,13 @@ function summarizeContextEvents(events: ReadonlyArray<ContextEvent>): string {
   return [...counts].map(([kind, n]) => `${kind} ×${n}`).join(', ');
 }
 
-/** One ledger line: kind, role, the pre-intervention fill when known, local stamp. */
+/** One ledger line: kind, voice, the pre-intervention fill when known, local stamp. */
 function contextEventLine(e: ContextEvent): string {
   const fill =
     e.preTokens !== undefined && e.windowTokens
       ? ` at ${contextPercent({ usedTokens: e.preTokens, windowTokens: e.windowTokens })}%`
       : '';
-  return `  ◔ ${e.role} ${e.kind}${fill}  ${fmtStamp(e.at)}`;
+  return `  ◔ ${e.voice} ${e.kind}${fill}  ${fmtStamp(e.at)}`;
 }
 
 export function renderStatus(model: StatusModel): string {
@@ -382,7 +381,7 @@ export function renderStatus(model: StatusModel): string {
   );
   if (model.context.length > 0) {
     lines.push(
-      `context:  ${model.context.map((c) => `${c.role} ${c.percent}% (${fmtTokens(c.usedTokens)}/${fmtTokens(c.windowTokens)})`).join(' · ')}`,
+      `context:  ${model.context.map((c) => `${c.voice} ${c.percent}% (${fmtTokens(c.usedTokens)}/${fmtTokens(c.windowTokens)})`).join(' · ')}`,
     );
   }
   if (model.snippetProposals.length > 0) {
@@ -405,7 +404,7 @@ export function renderStatus(model: StatusModel): string {
           : t.status === 'ready'
             ? 'ready — collect with check_turns'
             : 'failed — collect with check_turns to see the error';
-      lines.push(`  • ${t.role} (${t.tag}): ${note}`);
+      lines.push(`  • ${t.duty} (${t.tag}): ${note}`);
     }
   }
 
@@ -544,7 +543,7 @@ export interface BriefModel {
    * thing async turns add: a `ready`/`failed` turn to collect with check_turns.
    * Additive (schema-additive-only).
    */
-  pendingTurns?: Array<{ role: WorkerRole; tag: string; status: 'running' | 'ready' | 'failed' }>;
+  pendingTurns?: Array<{ duty: VoiceAddress; tag: string; status: 'running' | 'ready' | 'failed' }>;
 }
 
 function briefHeadline(stop: StopModel, workflow: WorkflowName): string {
@@ -596,7 +595,7 @@ export function buildBrief(model: StatusModel): BriefModel {
     contextEvents: model.contextEvents,
     ...(stop.kind === 'gate' && stop.packet?.humanDecisions ? { humanDecisions: stop.packet.humanDecisions } : {}),
     ...(model.pendingTurns && model.pendingTurns.length > 0
-      ? { pendingTurns: model.pendingTurns.map(({ role, tag, status }) => ({ role, tag, status })) }
+      ? { pendingTurns: model.pendingTurns.map(({ duty, tag, status }) => ({ duty, tag, status })) }
       : {}),
   };
 }
@@ -613,7 +612,7 @@ export function renderBrief(brief: BriefModel): string {
   }
   if (brief.pendingSteers > 0) lines.push(`pending steers: ${brief.pendingSteers}`);
   if (brief.pendingTurns && brief.pendingTurns.length > 0) {
-    lines.push(`pending turns: ${brief.pendingTurns.map((t) => `${t.role} ${t.status}`).join(' · ')}`);
+    lines.push(`pending turns: ${brief.pendingTurns.map((t) => `${t.duty} ${t.status}`).join(' · ')}`);
   }
   if (brief.autoApprovals.length > 0) lines.push(`auto-approved: ${brief.autoApprovals.map((a) => a.gate).join(', ')}`);
   if (brief.awayRetries.length > 0) lines.push(`auto-retried: ${summarizeRetriesByClass(brief.awayRetries)}`);

@@ -43,7 +43,7 @@ export type PaneFactory = (config: PaneConfig) => PaneController;
  * native byte-stream idle watchdog is forced on for THIS launched `claude` —
  * set on the exact command sh runs, NOT inherited from the tmux server env
  * (which may be a stale reuse). `bypassPermissions` is the unattended
- * implementer posture (P4), the same one the headless implementer uses.
+ * writing-worker posture (P4), the same one the headless workers use.
  */
 export function claudePaneLaunchCommand(config: PaneConfig): string[] {
   const launch = [

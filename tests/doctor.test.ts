@@ -2,7 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
 import { buildDoctorModel, renderDoctor } from '../src/doctor.ts';
-import type { DoctorModel, RoleHealthRow } from '../src/doctor.ts';
+import type { DoctorModel, VoiceHealthRow } from '../src/doctor.ts';
 import { runDirOf, saveRunState } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
 import { localStamp } from '../src/timefmt.ts';
@@ -20,9 +20,9 @@ function setDriver(run: { cwd: string; runId: string }, pid: number): void {
 }
 const DEAD_PID = 2 ** 22; // far above any real pid → process.kill(pid, 0) throws ESRCH
 
-const rowOf = (model: DoctorModel, role: string): RoleHealthRow => model.roles.find((r) => r.role === role)!;
+const rowOf = (model: DoctorModel, voice: string): VoiceHealthRow => model.voices.find((r) => r.voice === voice)!;
 
-describe('buildDoctorModel — per-role verdicts', () => {
+describe('buildDoctorModel — per-voice verdicts', () => {
   test('a parked run with no in-flight turns reads all idle, with resolved paths', async ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
     run.orchestratorSessionId = 'orch-1';
@@ -33,9 +33,10 @@ describe('buildDoctorModel — per-role verdicts', () => {
     plantCodexRollout(home, 'rev-1', jsonl({ type: 'event_msg', timestamp: ago(20 * MIN), payload: { type: 'agent_message', message: 'done' } }));
 
     const model = await buildDoctorModel(run, { now: NOW, home, fetch: okFetch });
-    expect.soft(model.roles.map((r) => r.verdict)).toEqual(['idle', 'idle', 'idle']);
-    expect.soft(rowOf(model, 'reviewer').provider).toBe('codex'); // exact map, no heuristic
-    expect.soft(rowOf(model, 'implementer').sessionPath).toContain('impl-1.jsonl');
+    // Every stage's duties get a row — the not-yet-started delivery pair reads idle too.
+    expect.soft(model.voices.map((r) => r.verdict)).toEqual(['idle', 'idle', 'idle', 'idle', 'idle']);
+    expect.soft(rowOf(model, 'analyst').provider).toBe('codex'); // exact map, no heuristic
+    expect.soft(rowOf(model, 'architect').sessionPath).toContain('impl-1.jsonl');
   });
 
   test('a bound consultant gets its own health row; the orchestrator is never dropped', async ({ consultantRun, projectDir }) => {
@@ -47,44 +48,44 @@ describe('buildDoctorModel — per-role verdicts', () => {
     plantClaudeTranscript(home, 'consult-1', jsonl(claudeUserToolResult({ ts: ago(20 * MIN) })));
 
     const model = await buildDoctorModel(consultantRun, { now: NOW, home, fetch: okFetch });
-    const roles = model.roles.map((r) => r.role);
+    const roles = model.voices.map((r) => r.voice);
     expect.soft(roles).toContain('orchestrator'); // voicesFor keeps it
     expect.soft(roles).toContain('consultant');
     expect.soft(rowOf(model, 'consultant').provider).toBe('claude'); // its exact bound provider
     expect.soft(rowOf(model, 'consultant').sessionPath).toContain('consult-1.jsonl');
   });
 
-  test('an unbound run has exactly today’s three voices (byte-for-byte)', async ({ run, projectDir }) => {
+  test('an unbound run shows the orchestrator plus every stage’s duties, in run order', async ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
     const model = await buildDoctorModel(run, { now: NOW, home, fetch: okFetch });
-    expect.soft(model.roles.map((r) => r.role)).toEqual(['orchestrator', 'implementer', 'reviewer']);
+    expect.soft(model.voices.map((r) => r.voice)).toEqual(['orchestrator', 'architect', 'analyst', 'builder', 'critic']);
   });
 
   test('an in-flight worker (activeTurns + live driver) reads working', async ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
     run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-1' } };
-    run.activeTurns = { implementer: { tag: 'start-plan', startedAt: ago(30 * SEC) } };
+    run.activeTurns = { architect: { tag: 'start-plan', startedAt: ago(30 * SEC) } };
     saveRunState(run);
     setDriver(run, process.pid); // a live driver (this test process)
     plantClaudeTranscript(home, 'impl-1', jsonl(claudeUserToolResult({ ts: ago(8 * SEC) })));
 
     const model = await buildDoctorModel(run, { now: NOW, home, fetch: okFetch });
-    expect.soft(rowOf(model, 'implementer').inFlight).toBe(true);
-    expect.soft(rowOf(model, 'implementer').verdict).toBe('working');
+    expect.soft(rowOf(model, 'architect').inFlight).toBe(true);
+    expect.soft(rowOf(model, 'architect').verdict).toBe('working');
   });
 
   test('stale activeTurns under a DEAD driver is reconciled to idle, never long-inference', async ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
     run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-1' } };
     // A turn the hint says started 40m ago — but the driver that would clear it is dead.
-    run.activeTurns = { implementer: { tag: 'start-plan', startedAt: ago(40 * MIN) } };
+    run.activeTurns = { architect: { tag: 'start-plan', startedAt: ago(40 * MIN) } };
     saveRunState(run);
     setDriver(run, DEAD_PID);
     plantClaudeTranscript(home, 'impl-1', jsonl(claudeUserToolResult({ ts: ago(40 * MIN) })));
 
     const model = await buildDoctorModel(run, { now: NOW, home, fetch: okFetch });
-    expect.soft(rowOf(model, 'implementer').inFlight).toBe(false);
-    expect.soft(rowOf(model, 'implementer').verdict).toBe('idle'); // NOT silent/stuck
+    expect.soft(rowOf(model, 'architect').inFlight).toBe(false);
+    expect.soft(rowOf(model, 'architect').verdict).toBe('idle'); // NOT silent/stuck
   });
 
   test('the interactive orchestrator (phase mid-flight) reads working from its own transcript', async ({ interactiveRun, projectDir }) => {
@@ -98,14 +99,14 @@ describe('buildDoctorModel — per-role verdicts', () => {
     expect.soft(rowOf(model, 'orchestrator').verdict).toBe('working');
   });
 
-  test('a role with no session yet is idle with no path', async ({ run, projectDir }) => {
+  test('a voice with no session yet is idle with no path', async ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
-    run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-1' } }; // reviewer + orchestrator absent
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-1' } }; // analyst + orchestrator absent
     saveRunState(run);
     plantClaudeTranscript(home, 'impl-1', jsonl(claudeUserToolResult({ ts: ago(MIN) })));
 
     const model = await buildDoctorModel(run, { now: NOW, home, fetch: okFetch });
-    const rev = rowOf(model, 'reviewer');
+    const rev = rowOf(model, 'analyst');
     expect.soft(rev.verdict).toBe('idle');
     expect.soft(rev.sessionPath).toBeUndefined();
   });
@@ -117,8 +118,8 @@ describe('buildDoctorModel — per-role verdicts', () => {
     plantClaudeTranscript(home, 'impl-1', jsonl(claudeApiError('API Error: 500 Internal server error', { ts: ago(30 * SEC) })));
 
     const model = await buildDoctorModel(run, { now: NOW, home, fetch: okFetch });
-    expect.soft(rowOf(model, 'implementer').verdict).toBe('crashed');
-    expect.soft(rowOf(model, 'implementer').recentErrors[0]?.errorClass).toBe('server');
+    expect.soft(rowOf(model, 'architect').verdict).toBe('crashed');
+    expect.soft(rowOf(model, 'architect').recentErrors[0]?.errorClass).toBe('server');
   });
 });
 
@@ -133,12 +134,12 @@ describe('buildDoctorModel — connectivity (best-effort, never load-bearing)', 
 
     const down = await buildDoctorModel(run, { now: NOW, fetch: async () => { throw new Error('ENOTFOUND'); } });
     expect.soft(down.connectivity).toEqual({ target: 'api.anthropic.com', status: 'down' });
-    expect.soft(down.roles).toHaveLength(3); // probe failure never sinks the model
+    expect.soft(down.voices).toHaveLength(5); // probe failure never sinks the model
   });
 });
 
 describe('renderDoctor', () => {
-  test('shows one line per role with its verdict and the connectivity probe', async ({ run, projectDir }) => {
+  test('shows one line per voice with its verdict and the connectivity probe', async ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
     run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-1' } };
     saveRunState(run);
@@ -146,8 +147,8 @@ describe('renderDoctor', () => {
     const text = renderDoctor(await buildDoctorModel(run, { now: NOW, home, fetch: okFetch }));
 
     expect.soft(text).toContain('orchestrator');
-    expect.soft(text).toContain('implementer');
-    expect.soft(text).toContain('reviewer');
+    expect.soft(text).toContain('architect');
+    expect.soft(text).toContain('analyst');
     expect.soft(text).toContain('network:');
     expect.soft(text).toMatch(/idle|working|crashed|retrying|long-inference|silent\/stuck/);
   });

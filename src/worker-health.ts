@@ -199,8 +199,8 @@ export function parseRecords(jsonl: string): JsonRecord[] {
  * Whether THIS turn's prompt was accepted into the session — true iff the
  * transcript carries a real activity record (a `user`/`assistant`/`result`
  * record; tool steps ride inside those) timestamped at/after `sinceMs`, the
- * turn's start. The lower bound is LOAD-BEARING: a persistent (implementer /
- * reviewer) session already holds PRIOR turns' records, so a whole-transcript
+ * turn's start. The lower bound is LOAD-BEARING: a persistent duty session
+ * already holds PRIOR turns' records, so a whole-transcript
  * scan would false-positive on a resumed turn that failed before its new prompt
  * was ever accepted — and that cascades into wrongly resuming (or, in S7,
  * wrongly resetting) a session the worker never acted in this turn. `system`

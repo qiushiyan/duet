@@ -87,7 +87,7 @@ export const KICKOFF_PROMPT =
  * both use the re-anchoring KICKOFF_PROMPT above.
  */
 export const RESUME_KICKOFF_PROMPT =
-  "We've turned everything we worked through in this discussion into a duet framing, so the thinking is settled — and from here your job changes. You're the orchestrator for this run now: the senior engineer who hands the actual building to an implementer and a reviewer, keeps the run on track, and holds it to the product goals we just agreed on.\n\n" +
+  "We've turned everything we worked through in this discussion into a duet framing, so the thinking is settled — and from here your job changes. You're the orchestrator for this run now: the senior engineer who hands the drafting to the architect and the critiquing to the analyst, keeps the run on track, and holds it to the product goals we just agreed on.\n\n" +
   "First, read get_task to see where the run really stands — the phase, the framing, the brief. That's the source of truth to work from; our conversation is the shared understanding behind it. Then give me a one-paragraph plan of attack, and wait for my go before you send the first worker prompt.\n\n" +
   'What we worked out here stays useful the whole way through — for briefing the workers well, and for judging what comes back against what we were actually trying to build.';
 

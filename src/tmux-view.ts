@@ -1,8 +1,11 @@
 import { join, resolve } from 'node:path';
 import { execa } from 'execa';
 import { ROLE_GLYPH, ROLE_TMUX_COLOR } from './colorize.ts';
-import { voicesFor, workerRolesFor } from './roles.ts';
-import { runDirOf } from './run-store.ts';
+import { voicesFor } from './roles.ts';
+import { dutiesOf, entryOf, stageOf } from './phases.ts';
+import type { PhaseName } from './phases.ts';
+import { probeRunPosition } from './harness/lifecycle.ts';
+import { runDirOf, workflowOf } from './run-store.ts';
 import type { RunState, Voice } from './run-store.ts';
 
 /**
@@ -38,21 +41,21 @@ function tailCommand(state: RunState, voice: Voice): string {
 }
 
 /**
- * The wide-anchor (2-column) arrangement, built by `columnLayout` below:
+ * The wide-anchor (2-column) arrangement, built by `columnLayout` below
+ * (duty names per the current stage — delivery shown):
  *
  * ```
  * ┌──────────────┬──────────────┐
  * │ orchestrator │              │
- * │     55%      │ implementer  │
+ * │     55%      │   builder    │
  * ├──────────────┤ full height  │
- * │ reviewer 45% │              │
+ * │ critic   45% │              │
  * └──────────────┴──────────────┘
  * ```
  *
- * The implementer produces the longest content (slice reports, revisions),
- * so it gets a full-height column; the left half pairs the orchestrator's
- * narration (the run's control plane, on top) with the reviewer's critiques
- * below it.
+ * The maker produces the longest content (slice reports, revisions), so it
+ * gets a full-height column; the left half pairs the orchestrator's narration
+ * (the run's control plane, on top) with the checker's critiques below it.
  */
 /**
  * A nested tmux `#{?match-glyph, then, else}` chain over the bound voices, the
@@ -64,7 +67,10 @@ function paneBranch(voices: Voice[], then: (v: Voice) => string): string {
   const [head, ...rest] = voices;
   if (head === undefined) return '';
   if (rest.length === 0) return then(head);
-  return `#{?#{m:${ROLE_GLYPH[head]}*,#{pane_title}},${then(head)},${paneBranch(rest, then)}}`;
+  // Match the full `glyph voice` title, not the glyph alone — lanes share a
+  // glyph across stages (architect/builder are both ■), so a glyph match
+  // would route a builder pane to the architect's sidecar.
+  return `#{?#{m:${ROLE_GLYPH[head]} ${head},#{pane_title}},${then(head)},${paneBranch(rest, then)}}`;
 }
 
 /** The detached-session viewer is created at this fixed width (no client to size it), so it always lands in the wide/2-column branch. */
@@ -95,29 +101,53 @@ function parseWidth(out: string): number {
 }
 
 /**
- * The wide-anchor arrangement (diagrammed above): orchestrator over reviewer on
- * the left, implementer full-height on the right (+ consultant in its column
- * when bound). New pane sizes are percentages of the pane being split — -h 50%
- * peels the right column off the anchor, -v 45% peels the reviewer off the left.
+ * The voices a viewer opened NOW should tail: the orchestrator plus the
+ * CURRENT stage's duty voices (+ consultant when bound) — derived from the
+ * registry enumeration, never a hardcoded voice list. Point-in-time by
+ * design (view glue): a viewer opened during planning tails the planning
+ * duties; reopen it after the handoff for the delivery pair (the logs
+ * themselves persist regardless). Fail-wide: an unreadable position falls
+ * back to the entry phase.
+ */
+function currentStageVoices(state: RunState): { maker: Voice; checker: Voice; consultant: boolean } {
+  const workflow = workflowOf(state);
+  let phase: PhaseName;
+  try {
+    const position = probeRunPosition(state);
+    phase = 'phase' in position ? position.phase : entryOf(workflow).firstPhase;
+  } catch {
+    phase = entryOf(workflow).firstPhase;
+  }
+  const [maker, checker] = dutiesOf(workflow, stageOf(workflow, phase));
+  return { maker, checker, consultant: Boolean(state.bindings.consultant) };
+}
+
+/**
+ * The wide-anchor arrangement (diagrammed above): orchestrator over the
+ * checker on the left, the maker full-height on the right (+ consultant in
+ * its column when bound). New pane sizes are percentages of the pane being
+ * split — -h 50% peels the right column off the anchor, -v 45% peels the
+ * checker off the left.
  */
 async function columnLayout(state: RunState, anchor: string): Promise<Array<[Voice, string]>> {
-  const implementer = await tmux('split-window', '-d', '-h', '-l', '50%', '-t', anchor, '-P', '-F', '#{pane_id}', tailCommand(state, 'implementer'));
-  const reviewer = await tmux('split-window', '-d', '-v', '-l', '45%', '-t', anchor, '-P', '-F', '#{pane_id}', tailCommand(state, 'reviewer'));
+  const { maker, checker, consultant } = currentStageVoices(state);
+  const makerPane = await tmux('split-window', '-d', '-h', '-l', '50%', '-t', anchor, '-P', '-F', '#{pane_id}', tailCommand(state, maker));
+  const checkerPane = await tmux('split-window', '-d', '-v', '-l', '45%', '-t', anchor, '-P', '-F', '#{pane_id}', tailCommand(state, checker));
   const panes: Array<[Voice, string]> = [
     ['orchestrator', anchor],
-    ['implementer', implementer],
-    ['reviewer', reviewer],
+    [maker, makerPane],
+    [checker, checkerPane],
   ];
-  if (state.bindings.consultant) {
-    const consultant = await tmux('split-window', '-d', '-v', '-l', '45%', '-t', implementer, '-P', '-F', '#{pane_id}', tailCommand(state, 'consultant'));
-    panes.push(['consultant', consultant]);
+  if (consultant) {
+    const consultantPane = await tmux('split-window', '-d', '-v', '-l', '45%', '-t', makerPane, '-P', '-F', '#{pane_id}', tailCommand(state, 'consultant'));
+    panes.push(['consultant', consultantPane]);
   }
   return panes;
 }
 
 /**
  * The narrow-anchor arrangement: every voice full-width stacked top-to-bottom
- * in voice order (orchestrator, implementer, reviewer[, consultant]), confined
+ * in voice order (orchestrator, maker, checker[, consultant]), confined
  * to the anchor's own region. Each voice splits off the previous so the order
  * is deterministic, with an explicit per-split percentage that evens the stack
  * — NOT `select-layout even-vertical`, which is window-global and would restack
@@ -128,7 +158,8 @@ async function columnLayout(state: RunState, anchor: string): Promise<Array<[Voi
  * readable in a half-window pane.
  */
 async function stackLayout(state: RunState, anchor: string): Promise<Array<[Voice, string]>> {
-  const workers = workerRolesFor(state);
+  const { maker, checker, consultant } = currentStageVoices(state);
+  const workers: Voice[] = consultant ? [maker, checker, 'consultant'] : [maker, checker];
   const total = workers.length + 1; // + orchestrator (the anchor)
   const panes: Array<[Voice, string]> = [['orchestrator', anchor]];
   let prev = anchor;

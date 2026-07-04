@@ -61,12 +61,12 @@ const TAIL_BYTES = 64 * 1024;
  * the model and reasoning effort to that file.
  *
  * This reversed a derived `opts.readOnly ? 'read-only' : 'workspace-write'`
- * mapping (2026-06-22). That override conflated "this role must not mutate the
- * repo" with "this role may touch nothing locally": codex `read-only` is a
+ * mapping (2026-06-22). That override conflated "this voice must not mutate the
+ * repo" with "this voice may touch nothing locally": codex `read-only` is a
  * Seatbelt profile that denies ALL filesystem writes and network, so it killed
- * the read-only reviewer's own evidence tooling (a tsx/Node tool's `$TMPDIR`
+ * the read-only checker's own evidence tooling (a tsx/Node tool's `$TMPDIR`
  * IPC socket dies with `listen EPERM`; outbound reads are blocked) AND it
- * overrode the user's config. The reviewer's review-only behavior is a
+ * overrode the user's config. A checker's review-only behavior is a
  * prompt-level convention now (the review-* snippets ask for critique, not
  * edits), not an OS sandbox — `opts.readOnly` no longer shapes the launch.
  */

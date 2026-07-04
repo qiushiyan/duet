@@ -16,16 +16,16 @@
  * tail-read stays in `sessions.ts`; the emit (the 30s heartbeat poll) lives in
  * `harness/tools.ts`.
  *
- * Two roles, two formats:
- *   - claude implementer — `assistant` records carry `message.content[].tool_use`
+ * Two providers, two formats:
+ *   - claude — `assistant` records carry `message.content[].tool_use`
  *     with a structured `input.file_path`: a clean read/write signal. Searches
  *     (Grep/Glob) and Bash are skipped so the last real file touch still shows —
  *     claude's structured tools already give it high coverage.
- *   - codex (reviewer by default, read-only; implementer when bound there) — its
+ *   - codex — its
  *     work is shell commands (`exec_command` with `arguments.cmd` =
  *     `sed -n '1,260p' CLAUDE.md`), so for a long time only a confident single
  *     known read file surfaced and codex panes read near-blank: most of a codex
- *     reviewer's turn is `rg` searches, chained/piped reads, and `git`/`pnpm`
+ *     checker's turn is `rg` searches, chained/piped reads, and `git`/`pnpm`
  *     runs (observed: of ~172 commands in one run, ~23 were the simple-read
  *     shape). Because the goal here is LIVENESS, not a precise audit trail, codex
  *     commands now classify into a bounded vocabulary — `read` (a known read

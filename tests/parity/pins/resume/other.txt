@@ -8,4 +8,4 @@ Your turn ended without calling advance_phase or ask_human, so the harness canno
 <approval_rider>
 Parity rider: proceed, but keep the flag name stable.
 </approval_rider>
-The human's gate approval came with the rider above — agreement with the direction, plus adjustments. Treat it as gate feedback in approving form: fold it into this phase's work from the start, relay what bears on the workers into their prompts, and where it revises something previously settled, the rider wins. It outranks reviewer opinions.
+The human's gate approval came with the rider above — agreement with the direction, plus adjustments. Treat it as gate feedback in approving form: fold it into this phase's work from the start, relay what bears on the workers into their prompts, and where it revises something previously settled, the rider wins. It outranks checker opinions.

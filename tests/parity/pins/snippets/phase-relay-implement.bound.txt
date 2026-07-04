@@ -1,5 +1,5 @@
 <snippet_library phase="implement">
-Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in arc order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).
+Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in workflow order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).
 <phase_templates phase="implement">
 <snippet key="implement-design">
 Build the change from the committed design doc — it is the authority for what we're building and why: its product sections carry the goal and the boundaries, its technical sections the module shapes, seams, and test standards the build must honor. Execute the design; don't re-decide it. This prompt carries the *how*.
@@ -264,7 +264,7 @@ Can't find a referenced skill? Tell me immediately for the exact path. **Don't s
 **Most importantly:** does this solve the core UX problem while maintaining a clean technical design?
 </snippet>
 </anytime_helpers>
-<coming_next note="the nominal arc — gate rejects loop back and pre-authorized gates skip the stop; orientation for forward-looking work, not a cue to reach ahead">
+<coming_next note="the workflow’s nominal order — gate rejects loop back and pre-authorized gates skip the stop; orientation for forward-looking work, not a cue to reach ahead">
 <phase name="finish">pr-description, compact-for-cleanup</phase>
 </coming_next>
 <already_done>

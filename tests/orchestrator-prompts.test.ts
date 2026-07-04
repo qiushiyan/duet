@@ -104,7 +104,7 @@ describe('verify self-heal (universal, when a contract is frozen)', () => {
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc' };
     const brief = buildPhaseBrief(consultantRun, 'implement');
     expect.soft(brief).toContain('self-heal'); // the universal loop
-    expect.soft(brief).toContain('implementer first'); // route failures to the implementer, not the human
+    expect.soft(brief).toContain('builder first'); // route failures to the implementer, not the human
     expect.soft(brief).toContain('re-verify'); // a fresh, independent re-check
     expect.soft(brief).toContain('still fails after'); // only a stuck assertion holds the gate
   });

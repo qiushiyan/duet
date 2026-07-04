@@ -404,8 +404,8 @@ export function claudeArgs(
   // Both workers launch with full permissions — headless -p mode has no
   // permission prompt, and duet deliberately does not make its coding agents
   // more restricted than the user's own manual workflow (the user's posture for
-  // their own repos: 2026-06-11 for the implementer, extended to the reviewer
-  // 2026-06-22, superseding the per-role read-only/bypass split). The reviewer's
+  // their own repos: 2026-06-11 for the writing worker, extended to the checker
+  // 2026-06-22, superseding the per-voice read-only/bypass split). A checker's
   // review-only behavior is a prompt-level convention (the review-* snippets ask
   // for critique, not edits) — never an argv flag — so claudeArgs takes no
   // readOnly at all. bypassPermissions still honors explicit deny rules and the

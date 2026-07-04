@@ -29,7 +29,7 @@ import { serveKernelStdio, serveRunScopedKernelStdio } from './harness/mcp-serve
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
 import { buildStatsModel, renderStats } from './stats.ts';
 import { runOrchestrate } from './orchestrate.ts';
-import { WORKFLOWS, entryOf, handoffWatchLabel, stagesOf, workflowHasConsultantBackstop } from './phases.ts';
+import { DUTIES, WORKFLOWS, entryOf, handoffWatchLabel, stagesOf, workflowHasConsultantBackstop } from './phases.ts';
 import { getEffectiveSnippet, loadEffectiveSnippets, runtimeLibraryContext } from './snippets.ts';
 import type { EffectiveSnippet } from './snippets.ts';
 import { buildBrief, buildStatusModel, formatGatePosture, renderBrief, renderStatus, steerRefusal } from './status.ts';
@@ -50,7 +50,6 @@ import {
   workflowOf,
 } from './run-store.ts';
 import type { RunState, Voice } from './run-store.ts';
-import type { PhaseName } from './phases.ts';
 import { listPendingSteers, stageSteer } from './steer-store.ts';
 
 /**
@@ -230,21 +229,21 @@ export type TakeoverPlan =
   | { kind: 'clear-orphan'; ephemeral: boolean }
   | { kind: 'no-session' };
 
-export function takeoverPlan(state: RunState, role: Voice, phase: PhaseName): TakeoverPlan {
-  const ephemeral = role !== 'orchestrator' && sessionPolicyFor(role) === 'ephemeral';
+export function takeoverPlan(state: RunState, voice: Voice): TakeoverPlan {
+  const ephemeral = voice !== 'orchestrator' && sessionPolicyFor(voice) === 'ephemeral';
   // A worker's provider comes from its SESSION RECORD, never the binding — a
   // stage-boundary provider switch makes any single binding wrong for a
   // switched voice, and a wrong provider here would hand the human the wrong
-  // resume CLI. The record is point-in-time: the duty this role names at the
-  // run's CURRENT phase, own slot or its live continuity edge's.
+  // resume CLI. A duty resolves its own slot or its live continuity edge's
+  // (sessionRecordFor); a duty names its own stage, so no phase is needed.
   const session =
-    role === 'orchestrator'
+    voice === 'orchestrator'
       ? state.orchestratorSessionId
         ? { provider: state.bindings.orchestrator.provider, id: state.orchestratorSessionId }
         : undefined
-      : sessionRecordFor(state, role, phase);
+      : sessionRecordFor(state, voice);
   if (!session) {
-    if (role !== 'orchestrator' && state.pendingTurns?.[role]) return { kind: 'clear-orphan', ephemeral };
+    if (voice !== 'orchestrator' && state.pendingTurns?.[voice]) return { kind: 'clear-orphan', ephemeral };
     return { kind: 'no-session' };
   }
   return { kind: 'open', sessionId: session.id, provider: session.provider, ephemeral };
@@ -252,22 +251,22 @@ export function takeoverPlan(state: RunState, role: Voice, phase: PhaseName): Ta
 program
   .name('duet')
   .description(
-    'Semi-AFK orchestrator for a two-agent AI engineering workflow: an LLM orchestrator routes an implementer and a reviewer through a multi-phase arc, pausing at human gates.',
+    "Semi-AFK orchestrator for a two-worker AI engineering workflow: an LLM orchestrator routes each stage's duty pair (planning's architect and analyst; delivery's builder and critic or judge) through a multi-phase workflow, pausing at human gates.",
   )
   .version('0.1.0')
   .addHelpText(
     'after',
     `
-The shape of a run (pick the arc with --workflow on duet new):
+The shape of a run (pick the workflow with --workflow on duet new):
   full:      frame → DIRECTION gate → spec → COMMIT-SPEC gate → plan → PLAN gate (walk away)
              → implement (AFK, often hours) → SHIP gate → finish (reconcile docs → PR) → OPEN-PR gate → done
   blueprint: frame → DIRECTION gate → design (one design doc) → DESIGN gate (walk away)
              → implement (AFK) → SHIP gate → finish (PR) → OPEN-PR gate → done
-  relay:  design's arc with a criss-cross build — the implementer builds from the
-          committed doc, the reviewer reviews WITH write access (fixes directly,
-          owns docs + PR); bind the providers per stage with [roles.*].build
-  short:    research → DIRECTION gate (walk away) → implement (AFK) → SHIP gate
-          → finish (reconcile docs → PR) → OPEN-PR gate → done
+  relay:     blueprint's shape with a criss-cross delivery — the builder implements the
+             committed doc, the judge reviews WITH write access (fixes directly,
+             owns docs + PR); bind providers per duty with --bind builder=… --bind judge=…
+  short:     research → DIRECTION gate (walk away) → implement (AFK) → SHIP gate
+             → finish (reconcile docs → PR) → OPEN-PR gate → done
 
 Each phase runs in a detached background driver; every command above returns
 immediately, and nothing runs between stops. A stop is a gate (decision), a
@@ -959,15 +958,19 @@ program
 
 program
   .command('takeover')
-  .description('Hand a role’s session to you: opens the provider’s interactive CLI resumed on that session. Duet stays out until you return; your turns land in the same transcript the orchestrator continues from.')
-  .argument('<role>', 'orchestrator | implementer | reviewer | consultant')
+  .description('Hand a voice’s session to you: opens the provider’s interactive CLI resumed on that session. Duet stays out until you return; your turns land in the same transcript the orchestrator continues from.')
+  .argument('<voice>', 'a duty (architect | analyst | builder | critic | judge), the orchestrator, or the consultant')
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
-  .action(async (role: string, runId: string | undefined) => {
-    if (role !== 'orchestrator' && role !== 'implementer' && role !== 'reviewer' && role !== 'consultant') {
-      fail(`unknown role "${role}" — use orchestrator, implementer, reviewer, or consultant`);
-    }
+  .action(async (voiceArg: string, runId: string | undefined) => {
     const cwd = process.cwd();
     const state = resolveRun(cwd, runId, 'no runs found in this project');
+    // The valid set is THIS run's voices — the error names the run's real
+    // duties, not the whole vocabulary (a full run has no judge to take over).
+    const voices = voicesFor(state);
+    if (!(voices as string[]).includes(voiceArg)) {
+      fail(`unknown voice "${voiceArg}" for this run — its voices are ${voices.join(', ')}`);
+    }
+    const role = voiceArg as Voice;
 
     const runningPid = aliveDriverPid(state);
     if (runningPid !== undefined) {
@@ -976,8 +979,7 @@ program
       );
     }
 
-    const position = probeRunPosition(state);
-    const plan = takeoverPlan(state, role, 'phase' in position ? position.phase : entryOf(workflowOf(state)).firstPhase);
+    const plan = takeoverPlan(state, role);
     if (plan.kind === 'no-session') fail(`the ${role} has no session yet in run ${state.runId}`);
 
     if (plan.kind === 'clear-orphan') {
@@ -1039,9 +1041,9 @@ program
 // tailing a voice log) pipe through. The log files stay plain text; color
 // exists only in the live view. Unknown voices pass lines through untouched.
 const colorizeCommand = new Command('_colorize')
-  .argument('<voice>', 'orchestrator | implementer | reviewer | consultant')
+  .argument('<voice>', 'orchestrator | a duty (architect, analyst, builder, critic, judge) | consultant')
   .action(async (voice: string) => {
-    const known = voice === 'orchestrator' || voice === 'implementer' || voice === 'reviewer' || voice === 'consultant';
+    const known = voice === 'orchestrator' || voice === 'consultant' || (DUTIES as readonly string[]).includes(voice);
     process.stdout.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'EPIPE') process.exit(0); // pane closed mid-stream
     });
