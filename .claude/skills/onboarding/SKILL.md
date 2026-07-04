@@ -9,9 +9,9 @@ allowed-tools: Read, Bash, Agent, Grep, Glob
 
 # Topic-aware onboarding
 
-You're bootstrapping a coding session on duet — the read-only orchestrator that routes a snippet protocol between an implementer and a reviewer inside a code-enforced statechart. Build a focused mental model, scoped to the user's topic, before any code-editing. The topic is in `$ARGUMENTS`; empty means general onboarding.
+You're bootstrapping a coding session on duet — the read-only orchestrator that routes a snippet protocol between each stage's two duty workers (a maker and a checker) inside a code-enforced statechart. Build a focused mental model, scoped to the user's topic, before any code-editing. The topic is in `$ARGUMENTS`; empty means general onboarding.
 
-duet's mental model and conventions live in `CLAUDE.md` (always loaded). Re-internalize it now if it isn't fresh — the trust gradient, the phase table as the single source, and the "invariants that bite if forgotten" are load-bearing.
+duet's mental model and conventions live in `CLAUDE.md` (always loaded). Re-internalize it now if it isn't fresh — the trust gradient, the registry as the single source, and the "invariants that bite if forgotten" are load-bearing.
 
 ## Protocol
 
@@ -21,10 +21,10 @@ Map `$ARGUMENTS` to a focus. The `engineering.md` module map is the source of tr
 
 | If the topic mentions…                                                | Focus       |
 | --------------------------------------------------------------------- | ----------- |
-| statechart, machine, phases, gates, arcs, workflow vocabulary, knobs, relay / fixer, lifecycle, driver, crash / resume, resilience, watchdog, timeout, afk | `harness`   |
-| providers, workers, claude, codex, transport, interactive, pane       | `providers` |
-| prompts, tools, snippets, orchestrator prompt, tool results, errors   | `prompts`   |
-| framing, templates, CLI, status, run-store, steers, persistence, health, doctor, supervision | `surface`   |
+| statechart, machine, workflows, stages, phases, gates, duties, workflow vocabulary, knobs, continuity edges, relay / judge, lifecycle, driver, crash / resume, resilience, watchdog, timeout, afk | `harness`   |
+| providers, workers, voices, bindings, claude, codex, transport, interactive, pane | `providers` |
+| prompts, tools, snippets, briefs, orchestrator prompt, tool results, errors | `prompts`   |
+| framing, manifest, templates, CLI, status, run store, steers, persistence, health, doctor, supervision | `surface`   |
 | design, product, scope, what-to-build, gate policy, direction         | `design`    |
 
 Ambiguous (no confident match, or several)? Ask one short clarifying question first. Empty `$ARGUMENTS` → step 4.
@@ -33,8 +33,8 @@ Ambiguous (no confident match, or several)? Ask one short clarifying question fi
 
 Regardless of topic, read these three in order. They're the mental model no duet task can skip:
 
-1. `CLAUDE.md` — the what / how summary, the Map, and the invariants. (Re-read if not fresh.)
-2. `docs/automation-design.md` — THE design: roles, layers, the phase/gate arc, triage rules, branch policy, what-not-to-build.
+1. `CLAUDE.md` — the what / how summary, the Map, and the invariants (the ratified glossary it points to is `CONTEXT.md`). (Re-read if not fresh.)
+2. `docs/automation-design.md` — THE design: the voices, layers, stages/phases/gates, triage rules, branch policy, what-not-to-build.
 3. `docs/engineering.md` — the codebase mental model: the trust gradient, module map, the seams, the patterns that carry the design.
 
 Read them yourself — don't delegate Phase 1 to subagents. They have to be in your working context for the rest of the session.
@@ -43,10 +43,10 @@ Read them yourself — don't delegate Phase 1 to subagents. They have to be in y
 
 Open your focus's design doc(s), then its code through the `engineering.md` module map — it holds the full file list with one-line pointers, so this skill names only the way in, not every file. Don't re-read Phase 1. Where each focus starts:
 
-- **`harness`** (statechart & run loop) — `automation-design.md` §"Phases and gates" + §"Invocation and lifecycle"; anchor on `src/phases.ts` (the registry, the single source) and `src/harness/machine.ts`. For the AFK resilience window (timeouts, the forced watchdog, the two recovery planes), read `engineering.md` §"AFK resilience" + `automation-design.md` §"Resilience for the AFK window" (the wall-clock backstop is `src/providers/wall-clock.ts`).
-- **`providers`** (worker seam & transports) — `docs/interactive-transport.md`; anchor on `src/providers/types.ts` (the `WorkerProvider` contract).
-- **`prompts`** (agent prompts, tools, snippets) — `docs/prompting-and-tool-design.md` (read first); anchor on `src/harness/tools.ts` and the block-named `snippets/` files.
-- **`surface`** (CLI, framing, status, persistence) — anchor on `src/run-store.ts` and `src/status.ts`; `src/cli.ts` wires the commands.
+- **`harness`** (statechart & run loop) — `automation-design.md` §"Phases and gates" + §"Invocation and lifecycle"; anchor on `src/registry/workflows.ts` (the registry, the single source) and `src/run/machine.ts`. For the AFK resilience window (timeouts, the forced watchdog, the two recovery planes), read `engineering.md` §"AFK resilience" + `automation-design.md` §"Resilience for the AFK window" (the wall-clock backstop is `src/voices/providers/wall-clock.ts`).
+- **`providers`** (worker seam & transports) — `docs/interactive-transport.md`; anchor on `src/voices/providers/types.ts` (the `WorkerProvider` contract).
+- **`prompts`** (agent prompts, tools, snippets) — `docs/prompting-and-tool-design.md` (read first); anchor on `src/orchestrator/tools.ts` and the block-named `snippets/` files.
+- **`surface`** (CLI, framing, status, persistence) — anchor on `src/run/store.ts` and `src/surfaces/status.ts`; `src/surfaces/cli.ts` wires the commands.
 - **`design`** (direction & rationale) — `automation-design.md`, then `future-directions.md` (check before proposing a direction) and `open-questions.md` (what's still open).
 
 For a tight cross-cutting question, dispatch one `Explore` subagent with a single extraction question (e.g. "how does a pending steer reach a live driver?") — file refs only, no source pasting. Read the files yourself for a careful audit.

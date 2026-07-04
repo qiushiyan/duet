@@ -353,7 +353,7 @@ export function parseConsultantToggle(value: string): "on" | "off" {
   if (v === "on") return "on";
   if (v === "off") return "off";
   throw new Error(
-    `consultant: "${value}" is not on or off — the framing toggles a consultant on or off; it does not bind one. Choose the provider/model with --consultant or [roles.consultant] in your config.`,
+    `consultant: "${value}" is not on or off — the framing toggles a consultant on or off; a binding is a bind.consultant: key (or --bind consultant=…, or a [consultant] table in your config).`,
   );
 }
 
