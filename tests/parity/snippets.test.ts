@@ -5,9 +5,9 @@ import {
   consultantSnippetsForWorkflow,
   phaseSnippetsFor,
   phasesOf,
-} from '../../src/phases.ts';
-import type { PhaseName, WorkflowName } from '../../src/phases.ts';
-import { renderSnippetLibrary } from '../../src/snippets.ts';
+} from '../../src/registry/workflows.ts';
+import type { PhaseName, WorkflowName } from '../../src/registry/workflows.ts';
+import { renderSnippetLibrary } from '../../src/orchestrator/library.ts';
 
 /**
  * The snippet-surface parity pins, at the two seams the refactor commits must

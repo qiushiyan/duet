@@ -1,11 +1,11 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
-import { buildDoctorModel, renderDoctor } from '../src/doctor.ts';
-import type { DoctorModel, VoiceHealthRow } from '../src/doctor.ts';
-import { runDirOf, saveRunState } from '../src/run-store.ts';
+import { buildDoctorModel, renderDoctor } from '../src/surfaces/doctor.ts';
+import type { DoctorModel, VoiceHealthRow } from '../src/surfaces/doctor.ts';
+import { runDirOf, saveRunState } from '../src/run/store.ts';
 import { test } from './helpers/fixtures.ts';
-import { localStamp } from '../src/timefmt.ts';
+import { localStamp } from '../src/view/timefmt.ts';
 import { claudeApiError, claudeUserToolResult, jsonl, plantClaudeTranscript, plantCodexRollout } from './helpers/transcripts.ts';
 
 const NOW = Date.parse('2026-06-20T12:00:00.000Z');

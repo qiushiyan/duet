@@ -36,7 +36,7 @@ import path from "node:path";
 const TOPICS = ["codebase-design", "testing"];
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-// This "lessons" segment is the same fact as LESSONS_DIR in src/snippets.ts (the
+// This "lessons" segment is the same fact as LESSONS_DIR in src/orchestrator/library.ts (the
 // serve-time read path): the vendor writes here, the runtime reads there. Kept as
 // two literals on purpose — a build script shouldn't import the runtime module
 // (and its zod/smol-toml graph) for one path segment — so relocate both together.

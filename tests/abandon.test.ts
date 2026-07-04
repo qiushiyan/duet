@@ -3,11 +3,13 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect } from 'vitest';
-import { aliveDriverPid, driveToQuiescence, killDriver, probeRunPosition } from '../src/harness/lifecycle.ts';
-import type { PhaseEvent } from '../src/harness/phase-events.ts';
-import { loadRunState, markAbandoned, purgeRun, runDirOf, saveRunState } from '../src/run-store.ts';
-import { locateSessionTranscripts } from '../src/sessions.ts';
-import { buildStatusModel, renderStatus, steerRefusal } from '../src/status.ts';
+import { driveToQuiescence, killDriver } from '../src/surfaces/lifecycle.ts';
+import { aliveDriverPid, probeRunPosition } from '../src/run/position.ts';
+import type { PhaseEvent } from '../src/run/phase-events.ts';
+import { loadRunState, markAbandoned, runDirOf, saveRunState } from '../src/run/store.ts';
+import { purgeRun } from '../src/voices/sessions.ts';
+import { locateSessionTranscripts } from '../src/voices/sessions.ts';
+import { buildStatusModel, renderStatus, steerRefusal } from '../src/surfaces/status.ts';
 import { test } from './helpers/fixtures.ts';
 import { scriptedMachine } from './helpers/scripted-machine.ts';
 

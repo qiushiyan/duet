@@ -1,4 +1,4 @@
-import type { PaneConfig, PaneController } from '../../src/providers/pane.ts';
+import type { PaneConfig, PaneController } from '../../src/voices/providers/pane.ts';
 
 /**
  * A scriptable PaneController — the test adapter on the PaneController sub-seam,

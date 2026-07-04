@@ -6,12 +6,12 @@ import { describe, expect, vi } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { createActor, fromCallback } from 'xstate';
 import type { EventObject } from 'xstate';
-import { defaultBindingsFor } from '../src/config.ts';
-import { runPhase } from '../src/harness/driver.ts';
-import type { RunOrchestratorTurn } from '../src/harness/driver.ts';
-import type { PhaseInput } from '../src/harness/host-runner.ts';
-import { duetMachine, interactiveMachine } from '../src/harness/machine.ts';
-import type { PhaseEvent } from '../src/harness/phase-events.ts';
+import { defaultBindingsFor } from '../src/voices/bindings.ts';
+import { runPhase } from '../src/orchestrator/hosts/driver.ts';
+import type { RunOrchestratorTurn } from '../src/orchestrator/hosts/driver.ts';
+import type { PhaseInput } from '../src/orchestrator/hosts/host-runner.ts';
+import { duetMachine, interactiveMachine } from '../src/run/machine.ts';
+import type { PhaseEvent } from '../src/run/phase-events.ts';
 import {
   caffeinateCommand,
   crossInteractive,
@@ -20,14 +20,14 @@ import {
   freezeContractAt,
   interactiveContinueAction,
   preventSleepUnderDriver,
-  probeRunPosition,
   validateInteractiveCrossing,
   waitForRunStop,
   waitForTurnOrStop,
-} from '../src/harness/lifecycle.ts';
-import { acceptanceContractPathForSpec } from '../src/phases.ts';
-import { createRun, gateAttended, loadMachineSnapshot, loadRunState, markAbandoned, runDirOf, saveMachineSnapshot, saveRunState, stageHumanInput } from '../src/run-store.ts';
-import type { RunState } from '../src/run-store.ts';
+} from '../src/surfaces/lifecycle.ts';
+import { probeRunPosition } from '../src/run/position.ts';
+import { acceptanceContractPathForSpec } from '../src/registry/workflows.ts';
+import { createRun, gateAttended, loadMachineSnapshot, loadRunState, markAbandoned, runDirOf, saveMachineSnapshot, saveRunState, stageHumanInput } from '../src/run/store.ts';
+import type { RunState } from '../src/run/store.ts';
 import { consultantBindingsFor, test } from './helpers/fixtures.ts';
 import { scriptedMachine, wedgedMachine } from './helpers/scripted-machine.ts';
 

@@ -2,20 +2,20 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, onTestFinished, vi } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import { buildOrchestratorOptions, runPhase } from '../src/harness/driver.ts';
-import type { RunOrchestratorTurn } from '../src/harness/driver.ts';
+import { buildOrchestratorOptions, runPhase } from '../src/orchestrator/hosts/driver.ts';
+import type { RunOrchestratorTurn } from '../src/orchestrator/hosts/driver.ts';
 import { claudeApiError, claudeAssistantText, jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
 import {
   ORCHESTRATOR_SYSTEM_PROMPT,
   buildPhaseBrief,
   feedbackResumePrompt,
-} from '../src/harness/orchestrator-prompts.ts';
-import { defaultBindingsFor } from '../src/config.ts';
-import { phasesOf } from '../src/phases.ts';
-import type { WorkflowName } from '../src/phases.ts';
-import { budgetFor, createRun, loadRunState, saveRunState } from '../src/run-store.ts';
-import type { RunState } from '../src/run-store.ts';
-import { listPendingSteers, stageSteer } from '../src/steer-store.ts';
+} from '../src/orchestrator/briefs.ts';
+import { defaultBindingsFor } from '../src/voices/bindings.ts';
+import { phasesOf } from '../src/registry/workflows.ts';
+import type { WorkflowName } from '../src/registry/workflows.ts';
+import { budgetFor, createRun, loadRunState, saveRunState } from '../src/run/store.ts';
+import type { RunState } from '../src/run/store.ts';
+import { listPendingSteers, stageSteer } from '../src/run/steers.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**

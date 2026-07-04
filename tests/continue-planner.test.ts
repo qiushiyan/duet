@@ -1,7 +1,7 @@
 import { describe, expect } from 'vitest';
-import { continuePlanner } from '../src/continue-planner.ts';
-import type { ContinueFacts, RestoredFacts } from '../src/continue-planner.ts';
-import type { RunPosition } from '../src/harness/lifecycle.ts';
+import { continuePlanner } from '../src/surfaces/continue-planner.ts';
+import type { ContinueFacts, RestoredFacts } from '../src/surfaces/continue-planner.ts';
+import type { RunPosition } from '../src/run/position.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**

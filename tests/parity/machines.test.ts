@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { interactiveMachineFor, machineFor } from '../../src/harness/machine.ts';
-import type { WorkflowName } from '../../src/phases.ts';
+import { interactiveMachineFor, machineFor } from '../../src/run/machine.ts';
+import type { WorkflowName } from '../../src/registry/workflows.ts';
 
 /**
  * The machine-shape parity pins: each arc's statechart serialized to its

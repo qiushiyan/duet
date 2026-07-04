@@ -1,11 +1,11 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { defaultBindingsFor } from '../../src/config.ts';
-import type { VoiceBindings } from '../../src/config.ts';
-import { acceptanceContractPathForSpec } from '../../src/phases.ts';
-import type { GatePhase, WorkflowName } from '../../src/phases.ts';
-import { createRun } from '../../src/run-store.ts';
-import type { RunState } from '../../src/run-store.ts';
+import { defaultBindingsFor } from '../../src/voices/bindings.ts';
+import type { VoiceBindings } from '../../src/voices/bindings.ts';
+import { acceptanceContractPathForSpec } from '../../src/registry/workflows.ts';
+import type { GatePhase, WorkflowName } from '../../src/registry/workflows.ts';
+import { createRun } from '../../src/run/store.ts';
+import type { RunState } from '../../src/run/store.ts';
 import { consultantBindingsFor } from '../helpers/fixtures.ts';
 
 /**

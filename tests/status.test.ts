@@ -1,11 +1,11 @@
 import { describe, expect } from 'vitest';
-import { buildBrief, buildStatusModel, describeStop, displayState, formatGatePosture, renderBrief, renderStatus, steerRefusal } from '../src/status.ts';
-import type { StopModel } from '../src/status.ts';
-import { createRun } from '../src/run-store.ts';
-import type { RunState } from '../src/run-store.ts';
-import type { RunPosition } from '../src/harness/lifecycle.ts';
-import { defaultBindingsFor } from '../src/config.ts';
-import { localStamp } from '../src/timefmt.ts';
+import { buildBrief, buildStatusModel, describeStop, displayState, formatGatePosture, renderBrief, renderStatus, steerRefusal } from '../src/surfaces/status.ts';
+import type { StopModel } from '../src/surfaces/status.ts';
+import { createRun } from '../src/run/store.ts';
+import type { RunState } from '../src/run/store.ts';
+import type { RunPosition } from '../src/run/position.ts';
+import { defaultBindingsFor } from '../src/voices/bindings.ts';
+import { localStamp } from '../src/view/timefmt.ts';
 import { test } from './helpers/fixtures.ts';
 
 const render = (run: RunState, position: RunPosition): string =>

@@ -1,8 +1,8 @@
 import { describe, expect, onTestFinished, vi } from 'vitest';
-import { runHostedPhase } from '../src/harness/host-runner.ts';
-import type { HostedSession, PhaseHost, PhaseInput, TurnOutcome } from '../src/harness/host-runner.ts';
-import { loadRunState, saveRunState } from '../src/run-store.ts';
-import type { ErrorClass } from '../src/worker-health.ts';
+import { runHostedPhase } from '../src/orchestrator/hosts/host-runner.ts';
+import type { HostedSession, PhaseHost, PhaseInput, TurnOutcome } from '../src/orchestrator/hosts/host-runner.ts';
+import { loadRunState, saveRunState } from '../src/run/store.ts';
+import type { ErrorClass } from '../src/voices/health.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**

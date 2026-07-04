@@ -1,6 +1,6 @@
 import { describe, expect } from 'vitest';
-import { buildPhaseBrief } from '../../src/harness/orchestrator-prompts.ts';
-import type { PhaseName } from '../../src/phases.ts';
+import { buildPhaseBrief } from '../../src/orchestrator/briefs.ts';
+import type { PhaseName } from '../../src/registry/workflows.ts';
 import { test } from '../helpers/fixtures.ts';
 import { parityRun } from './matrix.ts';
 import type { ParityRunOpts } from './matrix.ts';

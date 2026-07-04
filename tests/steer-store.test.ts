@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
-import { loadRunState, runDirOf } from '../src/run-store.ts';
-import { listPendingSteers, markSteersDelivered, stageSteer } from '../src/steer-store.ts';
+import { loadRunState, runDirOf } from '../src/run/store.ts';
+import { listPendingSteers, markSteersDelivered, stageSteer } from '../src/run/steers.ts';
 import { test } from './helpers/fixtures.ts';
 
 describe('the steer store', () => {

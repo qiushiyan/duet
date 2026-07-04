@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { VOICE_GLYPH, VOICE_TMUX_COLOR, colorizeVoiceLine } from '../src/colorize.ts';
+import { VOICE_GLYPH, VOICE_TMUX_COLOR, colorizeVoiceLine } from '../src/view/colorize.ts';
 
 /**
  * View-time colorizing. The consultant is a fourth voice, so the exhaustive

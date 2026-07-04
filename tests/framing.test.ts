@@ -12,7 +12,7 @@ import {
   resolveHumanText,
   resolveRunInputs,
   resolveTemplateSeed,
-} from '../src/framing.ts';
+} from '../src/surfaces/framing.ts';
 import { test } from './helpers/fixtures.ts';
 
 describe('parseGatesAt', () => {

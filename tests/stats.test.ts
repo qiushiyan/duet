@@ -1,8 +1,8 @@
 import { describe, expect, test as plain } from 'vitest';
-import { buildStats, buildStatsModel, renderStats } from '../src/stats.ts';
-import { phasesOf } from '../src/phases.ts';
-import { formatDuration } from '../src/timefmt.ts';
-import { appendVoiceLog } from '../src/run-store.ts';
+import { buildStats, buildStatsModel, renderStats } from '../src/surfaces/stats.ts';
+import { phasesOf } from '../src/registry/workflows.ts';
+import { formatDuration } from '../src/view/timefmt.ts';
+import { appendVoiceLog } from '../src/run/store.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**

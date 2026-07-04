@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
-import { GATE_ASK_RULE, KICKOFF_PROMPT, RESUME_KICKOFF_PROMPT, buildLaunchSpec, gateAskRuleLive, runOrchestrate } from '../src/orchestrate.ts';
-import type { ClaudeLauncher } from '../src/orchestrate.ts';
-import { CONSULTANT_IDENTITY_CLAUSE } from '../src/harness/orchestrator-prompts.ts';
-import { loadRunState, runDirOf, saveRunState } from '../src/run-store.ts';
+import { GATE_ASK_RULE, KICKOFF_PROMPT, RESUME_KICKOFF_PROMPT, buildLaunchSpec, gateAskRuleLive, runOrchestrate } from '../src/orchestrator/hosts/orchestrate.ts';
+import type { ClaudeLauncher } from '../src/orchestrator/hosts/orchestrate.ts';
+import { CONSULTANT_IDENTITY_CLAUSE } from '../src/orchestrator/briefs.ts';
+import { loadRunState, runDirOf, saveRunState } from '../src/run/store.ts';
 import { test } from './helpers/fixtures.ts';
 import { plantClaudeTranscript } from './helpers/transcripts.ts';
 

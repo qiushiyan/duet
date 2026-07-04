@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
-import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, UNLISTED_SNIPPETS, WORKFLOWS, consultantSnippetFor, phasesOf } from '../src/phases.ts';
-import { ACTION_CATALOG } from '../src/roles.ts';
-import type { WorkflowName } from '../src/phases.ts';
+import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, UNLISTED_SNIPPETS, WORKFLOWS, consultantSnippetFor, phasesOf } from '../src/registry/workflows.ts';
+import { ACTION_CATALOG } from '../src/voices/policy.ts';
+import type { WorkflowName } from '../src/registry/workflows.ts';
 import {
   LESSONS_DIR,
   getEffectiveSnippet,
@@ -14,8 +14,8 @@ import {
   mergeSnippetLayers,
   renderSnippetLibrary,
   runtimeLibraryContext,
-} from '../src/snippets.ts';
-import type { Snippet, SnippetOverrideLayer, SnippetRenderOpts } from '../src/snippets.ts';
+} from '../src/orchestrator/library.ts';
+import type { Snippet, SnippetOverrideLayer, SnippetRenderOpts } from '../src/orchestrator/library.ts';
 
 const WORKFLOW_NAMES = Object.keys(WORKFLOWS) as WorkflowName[];
 

@@ -7,19 +7,19 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect } from 'vitest';
 import { createActor } from 'xstate';
-import { toSdkTools } from '../src/harness/driver.ts';
-import { crossInteractive } from '../src/harness/lifecycle.ts';
-import { interactiveMachine } from '../src/harness/machine.ts';
-import { buildKernelMcpServer, buildKernelTools, buildRunScopedKernelServer, createRunScopedKernel } from '../src/harness/mcp-server.ts';
-import { createPhaseTools } from '../src/harness/tools.ts';
-import type { KernelTool } from '../src/harness/tools.ts';
-import { renderSnippetLibrary } from '../src/snippets.ts';
+import { toSdkTools } from '../src/orchestrator/hosts/driver.ts';
+import { crossInteractive } from '../src/surfaces/lifecycle.ts';
+import { interactiveMachine } from '../src/run/machine.ts';
+import { buildKernelMcpServer, buildKernelTools, buildRunScopedKernelServer, createRunScopedKernel } from '../src/orchestrator/hosts/mcp-server.ts';
+import { createPhaseTools } from '../src/orchestrator/tools.ts';
+import type { KernelTool } from '../src/orchestrator/tools.ts';
+import { renderSnippetLibrary } from '../src/orchestrator/library.ts';
 import { FakeWorker, test } from './helpers/fixtures.ts';
-import { createRun, loadRunState, markAbandoned, runDirOf, saveMachineSnapshot, saveRunState, stageHumanInput } from '../src/run-store.ts';
-import type { RunState } from '../src/run-store.ts';
-import { defaultBindingsFor } from '../src/config.ts';
+import { createRun, loadRunState, markAbandoned, runDirOf, saveMachineSnapshot, saveRunState, stageHumanInput } from '../src/run/store.ts';
+import type { RunState } from '../src/run/store.ts';
+import { defaultBindingsFor } from '../src/voices/bindings.ts';
 
-const CLI_ENTRY = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
+const CLI_ENTRY = fileURLToPath(new URL('../src/surfaces/cli.ts', import.meta.url));
 
 /** Extract the first text block of an MCP/kernel tool result. */
 const textOf = (result: unknown): string =>

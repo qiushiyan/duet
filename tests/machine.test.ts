@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'vitest';
 import { createActor, fromCallback, waitFor } from 'xstate';
 import type { AnyMachineSnapshot } from 'xstate';
-import { duetMachine, interactiveMachine, machineFor } from '../src/harness/machine.ts';
-import { phasesOf } from '../src/phases.ts';
-import type { WorkflowName } from '../src/phases.ts';
+import { duetMachine, interactiveMachine, machineFor } from '../src/run/machine.ts';
+import { phasesOf } from '../src/registry/workflows.ts';
+import type { WorkflowName } from '../src/registry/workflows.ts';
 import { scriptedMachine } from './helpers/scripted-machine.ts';
 
 /**

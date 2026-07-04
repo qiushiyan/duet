@@ -2,12 +2,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test as base } from 'vitest';
-import { defaultBindingsFor } from '../../src/config.ts';
-import type { VoiceBindings } from '../../src/config.ts';
-import type { WorkflowName } from '../../src/phases.ts';
-import type { RunTurnOptions, WorkerProvider, WorkerTurn } from '../../src/providers/types.ts';
-import { createRun, saveRunState } from '../../src/run-store.ts';
-import type { RunState } from '../../src/run-store.ts';
+import { defaultBindingsFor } from '../../src/voices/bindings.ts';
+import type { VoiceBindings } from '../../src/voices/bindings.ts';
+import type { WorkflowName } from '../../src/registry/workflows.ts';
+import type { RunTurnOptions, WorkerProvider, WorkerTurn } from '../../src/voices/providers/types.ts';
+import { createRun, saveRunState } from '../../src/run/store.ts';
+import type { RunState } from '../../src/run/store.ts';
 
 /** A workflow's default bindings plus a claude consultant — the opt-in second reviewer. */
 export function consultantBindingsFor(workflow: WorkflowName = 'full'): VoiceBindings {

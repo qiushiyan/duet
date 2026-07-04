@@ -1,5 +1,5 @@
 import { describe, expect } from 'vitest';
-import { newRunInputOpts, renderSnippetListing, resolveAfkArgs, takeoverPlan } from '../src/cli.ts';
+import { newRunInputOpts, renderSnippetListing, resolveAfkArgs, takeoverPlan } from '../src/surfaces/cli.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**

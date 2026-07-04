@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
-import { readTranscriptTailAtPath, readTranscriptTailForSession, resolveSessions } from '../src/sessions.ts';
+import { readTranscriptTailAtPath, readTranscriptTailForSession, resolveSessions } from '../src/voices/sessions.ts';
 import { test } from './helpers/fixtures.ts';
 import { claudeUserToolResult, jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
 

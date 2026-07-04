@@ -27,8 +27,8 @@ import {
   phasesOf,
   validateRegistry,
   workflowHasConsultantBackstop,
-} from '../src/phases.ts';
-import type { PhaseSemantics, StageSpecInput, WorkflowSpecInput } from '../src/phases.ts';
+} from '../src/registry/workflows.ts';
+import type { PhaseSemantics, StageSpecInput, WorkflowSpecInput } from '../src/registry/workflows.ts';
 
 /**
  * The workflow registry — the source of truth the flat lookups derive from.

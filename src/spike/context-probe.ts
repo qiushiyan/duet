@@ -28,9 +28,9 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { latestTranscriptUsageTokens } from '../context-guard.ts';
-import { parseRecords } from '../worker-health.ts';
-import type { JsonRecord } from '../worker-health.ts';
+import { latestTranscriptUsageTokens } from '../voices/context.ts';
+import { parseRecords } from '../voices/health.ts';
+import type { JsonRecord } from '../voices/health.ts';
 
 const TAIL_BYTES = 262_144; // sessions.ts readTranscriptTailAtPath default
 

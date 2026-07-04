@@ -11,8 +11,8 @@ import {
   parseBudget,
   resolveRunConfig,
   sessionCompatible,
-} from '../src/config.ts';
-import type { VoiceBindings } from '../src/config.ts';
+} from '../src/voices/bindings.ts';
+import type { VoiceBindings } from '../src/voices/bindings.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**

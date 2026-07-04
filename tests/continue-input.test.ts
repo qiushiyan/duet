@@ -1,8 +1,8 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect } from 'vitest';
-import { program, stageContinueText } from '../src/cli.ts';
-import { loadRunState, saveRunState } from '../src/run-store.ts';
+import { program, stageContinueText } from '../src/surfaces/cli.ts';
+import { loadRunState, saveRunState } from '../src/run/store.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**

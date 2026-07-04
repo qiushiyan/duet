@@ -1,0 +1,646 @@
+import { spawn } from 'node:child_process';
+import { closeSync, existsSync, openSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { execa } from 'execa';
+import { createActor, waitFor } from 'xstate';
+import type { AnyMachineSnapshot, Snapshot } from 'xstate';
+import { notify as desktopNotify } from '../view/notify.ts';
+import {
+  acceptanceContractPathForSpec,
+  contractAuthorPhaseOf,
+  gateOf,
+  gatePhasesOf,
+  handoffGateOf,
+  phaseOfGateState,
+  phasesOf,
+} from '../registry/workflows.ts';
+import type { GatePhase, PhaseName, WorkflowName } from '../registry/workflows.ts';
+import type { VoiceAddress } from '../voices/providers/types.ts';
+
+import {
+  gateAttended,
+  highDecisionsAt,
+  loadMachineSnapshot,
+  loadRunState,
+  runDirOf,
+  saveMachineSnapshot,
+  saveRunState,
+  setGatesAt,
+  workflowOf,
+} from '../run/store.ts';
+import type { RunState } from '../run/store.ts';
+import { drivenMachineFor } from '../orchestrator/hosts/driver.ts';
+import { aliveDriverPid, describeStop, phaseLoopOf, probeRunPosition } from '../run/position.ts';
+import type { RunPosition } from '../run/position.ts';
+import { duetMachine, flagWaitStateOf, interactiveMachineFor } from '../run/machine.ts';
+import { markerToEvent } from '../run/phase-events.ts';
+
+/**
+ * The run lifecycle — how phases actually execute (docs/automation-design.md
+ * §"Not a daemon — but alive through a phase"). `new` and gate-crossing
+ * `continue` invocations return immediately: spawnDrive starts a detached
+ * per-phase child (`duet _drive`) whose body is driveToQuiescence — it runs
+ * the statechart to the next quiescent state (a gate, a queued flag, or
+ * done), persists, notifies, and exits. Nothing runs between quiescent
+ * stops; the pid file is how a second driver is refused.
+ */
+
+export type HumanEvent = { type: 'human.approve' | 'human.reject' | 'human.answer' };
+
+/**
+ * The outer per-phase bound: above a realistic worst-case overnight impl phase
+ * (several 90-min-capped turns + bounded retry backoff). The number is the
+ * smaller half — the load-bearing change is that a hit now SOFT-FAILS to
+ * crash=flag (driveToQuiescence below), never an uncaught process kill that
+ * strands the run (the 7447 dead-run pattern).
+ */
+const QUIESCENCE_TIMEOUT_MS = 12 * 60 * 60_000;
+
+/** Injectable seams for spawnDrive's best-effort sleep-prevention (defaults: the host platform + a real caffeinate spawn). */
+export interface SpawnDriveDeps {
+  platform?: NodeJS.Platform;
+  /** Spawn the sleep-preventer scoped to the driver pid; defaulted to caffeinate on darwin, swapped for a spy in tests. */
+  spawnSleepPreventer?: (driverPid: number) => void;
+}
+
+/**
+ * The macOS sleep-preventer command — `caffeinate -i` prevents IDLE sleep, `-w
+ * <pid>` scopes it to the driver's lifetime (caffeinate exits when the driver
+ * pid does, so it never holds the machine awake past the run). Pure builder,
+ * pinned by test; the spawn around it is glue.
+ */
+export function caffeinateCommand(driverPid: number): string[] {
+  return ['caffeinate', '-i', '-w', String(driverPid)];
+}
+
+/**
+ * Prevent the machine sleeping under the driver — BEST-EFFORT, darwin-only.
+ * `caffeinate -i` blocks the common IDLE sleep (docked / lid-open); a closed lid
+ * on battery sleeps regardless, where the wall-clock backstop (the real
+ * protection) bounds the waste on wake. A spawn failure is swallowed — losing
+ * sleep-prevention degrades to bounded-waste-then-recover, never a failed run.
+ */
+export function preventSleepUnderDriver(driverPid: number, deps: SpawnDriveDeps = {}): void {
+  if ((deps.platform ?? process.platform) !== 'darwin') return;
+  const run = deps.spawnSleepPreventer ?? defaultSpawnSleepPreventer;
+  try {
+    run(driverPid);
+  } catch {
+    // best-effort — the wall-clock backstop is the load-bearing protection.
+  }
+}
+
+function defaultSpawnSleepPreventer(driverPid: number): void {
+  const [cmd, ...args] = caffeinateCommand(driverPid);
+  const child = spawn(cmd!, args, { detached: true, stdio: 'ignore' });
+  // A missing/failed caffeinate emits 'error' ASYNCHRONOUSLY — swallow it so an
+  // unhandled child 'error' can't crash the parent (best-effort, see above).
+  child.on('error', () => {});
+  child.unref();
+}
+
+/**
+ * Spawn the detached phase driver and return its pid. Its stdout/stderr go
+ * to `.duet/runs/<id>/driver.log` (crash evidence lives there); the pid file
+ * is how later invocations refuse to start a second concurrent driver. On
+ * darwin it also fires a best-effort `caffeinate` scoped to the driver pid.
+ */
+export function spawnDrive(
+  state: RunState,
+  eventType?: 'approve' | 'reject' | 'answer',
+  deps: SpawnDriveDeps = {},
+): number {
+  const runDir = runDirOf(state.cwd, state.runId);
+  const out = openSync(join(runDir, 'driver.log'), 'a');
+  const child = spawn(
+    process.execPath,
+    [process.argv[1]!, '_drive', state.runId, ...(eventType ? [eventType] : [])],
+    { cwd: state.cwd, detached: true, stdio: ['ignore', out, out] },
+  );
+  closeSync(out);
+  writeFileSync(join(runDir, 'driver.pid'), `${child.pid}\n`);
+  child.unref();
+  preventSleepUnderDriver(child.pid!, deps);
+  return child.pid!;
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stop a run's detached driver if one is alive: SIGTERM, then SIGKILL if it
+ * lingers past the grace. Returns the pid it stopped, or undefined when no
+ * driver was running. Only the driver pid is signalled — an in-flight worker
+ * turn is left to finish harmlessly into its own transcript
+ * (docs/automation-design.md §"Ending a run"), not killed with the group. The
+ * caller (`duet abandon`) then marks or purges the run with the driver already
+ * dead, so its state writes can't race the marker.
+ */
+export async function killDriver(
+  state: RunState,
+  opts: { graceMs?: number; pollMs?: number } = {},
+): Promise<number | undefined> {
+  const pid = aliveDriverPid(state);
+  if (pid === undefined) return undefined;
+  const graceMs = opts.graceMs ?? 5_000;
+  const pollMs = opts.pollMs ?? 100;
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    return undefined; // raced us and exited between the liveness check and the signal
+  }
+  const deadline = Date.now() + graceMs;
+  while (Date.now() < deadline) {
+    if (!pidAlive(pid)) return pid;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  // Lingered past the grace — escalate to the uncatchable signal.
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    // Exited between the last poll and here.
+  }
+  return pid;
+}
+
+/**
+ * Block until the run reaches a stop — any position but `running` — polling
+ * the probe on fresh state each round. The wait side of `duet status --wait`:
+ * the one deterministic supervision cycle, owned by the CLI so watchers (the
+ * concierge skill, a shell loop, a human) never reinvent polling. Read-only;
+ * interrupting it cannot affect the run.
+ */
+export async function waitForRunStop(
+  cwd: string,
+  runId: string,
+  opts: { intervalMs?: number } = {},
+): Promise<RunPosition> {
+  const intervalMs = opts.intervalMs ?? 5_000;
+  for (;;) {
+    const position = probeRunPosition(loadRunState(cwd, runId));
+    if (position.kind !== 'running') return position;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+/** A pending worker turn settled — what `duet status --wait` wakes on, beside a run stop. */
+export type TurnReady = { kind: 'turn-ready'; roles: VoiceAddress[] };
+
+/**
+ * The turn-aware wait behind `duet status --wait`: wake on a worker turn
+ * settling (interactive host) OR a run stop, whichever comes first. Stop-only
+ * polling (waitForRunStop) is wrong for the interactive host — an interactive
+ * run probes as `interactive`, never `running`, so it would wake instantly on
+ * exactly the host async send_prompt is for. The rule:
+ *   - any pending record `ready`/`failed` → `turn-ready` (collect with check_turns);
+ *   - a real stop (gate/flag/crashed/done/abandoned) → that position;
+ *   - keep polling only while a headless driver is `running`, or an `interactive`
+ *     run still has a turn `running`;
+ *   - otherwise return the position (an interactive rest with nothing pending is
+ *     itself the answer — there is nothing to wait for).
+ * Read-only, like waitForRunStop; interrupting it cannot affect the run.
+ */
+export async function waitForTurnOrStop(
+  cwd: string,
+  runId: string,
+  opts: { intervalMs?: number } = {},
+): Promise<RunPosition | TurnReady> {
+  const intervalMs = opts.intervalMs ?? 5_000;
+  for (;;) {
+    const state = loadRunState(cwd, runId);
+    // Every pending-turn record on disk, whatever its address — a dispatched
+    // consultant turn wakes `duet status --wait` like any duty's.
+    const pending = state.pendingTurns ?? {};
+    const addresses = Object.keys(pending) as VoiceAddress[];
+    const ready = addresses.filter((r) => pending[r]?.status === 'ready' || pending[r]?.status === 'failed');
+    if (ready.length > 0) return { kind: 'turn-ready', roles: ready };
+    const position = probeRunPosition(state);
+    const turnRunning = addresses.some((r) => pending[r]?.status === 'running');
+    const keepPolling = position.kind === 'running' || (position.kind === 'interactive' && turnRunning);
+    if (!keepPolling) return position;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+export interface LifecycleDeps {
+  /** Injectable for tests: a duetMachine with a scripted phaseDriver. */
+  machine?: typeof duetMachine;
+  notify?: typeof desktopNotify;
+  /** The outer per-phase quiescence bound; injectable so a test trips the soft-fail fast. Defaults to QUIESCENCE_TIMEOUT_MS (12 h). */
+  quiescenceTimeoutMs?: number;
+}
+
+/**
+ * Drive the statechart to the next attended quiescent stop. Gates whose
+ * phase isn't in gates_at were pre-authorized at run start: record the
+ * crossing, notify, and approve on the human's standing authority — the
+ * driver lives through the whole pre-authorized stretch and exits at the
+ * next attended stop. The statechart is untouched: gates still transition
+ * only on human.* events; what the pre-authorization changes is when the
+ * human's approval is uttered.
+ *
+ * Returns the stop's snapshot plus the freshly loaded state (the phase
+ * driver wrote to disk while the actor ran).
+ */
+export async function driveToQuiescence(
+  state: RunState,
+  options?: { snapshot?: Snapshot<unknown>; event?: HumanEvent },
+  deps: LifecycleDeps = {},
+): Promise<{ snapshot: AnyMachineSnapshot; state: RunState; wedged?: true }> {
+  const machine = deps.machine ?? drivenMachineFor(workflowOf(state));
+  const notify = deps.notify ?? desktopNotify;
+  const quiescenceTimeoutMs = deps.quiescenceTimeoutMs ?? QUIESCENCE_TIMEOUT_MS;
+
+  const actor = createActor(machine, {
+    input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
+    ...(options?.snapshot ? { snapshot: options.snapshot } : {}),
+  });
+  actor.start();
+
+  // Spent-marker guard. Keyed off the RESTORED snapshot value — the snapshot
+  // the actor just hydrated from machine.json, the durable record of where the
+  // machine resumed — NOT state.machineState, which is the state.json mirror
+  // written only after saveMachineSnapshot and so stale/absent in the very
+  // crash window this guards (machine.json saved at the gate, the mirror not
+  // yet). If we resumed AT the marker phase's OWN gate or flag-wait, the
+  // transition that marker drove already applied — we are parked past it, so
+  // the marker is a spent leftover. Clear it before the human event re-enters
+  // the phase loop: otherwise a stale `flag` re-entered by an answer
+  // (frameFlagWait → frameLoop) or a stale `advance` re-entered by a reject
+  // (directionGate → frameLoop) would replay the old decision and swallow the
+  // human's input — the run bounces straight back, authority lost. A crash
+  // BEFORE the transition restores at a prior quiescent state (phase loops are
+  // never persisted), so the restored value is not this marker's gate/flag-wait,
+  // the guard does not fire, and the driver still replays the live marker on
+  // loop re-entry (crash-before-transition replay, driver.ts / stdio-host.ts).
+  const restoredMarker = state.terminalMarker;
+  const restoredValue = actor.getSnapshot().value;
+  if (
+    restoredMarker &&
+    typeof restoredValue === 'string' &&
+    (phaseOfGateState(workflowOf(state), restoredValue) === restoredMarker.phase ||
+      restoredValue === flagWaitStateOf(restoredMarker.phase))
+  ) {
+    delete state.terminalMarker;
+    saveRunState(state);
+  }
+
+  // Freeze on an EXPLICIT headless approve of the contract gate (the human
+  // approved an attended/held plan gate, re-spawning the driver with the event):
+  // the restored snapshot is parked at that gate, so freeze before the event
+  // crosses it. The pre-authorized auto-cross is handled in the loop below.
+  if (options?.event?.type === 'human.approve' && typeof restoredValue === 'string') {
+    const enteringGate = phaseOfGateState(workflowOf(state), restoredValue);
+    if (enteringGate) await freezeContractAt(state, enteringGate);
+  }
+
+  if (options?.event) actor.send(options.event);
+
+  for (;;) {
+    let snapshot: AnyMachineSnapshot;
+    try {
+      snapshot = await waitFor(
+        actor,
+        (s) => s.hasTag('quiescent') || s.status === 'done',
+        { timeout: quiescenceTimeoutMs },
+      );
+    } catch {
+      // The phase ran past its outer time bound — a wedged phaseDriver invoke
+      // that never emitted phase.*, so `waitFor` rejected. Convert the would-be
+      // uncaught kill (which strands the run — the 7447 dead-run) into crash=flag,
+      // the universal "every stop has a next command". Order is LOAD-BEARING:
+      // park in flag-wait FIRST (drives the stuck loop to its *FlagWait, stopping
+      // the wedged invoke, and persists that snapshot), THEN queue the question —
+      // probeRunPosition reads a `flag` only from a flag-wait snapshot BESIDE a
+      // pendingQuestion; a question next to a still-phase-loop snapshot reads as
+      // crashed/running, defeating the fix.
+      const wf = workflowOf(state);
+      const value = actor.getSnapshot().value;
+      const phase = (typeof value === 'string' && phaseLoopOf(wf, value)) || phasesOf(wf)[0]!.name;
+      actor.send({ type: 'phase.flag' });
+      saveMachineSnapshot(state, actor.getPersistedSnapshot());
+      const parked = actor.getSnapshot();
+      // `actor.stop()` parks the machine but does NOT tear down the wedged
+      // invoke: `phaseDriver` is a `fromCallback` with no cleanup, so the hung
+      // `runPhase` (its in-process orchestrator turn) keeps running — keeping the
+      // `_drive` pid alive (supervision would read it as running) and able to race
+      // a late in-process write over this parked flag. We can't cancel it from
+      // here (no signal reaches the SDK turn), so we flag the caller to hard-exit
+      // the driver process below — the state is already durably parked, and the
+      // human resumes with a fresh driver.
+      actor.stop();
+      // First-question-wins: never clobber a question the orchestrator already
+      // queued (its own ask_human, a budget stop). Reload-mutate-save so a
+      // concurrent write isn't lost; the machine is parked in flag-wait regardless.
+      const fresh = loadRunState(state.cwd, state.runId);
+      fresh.machineState = typeof parked.value === 'string' ? parked.value : JSON.stringify(parked.value);
+      const hours = Math.round(quiescenceTimeoutMs / 3_600_000);
+      if (!fresh.pendingQuestion) {
+        fresh.pendingQuestion = {
+          question: `the ${phase} phase ran past its outer time bound (~${hours}h) and was parked — check .duet/runs/${fresh.runId}/driver.log or run \`duet doctor\`, then resume with \`duet continue\`.`,
+          cause: 'infra',
+        };
+      }
+      saveRunState(fresh);
+      await notify(
+        `duet ${fresh.runId}`,
+        `${phase} phase parked — it ran past its ~${hours}h outer bound; resume with duet continue`,
+      );
+      return { snapshot: parked, state: fresh, wedged: true };
+    }
+
+    saveMachineSnapshot(state, actor.getPersistedSnapshot());
+    const fresh = loadRunState(state.cwd, state.runId);
+    fresh.machineState = typeof snapshot.value === 'string' ? snapshot.value : JSON.stringify(snapshot.value);
+
+    // Deliver-before-clear: the snapshot above now durably reflects the
+    // transition the terminal marker drove, so the marker has done its job.
+    // Clear it here — after the snapshot save, before any gates_at auto-cross
+    // re-enters the next phase — so a pre-authorized continue can't carry a
+    // stale marker into the next phase's runPhase (markerToEvent is phase-keyed,
+    // but clearing keeps the on-disk state honest). If a crash lands in the
+    // window between the snapshot save and this clear, the marker survives to
+    // the next driveToQuiescence — where the spent-marker guard at entry clears
+    // it before any human event can re-enter the loop and replay it (the
+    // same-phase replay is NOT inherently harmless: see that guard above).
+    if (fresh.terminalMarker) {
+      delete fresh.terminalMarker;
+      saveRunState(fresh);
+    }
+
+    const gatePhase = snapshot.status !== 'done' ? phaseOfGateState(workflowOf(fresh), fresh.machineState) : undefined;
+    // The severity hold: a `high` human decision withholds the pre-authorized
+    // auto-cross (a non-explicit crossing), converting the gate to an attended
+    // stop so the human weighs the call before it ships. An EXPLICIT approve
+    // (crossInteractive) never consults this — only the manufactured one here.
+    const held = gatePhase ? highDecisionsAt(fresh, gatePhase) : [];
+    if (gatePhase && !gateAttended(fresh, gatePhase) && held.length === 0) {
+      // Freeze on a pre-authorized AUTO-cross of the contract gate (accepted even
+      // though the human never ratified it — the auto-cross is the standing
+      // authority). No-op at every other gate. Before the cross, like the entry case.
+      await freezeContractAt(fresh, gatePhase);
+      // Dedupe on crash-recovery re-entry at the same gate.
+      if (fresh.autoApprovals?.at(-1)?.gate !== fresh.machineState) {
+        (fresh.autoApprovals ??= []).push({ gate: fresh.machineState, at: new Date().toISOString() });
+      }
+      saveRunState(fresh);
+      console.log(`[gate] ${fresh.machineState} auto-approved — pre-authorized at run start (packet recorded)`);
+      await notify(`duet ${fresh.runId}`, `${fresh.machineState} auto-approved (pre-authorized) — run continues`);
+      actor.send({ type: 'human.approve' });
+      continue;
+    }
+
+    saveRunState(fresh);
+    actor.stop();
+    if (gatePhase && !gateAttended(fresh, gatePhase) && held.length > 0) {
+      // A pre-authorized gate that did NOT auto-cross because of a `high` — name
+      // the held decision so the human sees why the overnight run stopped here.
+      console.log(`[gate] ${fresh.machineState} held — a high human decision withheld the pre-authorized auto-cross`);
+      await notify(`duet ${fresh.runId}`, `${fresh.machineState} held for you — a high decision needs you: ${held.map((d) => d.title).join('; ')}`);
+      return { snapshot, state: fresh };
+    }
+    await notify(`duet ${fresh.runId}`, describeStop(fresh, snapshot.status === 'done'));
+    return { snapshot, state: fresh };
+  }
+}
+
+/**
+ * Freeze the acceptance contract when an approve-crossing reaches its author
+ * phase's gate (Full: the plan-approval gate). A discrete, self-guarding step the
+ * approve paths call — kept OUT of the pure crossInteractive disk transition. It
+ * no-ops unless this is the contract gate, a consultant is bound, a spec path is
+ * known, and the consultant actually authored a contract FILE (authoring failed ⇒
+ * no file ⇒ the orchestrator's missing-contract `high` surfaces it, not this).
+ *
+ * The consultant authors but never commits — single-writer-by-construction keeps
+ * the orphan-safe discard-and-reseed premise (the consultant touches no git
+ * history). So duet commits the authored file here, PATH-SCOPED so the in-progress
+ * plan in the same worktree stays uncommitted, and records the freezing commit for
+ * the impl verify checkpoint. Idempotent: a crash-recovery re-cross with the
+ * contract already frozen is a no-op, and the commit sha is resolved from the
+ * path's own history (not HEAD), surviving a crash between commit and state save.
+ *
+ * Freezes even on a pre-authorized (auto-crossed) plan gate the human never
+ * ratified — the contract still freezes and keeps its independent + evidence-
+ * verified value; only the human-signed-target leg is absent there (accepted).
+ */
+export async function freezeContractAt(state: RunState, gatePhase: PhaseName): Promise<void> {
+  if (state.acceptanceContract) return; // already frozen — idempotent re-entry
+  if (gatePhase !== contractAuthorPhaseOf(workflowOf(state))) return; // not the contract gate
+  if (!state.bindings.consultant || !state.specPath) return; // default-off / nothing to derive from
+  const path = acceptanceContractPathForSpec(state.specPath);
+  // Require THIS run's authoring: a draft marker the consultant's contract turn
+  // settled. A pre-existing/stale contract file from a prior run (no draft marker,
+  // or a stale path) is NOT this run's contract — freezing it would ratify a
+  // target nobody authored this run (the verify checkpoint then checks the built
+  // system against it). Without the marker, no freeze; impl treats it as "no
+  // contract" and the author-phase rail already required a high for the absence.
+  // A marker WITH a recorded path must match the derived path; a path-less marker
+  // (a late-author arc settled the turn before advance_phase recorded spec_path)
+  // is still this run's authorship evidence, and the file check below verifies
+  // the artifact at the path derived now.
+  const draft = state.acceptanceContractDraft;
+  if (!draft || (draft.path !== undefined && draft.path !== path)) return;
+  if (!existsSync(join(state.cwd, path))) return; // authoring produced no file
+  const git = (args: string[]): Promise<{ stdout: string }> => execa('git', args, { cwd: state.cwd, timeout: 30_000 });
+  const dirty = (await git(['status', '--porcelain', '--', path])).stdout.trim();
+  if (dirty) {
+    await git(['add', '--', path]);
+    await git(['commit', '-m', `docs(contract): freeze acceptance contract (${state.runId})`, '--', path]);
+  }
+  // The contract's own last-touching commit — robust to HEAD having moved on and
+  // to a crash between an earlier commit and this save (where HEAD ≠ the freeze).
+  const commit = (await git(['log', '-1', '--format=%H', '--', path])).stdout.trim();
+  // Fresh-load → set the one field → save (the setGatesAt discipline), so a
+  // concurrently-staged pendingMessage on disk is not clobbered; mirror onto the
+  // caller's ref so the same turn's downstream reads see the freeze.
+  const fresh = loadRunState(state.cwd, state.runId);
+  fresh.acceptanceContract = { path, commit };
+  saveRunState(fresh);
+  state.acceptanceContract = { path, commit };
+}
+
+/**
+ * Advance an interactive run's machine inline — the Stage-1 continue, with no
+ * `_drive`. The human's session drives each phase, so a crossing is a pure disk
+ * transition: restore the inert interactiveMachine at its resting phase loop,
+ * consume the marker's recorded phase.* to reach the gate/flag, apply the
+ * human's authority event, then persist the resulting next phase-loop rest and
+ * clear the marker deliver-before-clear.
+ *
+ * Marker-then-human ordering is load-bearing: at a phase loop the human.* event
+ * has no handler (only phase.* does), and only human.* crosses a gate/flag — so
+ * the marker's phase.* must move the machine to the gate/flag BEFORE the human
+ * event applies. (A naive `spawnDrive(state,'approve')` sends the human event
+ * first, against a phase loop that ignores it, then replays the marker and parks
+ * at the gate — never crossing. That is why an interactive crossing cannot go
+ * through driveToQuiescence, which sends its event before the marker replays.)
+ */
+export function crossInteractive(state: RunState, humanEvent: HumanEvent): void {
+  const wf = workflowOf(state);
+  const snapshot = loadMachineSnapshot(state);
+  const actor = createActor(interactiveMachineFor(wf), {
+    input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
+    ...(snapshot ? { snapshot } : {}),
+  });
+  actor.start();
+  // The actor rests at the phase loop the session was driving (or the entry
+  // phase, fresh, on the first crossing). Consume the marker keyed off that
+  // resting phase, so a stale marker can't drive a foreign phase's decision.
+  const restValue = actor.getSnapshot().value;
+  const restPhase = typeof restValue === 'string' ? phaseLoopOf(wf, restValue) : undefined;
+  const markerEvent = restPhase ? markerToEvent(state.terminalMarker, restPhase) : null;
+  if (markerEvent) actor.send(markerEvent);
+  actor.send(humanEvent);
+  // The interactive phase loop IS the rest (the provided actor is inert, so
+  // restore is safe — machine.ts). Persist it, then clear the marker
+  // deliver-before-clear: a crash between the two writes leaves a stale marker
+  // the probe ignores, since it no longer matches the moved-on rest phase.
+  saveMachineSnapshot(state, actor.getPersistedSnapshot());
+  actor.stop();
+  const fresh = loadRunState(state.cwd, state.runId);
+  delete fresh.terminalMarker;
+  saveRunState(fresh);
+}
+
+/**
+ * The mid-session AFK handoff (#1): from ANY interactive gate parked on the
+ * approve path — INCLUDING a pre-authorized one — re-set the downstream posture,
+ * cross this gate, clear the interactive marker, and let the caller spawn the
+ * detached headless driver. Legality keys on the gate POSITION (probeRunPosition
+ * kind 'gate' + validateInteractiveCrossing), never on gateAttended: a
+ * pre-authorized interactive gate is exactly where afk is the one tap that hands
+ * off (the interactive host never auto-crosses). Posture is written first
+ * (setGatesAt, fresh-load-safe), then the gate is crossed, then the interactive
+ * marker is cleared (fresh-load, preserving the just-written posture/snapshot).
+ * Returns the resulting attended/pre-authorized split for the caller to print as
+ * informed consent.
+ */
+export async function enterAfk(
+  state: RunState,
+  posture: GatePhase[],
+  opts: { gateless?: boolean } = {},
+): Promise<{ attended: GatePhase[]; preAuthorized: GatePhase[] }> {
+  if (state.orchestrationHost !== 'interactive') {
+    throw new Error(
+      `run ${state.runId} is not orchestrated interactively — duet afk hands off from an interactive gate; a headless run already runs unattended.`,
+    );
+  }
+  const position = probeRunPosition(state);
+  if (position.kind !== 'gate') {
+    const why = validateInteractiveCrossing(position, 'approve') ?? "isn't parked at a gate";
+    throw new Error(`run ${state.runId} ${why} — duet afk hands off only from a gate (steer a live phase, or answer a flag).`);
+  }
+  // The severity hold on the present→away transition: a BARE `duet afk` is a
+  // blanket walk-away that must not silently turn a `high` into an unattended
+  // approval — refuse it over a `high`, directing the human to the explicit
+  // substitute. `duet afk --gateless` IS that explicit substitute: a deliberate
+  // full-send the human chose having pre-decided the direction the bet/product
+  // highs concern, so it crosses them exactly as an explicit `--approve` does —
+  // except for the correctness backstop, preserved just below.
+  if (!opts.gateless) {
+    const held = highDecisionsAt(state, position.phase);
+    if (held.length > 0) {
+      throw new Error(
+        `run ${state.runId} can't hand off to AFK from this gate — it carries a high human decision that needs you (${held
+          .map((d) => d.title)
+          .join('; ')}). duet afk would approve it unattended; approve this gate explicitly and then hand off (duet continue --approve --headless), or full-send with duet afk --gateless if you accept the call.`,
+      );
+    }
+  }
+  // Freeze the contract before this gate is crossed away — `duet afk` from the
+  // plan gate is an approve-crossing of the contract gate (no-op elsewhere). The
+  // backstop is preserved even under gateless, so this freezes regardless.
+  await freezeContractAt(state, position.phase);
+  // The one high a gateless walk-away must NOT cross: the correctness backstop.
+  // A gateless full-send crosses the human's bet/product calls, but if this is the
+  // contract-author gate where a consultant was bound yet no contract got frozen
+  // (authoring failed), there is nothing for the impl verify to hold the run
+  // against — handing off would ship past an unset target, the very protection
+  // gateless promises to keep. Refuse it, pointing at the explicit override. (The
+  // headless `duet new --gateless` path holds here on the same missing-contract
+  // high via the untouched severity hold; this is its afk-path equivalent.)
+  if (
+    opts.gateless &&
+    state.bindings.consultant &&
+    position.phase === contractAuthorPhaseOf(workflowOf(state)) &&
+    !state.acceptanceContract
+  ) {
+    throw new Error(
+      `run ${state.runId}: gateless preserves the acceptance-contract backstop, but no contract was authored at this gate, so the impl verify would have nothing to hold the run against. Re-run the consultant's contract author first, or — if you accept shipping with no frozen target — approve explicitly: duet continue --approve --headless.`,
+    );
+  }
+  setGatesAt(state, posture);
+  crossInteractive(state, { type: 'human.approve' });
+  const fresh = loadRunState(state.cwd, state.runId);
+  delete fresh.orchestrationHost;
+  // Persist the gateless flag so the headless tail runs the consultant as a
+  // backstop only (the consultant axis; posture, the other axis, is `gatesAt`).
+  if (opts.gateless) fresh.gateless = true;
+  // A bare afk's crossing of THIS gate is a non-explicit crossing — the same
+  // class the severity hold guards and the morning ledger exists for — so
+  // record it like any pre-authorized auto-cross (it was the ledger's missing
+  // first entry: a run handed off with `duet afk` under-counted by one).
+  // `--gateless` is the explicit full-send substitute and, like an explicit
+  // --approve, is not ledgered.
+  if (!opts.gateless) {
+    const gateState = gateOf(workflowOf(state), position.phase).state;
+    if (fresh.autoApprovals?.at(-1)?.gate !== gateState) {
+      (fresh.autoApprovals ??= []).push({ gate: gateState, at: new Date().toISOString() });
+    }
+  }
+  saveRunState(fresh);
+  Object.assign(state, fresh);
+  const gates = gatePhasesOf(workflowOf(state));
+  return {
+    attended: gates.filter((g) => posture.includes(g)),
+    preAuthorized: gates.filter((g) => !posture.includes(g)),
+  };
+}
+
+/**
+ * Whether an interactive crossing rests inline (the connected session drives the
+ * next phase via get_task) or hands off to a detached headless `_drive`. The
+ * stage boundary — planning's last gate, `handoffGateOf` — is THE handoff:
+ * approving it enters the permanent AFK substrate (Full: plan-approval → impl;
+ * RIR: Direction → implement) — as does any explicit `--headless` fallback.
+ */
+export function interactiveContinueAction(
+  workflow: WorkflowName,
+  gatePhase: PhaseName,
+  eventType: 'approve' | 'reject' | 'answer',
+  headless: boolean,
+): 'inline' | 'handoff' {
+  return (gatePhase === handoffGateOf(workflow) && eventType === 'approve') || headless
+    ? 'handoff'
+    : 'inline';
+}
+
+/**
+ * Validate an interactive decision against the marker-derived position — the
+ * interactive rest is a phase loop with no human.* handler, so `restored.can()`
+ * would reject every crossing. A gate admits approve/reject; a flag admits
+ * answer; anywhere else, the orchestrator hasn't advanced and there is nothing
+ * to cross. Returns a friendly error sentence, or undefined when the decision is
+ * legal.
+ */
+export function validateInteractiveCrossing(
+  position: RunPosition,
+  eventType: 'approve' | 'reject' | 'answer',
+): string | undefined {
+  if (position.kind === 'gate') {
+    return eventType === 'answer'
+      ? 'is at a gate — use --approve or --reject "<feedback>", not --answer'
+      : undefined;
+  }
+  if (position.kind === 'flag') {
+    return eventType === 'answer' ? undefined : 'has a queued question — use --answer "<text>"';
+  }
+  return "isn't at a gate or flag yet — the orchestrator hasn't advanced, so there's nothing to cross";
+}

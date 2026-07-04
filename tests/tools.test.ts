@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, vi } from 'vitest';
 import { z } from 'zod';
-import { CONSULTANT_IDENTITY_CLAUSE, ORCHESTRATOR_SYSTEM_PROMPT, buildPhaseBrief, orchestratorSystemPrompt } from '../src/harness/orchestrator-prompts.ts';
+import { CONSULTANT_IDENTITY_CLAUSE, ORCHESTRATOR_SYSTEM_PROMPT, buildPhaseBrief, orchestratorSystemPrompt } from '../src/orchestrator/briefs.ts';
 import {
   COMPACT_TIMEOUT_MS,
   block,
@@ -27,19 +27,19 @@ import {
   terminalAlreadySetRail,
   verifyCheckpointRail,
   warnOnceTemplateRail,
-} from '../src/harness/tools.ts';
-import type { KernelTool, RailCtx } from '../src/harness/tools.ts';
-import { LESSONS_DIR } from '../src/snippets.ts';
-import { createTurnDispatcher } from '../src/harness/turn-dispatcher.ts';
-import type { TurnDispatcher } from '../src/harness/turn-dispatcher.ts';
-import { BudgetCutoffError } from '../src/providers/types.ts';
-import type { VoiceAddress } from '../src/providers/types.ts';
-import { checkerDutyOf, makerDutyOf, phaseSpec, stageOf } from '../src/phases.ts';
-import type { PhaseName } from '../src/phases.ts';
-import { contextSafetyPercent, createRun, loadRunState, markPendingTurn, recordContextUsage, runDirOf, saveRunState, stageHumanInput, workflowOf } from '../src/run-store.ts';
-import { listPendingSteers, stageSteer } from '../src/steer-store.ts';
-import type { RunState } from '../src/run-store.ts';
-import { defaultBindingsFor } from '../src/config.ts';
+} from '../src/orchestrator/tools.ts';
+import type { KernelTool, RailCtx } from '../src/orchestrator/tools.ts';
+import { LESSONS_DIR } from '../src/orchestrator/library.ts';
+import { createTurnDispatcher } from '../src/orchestrator/hosts/turn-dispatcher.ts';
+import type { TurnDispatcher } from '../src/orchestrator/hosts/turn-dispatcher.ts';
+import { BudgetCutoffError } from '../src/voices/providers/types.ts';
+import type { VoiceAddress } from '../src/voices/providers/types.ts';
+import { checkerDutyOf, makerDutyOf, phaseSpec, stageOf } from '../src/registry/workflows.ts';
+import type { PhaseName } from '../src/registry/workflows.ts';
+import { contextSafetyPercent, createRun, loadRunState, markPendingTurn, recordContextUsage, runDirOf, saveRunState, stageHumanInput, workflowOf } from '../src/run/store.ts';
+import { listPendingSteers, stageSteer } from '../src/run/steers.ts';
+import type { RunState } from '../src/run/store.ts';
+import { defaultBindingsFor } from '../src/voices/bindings.ts';
 import { DeferredWorker, FakeWorker, SyncThrowWorker, consultantBindingsFor, test } from './helpers/fixtures.ts';
 import { claudeApiRetry, claudeToolUse, claudeUserToolResult, codexExecCommand, jsonl, plantClaudeTranscript, plantCodexRollout } from './helpers/transcripts.ts';
 

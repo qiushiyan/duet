@@ -3,10 +3,10 @@ import { dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Command } from 'commander';
 import { describe, expect, test } from 'vitest';
-import { program } from '../src/cli.ts';
-import { FRAMING_TEMPLATE } from '../src/framing.ts';
-import { IDENTITY_PATH } from '../src/orchestrate.ts';
-import { WORKFLOWS } from '../src/phases.ts';
+import { program } from '../src/surfaces/cli.ts';
+import { FRAMING_TEMPLATE } from '../src/surfaces/framing.ts';
+import { IDENTITY_PATH } from '../src/orchestrator/hosts/orchestrate.ts';
+import { WORKFLOWS } from '../src/registry/workflows.ts';
 
 /**
  * Coherence guard for the shipped concierge skill (skills/duet-concierge/):

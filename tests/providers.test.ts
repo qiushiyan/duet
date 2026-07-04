@@ -2,19 +2,19 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
-import { COMPACT_CONFIRMATION, ClaudeWorker, claudeArgs, claudeExecaOptions, parseClaudeTurn, recoverClaudeFailure } from '../src/providers/claude.ts';
-import { CodexWorker, codexThreadOptions, parseRolloutContext, reconstructCodexTurn, recoverCodexAbort } from '../src/providers/codex.ts';
-import { ContextDeadlineExceededError, WALL_CLOCK_DRAIN_GRACE_MS, WALL_CLOCK_TICK_MS, WallClockExceededError } from '../src/providers/wall-clock.ts';
-import { classifyError } from '../src/worker-health.ts';
+import { COMPACT_CONFIRMATION, ClaudeWorker, claudeArgs, claudeExecaOptions, parseClaudeTurn, recoverClaudeFailure } from '../src/voices/providers/claude.ts';
+import { CodexWorker, codexThreadOptions, parseRolloutContext, reconstructCodexTurn, recoverCodexAbort } from '../src/voices/providers/codex.ts';
+import { ContextDeadlineExceededError, WALL_CLOCK_DRAIN_GRACE_MS, WALL_CLOCK_TICK_MS, WallClockExceededError } from '../src/voices/providers/wall-clock.ts';
+import { classifyError } from '../src/voices/health.ts';
 import type { ThreadEvent } from '@openai/codex-sdk';
-import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn, sessionIdForNonce } from '../src/providers/interactive-claude.ts';
-import { claudePaneLaunchCommand } from '../src/providers/pane.ts';
-import { createWorkers, providerFor } from '../src/providers/index.ts';
-import { BudgetCutoffError } from '../src/providers/types.ts';
-import { defaultBindingsFor } from '../src/config.ts';
-import type { VoiceBindings } from '../src/config.ts';
-import { makerDutyOf, stageOf } from '../src/phases.ts';
-import type { PhaseName } from '../src/phases.ts';
+import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn, sessionIdForNonce } from '../src/voices/providers/interactive-claude.ts';
+import { claudePaneLaunchCommand } from '../src/voices/providers/pane.ts';
+import { createWorkers, providerFor } from '../src/voices/providers/index.ts';
+import { BudgetCutoffError } from '../src/voices/providers/types.ts';
+import { defaultBindingsFor } from '../src/voices/bindings.ts';
+import type { VoiceBindings } from '../src/voices/bindings.ts';
+import { makerDutyOf, stageOf } from '../src/registry/workflows.ts';
+import type { PhaseName } from '../src/registry/workflows.ts';
 import { FakePane } from './helpers/fake-pane.ts';
 import {
   assistantFinal,

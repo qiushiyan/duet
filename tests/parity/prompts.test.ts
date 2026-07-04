@@ -7,9 +7,9 @@ import {
   nudgeContinuePrompt,
   orchestratorSystemPrompt,
   renderSteerBlock,
-} from '../../src/harness/orchestrator-prompts.ts';
-import type { PhaseName, WorkflowName } from '../../src/phases.ts';
-import type { Steer } from '../../src/steer-store.ts';
+} from '../../src/orchestrator/briefs.ts';
+import type { PhaseName, WorkflowName } from '../../src/registry/workflows.ts';
+import type { Steer } from '../../src/run/steers.ts';
 import { test } from '../helpers/fixtures.ts';
 import { parityRun } from './matrix.ts';
 

@@ -2,8 +2,8 @@ import { existsSync, readFileSync, readdirSync, mkdirSync, rmSync, writeFileSync
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
 import type { Snapshot } from 'xstate';
-import { defaultBindingsFor } from '../src/config.ts';
-import { claudeArgs } from '../src/providers/claude.ts';
+import { defaultBindingsFor } from '../src/voices/bindings.ts';
+import { claudeArgs } from '../src/voices/providers/claude.ts';
 import {
   acquireMcpOwner,
   appendVoiceLog,
@@ -30,7 +30,7 @@ import {
   scratchDirOf,
   stageHumanInput,
   workflowOf,
-} from '../src/run-store.ts';
+} from '../src/run/store.ts';
 import { test } from './helpers/fixtures.ts';
 
 describe('recordPhaseLabel — the view-only tmux phase sidecar', () => {

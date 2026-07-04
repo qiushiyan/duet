@@ -11,7 +11,7 @@
   },
   "type": "module",
   "bin": {
-    "duet": "src/cli.ts"
+    "duet": "src/surfaces/cli.ts"
   },
   "publishConfig": {
     "bin": {
@@ -26,7 +26,7 @@
     "prompts"
   ],
   "scripts": {
-    "duet": "node src/cli.ts",
+    "duet": "node src/surfaces/cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

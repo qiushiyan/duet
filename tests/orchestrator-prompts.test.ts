@@ -1,7 +1,7 @@
 import { describe, expect } from 'vitest';
-import { buildPhaseBrief } from '../src/harness/orchestrator-prompts.ts';
-import { defaultBindingsFor } from '../src/config.ts';
-import { createRun } from '../src/run-store.ts';
+import { buildPhaseBrief } from '../src/orchestrator/briefs.ts';
+import { defaultBindingsFor } from '../src/voices/bindings.ts';
+import { createRun } from '../src/run/store.ts';
 import { consultantBindingsFor, test } from './helpers/fixtures.ts';
 
 // A gateless run drops only the consultant's HOLDING bet audit (spec/implement)

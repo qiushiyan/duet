@@ -11,9 +11,9 @@ import {
   shouldResetAfterCompactAbort,
   voicesFor,
   writeAuthorityFor,
-} from '../src/roles.ts';
-import { defaultBindingsFor } from '../src/config.ts';
-import { createRun } from '../src/run-store.ts';
+} from '../src/voices/policy.ts';
+import { defaultBindingsFor } from '../src/voices/bindings.ts';
+import { createRun } from '../src/run/store.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**
