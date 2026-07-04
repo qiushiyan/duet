@@ -57,13 +57,21 @@ describe('newRunInputOpts — duet new flag forwarding (#3)', () => {
 
 describe('takeoverPlan — the takeover decision (resume vs inspect vs clear-orphan)', () => {
   test('a persistent role with a captured session opens to RESUME (not ephemeral)', ({ run }) => {
-    run.workerSessions = { reviewer: { provider: 'codex', id: 'rev-1' } };
-    expect(takeoverPlan(run, 'reviewer')).toEqual({ kind: 'open', sessionId: 'rev-1', provider: 'codex', ephemeral: false });
+    run.sessions = { 'planning.analyst': { provider: 'codex', id: 'rev-1' } };
+    expect(takeoverPlan(run, 'reviewer', 'spec')).toEqual({ kind: 'open', sessionId: 'rev-1', provider: 'codex', ephemeral: false });
+  });
+
+  test('a takeover at a delivery phase walks the live continuity edge — the planning session is the resume target', ({ run }) => {
+    // The builder never settled its own turn: its live session IS the
+    // architect's continued one, and takeover must hand the human that
+    // transcript, not report no-session.
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'arch-1' } };
+    expect(takeoverPlan(run, 'implementer', 'implement')).toEqual({ kind: 'open', sessionId: 'arch-1', provider: 'claude', ephemeral: false });
   });
 
   test('the consultant with a captured session opens to INSPECT — ephemeral, duet will not resume it', ({ consultantRun }) => {
-    consultantRun.workerSessions = { consultant: { provider: 'claude', id: 'c-1' } };
-    expect(takeoverPlan(consultantRun, 'consultant')).toEqual({ kind: 'open', sessionId: 'c-1', provider: 'claude', ephemeral: true });
+    consultantRun.sessions = { consultant: { provider: 'claude', id: 'c-1' } };
+    expect(takeoverPlan(consultantRun, 'consultant', 'spec')).toEqual({ kind: 'open', sessionId: 'c-1', provider: 'claude', ephemeral: true });
   });
 
   test('a pending record with no session is a clear-orphan — read-only-safe for the consultant, an abandon for a worker', ({
@@ -71,14 +79,14 @@ describe('takeoverPlan — the takeover decision (resume vs inspect vs clear-orp
     consultantRun,
   }) => {
     run.pendingTurns = { reviewer: { tag: 'review-spec', startedAt: 't', status: 'running' } };
-    expect.soft(takeoverPlan(run, 'reviewer')).toEqual({ kind: 'clear-orphan', ephemeral: false });
+    expect.soft(takeoverPlan(run, 'reviewer', 'spec')).toEqual({ kind: 'clear-orphan', ephemeral: false });
 
     consultantRun.pendingTurns = { consultant: { tag: 'consultant-spec', startedAt: 't', status: 'running' } };
-    expect.soft(takeoverPlan(consultantRun, 'consultant')).toEqual({ kind: 'clear-orphan', ephemeral: true });
+    expect.soft(takeoverPlan(consultantRun, 'consultant', 'spec')).toEqual({ kind: 'clear-orphan', ephemeral: true });
   });
 
   test('no session and no orphan is no-session', ({ run }) => {
-    expect(takeoverPlan(run, 'reviewer')).toEqual({ kind: 'no-session' });
+    expect(takeoverPlan(run, 'reviewer', 'spec')).toEqual({ kind: 'no-session' });
   });
 });
 

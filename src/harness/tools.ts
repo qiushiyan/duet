@@ -7,7 +7,7 @@ import { providerFor } from '../providers/index.ts';
 import { BudgetCutoffError } from '../providers/types.ts';
 import type { WorkerProviders, WorkerRole, WorkerTurn } from '../providers/types.ts';
 import { CONTEXT_CAUTION_PERCENT, CONTEXT_EMERGENCY_PERCENT, contextBand, latestTranscriptUsageTokens, salvageCompactInstructions } from '../context-guard.ts';
-import { countsReviewRound, orphanRecoveryFor, sessionIdFor, sessionPolicyFor, shouldResetAfterCompactAbort, workerRolesFor, writeAuthorityFor } from '../roles.ts';
+import { countsReviewRound, dutyForRole, orphanRecoveryFor, sessionIdFor, sessionKeyFor, sessionPolicyFor, sessionRecordFor, sessionSlotsToReset, shouldResetAfterCompactAbort, workerRolesFor, writeAuthorityFor } from '../roles.ts';
 import { getSnippet, renderSnippetLibrary, runtimeLibraryContext } from '../snippets.ts';
 import {
   appendNote,
@@ -476,25 +476,18 @@ export function settleTurn(
   // (collectible, orphan/in-flight rails) is preserved.
   const compactReset = shouldResetAfterCompactAbort(role, meta.isCompactTurn === true, aborted);
   const fresh = loadRunState(state.cwd, state.runId);
-  // The session record carries the provider that actually ran the turn (the
-  // phase's EFFECTIVE binding — a post-handoff build override may differ from
-  // the base), so every session consumer reads the truth. A provider switch
-  // over a prior record lands in the sessionResets ledger — the reset itself
-  // is derived (sessionIdFor), never evented, but the ledger explains to
-  // status/takeover why the old session is gone.
+  // The settled turn ran AS the phase's duty, so its record lands under that
+  // duty's own slot (the consultant under its one checkpoint slot), carrying
+  // the provider that actually ran (the phase-effective binding), so every
+  // session consumer reads the truth. A planning record a continuity edge
+  // walked to stays in ITS slot untouched — per-duty keys keep every era's
+  // session visible, which is what dissolved the sessionResets ledger.
   const effectiveProvider = effectiveBindingFor(state.bindings, role, workflowOf(state), phase).provider;
-  const priorSession = fresh.workerSessions[role];
-  if (priorSession && priorSession.provider !== effectiveProvider) {
-    (fresh.sessionResets ??= []).push({
-      role,
-      phase,
-      fromProvider: priorSession.provider,
-      toProvider: effectiveProvider,
-      at: new Date().toISOString(),
-    });
-  }
-  fresh.workerSessions[role] = { provider: effectiveProvider, id: turn.sessionId };
-  if (compactReset) delete fresh.workerSessions[role];
+  const slot = role === 'consultant' ? ('consultant' as const) : sessionKeyFor(dutyForRole(workflowOf(state), phase, role));
+  fresh.sessions[slot] = { provider: effectiveProvider, id: turn.sessionId };
+  // An aborted /compact resets the whole resumable lineage — the own slot AND
+  // the planning slot a still-live edge would walk straight back into.
+  if (compactReset) for (const key of sessionSlotsToReset(fresh, role, phase)) delete fresh.sessions[key];
   // Re-read off fresh rather than a call-start snapshot: the minutes-long await
   // means a parallel call may have moved the round count. An aborted turn delivered
   // no review — counting it would burn the phase cap and make later rails believe
@@ -903,8 +896,8 @@ export interface TerminalInput {
 }
 
 /** The reconnect-orphan refusal copy — branch on whether a resumable session exists. */
-function orphanRefusalText(role: WorkerRole, state: RunState): string {
-  return state.workerSessions[role]
+function orphanRefusalText(role: WorkerRole, state: RunState, phase: PhaseName): string {
+  return sessionRecordFor(state, role, phase)
     ? `The prior turn to the ${role} was orphaned when its session ended — its pending record is still on disk, and that session may still be resumable. Inspect or finish it with \`duet takeover ${role}\`, then re-send. Do not re-send into this role until the orphan is resolved: an immediate re-send would resume and race the orphaned worker on that same session.`
     : `The prior turn to the ${role} was orphaned before a session id was captured — there is no session to resume, and the old worker process may still be running and editing the repo. Dropping the orphan ABANDONS that in-flight turn: confirm it is done (or accept the risk), then run \`duet takeover ${role}\` to drop the orphan and re-send. Do not re-send until then.`;
 }
@@ -965,7 +958,7 @@ export const orphanRail: Rail<SendInput> = ({ role }, ctx) => {
     ctx.log(`[send_prompt] discarded an orphaned ${role} turn — reseeding with the newly supplied body`);
     return null;
   }
-  return refuse(orphanRefusalText(role, ctx.state));
+  return refuse(orphanRefusalText(role, ctx.state, ctx.phase));
 };
 
 /** The review-round backstop cap — runaway protection, refused at the cap. */
@@ -1190,7 +1183,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   const salvagedRoles = new Set<WorkerRole>();
   const resetWedgedSession = (role: WorkerRole): void => {
     const fresh = loadRunState(state.cwd, state.runId);
-    delete fresh.workerSessions[role];
+    for (const key of sessionSlotsToReset(fresh, role, phase)) delete fresh.sessions[key];
     recordContextEvent(fresh, { kind: 'session-reset', role, ...contextEventReading(fresh, role) });
     clearContextUsage(fresh, role);
     saveRunState(fresh);
@@ -1212,7 +1205,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     if (sessionPolicyFor(role) !== 'persistent') return undefined;
     // No session ⇒ nothing to compact — the prompt itself was over-window; the
     // plain overflow prescription (renderTurnResult) is the honest answer.
-    if (!state.workerSessions[role]) return undefined;
+    if (!sessionRecordFor(state, role, phase)) return undefined;
     if (salvagedRoles.has(role)) {
       // Overflowed again after a salvage this phase: the compact floor is too
       // high for this session — compacting harder would thrash, so reset.
@@ -1543,9 +1536,9 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       async (args) => {
         // Branch fixed once any worker prompt has been issued. workerDispatched
         // (the durable one-way flag) covers the async window where a turn was
-        // dispatched but its session id isn't yet persisted; workerSessions
+        // dispatched but its session id isn't yet persisted; a session record
         // covers the headless host (and a settled interactive turn).
-        if (state.workerDispatched || workerRolesFor(state).some((r) => state.workerSessions[r])) {
+        if (state.workerDispatched || Object.keys(state.sessions).length > 0) {
           return refuse(
             'A worker has already been prompted, so the run’s branch is fixed — creating one now would strand the work done so far. Continue on the current branch; if it is genuinely wrong, that is the human’s call: ask_human.',
           );
@@ -1737,7 +1730,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           for (const role of ROLES) {
             if (afterCollect.pendingTurns?.[role] && dispatcher.statusOf(role) === undefined) {
               // A discard-and-reseed role's orphan is "just resend," not "takeover".
-              const text = orphanRecoveryFor(role) === 'discard-and-reseed' ? orphanDiscardText(role) : orphanRefusalText(role, state);
+              const text = orphanRecoveryFor(role) === 'discard-and-reseed' ? orphanDiscardText(role) : orphanRefusalText(role, state, phase);
               content.push(block(text));
             }
           }

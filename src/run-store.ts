@@ -4,10 +4,10 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { Snapshot } from 'xstate';
 import type { VoiceBindings } from './config.ts';
+import type { Duty, StageName } from './phases.ts';
 import { WORKFLOWS, defaultPosture, defaultPreAuthorizedOf, gatePhasesOf, phaseSpec } from './phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
 import type { ContextUsage, WorkerRole } from './providers/types.ts';
-import { workerRolesFor } from './roles.ts';
 import { locateSessionTranscripts } from './sessions.ts';
 import type { ErrorClass, RetryState } from './worker-health.ts';
 
@@ -217,25 +217,19 @@ export interface RunState {
    */
   interactiveOrchestratorSessionId?: string;
   /**
-   * Each worker's live session, PROVIDER-QUALIFIED — the record is the single
-   * provider source for every session consumer (resume via sessionIdFor,
-   * takeover's resume-command choice, sessions.ts transcript location, the
-   * doctor/status probes), never re-derived from the base binding, which a
-   * post-handoff `build` override makes wrong for a switched role. A
-   * cross-provider resume is unrepresentable: sessionIdFor derives a fresh
-   * session on a provider mismatch. Legacy bare-string values are normalized
-   * to this shape once, at loadRunState (parse-don't-validate), so every
-   * downstream reader sees one shape.
+   * The worker sessions, keyed by SLOT — `"stage.duty"` for the duty voices
+   * (`"planning.architect"`, `"delivery.builder"`, …) plus the consultant's
+   * one checkpoint-scoped record (latest only; inspectable, never resumed).
+   * Each record is PROVIDER-QUALIFIED — the single provider source for every
+   * session consumer (resume via sessionIdFor, takeover, transcript location,
+   * the doctor/status probes), never re-derived from a binding. Cross-stage
+   * continuity is DERIVED, not persisted: a delivery duty with no own record
+   * walks its continuity edge to the planning record when the frozen bindings
+   * are session-compatible (sessionRecordFor) — so a degraded edge simply
+   * walks nothing, and the old sessionResets ledger has nothing left to
+   * explain (the per-duty keys keep every era's record visible).
    */
-  workerSessions: Partial<Record<WorkerRole, WorkerSessionRecord>>;
-  /**
-   * The session-reset ledger — one entry per provider switch at a session
-   * write (settleTurn: the settling turn's effective provider differs from the
-   * prior record's), the house ledger pattern (autoApprovals/autoRetries/
-   * contextEvents), so status and takeover can explain why a role's old
-   * session is gone. ADDITIVE: absent until the first reset.
-   */
-  sessionResets?: Array<{ role: WorkerRole; phase: PhaseName; fromProvider: 'claude' | 'codex'; toProvider: 'claude' | 'codex'; at: string }>;
+  sessions: Partial<Record<SessionKey, WorkerSessionRecord>>;
 
   /** Which phases have had their entry prompt sent (drives entry-vs-resume). */
   phaseStarted: Partial<Record<PhaseName, true>>;
@@ -386,11 +380,19 @@ export interface RunState {
   lastActivity?: string;
 }
 
-/** A worker's provider-qualified session — see `RunState.workerSessions`. */
+/** A worker's provider-qualified session — see `RunState.sessions`. */
 export interface WorkerSessionRecord {
   provider: 'claude' | 'codex';
   id: string;
 }
+
+/**
+ * A session slot in `RunState.sessions`: a duty's `"stage.duty"` key, or the
+ * consultant's one checkpoint-scoped slot. The template union admits foreign
+ * stage/duty pairings the vocabulary forbids — construction goes through
+ * `sessionKeyFor` (roles.ts), which only ever builds a duty's own key.
+ */
+export type SessionKey = `${StageName}.${Duty}` | 'consultant';
 
 /** The run's workflow, defaulting a missing/pre-feature value to `'full'`. */
 export function workflowOf(state: RunState): WorkflowName {
@@ -563,7 +565,7 @@ export function createRun(opts: {
     // is on for new runs while old/absent state.json stays off (host-runner reads
     // `state.retryInfra ?? 0`).
     retryInfra: opts.retryInfra ?? DEFAULT_RETRY_INFRA,
-    workerSessions: {},
+    sessions: {},
     phaseStarted: {},
     rounds: {},
     phaseSummaries: {},
@@ -598,11 +600,13 @@ export function loadRunState(cwd: string, runId: string): RunState {
  * boundary every reader trusts the one duty-keyed shape.
  */
 function normalizeRunState(state: RunState): RunState {
-  if ((state.bindings as { duties?: unknown } | undefined)?.duties === undefined) {
+  const legacy = state as RunState & { workerSessions?: unknown };
+  if ((state.bindings as { duties?: unknown } | undefined)?.duties === undefined || legacy.workerSessions !== undefined) {
     throw new Error(
       `run ${state.runId} predates the duty-keyed remodel (its state binds implementer/reviewer seats) — duet no longer loads it. Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .duet/runs/${state.runId}.`,
     );
   }
+  state.sessions ??= {};
   return state;
 }
 
@@ -833,17 +837,14 @@ export function purgeRun(state: RunState, home: string = homedir()): PurgeResult
   if (state.orchestratorSessionId) {
     sessions.push({ provider: state.bindings.orchestrator.provider, sessionId: state.orchestratorSessionId });
   }
-  // Each BOUND worker's LATEST tracked transcript, by exact session-id match —
-  // the consultant included when bound. Prior consultant checkpoint transcripts
-  // are intentionally left on disk: state tracks only the latest id and
-  // sessions.ts matches by exact id (never a directory sweep), so purge cannot
-  // reach them. (The run dir — including consultant.log — is removed below, so
-  // consultant.log is NOT a post-purge findability path; the surviving priors
-  // are the provider transcripts in ~/.claude / ~/.codex.)
-  for (const role of workerRolesFor(state)) {
-    // The record's provider, never the base binding's — a build-override
-    // switch means the latest transcript lives in the OTHER provider's tree.
-    const record = state.workerSessions[role];
+  // Every tracked session slot, by exact session-id match — each duty's record
+  // plus the consultant's latest checkpoint. The per-duty keys keep every
+  // era's transcript reachable (the old per-role shape tracked only the
+  // latest, losing the planning-era transcript after a provider switch).
+  // Prior consultant checkpoint transcripts are intentionally left on disk:
+  // the slot tracks only the latest id and sessions.ts matches by exact id
+  // (never a directory sweep), so purge cannot reach them.
+  for (const record of Object.values(state.sessions)) {
     if (record) sessions.push({ provider: record.provider, sessionId: record.id });
   }
 

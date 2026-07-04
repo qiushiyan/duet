@@ -475,22 +475,24 @@ describe('send_prompt', () => {
     expect.soft(joined).toContain('partial spec content'); // the resumable partial work
     expect.soft(joined).toContain('do not re-send the original prompt'); // continue, don't resend
     // The session is captured so the orchestrator can resume it with a continuation.
-    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer?.id).toBe('sess-mid');
+    expect.soft(loadRunState(projectDir, run.runId).sessions['planning.architect']?.id).toBe('sess-mid');
   });
 
-  test('a provider-switched build turn mints fresh, records the new provider, and ledgers the reset (T1)', async ({
+  test('a degraded continuity edge mints fresh at the build; the new record lands in the builder slot, the planning era stays visible (T1)', async ({
     projectDir,
     run,
   }) => {
-    // The criss-cross maker lane: planning ran on claude (the persisted
-    // record), the delivery builder is bound to codex. The send must NOT
-    // resume the claude session through codex; the settle must qualify the new
-    // record with the provider that actually ran and ledger the switch.
+    // The criss-cross maker lane: planning ran on claude (the architect slot),
+    // the delivery builder is bound to codex — the edge was degraded at
+    // freeze, so the send must NOT walk it into the claude session. The settle
+    // records the codex session under the builder's OWN slot; the architect's
+    // record stays untouched in its slot (per-duty keys keep every era
+    // visible — the reason the sessionResets ledger is gone).
     run.bindings = {
       ...run.bindings,
       duties: { ...run.bindings.duties, builder: { provider: 'codex' } },
     };
-    run.workerSessions = { implementer: { provider: 'claude', id: 'planning-era-sess' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'planning-era-sess' } };
     saveRunState(run);
     const implementer = new FakeWorker('codex', [{ sessionId: 'codex-build-sess', text: 'built' }]);
     const { call } = harness(run, { implementer, phase: 'implement' });
@@ -498,14 +500,8 @@ describe('send_prompt', () => {
     // The dispatch minted fresh — no cross-provider resume reached the worker.
     expect.soft(implementer.calls[0]?.sessionId).toBeUndefined();
     const persisted = loadRunState(projectDir, run.runId);
-    expect.soft(persisted.workerSessions.implementer).toEqual({ provider: 'codex', id: 'codex-build-sess' });
-    expect.soft(persisted.sessionResets).toHaveLength(1);
-    expect.soft(persisted.sessionResets?.[0]).toMatchObject({
-      role: 'implementer',
-      phase: 'implement',
-      fromProvider: 'claude',
-      toProvider: 'codex',
-    });
+    expect.soft(persisted.sessions['delivery.builder']).toEqual({ provider: 'codex', id: 'codex-build-sess' });
+    expect.soft(persisted.sessions['planning.architect']).toEqual({ provider: 'claude', id: 'planning-era-sess' });
   });
 
   test('a worker failure names the layer, prescribes retry-then-flag, and counts nothing', async ({ run }) => {
@@ -555,7 +551,7 @@ describe('send_prompt', () => {
 
     // The work is on disk and the session is resumable — settled like any turn.
     const persisted = loadRunState(projectDir, run.runId);
-    expect.soft(persisted.workerSessions.reviewer?.id).toBe('sess-b');
+    expect.soft(persisted.sessions['planning.analyst']?.id).toBe('sess-b');
     expect.soft(persisted.costs.claudeWorkersUsd).toBeGreaterThan(0);
     expect.soft(persisted.rounds.spec).toBe(1);
   });
@@ -574,7 +570,7 @@ describe('send_prompt', () => {
     expect.soft(joined).not.toContain('never saw your prompt'); // not the infra envelope
 
     const persisted = loadRunState(projectDir, run.runId);
-    expect.soft(persisted.workerSessions.reviewer?.id).toBe('sess-ab'); // the resumable handle is captured
+    expect.soft(persisted.sessions['planning.analyst']?.id).toBe('sess-ab'); // the resumable handle is captured
     expect.soft(persisted.rounds.spec ?? 0).toBe(0); // NO review round — the abort delivered none
     expect.soft(persisted.sentSnippets?.spec?.reviewer ?? []).toContain('review-spec'); // base snippet marked sent (a later full re-send must warn)
 
@@ -597,7 +593,7 @@ describe('send_prompt', () => {
 
     const persisted = loadRunState(projectDir, consultantRun.runId);
     expect.soft(persisted.acceptanceContractDraft).toBeUndefined(); // checkpoint NOT recorded
-    expect.soft(persisted.workerSessions.consultant?.id).toBe('sess-c'); // but the session is still captured (resumable)
+    expect.soft(persisted.sessions['consultant']?.id).toBe('sess-c'); // but the session is still captured (resumable)
   });
 
   test('S7: a /compact send carries the short 8-min cap; a normal send carries no override (blocking host)', async ({
@@ -623,7 +619,7 @@ describe('send_prompt', () => {
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
 
     // The bloated session is reset (not resumed) so the next send mints fresh.
-    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer).toBeUndefined();
+    expect.soft(loadRunState(projectDir, run.runId).sessions['planning.architect']).toBeUndefined();
     expect.soft(joined).toContain('recover-context'); // the recovery prescription, not the generic resume
     expect.soft(joined).not.toContain('Resume that session with a short continuation');
   });
@@ -642,7 +638,7 @@ describe('send_prompt', () => {
     await call('send_prompt', { role: 'implementer', tag: 'compact-for-impl', body: '/compact drop the journey' });
 
     const after = loadRunState(projectDir, run.runId);
-    expect.soft(after.workerSessions.implementer).toBeUndefined(); // the bloated session was reset
+    expect.soft(after.sessions['planning.architect']).toBeUndefined(); // the bloated session was reset
     expect.soft(after.sentSnippets?.spec?.implementer ?? []).not.toContain('compact-for-impl'); // …so nothing is marked sent to it
   });
 
@@ -793,7 +789,7 @@ describe('send_prompt', () => {
     // One run through the intervention kinds, asserting the durable ledger the
     // morning review reads (status's third while-you-were-away section).
     recordContextUsage(run, 'implementer', { usedTokens: 410_000, windowTokens: 1_000_000 });
-    run.workerSessions = { implementer: { provider: 'claude', id: 'sess-1' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-1' } };
     saveRunState(run);
     const implementer = new FakeWorker('claude', [
       { text: 'compacted', sessionId: 'sess-1' }, // an orchestrator-authored /compact
@@ -814,7 +810,7 @@ describe('send_prompt', () => {
     projectDir,
     run,
   }) => {
-    run.workerSessions = { implementer: { provider: 'claude', id: 'sess-wedged' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-wedged' } };
     saveRunState(run);
     const implementer = new FakeWorker('claude', [
       new Error('claude worker turn failed (success): Prompt is too long'),
@@ -833,7 +829,7 @@ describe('send_prompt', () => {
     projectDir,
     run,
   }) => {
-    run.workerSessions = { implementer: { provider: 'claude', id: 'sess-wedged' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-wedged' } };
     saveRunState(run);
     const implementer = new FakeWorker('claude', [
       new Error('claude worker turn failed (success): Prompt is too long'),
@@ -860,7 +856,7 @@ describe('send_prompt', () => {
     projectDir,
     run,
   }) => {
-    run.workerSessions = { implementer: { provider: 'claude', id: 'sess-wedged' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-wedged' } };
     saveRunState(run);
     const implementer = new FakeWorker('claude', [
       new Error('claude worker turn failed (success): Prompt is too long'),
@@ -873,14 +869,14 @@ describe('send_prompt', () => {
     expect.soft(joined).toContain('RESET the implementer');
     expect.soft(joined).toContain('recover-context');
     expect.soft(joined).not.toContain('re-send this same prompt'); // a fresh session must be re-anchored, not re-sent
-    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer).toBeUndefined();
+    expect.soft(loadRunState(projectDir, run.runId).sessions['planning.architect']).toBeUndefined();
   });
 
   test('the salvage ladder thrash guard: a second overflow after a salvage goes straight to reset, no compact loop', async ({
     projectDir,
     run,
   }) => {
-    run.workerSessions = { implementer: { provider: 'claude', id: 'sess-wedged' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-wedged' } };
     saveRunState(run);
     const implementer = new FakeWorker('claude', [
       new Error('claude worker turn failed (success): Prompt is too long'),
@@ -895,14 +891,14 @@ describe('send_prompt', () => {
     expect.soft(joined).toContain('again after an automatic salvage compaction');
     expect.soft(joined).toContain('recover-context');
     expect.soft(implementer.calls.length).toBe(3); // no second salvage /compact was dispatched
-    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer).toBeUndefined();
+    expect.soft(loadRunState(projectDir, run.runId).sessions['planning.architect']).toBeUndefined();
   });
 
   test('the salvage ladder: a salvage /compact cut at its cap rides the existing reset and names it', async ({
     projectDir,
     run,
   }) => {
-    run.workerSessions = { implementer: { provider: 'claude', id: 'sess-wedged' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-wedged' } };
     saveRunState(run);
     const implementer = new FakeWorker('claude', [
       new Error('claude worker turn failed (success): Prompt is too long'),
@@ -914,7 +910,7 @@ describe('send_prompt', () => {
 
     expect.soft(joined).toContain('cut at its cap');
     expect.soft(joined).toContain('recover-context');
-    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer).toBeUndefined(); // settle's compact-abort reset
+    expect.soft(loadRunState(projectDir, run.runId).sessions['planning.architect']).toBeUndefined(); // settle's compact-abort reset
   });
 
   test('an interrupted turn AT the context ceiling prescribes compact-first, not a short continuation', async ({
@@ -969,7 +965,7 @@ describe('send_prompt', () => {
     await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact drop the journey' });
 
     const after = loadRunState(projectDir, run.runId);
-    expect.soft(after.workerSessions.implementer).toBeUndefined(); // the reset (existing behavior)
+    expect.soft(after.sessions['planning.architect']).toBeUndefined(); // the reset (existing behavior)
     expect.soft(after.contextUsage?.implementer).toBeUndefined(); // the fresh session starts near-empty
   });
 
@@ -983,7 +979,7 @@ describe('send_prompt', () => {
     // The bug this pins: render claimed "duet has RESET the implementer" for ANY
     // aborted compact while settle reset nobody but the implementer — the two sites
     // disagreeing. Both now read the one predicate, so they move together.
-    run.workerSessions = { implementer: { provider: 'claude', id: 'impl-keep' }, reviewer: { provider: 'codex', id: 'rev-old' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-keep' }, 'planning.analyst': { provider: 'codex', id: 'rev-old' } };
     saveRunState(run);
     const reviewer = new FakeWorker('claude', [{ aborted: true, sessionId: 'rev-compact' }]);
     const { call } = harness(run, { reviewer });
@@ -991,8 +987,8 @@ describe('send_prompt', () => {
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
 
     const after = loadRunState(projectDir, run.runId);
-    expect.soft(after.workerSessions.reviewer).toBeUndefined(); // the persistent reviewer was reset
-    expect.soft(after.workerSessions.implementer?.id).toBe('impl-keep'); // the OTHER role untouched
+    expect.soft(after.sessions['planning.analyst']).toBeUndefined(); // the persistent reviewer was reset
+    expect.soft(after.sessions['planning.architect']?.id).toBe('impl-keep'); // the OTHER role untouched
     expect.soft(joined).toContain('RESET the reviewer'); // the copy names the ACTUAL role…
     expect.soft(joined).not.toContain('RESET the implementer'); // …never the old hard-coded implementer
     expect.soft(joined).toContain('recover-context'); // the same recovery prescription
@@ -1004,14 +1000,14 @@ describe('send_prompt', () => {
   }) => {
     // A never-accepted /compact (an infra Error) — the old session never saw the
     // compact and is still the one to compact, so it must NOT be reset.
-    run.workerSessions = { implementer: { provider: 'claude', id: 'sess-prior' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-prior' } };
     saveRunState(run);
     const implementer = new FakeWorker('claude', [new Error('spawn claude ENOENT')]);
     const { call } = harness(run, { implementer });
     const result = await call('send_prompt', { role: 'implementer', tag: 'custom', body: '/compact drop the journey' });
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
 
-    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer?.id).toBe('sess-prior'); // unchanged
+    expect.soft(loadRunState(projectDir, run.runId).sessions['planning.architect']?.id).toBe('sess-prior'); // unchanged
     expect.soft(joined).toContain('Retry this same send_prompt'); // the infra retry-verbatim envelope
     expect.soft(joined).not.toContain('recover-context');
   });
@@ -1027,7 +1023,7 @@ describe('send_prompt', () => {
     const result = await call('send_prompt', { role: 'implementer', tag: 'compact-for-impl', body: 'build the next slice' });
     const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
 
-    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer?.id).toBe('sess-x'); // resumable, not reset
+    expect.soft(loadRunState(projectDir, run.runId).sessions['planning.architect']?.id).toBe('sess-x'); // resumable, not reset
     expect.soft(joined).toContain('Resume that session with a short continuation'); // the generic resume note
     expect.soft(joined).not.toContain('recover-context');
   });
@@ -1046,7 +1042,7 @@ describe('send_prompt', () => {
 
     // No settlement: no session, no round, no cost.
     const persisted = loadRunState(projectDir, run.runId);
-    expect.soft(persisted.workerSessions.reviewer).toBeUndefined();
+    expect.soft(persisted.sessions['planning.analyst']).toBeUndefined();
     expect.soft(persisted.rounds.spec ?? 0).toBe(0);
     expect.soft(persisted.costs.claudeWorkersUsd).toBe(0);
   });
@@ -1094,8 +1090,8 @@ describe('send_prompt fan-out (role array — the framing analysis pass)', () =>
     // Both turns settled (each session persisted) and each tag registered — the
     // template-economy bookkeeping is per role.
     const persisted = loadRunState(projectDir, run.runId);
-    expect.soft(persisted.workerSessions.implementer).toBeDefined();
-    expect.soft(persisted.workerSessions.reviewer).toBeDefined();
+    expect.soft(persisted.sessions['planning.architect']).toBeDefined();
+    expect.soft(persisted.sessions['planning.analyst']).toBeDefined();
     expect.soft(persisted.sentSnippets?.frame?.implementer).toContain('think-holistic');
     expect.soft(persisted.sentSnippets?.frame?.reviewer).toContain('think-holistic');
   });
@@ -1473,7 +1469,7 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
       vi.useRealTimers();
     });
     const home = join(projectDir, 'home');
-    run.workerSessions = { implementer: { provider: 'claude', id: 'impl-1' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-1' } };
     saveRunState(run);
 
     let finish!: (t: { text: string; sessionId: string }) => void;
@@ -1499,7 +1495,7 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
       vi.useRealTimers();
     });
     const home = join(projectDir, 'home');
-    run.workerSessions = { implementer: { provider: 'claude', id: 'impl-1' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-1' } };
     saveRunState(run);
     const worker = new DeferredWorker('claude'); // stays in flight so the 5-min heartbeat fires
     const { call, dispatcher } = harness(run, { implementer: worker, home, async: true });
@@ -1608,7 +1604,7 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
     onTestFinished(() => {
       vi.useRealTimers();
     });
-    expect.soft(run.workerSessions.implementer).toBeUndefined(); // genuinely a first turn
+    expect.soft(run.sessions['planning.architect']).toBeUndefined(); // genuinely a first turn
     const { lines, finish, pending } = await activityLines(
       run,
       projectDir,
@@ -1716,7 +1712,7 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
     const base = Date.parse('2026-06-20T12:00:00.000Z');
     vi.setSystemTime(base);
     const home = join(projectDir, 'home');
-    consultantRun.workerSessions = { consultant: { provider: 'claude', id: 'stale-prior' } };
+    consultantRun.sessions = { consultant: { provider: 'claude', id: 'stale-prior' } };
     saveRunState(consultantRun);
     // The stale session has an OLD action; the live one has the current action.
     plantClaudeTranscript(home, 'stale-prior', jsonl(claudeToolUse([{ name: 'Read', input: { file_path: '/repo/old.ts' }, id: 'toolu_old' }], { ts: new Date(base).toISOString() })));
@@ -1926,7 +1922,7 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     // fresh — ephemerality by construction, not by forgetting to track it.
     expect.soft(consultant.calls[0]?.sessionId).toBeUndefined();
     expect.soft(consultant.calls[1]?.sessionId).toBeUndefined();
-    expect.soft(consultantRun.workerSessions.consultant).toBeDefined();
+    expect.soft(consultantRun.sessions['consultant']).toBeDefined();
   });
 
   test('ephemerality (interactive host): the dispatcher launches each consultant turn fresh', async ({ consultantRun }) => {
@@ -1956,7 +1952,7 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     await call('send_prompt', { role: 'consultant', tag: 'custom', body: 'audit 2' });
 
     const persisted = loadRunState(projectDir, consultantRun.runId);
-    expect.soft(persisted.workerSessions.consultant?.id).toBe('session-2'); // the latest, not the first
+    expect.soft(persisted.sessions['consultant']?.id).toBe('session-2'); // the latest, not the first
     // The find-on-disk mechanism: each checkpoint's session id is named in the
     // consultant's own voice log (the Voice widening routes it to consultant.log).
     const log = readFileSync(join(runDirOf(projectDir, consultantRun.runId), 'consultant.log'), 'utf8');
@@ -3110,7 +3106,7 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     const settled = loadRunState(projectDir, run.runId);
     expect.soft(settled.rounds.spec).toBe(1);
     expect.soft(settled.sentSnippets?.spec?.reviewer).toEqual(['review-spec']);
-    expect.soft(settled.workerSessions.reviewer?.id).toBe('rev-1');
+    expect.soft(settled.sessions['planning.analyst']?.id).toBe('rev-1');
 
     // Collect delivers the worker's text and clears the pending record.
     const collected = await call('check_turns');
@@ -3122,7 +3118,7 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     projectDir,
     run,
   }) => {
-    run.workerSessions = { implementer: { provider: 'claude', id: 'sess-prior' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-prior' } };
     saveRunState(run);
     const implementer = new DeferredWorker('claude');
     const { call } = harness(run, { implementer, async: true });
@@ -3135,7 +3131,7 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     // lands at settle, and collect renders the recover-context prescription.
     implementer.resolve({ aborted: true, sessionId: 'sess-compact' });
     await flush();
-    expect.soft(loadRunState(projectDir, run.runId).workerSessions.implementer).toBeUndefined(); // reset at settle
+    expect.soft(loadRunState(projectDir, run.runId).sessions['planning.architect']).toBeUndefined(); // reset at settle
 
     const collected = await call('check_turns');
     expect.soft(allText(collected)).toContain('recover-context');
@@ -3208,7 +3204,7 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     const disk = loadRunState(projectDir, run.runId);
     expect.soft(disk.costs.claudeWorkersUsd).toBe(1.25);
     expect.soft(disk.costs.codexTokens).toEqual({ input: 1000, output: 50 });
-    expect.soft(disk.workerSessions).toMatchObject({ implementer: { provider: 'claude', id: 'impl-1' }, reviewer: { provider: 'codex', id: 'rev-1' } });
+    expect.soft(disk.sessions).toMatchObject({ 'planning.architect': { provider: 'claude', id: 'impl-1' }, 'planning.analyst': { provider: 'codex', id: 'rev-1' } });
   });
 
   test('check_turns delivers the per-turn footer too (F5 covers the async host)', async ({ run }) => {
@@ -3330,7 +3326,7 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     // no round, no session id, and the record never flipped off `running`.
     const disk = loadRunState(projectDir, run.runId);
     expect.soft(disk.rounds.spec ?? 0).toBe(0);
-    expect.soft(disk.workerSessions.reviewer).toBeUndefined();
+    expect.soft(disk.sessions['planning.analyst']).toBeUndefined();
     expect.soft(disk.pendingTurns?.reviewer?.status).toBe('running');
   });
 
@@ -3368,7 +3364,7 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
       // to orphan-handle, so the settle writes nothing here either.
       const disk = loadRunState(projectDir, run.runId);
       expect.soft(disk.rounds.spec ?? 0).toBe(0);
-      expect.soft(disk.workerSessions.reviewer).toBeUndefined();
+      expect.soft(disk.sessions['planning.analyst']).toBeUndefined();
       expect.soft(disk.pendingTurns?.reviewer?.status).toBe('running'); // disk untouched
       // …but on a LIVE server whose check merely faulted, the in-memory record is
       // NOT stranded `running` — it flipped failed, so check_turns can drain it.
@@ -3380,7 +3376,7 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
       // The drain cleared the pending record but committed NO settle bookkeeping.
       const after = loadRunState(projectDir, run.runId);
       expect.soft(after.rounds.spec ?? 0).toBe(0);
-      expect.soft(after.workerSessions.reviewer).toBeUndefined();
+      expect.soft(after.sessions['planning.analyst']).toBeUndefined();
       expect.soft(after.pendingTurns?.reviewer).toBeUndefined();
     } finally {
       process.off('unhandledRejection', onRejection);
@@ -3420,7 +3416,7 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
   test('the orphan refusal is session-aware: a SESSION orphan points at takeover and names the resume race', async ({
     run,
   }) => {
-    run.workerSessions = { reviewer: { provider: 'codex', id: 'rev-prev' } }; // a session was captured before the crash
+    run.sessions = { 'planning.analyst': { provider: 'codex', id: 'rev-prev' } }; // a session was captured before the crash
     run.pendingTurns = { reviewer: { tag: 'review-spec', startedAt: 't', status: 'running' } };
     saveRunState(run);
     const { call } = harness(run, { async: true });

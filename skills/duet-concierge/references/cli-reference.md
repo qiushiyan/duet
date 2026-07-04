@@ -57,7 +57,7 @@ Top-level fields:
 | `rounds` | Review rounds per phase against their backstop caps: `{ phase, used, cap }`. |
 | `costs` | `{ orchestratorUsd, claudeWorkersUsd, codexTokens: { input, output } }`. |
 | `context` | Context-window fill per voice, captured at turn boundaries: `{ role, usedTokens, windowTokens, percent, at }`. Surface high percentages when the human asks how the run is doing — a worker near its window is worth mentioning. |
-| `sessions` | Each voice's transcript identity: `{ role, provider, sessionId }`, known sessions only (a role is omitted until its first turn completes). The cheap state-only map; the resolved path and the health verdicts live in `duet doctor`. |
+| `sessions` | Each session slot's transcript identity: `{ key, provider, sessionId }` — `key` is `orchestrator`, a duty's `stage.duty` (e.g. `planning.architect`, `delivery.builder`), or `consultant`; known sessions only (a slot is omitted until its first turn settles). The cheap state-only map; the resolved path and the health verdicts live in `duet doctor`. |
 | `pendingSteers` | Staged steers not yet delivered: `{ stagedAt, stagedDuring?, text }`. |
 | `snippetProposals` | Queued snippet-library edits awaiting the human's end-of-run review: `{ snippetKey, rationale, at }`. |
 | `lastActivity` | The orchestrator's most recent recorded action. |

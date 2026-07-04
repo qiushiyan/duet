@@ -1,12 +1,11 @@
-import { effectiveBindingFor } from './config.ts';
-import { phaseSpec } from './phases.ts';
-import type { PhaseName, ReviewPosture } from './phases.ts';
+import { dutyBindingFor, effectiveBindingFor, sessionCompatible } from './config.ts';
+import { checkerDutyOf, continuityEdgeFor, makerDutyOf, phaseSpec, stageOf, stageOfDuty } from './phases.ts';
+import type { Duty, PhaseName, ReviewPosture, WorkflowName } from './phases.ts';
 import type { WorkerRole } from './providers/types.ts';
-// Type-only on the run-store imports, so no runtime cycle closes: run-store.ts
-// value-imports this module (workerRolesFor), and the harness value-imports
-// both. The value edges out of here are phases.ts and config.ts, neither of
-// which imports this module. The Voice edge is erased at build.
-import type { RunState, Voice } from './run-store.ts';
+// Type-only on the run-store imports, so no runtime cycle closes: the value
+// edges out of here are phases.ts and config.ts, neither of which imports
+// this module. The RunState/Voice/SessionKey edges are erased at build.
+import type { RunState, SessionKey, Voice, WorkerSessionRecord } from './run-store.ts';
 
 /**
  * Run-state role POLICY — the consultant's three asymmetries expressed once, as
@@ -46,25 +45,85 @@ const POLICY: Record<WorkerRole, RolePolicy> = {
 };
 
 /**
+ * BRIDGE (dissolves with the remodel's slice 2c): the duty a seat name
+ * resolves to at a phase — the implementer is the phase's stage's maker, the
+ * reviewer its checker. Every seat-addressed surface routes through this
+ * until send_prompt itself takes duties.
+ */
+export function dutyForRole(workflow: WorkflowName, phase: PhaseName, role: 'implementer' | 'reviewer'): Duty {
+  const stage = stageOf(workflow, phase);
+  return role === 'implementer' ? makerDutyOf(workflow, stage) : checkerDutyOf(workflow, stage);
+}
+
+/** A duty's session slot in `RunState.sessions` — the only SessionKey constructor. */
+export function sessionKeyFor(duty: Duty): SessionKey {
+  return `${stageOfDuty(duty)}.${duty}`;
+}
+
+/**
+ * The planning duty whose session `duty` LIVE-continues, or undefined — the
+ * registry edge (continuityEdgeFor) filtered by the frozen bindings'
+ * session-compatibility. A provider- or transport-crossing edge was degraded
+ * at manifest freeze (echoed there); here it simply walks nothing, so the
+ * decision has exactly one derivation and no persisted copy.
+ */
+export function liveContinuityEdgeFor(state: RunState, duty: Duty): Duty | undefined {
+  const from = continuityEdgeFor(state.workflow ?? 'full', duty);
+  if (!from) return undefined;
+  return sessionCompatible(dutyBindingFor(state.bindings, from), dutyBindingFor(state.bindings, duty)) ? from : undefined;
+}
+
+/**
+ * The session record a role's next turn at `phase` would continue — its own
+ * duty's slot first, else the live continuity edge's planning slot, else
+ * none. The consultant answers its one checkpoint-scoped slot (inspection
+ * only; resume policy is sessionIdFor's job). The ONE record resolver every
+ * session consumer reads (resume, takeover, orphan copy, doctor, stats), so
+ * "which session is this voice's" cannot drift per surface.
+ */
+export function sessionRecordFor(state: RunState, role: WorkerRole, phase: PhaseName): WorkerSessionRecord | undefined {
+  if (role === 'consultant') return state.sessions['consultant'];
+  const duty = dutyForRole(state.workflow ?? 'full', phase, role);
+  const own = state.sessions[sessionKeyFor(duty)];
+  if (own) return own;
+  const from = liveContinuityEdgeFor(state, duty);
+  return from ? state.sessions[sessionKeyFor(from)] : undefined;
+}
+
+/**
+ * The session SLOTS a reset for `role` at `phase` must clear — the duty's own
+ * slot plus, while the duty still rides its continuity edge, the planning
+ * slot that edge walks to. Clearing only the own slot would leave the next
+ * send walking the edge straight back into the very session the reset meant
+ * to drop (the wedged-past-its-ceiling case).
+ */
+export function sessionSlotsToReset(state: RunState, role: WorkerRole, phase: PhaseName): SessionKey[] {
+  if (role === 'consultant') return ['consultant'];
+  const duty = dutyForRole(state.workflow ?? 'full', phase, role);
+  const from = liveContinuityEdgeFor(state, duty);
+  return from ? [sessionKeyFor(duty), sessionKeyFor(from)] : [sessionKeyFor(duty)];
+}
+
+/**
  * The resume session id for a role's next turn at `phase`, or `undefined` when
- * the next send must mint a fresh session. Two derivations, no events (T1):
+ * the next send must mint a fresh session. Derivations, no events (T1):
  *
  * - An ephemeral role never resumes — the whole of "fresh session per
  *   checkpoint".
- * - A persistent role resumes its record ONLY when the record's provider
- *   matches the phase's effective binding's provider. A mismatch (the
- *   post-handoff `build` override switched the role's provider) derives
- *   `undefined`, so a cross-provider resume is unrepresentable rather than
- *   guarded: no hook, no crash window — the answer re-derives on any host,
- *   even for a run resumed mid-arc by an older flow.
+ * - A persistent role resumes its duty's own record, or the planning record
+ *   its live continuity edge carries forward (a degraded edge walks nothing —
+ *   the duty starts fresh, exactly what the freeze echoed).
+ * - The record's provider must match the duty's frozen binding — state.json
+ *   is a hint, so a hand-edited record naming the wrong provider derives
+ *   fresh rather than resuming across CLIs.
  *
  * The two resume sites (the blocking turn in tools.ts, the dispatcher's
- * background launch) read this instead of `state.workerSessions[role]`
- * directly, so both rules hold on BOTH hosts.
+ * background launch) read this instead of `state.sessions` directly, so the
+ * rules hold on BOTH hosts.
  */
 export function sessionIdFor(state: RunState, role: WorkerRole, phase: PhaseName): string | undefined {
   if (POLICY[role].session === 'ephemeral') return undefined;
-  const record = state.workerSessions[role];
+  const record = sessionRecordFor(state, role, phase);
   if (!record) return undefined;
   const effective = effectiveBindingFor(state.bindings, role, state.workflow ?? 'full', phase);
   return record.provider === effective.provider ? record.id : undefined;

@@ -10,7 +10,7 @@ import { continuePlanner } from './continue-planner.ts';
 import type { ContinueEventType, RestoredFacts } from './continue-planner.ts';
 import { dutyBindingFor, formatBinding, parseBindAddress, resolveRunConfig } from './config.ts';
 import type { BindAddress } from './config.ts';
-import { sessionPolicyFor, voicesFor } from './roles.ts';
+import { sessionPolicyFor, sessionRecordFor, voicesFor } from './roles.ts';
 import { DEFAULT_FRAMING_FILE, composeInEditor, parseGatesAt, resolveHumanText, resolveRunInputs } from './framing.ts';
 import {
   aliveDriverPid,
@@ -50,6 +50,7 @@ import {
   workflowOf,
 } from './run-store.ts';
 import type { RunState, Voice } from './run-store.ts';
+import type { PhaseName } from './phases.ts';
 import { listPendingSteers, stageSteer } from './steer-store.ts';
 
 /**
@@ -229,18 +230,19 @@ export type TakeoverPlan =
   | { kind: 'clear-orphan'; ephemeral: boolean }
   | { kind: 'no-session' };
 
-export function takeoverPlan(state: RunState, role: Voice): TakeoverPlan {
+export function takeoverPlan(state: RunState, role: Voice, phase: PhaseName): TakeoverPlan {
   const ephemeral = role !== 'orchestrator' && sessionPolicyFor(role) === 'ephemeral';
   // A worker's provider comes from its SESSION RECORD, never the binding — a
   // stage-boundary provider switch makes any single binding wrong for a
   // switched voice, and a wrong provider here would hand the human the wrong
-  // resume CLI.
+  // resume CLI. The record is point-in-time: the duty this role names at the
+  // run's CURRENT phase, own slot or its live continuity edge's.
   const session =
     role === 'orchestrator'
       ? state.orchestratorSessionId
         ? { provider: state.bindings.orchestrator.provider, id: state.orchestratorSessionId }
         : undefined
-      : state.workerSessions[role];
+      : sessionRecordFor(state, role, phase);
   if (!session) {
     if (role !== 'orchestrator' && state.pendingTurns?.[role]) return { kind: 'clear-orphan', ephemeral };
     return { kind: 'no-session' };
@@ -974,7 +976,8 @@ program
       );
     }
 
-    const plan = takeoverPlan(state, role);
+    const position = probeRunPosition(state);
+    const plan = takeoverPlan(state, role, 'phase' in position ? position.phase : entryOf(workflowOf(state)).firstPhase);
     if (plan.kind === 'no-session') fail(`the ${role} has no session yet in run ${state.runId}`);
 
     if (plan.kind === 'clear-orphan') {

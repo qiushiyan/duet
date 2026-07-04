@@ -1,8 +1,8 @@
 import { allBindings, effectiveBindingFor } from './config.ts';
 import { entryOf } from './phases.ts';
 import { aliveDriverPid, probeRunPosition } from './harness/lifecycle.ts';
-import { voicesFor } from './roles.ts';
-import { resolveSessions, readRoleTranscriptTail } from './sessions.ts';
+import { sessionRecordFor, voicesFor } from './roles.ts';
+import { readTranscriptTailForSession } from './sessions.ts';
 import { workflowOf } from './run-store.ts';
 import type { RunState, Voice } from './run-store.ts';
 import type { PhaseName } from './phases.ts';
@@ -108,11 +108,16 @@ function inFlightFor(
 }
 
 function roleRow(role: Voice, state: RunState, opts: { now: number; home?: string; driverAlive: boolean; phaseMidFlight: boolean; phase: PhaseName }): RoleHealthRow {
-  // The phase-effective binding at the run's current position — the fallback
-  // provider before a voice's first session record exists (a known session's
-  // record stays the provider source below, via resolveSessions).
-  const provider = effectiveBindingFor(state.bindings, role, workflowOf(state), opts.phase).provider;
-  const known = resolveSessions(state).find((s) => s.role === role);
+  // The session a voice's next turn would continue at the run's current
+  // position — the duty's own record or its live continuity edge's
+  // (sessionRecordFor); the phase-effective binding is only the fallback
+  // provider before a first record exists.
+  const known = role === 'orchestrator'
+    ? state.orchestratorSessionId
+      ? { provider: state.bindings.orchestrator.provider, id: state.orchestratorSessionId }
+      : undefined
+    : sessionRecordFor(state, role, opts.phase);
+  const provider = known?.provider ?? effectiveBindingFor(state.bindings, role, workflowOf(state), opts.phase).provider;
   const { inFlightSince, retriesSince } = inFlightFor(role, state, opts.now, opts.driverAlive, opts.phaseMidFlight);
   const inFlight = inFlightSince !== undefined;
 
@@ -124,9 +129,9 @@ function roleRow(role: Voice, state: RunState, opts: { now: number; home?: strin
   }
 
   // Fail-soft: a disappearing transcript degrades to an empty read, never throws.
-  let tail: ReturnType<typeof readRoleTranscriptTail>;
+  let tail: ReturnType<typeof readTranscriptTailForSession>;
   try {
-    tail = readRoleTranscriptTail(state, role, opts.home !== undefined ? { home: opts.home } : {});
+    tail = readTranscriptTailForSession(known.provider, known.id, opts.home !== undefined ? { home: opts.home } : {});
   } catch {
     tail = undefined;
   }

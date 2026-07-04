@@ -17,7 +17,7 @@ import {
 } from '../run-store.ts';
 import type { HumanMessage, RunState } from '../run-store.ts';
 import { listPendingSteers, markSteersDelivered } from '../steer-store.ts';
-import { readRoleTranscriptTail } from '../sessions.ts';
+import { readTranscriptTailForSession } from '../sessions.ts';
 import { classifyError, currentTerminalError } from '../worker-health.ts';
 import type { ErrorClass } from '../worker-health.ts';
 import { markerToEvent } from './phase-events.ts';
@@ -206,7 +206,9 @@ function classifyInfraError(state: RunState, detail: string): ErrorClass {
   const fromThrow = classifyError(detail);
   if (fromThrow !== 'unknown') return fromThrow;
   try {
-    const tail = readRoleTranscriptTail(state, 'orchestrator');
+    const tail = state.orchestratorSessionId
+      ? readTranscriptTailForSession(state.bindings.orchestrator.provider, state.orchestratorSessionId)
+      : undefined;
     // Only a LIVE terminal error may name an opaque throw — recent AND not
     // superseded by later activity, the same rule the `crashed` verdict uses,
     // shared via currentTerminalError so a recovered error never hijacks the

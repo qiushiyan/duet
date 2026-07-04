@@ -98,7 +98,7 @@ export function parityRun(projectDir: string, opts: ParityRunOpts = {}): RunStat
     }
   }
   if (opts.warmSessions) {
-    state.workerSessions = { implementer: { provider: 'claude', id: 'parity-impl-session' }, reviewer: { provider: 'codex', id: 'parity-rev-session' } };
+    state.sessions = { 'planning.architect': { provider: 'claude', id: 'parity-impl-session' }, 'planning.analyst': { provider: 'codex', id: 'parity-rev-session' } };
   }
   return state;
 }

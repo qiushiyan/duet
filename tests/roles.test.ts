@@ -79,7 +79,7 @@ describe('role policy helpers', () => {
   });
 
   test('writeAuthorityFor on relay: the fixer writes action-scoped, never phase-blanket', ({ projectDir }) => {
-    const relay = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), workflow: 'relay', framing: 'x' });
+    const relay = createRun({ cwd: projectDir, bindings: defaultBindingsFor('relay'), workflow: 'relay', framing: 'x' });
     // The fixer's grant: review-and-fix, and the reviewer-owned tails.
     expect.soft(writeAuthorityFor(relay, 'implement', 'reviewer', 'review-and-fix')).toBe(true);
     expect.soft(writeAuthorityFor(relay, 'implement', 'reviewer', 'reconcile-docs')).toBe(true); // buildTailOwner
@@ -100,31 +100,57 @@ describe('role policy helpers', () => {
     expect.soft(countsReviewRound('implementer', 'review-and-fix')).toBe(false);
   });
 
-  test('sessionIdFor: persistent roles resume; the ephemeral consultant never does', ({ run }) => {
-    run.workerSessions = { implementer: { provider: 'claude', id: 'i-1' }, reviewer: { provider: 'codex', id: 'r-1' }, consultant: { provider: 'claude', id: 'c-1' } };
-    expect.soft(sessionIdFor(run, 'implementer', 'implement')).toBe('i-1');
-    expect.soft(sessionIdFor(run, 'reviewer', 'implement')).toBe('r-1');
-    expect.soft(sessionIdFor(run, 'consultant', 'implement')).toBeUndefined(); // ephemeral, despite a tracked id
+  test('sessionIdFor: duty slots resume within their stage; the ephemeral consultant never does', ({ run }) => {
+    run.sessions = {
+      'planning.architect': { provider: 'claude', id: 'i-1' },
+      'planning.analyst': { provider: 'codex', id: 'r-1' },
+      consultant: { provider: 'claude', id: 'c-1' },
+    };
+    expect.soft(sessionIdFor(run, 'implementer', 'spec')).toBe('i-1');
+    expect.soft(sessionIdFor(run, 'reviewer', 'plan')).toBe('r-1');
+    expect.soft(sessionIdFor(run, 'consultant', 'plan')).toBeUndefined(); // ephemeral, despite a tracked slot
   });
 
-  test('sessionIdFor: a provider mismatch against the phase-effective binding derives a FRESH session (T1)', ({
-    run,
-  }) => {
-    // The maker lane plans on claude (architect) and builds on codex
-    // (builder) — its planning-era claude session must never be resumed
-    // through the codex CLI. The reset is DERIVED at the read, not evented:
-    // no crash window, idempotent on any host.
+  test('sessionIdFor: a delivery duty with a LIVE continuity edge resumes the planning session (full)', ({ run }) => {
+    // Before the builder's first delivery settle, its slot is empty — the
+    // builder←architect edge carries the planning session across the boundary
+    // (the boundary compact rides that resumed session). Once the builder's
+    // own record exists, it wins.
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'planning-era' } };
+    expect.soft(sessionIdFor(run, 'implementer', 'implement')).toBe('planning-era'); // edge walk
+    expect.soft(sessionIdFor(run, 'reviewer', 'implement')).toBeUndefined(); // analyst never settled — nothing to carry
+    run.sessions['delivery.builder'] = { provider: 'claude', id: 'build-era' };
+    expect.soft(sessionIdFor(run, 'implementer', 'implement')).toBe('build-era'); // own slot wins
+    expect.soft(sessionIdFor(run, 'implementer', 'plan')).toBe('planning-era'); // planning still resumes its own
+  });
+
+  test('sessionIdFor: a DEGRADED edge (provider-crossing bindings) walks nothing — the build mints fresh (T1)', ({ run }) => {
+    // The maker lane plans on claude (architect) and builds on codex (builder):
+    // the edge was degraded at manifest freeze, so the planning-era claude
+    // session must never be resumed through the codex CLI. Derived at the
+    // read, not evented: no crash window, idempotent on any host.
     run.bindings = {
       ...run.bindings,
       duties: { ...run.bindings.duties, builder: { provider: 'codex' } },
     };
-    run.workerSessions = { implementer: { provider: 'claude', id: 'planning-era' } };
-    expect.soft(sessionIdFor(run, 'implementer', 'plan')).toBe('planning-era'); // pre-handoff: same provider, resume
-    expect.soft(sessionIdFor(run, 'implementer', 'implement')).toBeUndefined(); // post-handoff: codex now — mint fresh
-    // Once the build's codex session settles, it resumes normally post-handoff.
-    run.workerSessions = { implementer: { provider: 'codex', id: 'build-era' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'planning-era' } };
+    expect.soft(sessionIdFor(run, 'implementer', 'plan')).toBe('planning-era'); // planning: own slot, same provider
+    expect.soft(sessionIdFor(run, 'implementer', 'implement')).toBeUndefined(); // delivery: degraded edge — mint fresh
+    // Once the build's codex session settles under its own slot, it resumes.
+    run.sessions['delivery.builder'] = { provider: 'codex', id: 'build-era' };
     expect.soft(sessionIdFor(run, 'implementer', 'implement')).toBe('build-era');
-    expect.soft(sessionIdFor(run, 'implementer', 'plan')).toBeUndefined(); // and never leaks back into a claude phase
+  });
+
+  test('sessionIdFor: relay declares no edges — the whole delivery is born fresh', ({ run }) => {
+    run.workflow = 'relay';
+    run.bindings = defaultBindingsFor('relay');
+    run.sessions = {
+      'planning.architect': { provider: 'claude', id: 'arch-1' },
+      'planning.analyst': { provider: 'codex', id: 'ana-1' },
+    };
+    expect.soft(sessionIdFor(run, 'implementer', 'implement')).toBeUndefined(); // builder: fresh by design
+    expect.soft(sessionIdFor(run, 'reviewer', 'implement')).toBeUndefined(); // judge: fresh by design
+    expect.soft(sessionIdFor(run, 'implementer', 'design')).toBe('arch-1'); // planning untouched
   });
 
   test('orphanRecoveryFor: takeover for the persistent roles, discard-and-reseed for the consultant', () => {

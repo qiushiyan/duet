@@ -2,10 +2,11 @@ import { closeSync, existsSync, openSync, readSync, readdirSync, statSync } from
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Provider } from './config.ts';
-import { workerRolesFor } from './roles.ts';
+import { stagesOf } from './phases.ts';
+import { sessionKeyFor } from './roles.ts';
 // Type-only — run-store.ts value-imports THIS module, so a value import back
-// would close a runtime cycle. RunState/Voice are erased at build.
-import type { RunState, Voice } from './run-store.ts';
+// would close a runtime cycle. RunState/SessionKey are erased at build.
+import type { RunState, SessionKey } from './run-store.ts';
 
 /**
  * Locating the providers' standard-location session transcripts for a run.
@@ -62,65 +63,47 @@ export function locateSessionTranscripts(provider: Provider, sessionId: string, 
 }
 
 export interface SessionRef {
-  role: Voice;
+  /** The persisted slot: 'orchestrator', a duty's "stage.duty", or 'consultant'. */
+  key: 'orchestrator' | SessionKey;
   provider: Provider;
   sessionId: string;
 }
 
 /**
- * The cheap exact session map — the enabler (#1), a pure state-only read joining
- * each voice's persisted session id with its bound provider. NO fs, NO scan: it
- * is the field `status --json` exposes on the hot path (`sessions[]`), so the
- * polled path never touches a transcript. KNOWN sessions only — a role whose id
- * is still absent (optional until its first turn completes) is OMITTED, never a
- * null-id entry. The resolved *path* and any transcript reads live below /in
+ * The cheap exact session map — the enabler (#1), a pure state-only read
+ * enumerating every persisted session slot in run order: the orchestrator,
+ * each stage's duties, then the consultant. NO fs, NO scan: it is the field
+ * `status --json` exposes on the hot path (`sessions[]`), so the polled path
+ * never touches a transcript. KNOWN sessions only — a slot whose record is
+ * still absent (until its first turn settles) is OMITTED, never a null-id
+ * entry. Each record is its own provider source (a stage-boundary provider
+ * switch makes any binding wrong for locating the transcript tree). The
+ * resolved *path* and any transcript reads live below / in
  * `worker-health.ts`, off the hot path.
  */
 export function resolveSessions(state: RunState): SessionRef[] {
   const out: SessionRef[] = [];
   if (state.orchestratorSessionId) {
-    out.push({ role: 'orchestrator', provider: state.bindings.orchestrator.provider, sessionId: state.orchestratorSessionId });
+    out.push({ key: 'orchestrator', provider: state.bindings.orchestrator.provider, sessionId: state.orchestratorSessionId });
   }
-  for (const role of workerRolesFor(state)) {
-    // The RECORD is the provider source, never the base binding — a
-    // post-handoff build override makes the binding's provider wrong for a
-    // switched role, and a wrong provider here locates the wrong transcript
-    // tree (~/.claude/projects/ vs ~/.codex/sessions/).
-    const record = state.workerSessions[role];
-    if (record) out.push({ role, provider: record.provider, sessionId: record.id });
+  const keys: SessionKey[] = [
+    ...stagesOf(state.workflow ?? 'full').flatMap((s) => [sessionKeyFor(s.duties.maker), sessionKeyFor(s.duties.checker)]),
+    'consultant',
+  ];
+  for (const key of keys) {
+    const record = state.sessions[key];
+    if (record) out.push({ key, provider: record.provider, sessionId: record.id });
   }
   return out;
 }
 
 /**
- * Read the TAIL of a role's transcript — the thin fs wrapper over
- * `locateSessionTranscripts` that `doctor`/the heartbeat read through (never
- * `status`). It returns the chosen `path` so `doctor` doesn't locate twice.
- *
- * Reads the last `maxBytes` (default 256 KiB) so a multi-MB JSONL is never read
- * whole. The partial leading line is discarded ONLY when the read seeked past
- * the file start (a file ≤ maxBytes is read from offset 0 with NO discard — so a
- * small transcript keeps its first record). On multiple located paths it picks
- * the NEWEST by mtime; a missing/unlocatable transcript returns undefined.
- */
-export function readRoleTranscriptTail(
-  state: RunState,
-  role: Voice,
-  opts: { home?: string; maxBytes?: number } = {},
-): { jsonl: string; schema: Provider; path: string } | undefined {
-  const session = resolveSessions(state).find((s) => s.role === role);
-  if (!session) return undefined;
-  return readTranscriptTailForSession(session.provider, session.sessionId, opts);
-}
-
-/**
  * Read the tail of a transcript for an EXPLICIT (provider, session id) — the
- * locate-by-exact-id core `readRoleTranscriptTail` delegates to once it has
- * resolved a role's settled id. Split out because the live-activity poll locates
- * by THIS turn's id (staged on the active-turn hint as soon as the provider
- * announces it), which is not yet in `workerSessions` on a first turn — so it
- * can't route through the role-resolving wrapper. Still an exact `<id>.jsonl`
- * match (never a directory sweep), so the purge contract above is unchanged. On
+ * locate-by-exact-id reader every tail consumer routes through (doctor via
+ * the resolved session record, the driver's orchestrator read, the
+ * live-activity poll by THIS turn's announced id, which is not yet in a
+ * settled session slot on a first turn). Still an exact `<id>.jsonl` match
+ * (never a directory sweep), so the purge contract above is unchanged. On
  * multiple located paths it picks the NEWEST by mtime; unlocatable → undefined.
  */
 export function readTranscriptTailForSession(
@@ -138,7 +121,7 @@ export function readTranscriptTailForSession(
 
 /**
  * Read the tail of a transcript at an ALREADY-LOCATED path — the locate-free
- * half of `readRoleTranscriptTail`, so a fast repeated reader (the 30s heartbeat
+ * variant, so a fast repeated reader (the 30s heartbeat
  * activity poll) can skip the directory scan after the first tick. Returns
  * undefined when the path has vanished, so the caller re-locates. The partial
  * leading line is discarded only when the read seeked past the file start, same

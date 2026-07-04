@@ -26,7 +26,7 @@ describe('buildDoctorModel — per-role verdicts', () => {
   test('a parked run with no in-flight turns reads all idle, with resolved paths', async ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
     run.orchestratorSessionId = 'orch-1';
-    run.workerSessions = { implementer: { provider: 'claude', id: 'impl-1' }, reviewer: { provider: 'codex', id: 'rev-1' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-1' }, 'planning.analyst': { provider: 'codex', id: 'rev-1' } };
     saveRunState(run);
     plantClaudeTranscript(home, 'orch-1', jsonl(claudeUserToolResult({ ts: ago(20 * MIN) })));
     plantClaudeTranscript(home, 'impl-1', jsonl(claudeUserToolResult({ ts: ago(20 * MIN) })));
@@ -41,7 +41,7 @@ describe('buildDoctorModel — per-role verdicts', () => {
   test('a bound consultant gets its own health row; the orchestrator is never dropped', async ({ consultantRun, projectDir }) => {
     const home = join(projectDir, 'home');
     consultantRun.orchestratorSessionId = 'orch-1';
-    consultantRun.workerSessions = { consultant: { provider: 'claude', id: 'consult-1' } };
+    consultantRun.sessions = { consultant: { provider: 'claude', id: 'consult-1' } };
     saveRunState(consultantRun);
     plantClaudeTranscript(home, 'orch-1', jsonl(claudeUserToolResult({ ts: ago(20 * MIN) })));
     plantClaudeTranscript(home, 'consult-1', jsonl(claudeUserToolResult({ ts: ago(20 * MIN) })));
@@ -62,7 +62,7 @@ describe('buildDoctorModel — per-role verdicts', () => {
 
   test('an in-flight worker (activeTurns + live driver) reads working', async ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
-    run.workerSessions = { implementer: { provider: 'claude', id: 'impl-1' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-1' } };
     run.activeTurns = { implementer: { tag: 'start-plan', startedAt: ago(30 * SEC) } };
     saveRunState(run);
     setDriver(run, process.pid); // a live driver (this test process)
@@ -75,7 +75,7 @@ describe('buildDoctorModel — per-role verdicts', () => {
 
   test('stale activeTurns under a DEAD driver is reconciled to idle, never long-inference', async ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
-    run.workerSessions = { implementer: { provider: 'claude', id: 'impl-1' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-1' } };
     // A turn the hint says started 40m ago — but the driver that would clear it is dead.
     run.activeTurns = { implementer: { tag: 'start-plan', startedAt: ago(40 * MIN) } };
     saveRunState(run);
@@ -100,7 +100,7 @@ describe('buildDoctorModel — per-role verdicts', () => {
 
   test('a role with no session yet is idle with no path', async ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
-    run.workerSessions = { implementer: { provider: 'claude', id: 'impl-1' } }; // reviewer + orchestrator absent
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-1' } }; // reviewer + orchestrator absent
     saveRunState(run);
     plantClaudeTranscript(home, 'impl-1', jsonl(claudeUserToolResult({ ts: ago(MIN) })));
 
@@ -112,7 +112,7 @@ describe('buildDoctorModel — per-role verdicts', () => {
 
   test('a recent terminal error with no later activity reads crashed and lists the error', async ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
-    run.workerSessions = { implementer: { provider: 'claude', id: 'impl-1' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-1' } };
     saveRunState(run);
     plantClaudeTranscript(home, 'impl-1', jsonl(claudeApiError('API Error: 500 Internal server error', { ts: ago(30 * SEC) })));
 
@@ -140,7 +140,7 @@ describe('buildDoctorModel — connectivity (best-effort, never load-bearing)', 
 describe('renderDoctor', () => {
   test('shows one line per role with its verdict and the connectivity probe', async ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
-    run.workerSessions = { implementer: { provider: 'claude', id: 'impl-1' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-1' } };
     saveRunState(run);
     plantClaudeTranscript(home, 'impl-1', jsonl(claudeUserToolResult({ ts: ago(MIN) })));
     const text = renderDoctor(await buildDoctorModel(run, { now: NOW, home, fetch: okFetch }));
@@ -155,7 +155,7 @@ describe('renderDoctor', () => {
   test('an error row localizes its timestamp (the stored transcript ts stays UTC)', async ({ run, projectDir }) => {
     const home = join(projectDir, 'home');
     const errTs = '2026-06-20T11:59:30.000Z';
-    run.workerSessions = { implementer: { provider: 'claude', id: 'impl-1' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-1' } };
     saveRunState(run);
     plantClaudeTranscript(home, 'impl-1', jsonl(claudeApiError('API Error: 500 Internal server error', { ts: errTs })));
     const text = renderDoctor(await buildDoctorModel(run, { now: NOW, home, fetch: okFetch }));

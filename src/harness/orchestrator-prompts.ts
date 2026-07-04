@@ -12,7 +12,6 @@ import {
 } from '../phases.ts';
 import type { ArtifactKind, ExamplesKey, GatePhase, PhaseName, PhaseSemantics, PhaseSpec, WorkflowName } from '../phases.ts';
 import { effectiveBindingFor } from '../config.ts';
-import { workerRolesFor } from '../roles.ts';
 import { gateAttended, workflowOf } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
 import type { Steer } from '../steer-store.ts';
@@ -339,7 +338,7 @@ function approvalClause(state: RunState, gatePhase: GatePhase, attended: string,
  * is structurally unavailable.
  */
 function branchPolicyParagraph(state: RunState): string {
-  if (workerRolesFor(state).some((r) => state.workerSessions[r])) return '';
+  if (Object.keys(state.sessions).length > 0) return '';
   return `
 Branch: the run works on exactly one branch, fixed before your first worker prompt. The repo is currently on "${state.branch ?? 'unknown'}". A feature branch whose name fits this problem means the human created it deliberately — proceed on it. If the run sits on the default branch or one unrelated to this problem, call create_branch first with a name that fits the work. Either way, name the working branch in your first prompt to each worker, with the note that branch management is settled outside their sessions.
 `;

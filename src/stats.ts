@@ -2,11 +2,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEFAULT_CLAUDE_MODEL, effectiveBindingFor } from './config.ts';
 import type { VoiceBindings } from './config.ts';
-import { phasesOf } from './phases.ts';
+import { phasesOf, stagesOf } from './phases.ts';
 import type { PhaseName, WorkflowName } from './phases.ts';
-import { workerRolesFor } from './roles.ts';
+import { sessionKeyFor, workerRolesFor } from './roles.ts';
 import { runDirOf, workflowOf } from './run-store.ts';
 import type { RunState, Voice } from './run-store.ts';
+import type { WorkerRole } from './providers/types.ts';
 import { formatDuration } from './timefmt.ts';
 
 /**
@@ -274,10 +275,17 @@ export function buildStatsModel(state: RunState): StatsModel {
   // A worker with a session but no log is an EXPECTED-missing log (a real
   // undercount → buildStats notes it); a never-prompted worker (no session) is
   // simply absent and omitted, so the note fires only when it means something.
+  const laneHasSession = (role: WorkerRole): boolean => {
+    if (role === 'consultant') return Boolean(state.sessions['consultant']);
+    return stagesOf(workflowOf(state)).some((s) => {
+      const duty = role === 'implementer' ? s.duties.maker : s.duties.checker;
+      return Boolean(state.sessions[sessionKeyFor(duty)]);
+    });
+  };
   const workers = workerRolesFor(state).flatMap((role) => {
     const log = read(role);
     if (log !== undefined) return [{ role, log }];
-    return state.workerSessions[role] ? [{ role }] : [];
+    return laneHasSession(role) ? [{ role }] : [];
   });
   const arcOrder = phasesOf(workflowOf(state)).map((p) => p.name);
   // Label only phases of THIS run's arc — a foreign phase (a run predating an arc

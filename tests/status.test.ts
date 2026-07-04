@@ -303,13 +303,13 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     expect.soft(brief.nextCommand).toContain('--answer');
   });
 
-  test('sessions[] surfaces the known voices and is [] on a fresh run', ({ run }) => {
+  test('sessions[] surfaces the known slots and is [] on a fresh run', ({ run }) => {
     expect.soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions).toEqual([]);
     run.orchestratorSessionId = 'orch-1';
-    run.workerSessions = { reviewer: { provider: 'codex', id: 'rev-1' } };
+    run.sessions = { 'planning.analyst': { provider: 'codex', id: 'rev-1' } };
     expect.soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions).toEqual([
-      { role: 'orchestrator', provider: 'claude', sessionId: 'orch-1' },
-      { role: 'reviewer', provider: 'codex', sessionId: 'rev-1' },
+      { key: 'orchestrator', provider: 'claude', sessionId: 'orch-1' },
+      { key: 'planning.analyst', provider: 'codex', sessionId: 'rev-1' },
     ]);
   });
 
@@ -370,18 +370,19 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     run,
     consultantRun,
   }) => {
-    // sessions[] (worker surface): the consultant appears when bound, never when not.
+    // sessions[] enumerates persisted slots: an unbound run never writes a
+    // consultant slot, so none surfaces; a bound run's settled checkpoint does.
     run.orchestratorSessionId = 'orch-1';
-    run.workerSessions = { reviewer: { provider: 'codex', id: 'rev-1' }, consultant: { provider: 'claude', id: 'stray' } }; // unbound: 'stray' must not surface
+    run.sessions = { 'planning.analyst': { provider: 'codex', id: 'rev-1' } };
     expect
-      .soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions.map((s) => s.role))
-      .toEqual(['orchestrator', 'reviewer']);
+      .soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions.map((s) => s.key))
+      .toEqual(['orchestrator', 'planning.analyst']);
 
     consultantRun.orchestratorSessionId = 'orch-1';
-    consultantRun.workerSessions = { consultant: { provider: 'claude', id: 'c-1' } };
+    consultantRun.sessions = { consultant: { provider: 'claude', id: 'c-1' } };
     expect
       .soft(buildStatusModel(consultantRun, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions)
-      .toContainEqual({ role: 'consultant', provider: 'claude', sessionId: 'c-1' });
+      .toContainEqual({ key: 'consultant', provider: 'claude', sessionId: 'c-1' });
 
     // context (voice surface): keeps the orchestrator AND gains the consultant —
     // a blunt workerRolesFor here would have silently dropped the orchestrator.
