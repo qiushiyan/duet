@@ -6,12 +6,12 @@ import { createActor, waitFor } from 'xstate';
 import type { AnyMachineSnapshot, Snapshot } from 'xstate';
 import { notify as desktopNotify } from '../notify.ts';
 import {
-  WORKFLOWS,
   acceptanceContractPathForSpec,
   contractAuthorPhaseOf,
   entryOf,
   gateOf,
   gatePhasesOf,
+  handoffGateOf,
   phaseOfGateState,
   phaseSpec,
   phasesOf,
@@ -775,9 +775,9 @@ export async function enterAfk(
 /**
  * Whether an interactive crossing rests inline (the connected session drives the
  * next phase via get_task) or hands off to a detached headless `_drive`. The
- * workflow's `handoffGate` is THE handoff — approving it enters the permanent
- * AFK substrate (Full: plan-approval → impl; RIR: Direction → implement) — as is
- * any explicit `--headless` fallback.
+ * stage boundary — planning's last gate, `handoffGateOf` — is THE handoff:
+ * approving it enters the permanent AFK substrate (Full: plan-approval → impl;
+ * RIR: Direction → implement) — as does any explicit `--headless` fallback.
  */
 export function interactiveContinueAction(
   workflow: WorkflowName,
@@ -785,7 +785,7 @@ export function interactiveContinueAction(
   eventType: 'approve' | 'reject' | 'answer',
   headless: boolean,
 ): 'inline' | 'handoff' {
-  return (gatePhase === WORKFLOWS[workflow].handoffGate && eventType === 'approve') || headless
+  return (gatePhase === handoffGateOf(workflow) && eventType === 'approve') || headless
     ? 'handoff'
     : 'inline';
 }

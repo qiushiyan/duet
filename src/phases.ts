@@ -2,8 +2,9 @@
  * The workflow registry — the single source of truth for the run arcs.
  *
  * duet is workflow-aware: `WORKFLOWS` holds one entry per arc, and each
- * workflow owns its complete spec — the ordered phases, the entry route, the
- * handoff gate, the gate presets, and the force-attended gates. A run records
+ * workflow owns its complete spec — the ordered phases, the stages that
+ * partition them (with each stage's duty voices and continuity edges), the
+ * entry route, the gate presets, and the force-attended gates. A run records
  * which workflow it is on (`RunState.workflow`); everything arc-shaped resolves
  * through it.
  *
@@ -233,6 +234,72 @@ function snippetsForSemantics(s: PhaseSemantics): readonly string[] {
 }
 
 /**
+ * The stage vocabulary (CONTEXT.md: Workflow structure). A workflow's phases
+ * PARTITION into exactly two stages — `planning` (the attended thinking
+ * stretch: the entry phase through the last phase before the build) and
+ * `delivery` (the AFK stretch: implement + finish). A stage is one holistic
+ * thinking flow: one primary model carries it end to end, and duty bindings
+ * are scoped to it. The interactive→headless handoff and the approval-boundary
+ * semantics live at the stage edge (`handoffGateOf` derives as planning's last
+ * phase — the old `handoffGate` field is deleted; one source).
+ */
+export type StageName = 'planning' | 'delivery';
+
+/**
+ * The duty vocabulary — a worker's identity within a stage, CLOSED and
+ * globally stage-unique (a duty alone names its stage, the invariant the bare
+ * `--bind <duty>=…` grammar rests on; enforced by validateRegistry, never
+ * assumed). Planning has `architect` (makes) and `analyst` (checks); delivery
+ * has `builder` (makes) and `critic` or `judge` (checks — which one is the
+ * workflow's review-posture knob: a fixer-posture build is judged, the others
+ * critiqued). The vocabulary grows only with a shipping workflow.
+ */
+export type Duty = 'architect' | 'analyst' | 'builder' | 'critic' | 'judge';
+
+/**
+ * Each duty's fixed place in the vocabulary — the stage it names and the lane
+ * it fills. The single source for stage-uniqueness (validateRegistry checks
+ * every authored stage against it) and for `stageOfDuty`, the resolver the
+ * bare-duty CLI grammar reads.
+ */
+const DUTY_INFO: Record<Duty, { stage: StageName; lane: 'maker' | 'checker' }> = {
+  architect: { stage: 'planning', lane: 'maker' },
+  analyst: { stage: 'planning', lane: 'checker' },
+  builder: { stage: 'delivery', lane: 'maker' },
+  critic: { stage: 'delivery', lane: 'checker' },
+  judge: { stage: 'delivery', lane: 'checker' },
+};
+
+/** The stage a duty names — total, from the closed vocabulary's own table. */
+export function stageOfDuty(duty: Duty): StageName {
+  return DUTY_INFO[duty].stage;
+}
+
+/**
+ * A stage as written in the registry: its ordered phase slice, its two duty
+ * voices (exactly two per stage — the old two-worker legibility, restated per
+ * stage), and its continuity edges.
+ *
+ * `edges` (delivery-side only) declare that a delivery duty CONTINUES a
+ * planning duty's session across the stage boundary — `builder: { from:
+ * 'architect' }` means the builder's first delivery turn resumes the
+ * architect's session. No edge ⇒ the duty starts fresh (relay's whole
+ * delivery — the criss-cross's point). The seed RITUAL an edge carries is not
+ * duplicated here: the maker lane's ritual is the build phase's `entrySeed`
+ * knob (one source — validateRegistry holds the two coherent), and the
+ * checker lane continues directly. An edge whose two duties' FROZEN bindings
+ * cross providers degrades to fresh at manifest freeze — a binding concern,
+ * checked there, never here (the registry cannot see bindings).
+ */
+export interface StageSpecInput {
+  readonly name: StageName;
+  /** The stage's ordered phase slice; the stages together partition the workflow's phases. */
+  readonly phases: readonly string[];
+  readonly duties: { readonly maker: Duty; readonly checker: Duty };
+  readonly edges?: Partial<Record<Duty, { readonly from: Duty }>>;
+}
+
+/**
  * The gate a phase exits through (registry input shape). String-typed at input
  * time, then narrowed by `as const`. Every phase gates, so this is non-optional.
  */
@@ -285,17 +352,18 @@ export interface WorkflowSpecInput {
   /** The ordered arc. */
   readonly phases: readonly PhaseSpecInput[];
   /**
+   * The workflow's stages — planning then delivery, partitioning `phases` in
+   * order (validateRegistry enforces the partition). Duties, continuity edges,
+   * and the derived handoff gate (`handoffGateOf` = planning's last phase) all
+   * live here.
+   */
+  readonly stages: readonly StageSpecInput[];
+  /**
    * The entry route: the phase a snapshot-less run starts in (`firstPhase`),
    * and — for arcs that admit a draft-spec entry — the phase a `--spec` run
    * skips to (`specSkipsTo`).
    */
   readonly entry: { readonly firstPhase: string; readonly specSkipsTo?: string };
-  /**
-   * The walk-away → headless boundary: the gate where an interactive run hands
-   * off to the detached driver (always crossed live there, regardless of
-   * gates_at).
-   */
-  readonly handoffGate: string;
   /** Named gates_at presets, workflow-scoped — pure aliases for gate lists. */
   readonly presets: Record<string, readonly string[]>;
   /** Gates that can never be pre-authorized (outward-facing/non-negotiable). */
@@ -436,8 +504,21 @@ export const WORKFLOWS = {
         workerTurnTimeoutMs: 30 * 60_000,
       },
     ],
+    // Planning runs the whole attended thinking stretch (frame → spec → plan);
+    // approving the plan gate — planning's last phase, the derived handoff —
+    // enters the AFK delivery. Both delivery duties continue their planning
+    // sessions: the builder rides the boundary compact (entrySeed
+    // compact-for-impl), the critic continues the analyst's session directly.
+    stages: [
+      { name: 'planning', phases: ['frame', 'spec', 'plan'], duties: { maker: 'architect', checker: 'analyst' } },
+      {
+        name: 'delivery',
+        phases: ['implement', 'finish'],
+        duties: { maker: 'builder', checker: 'critic' },
+        edges: { builder: { from: 'architect' }, critic: { from: 'analyst' } },
+      },
+    ],
     entry: { firstPhase: 'frame', specSkipsTo: 'spec' },
-    handoffGate: 'plan',
     presets: {
       /** Attend nothing after the spec — the full sleep posture. */
       overnight: ['frame', 'spec'],
@@ -580,12 +661,22 @@ export const WORKFLOWS = {
         workerTurnTimeoutMs: 30 * 60_000,
       },
     ],
+    // Planning is frame → design; the design gate — planning's last phase, the
+    // derived handoff — carries plan-approval's role (freeze + walk-away).
+    // Both delivery duties continue their planning sessions, the builder
+    // re-anchoring on the one committed doc (entrySeed implement-design).
+    stages: [
+      { name: 'planning', phases: ['frame', 'design'], duties: { maker: 'architect', checker: 'analyst' } },
+      {
+        name: 'delivery',
+        phases: ['implement', 'finish'],
+        duties: { maker: 'builder', checker: 'critic' },
+        edges: { builder: { from: 'architect' }, critic: { from: 'analyst' } },
+      },
+    ],
     // --spec enters the design loop with the draft as the starting document —
     // the flag's meaning generalizes to "a draft of the primary artifact".
     entry: { firstPhase: 'frame', specSkipsTo: 'design' },
-    // The design gate is the interactive→headless handoff: the interactive arc
-    // runs FRAME → DESIGN; plan-approval's role (freeze + walk-away) lives here.
-    handoffGate: 'design',
     presets: { afk: [] },
     // The one-interruption posture is the arc's product promise: a new run
     // materializes gatesAt = ['design'] — the Direction gate auto-crosses, the
@@ -697,11 +788,17 @@ export const WORKFLOWS = {
         workerTurnTimeoutMs: 30 * 60_000,
       },
     ],
+    // The criss-cross stage split: delivery declares NO continuity edges —
+    // both its duty voices are born fresh at the boundary (the builder seeds
+    // from the committed doc, entrySeed fresh-seed; the judge starts clean),
+    // which is what lets each stage bind its own providers with nothing to
+    // resume across the switch. The delivery checker is the JUDGE — the fixer
+    // posture's addressable name.
+    stages: [
+      { name: 'planning', phases: ['frame', 'design'], duties: { maker: 'architect', checker: 'analyst' } },
+      { name: 'delivery', phases: ['implement', 'finish'], duties: { maker: 'builder', checker: 'judge' } },
+    ],
     entry: { firstPhase: 'frame', specSkipsTo: 'design' },
-    // The design gate is the interactive→headless handoff AND the session
-    // boundary: a provider-switched role's next turn derives a fresh session
-    // (sessionIdFor), re-anchored on the committed doc.
-    handoffGate: 'design',
     presets: { afk: [] },
     // design's one-interruption posture: the human reads one document, taps
     // once, and walks away.
@@ -790,8 +887,20 @@ export const WORKFLOWS = {
         workerTurnTimeoutMs: 30 * 60_000,
       },
     ],
+    // Research alone is this workflow's planning — a workflow with no document
+    // still has an attended thinking stretch, and its one gate is the derived
+    // handoff. Delivery continues both planning sessions (the builder enters
+    // directly from the research decisions, entrySeed implement-direct).
+    stages: [
+      { name: 'planning', phases: ['research'], duties: { maker: 'architect', checker: 'analyst' } },
+      {
+        name: 'delivery',
+        phases: ['implement', 'finish'],
+        duties: { maker: 'builder', checker: 'critic' },
+        edges: { builder: { from: 'architect' }, critic: { from: 'analyst' } },
+      },
+    ],
     entry: { firstPhase: 'research' },
-    handoffGate: 'research',
     // afk attends no gates — a headless RIR run auto-crosses Direction, Ship, and
     // the new Open-PR gate straight to done (the user's walk-away-after-research
     // flow). forceAttend pins nothing for RIR; defaultPreAuthorized stays empty,
@@ -950,6 +1059,105 @@ export function validateRegistry(workflows: Record<string, WorkflowSpecInput>): 
         }
       }
     }
+    // The stage topology — the invariants the duty-keyed runtime rests on,
+    // checked as TOPOLOGY ONLY (the registry cannot see bindings; the
+    // binding-dependent check — the provider-crossing edge degrade — runs at
+    // manifest freeze, the one place all binding sources are resolved).
+    if (wf.stages.length !== 2 || wf.stages[0]?.name !== 'planning' || wf.stages[1]?.name !== 'delivery') {
+      throw new Error(
+        `registry: workflow "${wfName}" must have exactly the two stages "planning" then "delivery" (got: ${wf.stages.map((s) => s.name).join(', ') || 'none'}) — every workflow splits into the attended thinking stretch and the AFK delivery`,
+      );
+    }
+    const [planning, delivery] = [wf.stages[0], wf.stages[1]];
+    for (const stage of wf.stages) {
+      if (stage.phases.length === 0) {
+        throw new Error(
+          `registry: workflow "${wfName}" stage "${stage.name}" has no phases — each stage carries at least one (a workflow with no document still has a planning stage: its research/frame phase alone)`,
+        );
+      }
+    }
+    const stagePhases = wf.stages.flatMap((s) => s.phases);
+    const arcPhases = wf.phases.map((p) => p.name);
+    if (stagePhases.length !== arcPhases.length || stagePhases.some((p, i) => p !== arcPhases[i])) {
+      throw new Error(
+        `registry: workflow "${wfName}" stages [${stagePhases.join(', ')}] do not partition its phases [${arcPhases.join(', ')}] in order — every phase belongs to exactly one stage, planning first`,
+      );
+    }
+    // Duties: in the vocabulary, in their own stage, in their own lane —
+    // global stage-uniqueness is what the bare `--bind <duty>=…` grammar
+    // rests on, so it is enforced here, never assumed.
+    for (const stage of wf.stages) {
+      for (const lane of ['maker', 'checker'] as const) {
+        const duty = stage.duties[lane];
+        const info = DUTY_INFO[duty] as (typeof DUTY_INFO)[Duty] | undefined;
+        if (!info) {
+          throw new Error(
+            `registry: workflow "${wfName}" stage "${stage.name}" ${lane} duty "${duty}" is not in the duty vocabulary (${Object.keys(DUTY_INFO).join(', ')}) — the vocabulary is closed and grows only with a shipping workflow`,
+          );
+        }
+        if (info.stage !== stage.name) {
+          throw new Error(
+            `registry: workflow "${wfName}" stage "${stage.name}" names "${duty}" as its ${lane} — "${duty}" is a ${info.stage} duty, and duties are globally stage-unique so a duty alone names its stage`,
+          );
+        }
+        if (info.lane !== lane) {
+          throw new Error(
+            `registry: workflow "${wfName}" stage "${stage.name}" puts "${duty}" in the ${lane} slot — "${duty}" is a ${info.lane} duty`,
+          );
+        }
+      }
+    }
+    // The delivery checker is named by the build's review posture: a fixer
+    // build is JUDGED (the checker fixes and owns tails), the others are
+    // CRITIQUED. Authored explicitly for registry legibility, held coherent
+    // here so the address and the posture can never describe different worlds.
+    const buildPhase = wf.phases.find((p) => p.semantics?.block === 'build');
+    if (buildPhase && buildPhase.semantics.block === 'build' && delivery.phases.includes(buildPhase.name)) {
+      const expectedChecker = buildPhase.semantics.reviewPosture === 'fixer' ? 'judge' : 'critic';
+      if (delivery.duties.checker !== expectedChecker) {
+        throw new Error(
+          `registry: workflow "${wfName}" delivery checker is "${delivery.duties.checker}" but the build's review posture "${buildPhase.semantics.reviewPosture}" names the checker "${expectedChecker}" — the checker duty and the posture are one fact`,
+        );
+      }
+      // Maker-edge ⇔ entry-seed coherence: fresh-seed means the maker is born
+      // fresh at the boundary (no session to continue); every other seed
+      // carries the planning session forward, so the edge must say so too.
+      const hasMakerEdge = delivery.edges?.[delivery.duties.maker] !== undefined;
+      if (buildPhase.semantics.entrySeed === 'fresh-seed' && hasMakerEdge) {
+        throw new Error(
+          `registry: workflow "${wfName}" declares a continuity edge into its delivery maker "${delivery.duties.maker}" but the build's entrySeed is "fresh-seed" — a fresh-seeded maker has no planning session to continue; drop the edge or change the seed`,
+        );
+      }
+      if (buildPhase.semantics.entrySeed !== 'fresh-seed' && !hasMakerEdge) {
+        throw new Error(
+          `registry: workflow "${wfName}" build entrySeed "${buildPhase.semantics.entrySeed}" carries the planning session across the boundary but no continuity edge into "${delivery.duties.maker}" is declared — declare the edge or seed fresh`,
+        );
+      }
+    }
+    // Edges run planning → delivery only, lane to lane.
+    if (planning.edges && Object.keys(planning.edges).length > 0) {
+      throw new Error(
+        `registry: workflow "${wfName}" declares continuity edges on its planning stage — edges run planning→delivery only (a delivery duty continues a planning session, never the reverse)`,
+      );
+    }
+    for (const [into, edge] of Object.entries(delivery.edges ?? {})) {
+      if (edge === undefined) continue;
+      if (into !== delivery.duties.maker && into !== delivery.duties.checker) {
+        throw new Error(
+          `registry: workflow "${wfName}" declares a continuity edge into "${into}", which is not a delivery duty of this workflow (${delivery.duties.maker}, ${delivery.duties.checker})`,
+        );
+      }
+      if (edge.from !== planning.duties.maker && edge.from !== planning.duties.checker) {
+        throw new Error(
+          `registry: workflow "${wfName}" continuity edge ${into} ← ${edge.from}: "${edge.from}" is not a planning duty of this workflow (${planning.duties.maker}, ${planning.duties.checker})`,
+        );
+      }
+      if (DUTY_INFO[into as Duty].lane !== DUTY_INFO[edge.from].lane) {
+        throw new Error(
+          `registry: workflow "${wfName}" continuity edge ${into} ← ${edge.from} crosses lanes — a maker continues a maker's session, a checker a checker's`,
+        );
+      }
+    }
     const gatePhases = new Set(wf.phases.map((p) => p.name));
     const requireGatePhase = (value: string, what: string): void => {
       if (!gatePhases.has(value)) {
@@ -958,7 +1166,6 @@ export function validateRegistry(workflows: Record<string, WorkflowSpecInput>): 
         );
       }
     };
-    requireGatePhase(wf.handoffGate, 'handoffGate');
     for (const g of wf.forceAttend) requireGatePhase(g, 'forceAttend entry');
     for (const g of wf.defaultPreAuthorized) requireGatePhase(g, 'defaultPreAuthorized entry');
     // Disjointness: a gate cannot be both force-attended and default-pre-authorized.
@@ -1016,6 +1223,97 @@ export function phasesOf(workflow: WorkflowName): readonly PhaseSpec[] {
   return SERVED_PHASES[workflow];
 }
 
+/** The consumer-facing stage view — the registry input narrowed to `PhaseName`. */
+export interface StageSpec {
+  name: StageName;
+  phases: readonly PhaseName[];
+  duties: { maker: Duty; checker: Duty };
+  edges?: Partial<Record<Duty, { from: Duty }>>;
+}
+
+/** A workflow's two stages, planning then delivery (the validated partition). */
+export function stagesOf(workflow: WorkflowName): readonly StageSpec[] {
+  return WORKFLOWS[workflow].stages as readonly StageSpec[];
+}
+
+/**
+ * The stage a phase belongs to — the one resolver for "which side of the
+ * boundary is this turn on", replacing every handoff-index comparison. Throws
+ * on a phase the workflow doesn't own (a caller bug, same contract as
+ * phaseSpec).
+ */
+export function stageOf(workflow: WorkflowName, phase: PhaseName): StageName {
+  const stage = stagesOf(workflow).find((s) => s.phases.includes(phase));
+  if (!stage) {
+    throw new Error(
+      `phase "${phase}" is not part of the "${workflow}" workflow (phases: ${phasesOf(workflow).map((p) => p.name).join(', ')})`,
+    );
+  }
+  return stage.name;
+}
+
+/** A workflow's stage spec by name — total (validateRegistry pins both stages). */
+function stageSpecOf(workflow: WorkflowName, stage: StageName): StageSpec {
+  return stagesOf(workflow).find((s) => s.name === stage)!;
+}
+
+/** A stage's two duty voices, maker first — the per-stage worker enumeration. */
+export function dutiesOf(workflow: WorkflowName, stage: StageName): readonly [Duty, Duty] {
+  const { maker, checker } = stageSpecOf(workflow, stage).duties;
+  return [maker, checker];
+}
+
+/** The duty that MAKES in a stage (planning: architect; delivery: builder). */
+export function makerDutyOf(workflow: WorkflowName, stage: StageName): Duty {
+  return stageSpecOf(workflow, stage).duties.maker;
+}
+
+/** The duty that CHECKS in a stage (planning: analyst; delivery: critic or judge, per the review posture). */
+export function checkerDutyOf(workflow: WorkflowName, stage: StageName): Duty {
+  return stageSpecOf(workflow, stage).duties.checker;
+}
+
+/**
+ * The duty that owns FIXING the build — where the verify self-heal routes a
+ * failed assertion, and the addressee of any "send the fix to…" routing. The
+ * checker under the fixer posture (relay's judge already fixes with write
+ * access; a verify fix is a review finding by another name), the maker
+ * everywhere else. A resolver, never prose: briefs, rails, and tool copy all
+ * read this, so the routing cannot drift per surface.
+ */
+export function fixerDutyFor(workflow: WorkflowName): Duty {
+  const build = phasesOf(workflow).find((p) => p.semantics.block === 'build');
+  const fixerPosture = build?.semantics.block === 'build' && build.semantics.reviewPosture === 'fixer';
+  return fixerPosture ? checkerDutyOf(workflow, 'delivery') : makerDutyOf(workflow, 'delivery');
+}
+
+/**
+ * The interactive→headless handoff gate — planning's last phase, DERIVED (the
+ * old `handoffGate` registry field is deleted; the stage partition is the one
+ * source). Approving this gate crosses the stage boundary: continuity edges
+ * apply, and an interactively-orchestrated run hands its session to the
+ * headless driver.
+ */
+export function handoffGateOf(workflow: WorkflowName): GatePhase {
+  const planningPhases = stageSpecOf(workflow, 'planning').phases;
+  return planningPhases[planningPhases.length - 1]!;
+}
+
+/**
+ * The planning duty a delivery duty CONTINUES across the stage boundary, or
+ * undefined when the duty starts fresh (no edge — relay's whole delivery).
+ * The registry half of the session-derivation walk; the binding-dependent
+ * degrade (a provider-crossing edge falls back to fresh) happens at manifest
+ * freeze, not here.
+ */
+export function continuityEdgeFor(workflow: WorkflowName, duty: Duty): Duty | undefined {
+  for (const stage of stagesOf(workflow)) {
+    const edge = stage.edges?.[duty];
+    if (edge) return edge.from;
+  }
+  return undefined;
+}
+
 /** A workflow's entry route, normalized to the optional-specSkipsTo shape. */
 export function entryOf(workflow: WorkflowName): { firstPhase: PhaseName; specSkipsTo?: PhaseName } {
   return WORKFLOWS[workflow].entry;
@@ -1030,7 +1328,7 @@ export function entryOf(workflow: WorkflowName): { firstPhase: PhaseName; specSk
  */
 export function handoffWatchLabel(workflow: WorkflowName): string {
   const phases = phasesOf(workflow);
-  const handoff = WORKFLOWS[workflow].handoffGate;
+  const handoff = handoffGateOf(workflow);
   const i = phases.findIndex((p) => p.name === handoff);
   const next = phases[i + 1]?.name ?? 'the next phase';
   return `${handoff} approved — AFK ${next}`;
@@ -1057,15 +1355,12 @@ export function priorPhaseOf(workflow: WorkflowName, phase: PhaseName): PhaseNam
  * of `priorPhaseOf`.
  *
  * The per-phase implementer-model swap keys off this: the base model plans (frame,
- * spec, plan), the impl model builds and finishes. Deliberately ALIASED onto the
- * handoff boundary — the cheaper build model kicks in exactly when the run goes
- * AFK/headless — so if `handoffGate` ever moves, this boundary moves with it (a
- * coupling we accept, not a coincidence).
+ * spec, plan), the impl model builds and finishes. Now an alias of the stage
+ * partition (post-handoff ≡ delivery) — slated for deletion when binding
+ * resolution re-keys onto `stageOf` directly (the remodel's slice 2).
  */
 export function isPostHandoffPhase(workflow: WorkflowName, phase: PhaseName): boolean {
-  const phases = phasesOf(workflow);
-  const handoffIdx = phases.findIndex((p) => p.name === WORKFLOWS[workflow].handoffGate);
-  return phases.findIndex((p) => p.name === phase) > handoffIdx;
+  return stageOf(workflow, phase) === 'delivery';
 }
 
 /**

@@ -5,22 +5,31 @@ import {
   acceptanceContractPathForSpec,
   consultantCheckpointLive,
   consultantSnippetFor,
+  checkerDutyOf,
   consultantSnippetsForWorkflow,
+  continuityEdgeFor,
   contractAuthorPhaseOf,
   defaultPosture,
+  dutiesOf,
+  fixerDutyFor,
   gateOf,
   gatePhasesOf,
+  handoffGateOf,
   handoffWatchLabel,
   isBackstopCheckpoint,
   isPostHandoffPhase,
+  makerDutyOf,
   phaseOfGateState,
+  stageOf,
+  stageOfDuty,
+  stagesOf,
   phaseSnippetsFor,
   phaseSpec,
   phasesOf,
   validateRegistry,
   workflowHasConsultantBackstop,
 } from '../src/phases.ts';
-import type { PhaseSemantics, WorkflowSpecInput } from '../src/phases.ts';
+import type { PhaseSemantics, StageSpecInput, WorkflowSpecInput } from '../src/phases.ts';
 
 /**
  * The workflow registry — the source of truth the flat lookups derive from.
@@ -45,14 +54,24 @@ function phase(name: string, gateState: string = `${name}Gate`, overrides: Recor
   };
 }
 
-// A minimal valid workflow: two gate phases `a` and `b`.
+// A minimal valid stage pair partitioning phases `a` (planning) and `b` (delivery).
+// Cast at the edge: the overrides deliberately build INVALID shapes (foreign
+// duties, reversed partitions) for the validation cases to reject.
+function stages(overrides: { planning?: Record<string, unknown>; delivery?: Record<string, unknown> } = {}): StageSpecInput[] {
+  return [
+    { name: 'planning', phases: ['a'], duties: { maker: 'architect', checker: 'analyst' }, ...overrides.planning },
+    { name: 'delivery', phases: ['b'], duties: { maker: 'builder', checker: 'critic' }, ...overrides.delivery },
+  ] as unknown as StageSpecInput[];
+}
+
+// A minimal valid workflow: two gate phases `a` and `b`, one per stage.
 function workflow(overrides: Record<string, unknown> = {}) {
   return {
     name: 'w',
     displayName: 'W',
     phases: [phase('a', 'aGate'), phase('b', 'bGate')],
+    stages: stages(),
     entry: { firstPhase: 'a' },
-    handoffGate: 'a',
     presets: {},
     forceAttend: [] as readonly string[],
     defaultPreAuthorized: [] as readonly string[],
@@ -81,10 +100,74 @@ describe('validateRegistry', () => {
       registry: { w: workflow({ phases: [phase('a', 'g'), phase('b', 'g')] }) },
       throws: /two gates with state "g"/,
     },
+    // ---- the stage topology (the duty-keyed runtime's invariants) ----
     {
-      name: 'a handoffGate that is not a gate phase throws',
-      registry: { w: workflow({ handoffGate: 'ghost' }) },
-      throws: /handoffGate "ghost" is not a gate phase/,
+      name: 'a workflow without the planning/delivery stage pair throws',
+      registry: { w: workflow({ stages: [stages()[0]] }) },
+      throws: /exactly the two stages "planning" then "delivery"/,
+    },
+    {
+      name: 'stages out of order throw',
+      registry: { w: workflow({ stages: [...stages()].reverse() }) },
+      throws: /exactly the two stages "planning" then "delivery"/,
+    },
+    {
+      name: 'an empty stage throws',
+      registry: { w: workflow({ stages: stages({ planning: { phases: [] }, delivery: { phases: ['a', 'b'] } }) }) },
+      throws: /stage "planning" has no phases/,
+    },
+    {
+      name: 'stages that do not partition the phase list in order throw',
+      registry: { w: workflow({ stages: stages({ planning: { phases: ['b'] }, delivery: { phases: ['a'] } }) }) },
+      throws: /do not partition its phases/,
+    },
+    {
+      name: 'a stage phase missing from the partition throws',
+      registry: { w: workflow({ stages: stages({ delivery: { phases: [] } }) }) },
+      throws: /stage "delivery" has no phases/,
+    },
+    {
+      name: 'a duty outside the closed vocabulary throws',
+      registry: { w: workflow({ stages: stages({ planning: { duties: { maker: 'author', checker: 'analyst' } } }) }) },
+      throws: /maker duty "author" is not in the duty vocabulary/,
+    },
+    {
+      name: "a duty in a foreign stage throws (duties are globally stage-unique — a duty alone names its stage)",
+      registry: { w: workflow({ stages: stages({ planning: { duties: { maker: 'builder', checker: 'analyst' } } }) }) },
+      throws: /"builder" is a delivery duty/,
+    },
+    {
+      name: 'a checker duty in the maker slot throws',
+      registry: { w: workflow({ stages: stages({ delivery: { duties: { maker: 'judge', checker: 'critic' } } }) }) },
+      throws: /"judge" is a delivery duty|puts "judge" in the maker slot/,
+    },
+    {
+      name: 'a continuity edge on the planning stage throws (edges run planning→delivery only)',
+      registry: {
+        w: workflow({ stages: stages({ planning: { edges: { architect: { from: 'builder' } } } }) }),
+      },
+      throws: /edges on its planning stage/,
+    },
+    {
+      name: 'a continuity edge into a duty the delivery stage lacks throws',
+      registry: {
+        w: workflow({ stages: stages({ delivery: { edges: { judge: { from: 'analyst' } } } }) }),
+      },
+      throws: /edge into "judge", which is not a delivery duty/,
+    },
+    {
+      name: 'a continuity edge from a non-planning duty throws',
+      registry: {
+        w: workflow({ stages: stages({ delivery: { edges: { builder: { from: 'judge' } } } }) }),
+      },
+      throws: /"judge" is not a planning duty/,
+    },
+    {
+      name: 'a lane-crossing continuity edge throws (maker continues maker, checker continues checker)',
+      registry: {
+        w: workflow({ stages: stages({ delivery: { edges: { builder: { from: 'analyst' } } } }) }),
+      },
+      throws: /crosses lanes/,
     },
     {
       name: 'a forceAttend entry that is not a gate phase throws',
@@ -343,8 +426,8 @@ describe('the design workflow (the middle arc — one design doc between framing
     expect(WORKFLOWS.design.entry).toEqual({ firstPhase: 'frame', specSkipsTo: 'design' });
   });
 
-  test('the design gate is the interactive→headless handoff', () => {
-    expect.soft(WORKFLOWS.design.handoffGate).toBe('design');
+  test('the design gate is the interactive→headless handoff (derived: planning ends at design)', () => {
+    expect.soft(handoffGateOf('design')).toBe('design');
     expect.soft(handoffWatchLabel('design')).toBe('design approved — AFK implement');
   });
 
@@ -578,5 +661,122 @@ describe('isPostHandoffPhase — the "doing" set strictly after the handoff gate
     expect.soft(isPostHandoffPhase('rir', 'research')).toBe(false);
     expect.soft(isPostHandoffPhase('rir', 'implement')).toBe(true);
     expect.soft(isPostHandoffPhase('rir', 'finish')).toBe(true);
+  });
+});
+
+describe('the stage partition — stages, duties, and continuity edges (registry data)', () => {
+  test('every shipped workflow partitions into planning then delivery, pinned literally', () => {
+    // Pinned (not derived) so a malformed registry can't self-validate.
+    expect.soft(stagesOf('full').map((s) => ({ name: s.name, phases: s.phases }))).toEqual([
+      { name: 'planning', phases: ['frame', 'spec', 'plan'] },
+      { name: 'delivery', phases: ['implement', 'finish'] },
+    ]);
+    expect.soft(stagesOf('design').map((s) => ({ name: s.name, phases: s.phases }))).toEqual([
+      { name: 'planning', phases: ['frame', 'design'] },
+      { name: 'delivery', phases: ['implement', 'finish'] },
+    ]);
+    expect.soft(stagesOf('relay').map((s) => ({ name: s.name, phases: s.phases }))).toEqual([
+      { name: 'planning', phases: ['frame', 'design'] },
+      { name: 'delivery', phases: ['implement', 'finish'] },
+    ]);
+    // A workflow with no document still has a planning stage: research alone.
+    expect.soft(stagesOf('rir').map((s) => ({ name: s.name, phases: s.phases }))).toEqual([
+      { name: 'planning', phases: ['research'] },
+      { name: 'delivery', phases: ['implement', 'finish'] },
+    ]);
+  });
+
+  test('stageOf resolves each phase to its stage; a foreign phase throws', () => {
+    expect.soft(stageOf('full', 'plan')).toBe('planning');
+    expect.soft(stageOf('full', 'implement')).toBe('delivery');
+    expect.soft(stageOf('rir', 'research')).toBe('planning');
+    expect.soft(() => stageOf('rir', 'plan')).toThrow(/not part of the "rir" workflow/);
+  });
+
+  test('handoffGateOf derives as planning last phase — the deleted handoffGate field, one source', () => {
+    expect.soft(handoffGateOf('full')).toBe('plan');
+    expect.soft(handoffGateOf('design')).toBe('design');
+    expect.soft(handoffGateOf('relay')).toBe('design');
+    expect.soft(handoffGateOf('rir')).toBe('research');
+  });
+
+  test('duty resolvers: planning is architect/analyst everywhere; delivery checker follows the review posture', () => {
+    expect.soft(dutiesOf('full', 'planning')).toEqual(['architect', 'analyst']);
+    expect.soft(dutiesOf('full', 'delivery')).toEqual(['builder', 'critic']);
+    expect.soft(makerDutyOf('relay', 'delivery')).toBe('builder');
+    // relay's fixer posture names its delivery checker the JUDGE; the critique
+    // and writable postures keep the critic.
+    expect.soft(checkerDutyOf('relay', 'delivery')).toBe('judge');
+    expect.soft(checkerDutyOf('full', 'delivery')).toBe('critic');
+    expect.soft(checkerDutyOf('rir', 'delivery')).toBe('critic');
+  });
+
+  test('stageOfDuty names each duty stage from the closed vocabulary', () => {
+    expect.soft(stageOfDuty('architect')).toBe('planning');
+    expect.soft(stageOfDuty('analyst')).toBe('planning');
+    expect.soft(stageOfDuty('builder')).toBe('delivery');
+    expect.soft(stageOfDuty('critic')).toBe('delivery');
+    expect.soft(stageOfDuty('judge')).toBe('delivery');
+  });
+
+  test('fixerDutyFor routes a fix to the judge under the fixer posture, the builder everywhere else', () => {
+    expect.soft(fixerDutyFor('relay')).toBe('judge');
+    expect.soft(fixerDutyFor('full')).toBe('builder');
+    expect.soft(fixerDutyFor('design')).toBe('builder');
+    expect.soft(fixerDutyFor('rir')).toBe('builder');
+  });
+
+  test('continuity edges: full/design/rir carry both lanes; relay delivery is born fresh', () => {
+    for (const wf of ['full', 'design', 'rir'] as const) {
+      expect.soft(continuityEdgeFor(wf, 'builder')).toBe('architect');
+      expect.soft(continuityEdgeFor(wf, 'critic')).toBe('analyst');
+    }
+    expect.soft(continuityEdgeFor('relay', 'builder')).toBeUndefined();
+    expect.soft(continuityEdgeFor('relay', 'judge')).toBeUndefined();
+    // Planning duties never have inbound edges.
+    expect.soft(continuityEdgeFor('full', 'architect')).toBeUndefined();
+  });
+});
+
+describe('validateRegistry — posture/seed coherence on a delivery build phase', () => {
+  const buildPhase = (semantics: Record<string, unknown>) =>
+    phase('b', 'bGate', {
+      reviewLoop: true,
+      semantics: {
+        block: 'build',
+        entrySeed: 'fresh-seed',
+        reviewPosture: 'fixer',
+        midpoint: 'none',
+        shipPacket: 'lean',
+        buildTailOwner: 'reviewer',
+        examplesKey: 'relay-impl',
+        ...semantics,
+      } as PhaseSemantics,
+    });
+
+  test('a fixer build with a critic checker throws (the checker duty and the posture are one fact)', () => {
+    const w = workflow({ phases: [phase('a', 'aGate'), buildPhase({})] });
+    expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).toThrow(
+      /checker is "critic" but the build's review posture "fixer" names the checker "judge"/,
+    );
+  });
+
+  test('a fresh-seed build with a maker continuity edge throws', () => {
+    const w = workflow({
+      phases: [phase('a', 'aGate'), buildPhase({ reviewPosture: 'writable' })],
+      stages: stages({ delivery: { edges: { builder: { from: 'architect' } } } }),
+    });
+    expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).toThrow(
+      /has no planning session to continue/,
+    );
+  });
+
+  test('a session-carrying entrySeed without a maker edge throws (the edge and the seed are one fact)', () => {
+    const w = workflow({
+      phases: [phase('a', 'aGate'), buildPhase({ reviewPosture: 'writable', entrySeed: 'compact-for-impl' })],
+    });
+    expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).toThrow(
+      /declare the edge or seed fresh/,
+    );
   });
 });
