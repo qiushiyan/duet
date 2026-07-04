@@ -14,7 +14,7 @@
  * surface it. It is the read/write sibling of `worker-health.ts`'s health probe,
  * and like it, PURE BY DESIGN: string in, value out, no fs, no clock. The fs
  * tail-read stays in `sessions.ts`; the emit (the 30s heartbeat poll) lives in
- * `harness/tools.ts`.
+ * `orchestrator/tools.ts`.
  *
  * Two providers, two formats:
  *   - claude — `assistant` records carry `message.content[].tool_use`

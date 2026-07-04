@@ -5,7 +5,7 @@ import { parseRecords } from './health.ts';
  * sampler, the context deadline, and the send-gate/nudge guards. The sibling
  * of `worker-health.ts` in both shape and discipline: string/value in, value
  * out, no fs, no clock, no lifecycle imports — the fs tail-read stays in
- * `sessions.ts` and the wiring in `harness/tools.ts` / the claude provider.
+ * `sessions.ts` and the wiring in `orchestrator/tools.ts` / the claude provider.
  *
  * Why it exists (the 20260701 wedge): a claude session grew 17% → 98% of its
  * 1M window inside one two-hour turn and wedged — every subsequent send

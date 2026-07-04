@@ -104,7 +104,7 @@ describe('the snippet library', () => {
   });
 
   test('carries the templates the orchestrator prompts name', () => {
-    // Entry prompts reference these by name (src/harness/orchestrator-prompts.ts);
+    // Entry prompts reference these by name (src/orchestrator/briefs.ts);
     // a library missing them would strand the orchestrator mid-phase.
     for (const key of [
       'think-holistic',

@@ -31,7 +31,7 @@ import { formatDuration } from '../view/timefmt.ts';
  */
 
 // The voice-log markers, anchored on the full ISO stamp `appendVoiceLog` writes
-// (src/run-store.ts) so a prompt body line can't masquerade as a header.
+// (src/run/store.ts) so a prompt body line can't masquerade as a header.
 const TS = String.raw`\[(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z)\]`;
 const PHASE_OPEN = new RegExp(`^${TS} ◀ harness prompt \\(phase=(\\w+)\\)`);
 const PHASE_CLOSE = new RegExp(`^${TS} advance_phase \\((\\w+)\\)`);

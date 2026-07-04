@@ -227,10 +227,10 @@ describe('run creation', () => {
     );
   });
 
-  test('createRun without gatesAt leaves it absent when defaultPreAuthorized is empty (rir — legacy attend-all)', ({
+  test('createRun without gatesAt leaves it absent when defaultPreAuthorized is empty (short — legacy attend-all)', ({
     projectDir,
   }) => {
-    // rir ships defaultPreAuthorized: [] → defaultPosture returns undefined →
+    // short ships defaultPreAuthorized: [] → defaultPosture returns undefined →
     // gatesAt stays absent (attend-all). (full now materializes the overnight
     // posture ['frame','spec'] — see the default-posture test below.)
     const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('short'), workflow: 'short' });

@@ -10,7 +10,8 @@ import type { RunState, Voice } from '../../run/store.ts';
 
 /**
  * The --tmux viewer (docs/automation-design.md §"Visualization: tmux is a
- * viewer, never the runtime"). Three panes, one per voice, each running
+ * viewer, never the runtime"). One pane per live voice — the orchestrator,
+ * the current stage's duty pair, the consultant when bound — each running
  * `tail -n +1 -F` on that voice's log — `-n +1` replays the full transcript
  * in a late-opened pane, and BSD tail's -F waits for logs that don't exist
  * yet (verified on this machine). Duet never lives inside tmux: killing the

@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import type { Provider } from './bindings.ts';
 import { stagesOf } from '../registry/workflows.ts';
 import { sessionKeyFor } from './policy.ts';
-// Type-only — run-store.ts value-imports THIS module, so a value import back
-// would close a runtime cycle. RunState/SessionKey are erased at build.
+// run/ sits below voices/ in the import gradient, so both imports point
+// downward: runDirOf as a value, the state shapes type-only (erased at build).
 import { runDirOf } from '../run/store.ts';
 import type { RunState, SessionKey } from '../run/store.ts';
 
@@ -14,7 +14,7 @@ import type { RunState, SessionKey } from '../run/store.ts';
  *
  * This is the ONE place duet reaches OUTSIDE `.duet/` into the user's own
  * `~/.claude` and `~/.codex` — `duet abandon --purge` deletes what it finds
- * here (src/run-store.ts `purgeRun`). Everything else duet writes lives under
+ * here (`purgeRun` below). Everything else duet writes lives under
  * the self-ignored `.duet/`; these transcripts are the user's normal CLI
  * artifacts (augmentation principle), so deletion is opt-in and location is by
  * EXACT session-id match — never a directory sweep that could catch an
@@ -158,7 +158,7 @@ export function readTranscriptTailAtPath(
 export interface PurgeResult {
   /** The `.duet/runs/<id>/` dir that was removed. */
   runDir: string;
-  /** The provider session transcripts that were removed (0–3 paths). */
+  /** The provider session transcripts that were removed — one per tracked slot (the orchestrator, each duty's record, the consultant's latest) that located a file. */
   transcripts: string[];
 }
 
@@ -168,15 +168,15 @@ export interface PurgeResult {
  * that spans both lives HERE, on the voices side, importing runDirOf
  * downward).
  *
- * Delete everything a run created: its `.duet/runs/<id>/` dir AND the three
- * providers' session transcripts (orchestrator + both workers), located by
- * exact session-id match (locateSessionTranscripts above). This is the one
- * duet operation
- * that removes the user's standard-location CLI artifacts — hence opt-in
+ * Delete everything a run created: its `.duet/runs/<id>/` dir AND every
+ * tracked session's transcript (the orchestrator, each duty's record, the
+ * consultant's latest checkpoint), located by exact session-id match
+ * (locateSessionTranscripts above). This is the one duet operation that
+ * removes the user's standard-location CLI artifacts — hence opt-in
  * (`duet abandon --purge`) — so it returns exactly what it removed for the
- * caller to echo. Idempotent and provider-aware: each session is resolved
- * against ITS role's bound provider (roles are provider-decoupled), and
- * missing files are simply absent from the result.
+ * caller to echo. Idempotent and provider-aware: each transcript is located
+ * under the provider its own RECORD names (never a binding — a record is its
+ * own provider source), and missing files are simply absent from the result.
  *
  * Transcripts are gathered from the in-memory state and removed before the run
  * dir, since the dir holds the only copy of the session ids on disk. `home` is

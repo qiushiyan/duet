@@ -228,7 +228,7 @@ function stopModel(state: RunState, position: RunPosition): StopModel {
       };
     case 'done': {
       // The run's last phase carries the completion summary — Full's `finish`,
-      // RIR's `implement` — not a hardcoded phase.
+      // short's `implement` — not a hardcoded phase.
       const lastPhase = phasesOf(state.workflow).at(-1)?.name;
       const summary = lastPhase ? state.phaseSummaries[lastPhase]?.summary : undefined;
       return { kind: 'done', ...(summary ? { summary } : {}) };
@@ -328,7 +328,7 @@ export function renderStatus(model: StatusModel): string {
   if (model.stop.kind === 'running') {
     lines.push(`phase:    running in the background (pid ${model.stop.pid})`);
   }
-  // Only a workflow with a spec phase reports a (missing) spec — RIR has none.
+  // Only a workflow with a spec phase reports a (missing) spec — short has none.
   if (model.specPath) lines.push(`spec:     ${model.specPath}`);
   else if (hasSpecPhase(model.workflow)) lines.push(`spec:     (not yet drafted — framing-only entry)`);
   if (model.branch) lines.push(`branch:   ${model.branch}`);

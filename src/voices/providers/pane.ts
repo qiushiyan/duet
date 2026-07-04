@@ -60,7 +60,7 @@ export function claudePaneLaunchCommand(config: PaneConfig): string[] {
 
 /**
  * The tmux driver adapter — thin, deliberately untested glue, the same boundary
- * as src/tmux-view.ts (a subprocess to tmux). ALL the driving logic lives above
+ * as src/surfaces/view/tmux.ts (a subprocess to tmux). ALL the driving logic lives above
  * it in InteractiveClaudeWorker and is tested via FakePane; this class only owns
  * the terminal mechanics. Its run-scoped session is distinct from the viewer's
  * `duet-<run_id>` — a separate failure domain by design.

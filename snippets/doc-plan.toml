@@ -3,7 +3,7 @@
 # line-level anchors are fair game), and the round-2 -again pair.
 # compact-for-plan is the unlisted manual compaction at the spec → plan
 # boundary — kept for a judgment-timed early cut, not a default template
-# (UNLISTED_SNIPPETS in src/phases.ts).
+# (UNLISTED_SNIPPETS in src/registry/workflows.ts).
 
 [[snippets]]
 key = "compact-for-plan"

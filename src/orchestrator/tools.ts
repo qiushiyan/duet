@@ -49,8 +49,8 @@ import {
  * orchestrator's surface, independent of any one SDK. It carries exactly what
  * both transports need (name, description, a zod input shape, MCP annotations,
  * and an async handler returning an MCP CallToolResult). Two thin adapters host
- * it: the in-process Agent SDK server (src/harness/driver.ts) and the standard
- * stdio MCP server (src/harness/mcp-server.ts). Keeping the Agent SDK's tool
+ * it: the in-process Agent SDK server (src/orchestrator/hosts/driver.ts) and the standard
+ * stdio MCP server (src/orchestrator/hosts/mcp-server.ts). Keeping the Agent SDK's tool
  * type out of here is the point — nothing that hosts the kernel should have to
  * import it.
  */
@@ -1770,7 +1770,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
    * recorded this phase's terminal marker (advance requested, question queued)
    * is ending the turn, and guidance appended to a dying turn lands and dies —
    * those steers stay pending and ride the next harness prompt instead
-   * (carry-forward, src/harness/driver.ts). Peek → append → mark-delivered order: a crash in
+   * (carry-forward, src/orchestrator/hosts/driver.ts). Peek → append → mark-delivered order: a crash in
    * between redelivers (a repeated instruction is benign where a lost one is
    * not). The steer path is fail-soft — it must never corrupt a tool result.
    */

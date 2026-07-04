@@ -35,7 +35,7 @@ import type { TurnDispatcher } from './turn-dispatcher.ts';
  *
  * The phase is validated against THIS run's workflow, not a global phase set:
  * the run is loaded first, then the phase must be a member of its workflow's
- * arc — so a RIR run can't be asked to host a Full-only phase's tools.
+ * arc — so a short run can't be asked to host a full-only phase's tools.
  */
 export function buildKernelTools(cwd: string, runId: string, phaseRaw: string): { tools: Array<KernelTool<any>>; phase: PhaseName } {
   // Throws a clear "no run state at … — is <id> a run of this project?" when unknown.

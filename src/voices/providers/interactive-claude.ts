@@ -344,7 +344,7 @@ async function watchForTurn(store: TranscriptStore, nonce: string, deadline: num
  * `pane.kill()` runs in a `finally`, so it fires on success, throw, and timeout
  * alike — a timed-out turn never leaves a lingering interactive pane. A stall or
  * a tmux error becomes a thrown `runTurn` error, which the `send_prompt` rail
- * converts to retry-once-then-ask_human (src/harness/tools.ts) — the one failure
+ * converts to retry-once-then-ask_human (src/orchestrator/tools.ts) — the one failure
  * that rail can't catch is a silent hang, which the deadline forecloses.
  *
  * `transcriptRoot` and `newPane` are injectable so tests drive it over a FakePane

@@ -13,9 +13,9 @@ import type { ErrorClass, RetryState } from '../voices/health.ts';
  * Per-run working data under `.duet/runs/<run_id>/` in the target project —
  * the one module that reads and writes it.
  *
- * The state file is a fast-access HINT — the source of truth is the three
- * JSONL transcripts in the providers' standard locations (augmentation
- * principle). Everything here must stay human-readable and survivable: the
+ * The state file is a fast-access HINT — the source of truth is the provider
+ * JSONL transcripts in their standard locations (augmentation principle).
+ * Everything here must stay human-readable and survivable: the
  * user can stop duet mid-run, continue manually with `claude --resume` /
  * `codex exec resume`, and come back (or never).
  *
@@ -186,12 +186,13 @@ export interface RunState {
   abandoned?: { at: string };
   /**
    * Set by `duet orchestrate` when the human's interactive Claude Code session
-   * is the orchestrator for this run (FRAME → PLAN). A run-level marker, NOT a
-   * config role-binding (src/config.ts stays role→provider/model only). Two
-   * readers: `duet continue` chooses the interactive rest-vs-handoff path from
-   * it, and `probeRunPosition` reads a resting phase-loop snapshot as
-   * interactive-active rather than crashed. Cleared at the plan-gate handoff to
-   * headless impl (and the `--headless` fallback); absent on every headless run,
+   * is the orchestrator for this run (the planning stage, up to its handoff
+   * gate). A run-level marker, NOT a binding (src/voices/bindings.ts stays
+   * voice→provider/model only). Two readers: `duet continue` chooses the
+   * interactive rest-vs-handoff path from it, and `probeRunPosition` reads a
+   * resting phase-loop snapshot as interactive-active rather than crashed.
+   * Cleared at the stage-boundary handoff to the headless driver (and the
+   * `--headless` fallback); absent on every headless run,
    * so the headless path is byte-for-byte unchanged. Never traps a run —
    * `takeover`/`abandon` ignore it.
    */
@@ -285,7 +286,7 @@ export interface RunState {
    * provider announces it (`recordTurnSessionId`, from RunTurnOptions.onSessionId)
    * — at/near turn start, not at settle. The live-activity heartbeat locates the
    * worker's transcript by it, so a worker's FIRST turn (and every ephemeral
-   * consultant turn, whose settled `workerSessions` id is the *prior* session) is
+   * consultant turn, whose settled `sessions` record is the *prior* session) is
    * no longer blind. Absent until the announce; never load-bearing.
    */
   activeTurns?: Partial<Record<VoiceAddress, { tag: string; startedAt: string; sessionId?: string }>>;
@@ -308,7 +309,7 @@ export interface RunState {
    * stays fixed through the dispatched-but-uncollected window (and even if that
    * first turn fails and its pending record is cleared) — a worker prompt was
    * issued, so the one-branch-per-run invariant has bound the branch. Headless
-   * never sets it (it reads workerSessions, written at settle, which suffices
+   * never sets it (it reads the `sessions` records, written at settle, which suffice
    * there because the blocking call never returns mid-turn).
    */
   workerDispatched?: true;
@@ -391,7 +392,7 @@ export interface WorkerSessionRecord {
  * A session slot in `RunState.sessions`: a duty's `"stage.duty"` key, or the
  * consultant's one checkpoint-scoped slot. The template union admits foreign
  * stage/duty pairings the vocabulary forbids — construction goes through
- * `sessionKeyFor` (roles.ts), which only ever builds a duty's own key.
+ * `sessionKeyFor` (src/voices/policy.ts), which only ever builds a duty's own key.
  */
 export type SessionKey = `${StageName}.${Duty}` | 'consultant';
 
@@ -720,7 +721,7 @@ export function clearTurnActive(state: RunState, role: VoiceAddress): void {
  * Stage THIS turn's provider session id onto the active-turn hint, as soon as the
  * provider announces it (RunTurnOptions.onSessionId). The live-activity heartbeat
  * locates the worker's transcript by this id — known at/near turn start — instead
- * of the settled `workerSessions` id (which only lands at settle, so a first turn
+ * of the settled `sessions` record (which only lands at settle, so a first turn
  * was blind, and which for the ephemeral consultant is the *prior* session). A
  * no-op when the role has no active-turn entry (a settle already cleared it), so
  * a late announce can't resurrect a finished turn.
@@ -845,7 +846,7 @@ export function contextPercent(usage: ContextUsage): number {
 /**
  * Compact token count for display: 2_000_000 → "2.0M", 1_500 → "2k", else the
  * number. Shared by `duet status` (status.ts) and the per-turn footer
- * (harness/tools.ts) so the two render Codex tokens identically.
+ * (orchestrator/tools.ts) so the two render Codex tokens identically.
  */
 export function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -983,7 +984,7 @@ export function loadMachineSnapshot(state: RunState): Snapshot<unknown> | undefi
 
 /**
  * One append-only log per voice (docs/automation-design.md §"Visualization").
- * Plain text, inspectable without duet; `--tmux` (src/tmux-view.ts) opens
+ * Plain text, inspectable without duet; `--tmux` (src/surfaces/view/tmux.ts) opens
  * panes running `tail -n +1 -F` on these files.
  */
 export function appendVoiceLog(state: RunState, voice: Voice, header: string, body?: string): void {

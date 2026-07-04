@@ -1,16 +1,16 @@
 # Build block — the AFK implementation phase of every arc. In lifecycle order:
 # the entry seeds (compact-for-impl for full's plan-driven build,
 # implement-design for the design arc's doc-driven build, implement-direct for
-# rir's plan-less build from the research decisions), the midpoint checkpoint
+# short's plan-less build from the research decisions), the midpoint checkpoint
 # trio, the build → review compaction, the critique review family
 # (implementation-handoff → review-implementation → respond-review, with
 # -again round-2 variants), the writable one-round family (handoff-direct →
-# review-direct → apply-review — rir's, reviewing against the research
+# review-direct → apply-review — short's, reviewing against the research
 # decisions), the fixer family (review-and-fix — relay's judge-fixer reviews
 # with write access and resolves its own findings; the handoff stays with the
 # builder), and the build tail (reconcile-docs, ceo-summary — the last build
 # steps before the Ship packet). review-direct and review-and-fix count review
-# rounds through the action catalog (ACTION_CATALOG in src/roles.ts).
+# rounds through the action catalog (ACTION_CATALOG in src/voices/policy.ts).
 
 [[snippets]]
 key = "compact-for-impl"

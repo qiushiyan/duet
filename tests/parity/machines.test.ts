@@ -4,7 +4,7 @@ import { WORKFLOWS } from '../../src/registry/workflows.ts';
 import type { WorkflowName } from '../../src/registry/workflows.ts';
 
 /**
- * The machine-shape parity pins: each arc's statechart serialized to its
+ * The machine-shape parity pins: each workflow's statechart serialized to its
  * structural facts — state names, tags, event→target transitions, the entry
  * route, the invoke wiring. JSON.stringify drops the function-valued fields
  * (the invoke input mapper, the context factory), leaving exactly the shape

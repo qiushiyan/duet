@@ -404,7 +404,7 @@ export function parseGatesAt(value: string, workflow: WorkflowName = "full"): Ga
     if (!gates.includes(name as GatePhase)) gates.push(name as GatePhase);
   }
   // A matched preset may legally resolve to an empty attended-gates list
-  // (RIR's afk = [] ⇒ attend nothing); only a user-typed empty list is invalid.
+  // (short's afk = [] ⇒ attend nothing); only a user-typed empty list is invalid.
   if (!matchedPreset && gates.length === 0) {
     throw new Error(
       `gates_at is empty — list the phases whose gates you will attend (from {${gatePhases.join(", ")}}), or omit it to attend every gate.`,
@@ -572,7 +572,7 @@ export async function resolveRunInputs(
   // gates_at resolves against the final workflow: the --gates-at flag parses
   // directly against it; a frontmatter list parsed against a different
   // frontmatter workflow is re-validated against the final one (the flag may
-  // have overridden it), so a Full-shaped gates_at can't ride into a RIR run.
+  // have overridden it), so a Full-shaped gates_at can't ride into a short run.
   let gatesAt: GatePhase[] | undefined;
   // Key-present, not truthy — matching parseFramingFile: a literal `--gates-at ""`
   // reaches parseGatesAt and is rejected as empty, rather than silently ignored

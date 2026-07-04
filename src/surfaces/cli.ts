@@ -52,9 +52,9 @@ import { listPendingSteers, stageSteer } from '../run/steers.ts';
 
 /**
  * duet — the command surface. Parsing and validation live here; everything
- * with behavior lives behind it: the run store (src/run-store.ts), the
- * process lifecycle (src/harness/lifecycle.ts), status rendering
- * (src/status.ts), and the viewer (src/tmux-view.ts). Commands return
+ * with behavior lives behind it: the run store (src/run/store.ts), the
+ * process lifecycle (src/surfaces/lifecycle.ts), status rendering
+ * (src/surfaces/status.ts), and the viewer (src/surfaces/view/tmux.ts). Commands return
  * immediately — phases run in the detached `_drive` child.
  */
 
@@ -909,7 +909,7 @@ program
 program
   .command('abandon')
   .description(
-    'Stop a run for good: kill its live driver if one is running, and mark it abandoned. The transcripts stay, so duet continue/takeover still revive it. With --purge, also delete the run dir and the three session transcripts (irreversible).',
+    'Stop a run for good: kill its live driver if one is running, and mark it abandoned. The transcripts stay, so duet continue/takeover still revive it. With --purge, also delete the run dir and every tracked session transcript (irreversible).',
   )
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
   .option(

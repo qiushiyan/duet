@@ -2,15 +2,14 @@ import { dutyBindingFor, sessionCompatible } from './bindings.ts';
 import { continuityEdgeFor, dutiesOf, phaseSpec, stageOf, stageOfDuty, stageOfDutyLane, stagesOf } from '../registry/workflows.ts';
 import type { Duty, PhaseName, ReviewPosture } from '../registry/workflows.ts';
 import type { VoiceAddress } from './providers/types.ts';
-// Type-only on the run-store imports, so no runtime cycle closes: the value
-// edges out of here are phases.ts and config.ts, neither of which imports
-// this module. The RunState/Voice/SessionKey edges are erased at build.
+// run/ sits below voices/ in the import gradient; only the state SHAPES are
+// needed here, so the imports stay type-only and erase at build.
 import type { RunState, SessionKey, Voice, WorkerSessionRecord } from '../run/store.ts';
 
 /**
  * Voice POLICY — the behavior keyed off an address, expressed once as data and
- * read by BOTH send_prompt hosts (the blocking path in harness/tools.ts and
- * the async harness/turn-dispatcher.ts) through the helpers below. This is
+ * read by BOTH send_prompt hosts (the blocking path in orchestrator/tools.ts and
+ * the async orchestrator/hosts/turn-dispatcher.ts) through the helpers below. This is
  * the canonical "deletion-test" module: scattered per-address checks are
  * ABSORBED here, never paralleled — delete the table and the rule reappears
  * at N call sites.

@@ -608,7 +608,7 @@ export async function enterAfk(
  * next phase via get_task) or hands off to a detached headless `_drive`. The
  * stage boundary — planning's last gate, `handoffGateOf` — is THE handoff:
  * approving it enters the permanent AFK substrate (Full: plan-approval → impl;
- * RIR: Direction → implement) — as does any explicit `--headless` fallback.
+ * short: Direction → implement) — as does any explicit `--headless` fallback.
  */
 export function interactiveContinueAction(
   workflow: WorkflowName,

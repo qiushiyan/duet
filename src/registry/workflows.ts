@@ -21,7 +21,7 @@
  * Every per-phase fact lives here: the order of phases, each phase's gate (its
  * machine state name and human-facing copy), the review-loop posture, and the
  * runaway rails (round caps, budgets, timeouts). The statechart
- * (src/harness/machine.ts) builds its states from a workflow's phases; the
+ * (src/run/machine.ts) builds its states from a workflow's phases; the
  * driver, CLI, and prompts look phases up here.
  *
  * The arcs (docs/automation-design.md §"Phases and gates"):
@@ -47,18 +47,18 @@ import { basename, dirname, extname } from 'node:path';
  *
  * - `frame` — the generative third-analysis mode (framing).
  * - `specGate` — the critical bet-audit mode just before the Commit-spec gate.
- * - `implGate` — the open-ended bet-audit mode at the impl-side gate. RIR's
+ * - `implGate` — the open-ended bet-audit mode at the impl-side gate. short's
  *   `implement` uses it (it has no plan phase, so it authors no contract).
  * - `contract` — the generative-and-writing mode: the consultant AUTHORS the
- *   acceptance contract (Full's `plan`), blind to the plan and code.
+ *   acceptance contract (full's `plan`; blueprint's and relay's `design`), blind to the plan and code.
  * - `verify` — the evidence-grounded verification mode: a fresh session VERIFIES
- *   the frozen acceptance contract (Full's `implement`), supplanting the open-ended
+ *   the frozen acceptance contract (the verify-carrying `implement` phases), supplanting the open-ended
  *   `implGate` audit there.
  *
- * Each arc maps the modes onto its own phases (Full: frame/specGate/contract/
- * verify; RIR: frame/implGate — no spec or plan phase, so no contract loop). The
+ * Each workflow maps the modes onto its own phases (full: frame/specGate/contract/
+ * verify; short: frame/implGate — no spec or plan phase, so no contract loop). The
  * `contract`/`verify` pair is the acceptance-contract feature; `implGate` is
- * NOT globally re-pointed (RIR still audits the bet with no contract to verify).
+ * NOT globally re-pointed (short still audits the bet with no contract to verify).
  * Registry data, so "where the consultant fires" stays in the single source.
  */
 export type ConsultantCheckpoint = 'frame' | 'specGate' | 'implGate' | 'contract' | 'verify';
@@ -475,7 +475,7 @@ export const WORKFLOWS = {
         workerTurnTimeoutMs: 90 * 60_000,
         // The acceptance-contract VERIFY checkpoint: a fresh session verifies the
         // frozen contract by running the built system, supplanting the
-        // open-ended implGate bet-audit (RIR keeps implGate — it has no contract).
+        // open-ended implGate bet-audit (short keeps implGate — it has no contract).
         consultantCheckpoint: 'verify',
       },
       {
@@ -909,9 +909,9 @@ export const WORKFLOWS = {
       },
     ],
     entry: { firstPhase: 'research' },
-    // afk attends no gates — a headless RIR run auto-crosses Direction, Ship, and
+    // afk attends no gates — a headless short run auto-crosses Direction, Ship, and
     // the new Open-PR gate straight to done (the user's walk-away-after-research
-    // flow). forceAttend pins nothing for RIR; defaultPreAuthorized stays empty,
+    // flow). forceAttend pins nothing for short; defaultPreAuthorized stays empty,
     // so a bare run attends all three gates (legacy attend-all default).
     presets: { afk: [] },
     forceAttend: [],
@@ -1341,9 +1341,9 @@ export function entryOf(workflow: WorkflowName): { firstPhase: PhaseName; specSk
 /**
  * The watch-hint printed when an interactive run hands off to the headless
  * driver at its handoff gate: "<handoff gate> approved — AFK <next phase>".
- * Derived from the registry so each arc reads correctly — Full: "plan approved
- * — AFK impl"; RIR: "research approved — AFK implement" — rather than the old
- * hardcoded "plan approved" that mislabeled a RIR handoff (Q: no plan exists).
+ * Derived from the registry so each workflow reads correctly — full: "plan approved
+ * — AFK impl"; short: "research approved — AFK implement" — rather than the old
+ * hardcoded "plan approved" that mislabeled a short-workflow handoff (Q: no plan exists).
  */
 export function handoffWatchLabel(workflow: WorkflowName): string {
   const phases = phasesOf(workflow);
@@ -1356,7 +1356,7 @@ export function handoffWatchLabel(workflow: WorkflowName): string {
 /**
  * The phase immediately before `phase` in its own arc — the predecessor whose
  * gate approval enters `phase`. Registry-derived so a renamed or reordered arc
- * stays correct (Full: finish ← implement; RIR: finish ← implement). Throws if
+ * stays correct (full: finish ← implement; short: finish ← implement). Throws if
  * `phase` is the first in its arc (it has no predecessor) — a caller bug.
  */
 export function priorPhaseOf(workflow: WorkflowName, phase: PhaseName): PhaseName {
@@ -1601,7 +1601,7 @@ export function consultantSnippetFor(workflow: WorkflowName, phase: PhaseName): 
 /**
  * The phase in a workflow whose consultant checkpoint AUTHORS the acceptance
  * contract (`contract` mode) — Full's `plan`; `undefined` for an arc with no
- * contract loop (RIR). The freeze step reads this to recognize "this gate is the
+ * contract loop (short). The freeze step reads this to recognize "this gate is the
  * contract's freeze gate", so the gate→freeze coupling stays registry-derived
  * (never a hardcoded `=== 'plan'`), and an arc that authors no contract freezes
  * none. Derived, since exactly one phase carries the mode (or none).

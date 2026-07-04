@@ -2,7 +2,7 @@
 # spec + plan pair: product sections on top (spec altitude), technical
 # sections below (plan altitude minus per-case enumeration), reviewed in one
 # section-scoped loop. review-design and its -again variant count review
-# rounds through the action catalog (ACTION_CATALOG in src/roles.ts).
+# rounds through the action catalog (ACTION_CATALOG in src/voices/policy.ts).
 
 [[snippets]]
 key = "write-design"

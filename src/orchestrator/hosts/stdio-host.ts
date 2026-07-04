@@ -14,11 +14,11 @@ import type { PhaseEvent } from '../../run/phase-events.ts';
 /**
  * The stdio host — the SDK-over-stdio sibling of the in-process driver, and the
  * stdio `PhaseHost` adapter over the shared run loop (`runHostedPhase`,
- * src/harness/host-runner.ts). `openSession` connects an orchestrator client to a
+ * src/orchestrator/hosts/host-runner.ts). `openSession` connects an orchestrator client to a
  * real `duet _mcp <runId> <phase>` subprocess (the kernel tool server); each
  * `driveTurn` runs the external orchestrator over that boundary, then reads the
  * terminal marker the subprocess wrote and maps it to a TurnOutcome — the same
- * channel the in-process driver uses (src/harness/phase-events.ts), never
+ * channel the in-process driver uses (src/run/phase-events.ts), never
  * tool-result-text scraping.
  *
  * Behavioral parity with the in-process driver is the point, and the four run-loop

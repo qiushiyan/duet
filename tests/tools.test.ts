@@ -1286,7 +1286,7 @@ describe('send_prompt heartbeat enrichment (#2 — best-effort)', () => {
     let finish!: (t: { text: string; sessionId: string }) => void;
     const slow = new FakeWorker('claude');
     // The worker announces its id at turn start (as the real adapters do) — the
-    // heartbeat then locates the transcript by it, no settled workerSessions id.
+    // heartbeat then locates the transcript by it, no settled session record.
     slow.runTurn = (opts) => {
       opts.onSessionId?.('impl-1');
       return new Promise((r) => (finish = r));
@@ -1538,7 +1538,7 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
     const base = Date.parse('2026-06-20T12:00:00.000Z');
     vi.setSystemTime(base);
     const home = join(projectDir, 'home');
-    // No workerSessions: this is a FIRST turn. The worker announces its id at
+    // No session record yet: this is a FIRST turn. The worker announces its id at
     // turn start (onSessionId), which is what the poll now locates by.
     plant(home, base);
 
@@ -1609,7 +1609,7 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
   });
 
   test('a FIRST turn surfaces activity once the provider announces its id (the regression)', async ({ run, projectDir, onTestFinished }) => {
-    // The headline: a fresh run with NO workerSessions for the maker — the
+    // The headline: a fresh run with NO session record for the maker — the
     // exact state that used to go dark for a whole turn. The worker announces its
     // id at turn start and the poll finds the transcript planted at it.
     vi.useFakeTimers();
@@ -1714,7 +1714,7 @@ describe('send_prompt live-activity poll (the 30s ⋯ line)', () => {
   });
 
   test('the ephemeral consultant locates THIS turn’s id, never its stale settled session', async ({ consultantRun, projectDir, onTestFinished }) => {
-    // The consultant reseeds every turn, so workerSessions.consultant holds the
+    // The consultant reseeds every turn, so sessions.consultant holds the
     // PRIOR session. The poll must follow the announced live id, not fall back to
     // that stale id (which would surface the wrong — or no — transcript).
     vi.useFakeTimers();
@@ -1948,12 +1948,12 @@ describe('the consultant role (ephemeral, read-only, additive)', () => {
     await call('send_prompt', { duty: 'consultant', tag: 'custom', body: 'audit 2' });
 
     // Both launches went out with no resume id, even though the first settle
-    // tracked 'c-1' — the dispatcher reads sessionIdFor, not workerSessions.
+    // tracked 'c-1' — the dispatcher reads sessionIdFor, never the raw sessions map.
     expect.soft(consultant.calls[0]?.sessionId).toBeUndefined();
     expect.soft(consultant.calls[1]?.sessionId).toBeUndefined();
   });
 
-  test('latest-session tracked: workerSessions.consultant holds the newest id; consultant.log names each', async ({
+  test('latest-session tracked: sessions.consultant holds the newest id; consultant.log names each', async ({
     projectDir,
     consultantRun,
   }) => {

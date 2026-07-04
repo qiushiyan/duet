@@ -16,10 +16,10 @@ import type { PhaseName, WorkflowName, WorkflowSpecInput } from '../registry/wor
  * internal, valid only from phase states; `human.approve|reject|answer` are
  * authority, valid only from gate/flag-wait states. A gate has no `phase.*`
  * handler, so `advance_phase` parks but cannot cross — a property of the
- * vocabulary, not a prompt (src/harness/phase-events.ts).
+ * vocabulary, not a prompt (src/run/phase-events.ts).
  *
  * The states are built from a workflow's phases (`machineFor(workflow)`, over
- * the registry in src/phases.ts) — the arc is a linear chain, so each phase
+ * the registry in src/registry/workflows.ts) — the arc is a linear chain, so each phase
  * contributes `<name>Loop` + `<name>FlagWait` + its gate state; a gate's approve
  * targets the next phase's loop (or `done` when it gates the last phase, as
  * Full's `finish` does), its reject re-enters the loop it gates. Every phase
@@ -64,7 +64,7 @@ export interface PhaseInput {
 
 /**
  * The machine-state name of a phase's flag-wait. The one place the naming
- * convention lives — the position probe (harness/lifecycle.ts) resolves
+ * convention lives — the position probe (run/position.ts) resolves
  * state values back to phases through it. (Gate state names are domain
  * names, owned by the phase table.)
  */
