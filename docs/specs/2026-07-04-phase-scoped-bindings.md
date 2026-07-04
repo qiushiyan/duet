@@ -1,6 +1,6 @@
 # Phase-scoped bindings — the binding vocabulary's altitude debt
 
-**Status:** analysis + proposal, not yet built. Forward-looking; nothing here is live.
+**Status:** superseded 2026-07-04 by `docs/specs/2026-07-04-domain-remodel.md` — the analysis below stands (the altitude mismatch, the code smells, §"What is already right"), but the proposal does not: tier 2's per-phase binding maps were rejected as the wrong unit (a stage is one thinking flow), and the settled direction re-keys bindings to named stages (planning/delivery) with the framing frontmatter as the run manifest. This file stays as the dated analysis record.
 **Motivating run:** the PR6 relay run `20260703-1500-e035` (worktree `~/dev/.worktrees/main/feat/loopy-infra-pr6`) — the first hand-configured relay criss-cross, and the run that exposed the friction below **(observed)**.
 **Touches:** `src/config.ts` (the binding resolver + parse paths), `src/phases.ts` (the composition vocabulary it's measured against), `src/roles.ts` / `src/providers/` (the worker roster). **Does not touch the statechart** — see §"What is already right".
 
