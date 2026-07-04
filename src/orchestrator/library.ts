@@ -333,7 +333,7 @@ export function renderSnippetLibrary(opts: SnippetRenderOpts = {}): string {
   if (opts.all || !opts.phase) return renderFlat(library, opts.sentTo, opts.all, consultantBound, opts.workflow, gateless);
   // A phase-scoped render needs the workflow: phase names are workflow-scoped, so the
   // phase alone can't resolve its templates. The one boundary check (parse, don't
-  // validate) — the real caller (list_snippets) always supplies workflowOf(state).
+  // validate) — the real caller (list_snippets) always supplies state.workflow.
   if (!opts.workflow) throw new Error('renderSnippetLibrary: a phase-scoped render needs the run workflow — phase names are workflow-scoped');
   return renderForPhase(library, opts.phase, opts.workflow, opts.sentTo, consultantBound, gateless);
 }

@@ -6,7 +6,7 @@ import { phaseSpec, phasesOf } from '../../registry/workflows.ts';
 import type { PhaseName } from '../../registry/workflows.ts';
 import { createWorkers } from '../../voices/providers/index.ts';
 import type { WorkerProviders, VoiceAddress } from '../../voices/providers/types.ts';
-import { acquireMcpOwner, budgetFor, holdsMcpOwner, loadRunState, workflowOf } from '../../run/store.ts';
+import { acquireMcpOwner, budgetFor, holdsMcpOwner, loadRunState } from '../../run/store.ts';
 import type { RunState } from '../../run/store.ts';
 import { probeRunPosition } from '../../run/position.ts';
 import type { RunPosition } from '../../run/position.ts';
@@ -40,7 +40,7 @@ import type { TurnDispatcher } from './turn-dispatcher.ts';
 export function buildKernelTools(cwd: string, runId: string, phaseRaw: string): { tools: Array<KernelTool<any>>; phase: PhaseName } {
   // Throws a clear "no run state at … — is <id> a run of this project?" when unknown.
   const state = loadRunState(cwd, runId);
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   const legal = phasesOf(workflow).map((p) => p.name);
   if (!(legal as string[]).includes(phaseRaw)) {
     throw new Error(
@@ -135,9 +135,9 @@ function hostablePhase(position: RunPosition): PhaseName | undefined {
 export type WorkerFactory = (state: RunState, phase: PhaseName) => WorkerProviders;
 
 const defaultWorkerFactory: WorkerFactory = (state, phase) =>
-  createWorkers(state.bindings, workflowOf(state), phase, {
+  createWorkers(state.bindings, state.workflow, phase, {
     workerBudgetUsd: budgetFor(state, phase).worker,
-    timeoutMs: phaseSpec(workflowOf(state), phase).workerTurnTimeoutMs,
+    timeoutMs: phaseSpec(state.workflow, phase).workerTurnTimeoutMs,
   });
 
 export interface RunScopedKernel {
@@ -199,7 +199,7 @@ export function createRunScopedKernel(
         dispatcher: createTurnDispatcher({
           state,
           phase,
-          cap: phaseSpec(workflowOf(state), phase).roundCap,
+          cap: phaseSpec(state.workflow, phase).roundCap,
           providers,
           log: (line) => console.error(line),
           holdsLease: leaseHeld,

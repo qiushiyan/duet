@@ -5,7 +5,7 @@ import { voicesFor } from '../../voices/policy.ts';
 import { dutiesOf, entryOf, stageOf } from '../../registry/workflows.ts';
 import type { PhaseName } from '../../registry/workflows.ts';
 import { probeRunPosition } from '../../run/position.ts';
-import { runDirOf, workflowOf } from '../../run/store.ts';
+import { runDirOf } from '../../run/store.ts';
 import type { RunState, Voice } from '../../run/store.ts';
 
 /**
@@ -110,7 +110,7 @@ function parseWidth(out: string): number {
  * back to the entry phase.
  */
 function currentStageVoices(state: RunState): { maker: Voice; checker: Voice; consultant: boolean } {
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   let phase: PhaseName;
   try {
     const position = probeRunPosition(state);

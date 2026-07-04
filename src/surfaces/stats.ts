@@ -5,7 +5,7 @@ import type { VoiceBindings } from '../voices/bindings.ts';
 import { makerDutyOf, phasesOf, stageOf } from '../registry/workflows.ts';
 import type { PhaseName, WorkflowName } from '../registry/workflows.ts';
 import { sessionKeyFor, voicesFor } from '../voices/policy.ts';
-import { runDirOf, workflowOf } from '../run/store.ts';
+import { runDirOf } from '../run/store.ts';
 import type { RunState, Voice } from '../run/store.ts';
 import type { VoiceAddress } from '../voices/providers/types.ts';
 import { formatDuration } from '../view/timefmt.ts';
@@ -285,7 +285,7 @@ export function buildStatsModel(state: RunState): StatsModel {
       if (log !== undefined) return [{ voice, log }];
       return hasSession(voice) ? [{ voice }] : [];
     });
-  const phaseOrder = phasesOf(workflowOf(state)).map((p) => p.name);
+  const phaseOrder = phasesOf(state.workflow).map((p) => p.name);
   // Label only phases of THIS run's workflow — a foreign phase (a run predating
   // a workflow change) has no confident resolution, so it stays unlabeled rather
   // than force the labeler to resolve a phase its workflow doesn't own.
@@ -296,7 +296,7 @@ export function buildStatsModel(state: RunState): StatsModel {
     read('orchestrator'),
     workers,
     phaseOrder,
-    (phase) => (ownPhases.has(phase) ? makerModelLabel(state.bindings, workflowOf(state), phase as PhaseName) : undefined),
+    (phase) => (ownPhases.has(phase) ? makerModelLabel(state.bindings, state.workflow, phase as PhaseName) : undefined),
     Number.isNaN(runStartMs) ? 0 : runStartMs,
   );
 }

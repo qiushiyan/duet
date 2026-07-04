@@ -4,7 +4,7 @@ import { createActor } from 'xstate';
 import type { Snapshot } from 'xstate';
 import { entryOf, gateOf, phaseOfGateState, phaseSpec, phasesOf } from '../registry/workflows.ts';
 import type { GatePhase, PhaseName, WorkflowName } from '../registry/workflows.ts';
-import { loadMachineSnapshot, runDirOf, workflowOf } from './store.ts';
+import { loadMachineSnapshot, runDirOf } from './store.ts';
 import type { RunState } from './store.ts';
 import { flagWaitStateOf, machineFor } from './machine.ts';
 
@@ -78,7 +78,7 @@ export function probeRunPosition(state: RunState): RunPosition {
 
 /** The position assuming no live driver — also the running phase's identity. */
 function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running' | 'abandoned' }> {
-  const wf = workflowOf(state);
+  const wf = state.workflow;
   const entry = entryOf(wf);
   // The phase a snapshot-less machine starts in (a draft-spec run skips ahead
   // to the workflow's specSkipsTo, when it has one).
@@ -180,7 +180,7 @@ export function phaseLoopOf(wf: WorkflowName, value: string): PhaseName | undefi
  * caller fall back to the entry phase.
  */
 function interactiveRestPhase(state: RunState, snapshot: Snapshot<unknown>): PhaseName | undefined {
-  const wf = workflowOf(state);
+  const wf = state.workflow;
   const restored = createActor(machineFor(wf), {
     input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
     snapshot,
@@ -201,13 +201,13 @@ export function completionLine(workflow: WorkflowName): string {
 
 /** One line describing why the run stopped — the notification body. */
 export function describeStop(state: RunState, done: boolean): string {
-  if (done) return completionLine(workflowOf(state));
+  if (done) return completionLine(state.workflow);
   const machineState = state.machineState ?? '';
   if (state.pendingQuestion && machineState.includes('FlagWait')) {
     return `question queued: ${state.pendingQuestion.question}`;
   }
-  const gatePhase = phaseOfGateState(workflowOf(state), machineState);
-  if (gatePhase) return gateOf(workflowOf(state), gatePhase).ready;
+  const gatePhase = phaseOfGateState(state.workflow, machineState);
+  if (gatePhase) return gateOf(state.workflow, gatePhase).ready;
   return `stopped at ${machineState}`;
 }
 

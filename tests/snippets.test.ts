@@ -342,7 +342,7 @@ describe('the snippet library', () => {
     // Phase identity is workflow-scoped now (both arcs share `implement`/`finish`),
     // so a phase alone can't resolve its arc. The render throws at the one boundary
     // rather than guessing an arc (the real caller, list_snippets, always supplies
-    // workflowOf(state)); rendering a phase against its actual arc is covered below.
+    // state.workflow); rendering a phase against its actual arc is covered below.
     expect(() => renderSnippetLibrary({ phase: 'research' })).toThrow(/needs the run workflow/);
   });
 

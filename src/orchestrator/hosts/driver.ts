@@ -13,8 +13,7 @@ import {
   recordContextUsage,
   recordPhaseLabel,
   saveRunState,
-  workflowOf,
-} from '../../run/store.ts';
+  } from '../../run/store.ts';
 import type { HumanMessage, RunState } from '../../run/store.ts';
 import { listPendingSteers, markSteersDelivered } from '../../run/steers.ts';
 import { readTranscriptTailForSession } from '../../voices/sessions.ts';
@@ -139,9 +138,9 @@ function makeInProcessHost(runTurn: RunOrchestratorTurn): PhaseHost {
       const { tools } = createPhaseTools({
         state,
         phase,
-        providers: createWorkers(state.bindings, workflowOf(state), phase, {
+        providers: createWorkers(state.bindings, state.workflow, phase, {
           workerBudgetUsd: budget.worker,
-          timeoutMs: phaseSpec(workflowOf(state), phase).workerTurnTimeoutMs,
+          timeoutMs: phaseSpec(state.workflow, phase).workerTurnTimeoutMs,
         }),
         log: driverLog,
         ...(pendingMessage?.kind === 'answer' ? { stagedAnswer: pendingMessage.text } : {}),
@@ -359,7 +358,7 @@ function basePrompt(
     return buildPhaseBrief(state, phase);
   }
   if (pendingMessage?.kind === 'answer') return answerResumePrompt(pendingMessage.text);
-  if (pendingMessage?.kind === 'feedback') return feedbackResumePrompt(workflowOf(state), phase, pendingMessage.text);
+  if (pendingMessage?.kind === 'feedback') return feedbackResumePrompt(state.workflow, phase, pendingMessage.text);
   // Re-entered the phase with no staged input (e.g. recovery after a crash):
   // ask the orchestrator to take stock and continue.
   return nudgeContinuePrompt();

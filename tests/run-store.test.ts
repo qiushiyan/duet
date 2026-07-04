@@ -19,6 +19,7 @@ import {
   holdsMcpOwner,
   clearTurnActive,
   listRuns,
+  scanRuns,
   loadMachineSnapshot,
   loadRunState,
   markTurnActive,
@@ -29,8 +30,7 @@ import {
   saveRunState,
   scratchDirOf,
   stageHumanInput,
-  workflowOf,
-} from '../src/run/store.ts';
+  } from '../src/run/store.ts';
 import { test } from './helpers/fixtures.ts';
 
 describe('recordPhaseLabel — the view-only tmux phase sidecar', () => {
@@ -197,6 +197,34 @@ describe('run creation', () => {
     // The error names what happened AND the manual path out — transcripts are
     // intact, so the augmentation promise (finish by hand) survives the break.
     expect(() => loadRunState(projectDir, run.runId)).toThrow(/predates the duty-keyed remodel[\s\S]*claude --resume/);
+  });
+
+  test('loadRunState REJECTS a state file carrying the seat-keyed workerSessions map (the other pre-remodel signature)', ({
+    projectDir,
+    run,
+  }) => {
+    // A pre-remodel run persisted sessions under seat names; its presence is a
+    // rejection signature of its own, even beside a plausible bindings shape.
+    const legacy = JSON.parse(readFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), 'utf8'));
+    legacy.workerSessions = { implementer: { provider: 'claude', id: 's-1' } };
+    writeFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), JSON.stringify(legacy, null, 2));
+
+    expect(() => loadRunState(projectDir, run.runId)).toThrow(/predates the duty-keyed remodel[\s\S]*claude --resume/);
+  });
+
+  test('loadRunState REJECTS a persisted retired workflow name with the standard library and the manual path', ({
+    projectDir,
+    run,
+  }) => {
+    // A hand-crafted state with the NEW bindings shape but a retired workflow
+    // spelling must still die at the boundary, not fall through to a lookup crash.
+    const legacy = JSON.parse(readFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), 'utf8'));
+    legacy.workflow = 'design';
+    writeFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), JSON.stringify(legacy, null, 2));
+
+    expect(() => loadRunState(projectDir, run.runId)).toThrow(
+      /retired workflow "design"[\s\S]*full · blueprint · relay · short[\s\S]*claude --resume/,
+    );
   });
 
   test('createRun without gatesAt leaves it absent when defaultPreAuthorized is empty (rir — legacy attend-all)', ({
@@ -425,13 +453,16 @@ describe('budgetFor — the opt-in knob', () => {
 });
 
 describe('workflow identity', () => {
-  test('a created run defaults to the full workflow', ({ run }) => {
-    expect(workflowOf(run)).toBe('full');
+  test('a created run materializes the full workflow by default — persisted, not defaulted at read time', ({ projectDir, run }) => {
+    expect.soft(run.workflow).toBe('full');
+    const onDisk = readFileSync(join(projectDir, '.duet', 'runs', run.runId, 'state.json'), 'utf8');
+    expect(JSON.parse(onDisk).workflow).toBe('full');
   });
 
-  test('a state with no workflow field (pre-feature) resolves to full', ({ run }) => {
-    delete run.workflow;
-    expect(workflowOf(run)).toBe('full');
+  test('a state file with no workflow field (remodel-era or hand-written) materializes full at the load boundary', ({ projectDir, run }) => {
+    delete (run as { workflow?: string }).workflow;
+    saveRunState(run);
+    expect(loadRunState(projectDir, run.runId).workflow).toBe('full');
   });
 
   test('createRun persists an explicit workflow', ({ projectDir }) => {
@@ -451,5 +482,30 @@ describe('run listing', () => {
     saveRunState(newer);
 
     expect(listRuns(projectDir).map((r) => r.runId)).toEqual([newer.runId, run.runId]);
+  });
+
+  test('scanRuns REPORTS a recognized-but-refused run (never silently hidden) while a corrupt dir still skips quietly', ({
+    projectDir,
+    run,
+  }) => {
+    // One loadable run (the fixture), one pre-remodel run (recognized, refused),
+    // one corrupt dir (nothing prescriptive to say — quiet skip).
+    const old = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full') });
+    const oldState = JSON.parse(readFileSync(join(runDirOf(projectDir, old.runId), 'state.json'), 'utf8'));
+    delete oldState.bindings.duties;
+    writeFileSync(join(runDirOf(projectDir, old.runId), 'state.json'), JSON.stringify(oldState, null, 2));
+    mkdirSync(join(projectDir, '.duet', 'runs', 'corrupt'));
+    writeFileSync(join(projectDir, '.duet', 'runs', 'corrupt', 'state.json'), 'not json at all');
+
+    const { runs, unloadable } = scanRuns(projectDir);
+    expect.soft(runs.map((r) => r.runId)).toEqual([run.runId]);
+    // The refusal carries the run id and the prescriptive way out, so a listing
+    // surface can print it verbatim — a post-upgrade `duet status` must never
+    // read as "no runs" when the truth is "your run no longer loads".
+    expect.soft(unloadable).toHaveLength(1);
+    expect.soft(unloadable[0]?.runId).toBe(old.runId);
+    expect.soft(unloadable[0]?.reason).toMatch(/predates the duty-keyed remodel[\s\S]*claude --resume/);
+    // listRuns stays the loadable view.
+    expect.soft(listRuns(projectDir).map((r) => r.runId)).toEqual([run.runId]);
   });
 });

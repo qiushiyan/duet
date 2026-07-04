@@ -36,7 +36,7 @@ import { BudgetCutoffError } from '../src/voices/providers/types.ts';
 import type { VoiceAddress } from '../src/voices/providers/types.ts';
 import { checkerDutyOf, makerDutyOf, phaseSpec, stageOf } from '../src/registry/workflows.ts';
 import type { PhaseName } from '../src/registry/workflows.ts';
-import { contextSafetyPercent, createRun, loadRunState, markPendingTurn, recordContextUsage, runDirOf, saveRunState, stageHumanInput, workflowOf } from '../src/run/store.ts';
+import { contextSafetyPercent, createRun, loadRunState, markPendingTurn, recordContextUsage, runDirOf, saveRunState, stageHumanInput } from '../src/run/store.ts';
 import { listPendingSteers, stageSteer } from '../src/run/steers.ts';
 import type { RunState } from '../src/run/store.ts';
 import { defaultBindingsFor } from '../src/voices/bindings.ts';
@@ -74,7 +74,7 @@ interface HarnessOpts {
 
 function harness(run: RunState, opts: HarnessOpts = {}) {
   const phase = opts.phase ?? 'spec';
-  const workflow = workflowOf(run);
+  const workflow = run.workflow;
   const stage = stageOf(workflow, phase);
   const maker = opts.maker ?? new FakeWorker('claude');
   const checker = opts.checker ?? new FakeWorker('codex');
@@ -91,7 +91,7 @@ function harness(run: RunState, opts: HarnessOpts = {}) {
     ? createTurnDispatcher({
         state: run,
         phase,
-        cap: phaseSpec(workflowOf(run), phase).roundCap,
+        cap: phaseSpec(run.workflow, phase).roundCap,
         providers,
         log,
         ...(opts.home !== undefined ? { home: opts.home } : {}),

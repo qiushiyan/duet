@@ -88,7 +88,7 @@ export function resolveSessions(state: RunState): SessionRef[] {
     out.push({ key: 'orchestrator', provider: state.bindings.orchestrator.provider, sessionId: state.orchestratorSessionId });
   }
   const keys: SessionKey[] = [
-    ...stagesOf(state.workflow ?? 'full').flatMap((s) => [sessionKeyFor(s.duties.maker), sessionKeyFor(s.duties.checker)]),
+    ...stagesOf(state.workflow).flatMap((s) => [sessionKeyFor(s.duties.maker), sessionKeyFor(s.duties.checker)]),
     'consultant',
   ];
   for (const key of keys) {
@@ -194,7 +194,10 @@ export function purgeRun(state: RunState, home: string = homedir()): PurgeResult
   // latest, losing the planning-era transcript after a provider switch).
   // Prior consultant checkpoint transcripts are intentionally left on disk:
   // the slot tracks only the latest id and sessions.ts matches by exact id
-  // (never a directory sweep), so purge cannot reach them.
+  // (never a directory sweep), so purge cannot reach them. The same limit
+  // applies to a slot a compact-abort session reset cleared
+  // (sessionSlotsToReset — it may clear the planning slot an edge walked to):
+  // a record purge never saw is a transcript purge leaves behind.
   for (const record of Object.values(state.sessions)) {
     if (record) sessions.push({ provider: record.provider, sessionId: record.id });
   }

@@ -779,3 +779,50 @@ describe('validateRegistry — posture/seed coherence on a delivery build phase'
     );
   });
 });
+
+describe('validateRegistry — the acceptance contract is one chain (author ⇔ verify)', () => {
+  // A coherent delivery build that can carry a verify checkpoint: fresh-seed +
+  // writable keeps the default critic checker and needs no continuity edge.
+  const buildPhase = (overrides: Record<string, unknown> = {}) =>
+    phase('b', 'bGate', {
+      reviewLoop: true,
+      semantics: {
+        block: 'build',
+        entrySeed: 'fresh-seed',
+        reviewPosture: 'writable',
+        midpoint: 'none',
+        shipPacket: 'lean',
+        buildTailOwner: 'maker',
+        examplesKey: 'short-impl',
+      } as PhaseSemantics,
+      ...overrides,
+    });
+  // A coherent planning doc-loop that can carry the contract-author checkpoint.
+  const docPhase = (overrides: Record<string, unknown> = {}) =>
+    phase('a', 'aGate', {
+      reviewLoop: true,
+      semantics: { block: 'doc-loop', artifactKind: 'design', examplesKey: 'design' } as PhaseSemantics,
+      ...overrides,
+    });
+
+  test('a verify checkpoint without a contract author throws — nothing would ever be frozen to check', () => {
+    const w = workflow({ phases: [docPhase(), buildPhase({ consultantCheckpoint: 'verify' })] });
+    expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).toThrow(
+      /"verify" consultant checkpoint without its "contract" counterpart/,
+    );
+  });
+
+  test('a contract author without a verify throws — a frozen target nothing ever checks', () => {
+    const w = workflow({ phases: [docPhase({ consultantCheckpoint: 'contract' }), buildPhase()] });
+    expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).toThrow(
+      /"contract" consultant checkpoint without its "verify" counterpart/,
+    );
+  });
+
+  test('both ends together pass (the shipped full/blueprint/relay shape)', () => {
+    const w = workflow({
+      phases: [docPhase({ consultantCheckpoint: 'contract' }), buildPhase({ consultantCheckpoint: 'verify' })],
+    });
+    expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).not.toThrow();
+  });
+});

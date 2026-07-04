@@ -5,7 +5,7 @@ import { WORKFLOWS, entryOf, gateOf, phaseOfGateState, phasesOf } from '../regis
 import type { GatePhase, PhaseName, WorkflowName } from '../registry/workflows.ts';
 import type { VoiceAddress } from '../voices/providers/types.ts';
 import { voicesFor } from '../voices/policy.ts';
-import { contextPercent, fmtTokens, workflowOf } from '../run/store.ts';
+import { contextPercent, fmtTokens } from '../run/store.ts';
 import type { ContextEvent, HumanDecision, RunState, Voice } from '../run/store.ts';
 import type { Steer } from '../run/steers.ts';
 import { resolveSessions } from '../voices/sessions.ts';
@@ -147,7 +147,7 @@ export interface StatusModel {
 }
 
 export function buildStatusModel(state: RunState, position: RunPosition, pendingSteers: Steer[]): StatusModel {
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   return {
     runId: state.runId,
     createdAt: state.createdAt,
@@ -193,7 +193,7 @@ function stopModel(state: RunState, position: RunPosition): StopModel {
     case 'interactive':
       return position;
     case 'gate': {
-      const gate = gateOf(workflowOf(state), position.phase);
+      const gate = gateOf(state.workflow, position.phase);
       const packet = state.phaseSummaries[position.phase];
       return {
         kind: 'gate',
@@ -229,7 +229,7 @@ function stopModel(state: RunState, position: RunPosition): StopModel {
     case 'done': {
       // The run's last phase carries the completion summary — Full's `finish`,
       // RIR's `implement` — not a hardcoded phase.
-      const lastPhase = phasesOf(workflowOf(state)).at(-1)?.name;
+      const lastPhase = phasesOf(state.workflow).at(-1)?.name;
       const summary = lastPhase ? state.phaseSummaries[lastPhase]?.summary : undefined;
       return { kind: 'done', ...(summary ? { summary } : {}) };
     }
@@ -237,7 +237,7 @@ function stopModel(state: RunState, position: RunPosition): StopModel {
 }
 
 function packetHeadline(state: RunState, gateState: string): string {
-  const phase = phaseOfGateState(workflowOf(state), gateState);
+  const phase = phaseOfGateState(state.workflow, gateState);
   if (!phase) return '';
   return (state.phaseSummaries[phase]?.summary.split('\n').find((l) => l.trim()) ?? '').slice(0, 96);
 }

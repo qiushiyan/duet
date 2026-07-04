@@ -11,7 +11,7 @@ import {
   feedbackResumePrompt,
 } from '../src/orchestrator/briefs.ts';
 import { defaultBindingsFor } from '../src/voices/bindings.ts';
-import { phasesOf } from '../src/registry/workflows.ts';
+import { WORKFLOWS, phasesOf } from '../src/registry/workflows.ts';
 import type { WorkflowName } from '../src/registry/workflows.ts';
 import { budgetFor, createRun, loadRunState, saveRunState } from '../src/run/store.ts';
 import type { RunState } from '../src/run/store.ts';
@@ -81,11 +81,15 @@ describe('buildPhaseBrief (the shared entry-prompt renderer — headless parity)
   // harness (tests/parity/briefs.test.ts); here the guard is coverage — a
   // phase whose semantics reach a stub or throwing render path surfaces here.
   // Each phase is built against a run of its own arc.
-  test.for([
-    ...phasesOf('full').map((p) => ['full', p.name] as const),
-    ...phasesOf('blueprint').map((p) => ['blueprint', p.name] as const),
-    ...phasesOf('short').map((p) => ['short', p.name] as const),
-  ])('%s builds a non-empty brief', ([workflow, phase], { projectDir }) => {
+  // Derived from the registry, never a hand list: a new workflow's phases get
+  // render coverage the same commit they ship (a missing brief-data record —
+  // the Partial<Record<ExamplesKey, …>> maps throw at render — fails here in
+  // seconds instead of at a run's first get_task).
+  test.for(
+    (Object.keys(WORKFLOWS) as WorkflowName[]).flatMap((workflow) =>
+      phasesOf(workflow).map((p) => [workflow, p.name] as const),
+    ),
+  )('%s builds a non-empty brief', ([workflow, phase], { projectDir }) => {
     expect(buildPhaseBrief(runOf(projectDir, workflow), phase).trim().length).toBeGreaterThan(0);
   });
 

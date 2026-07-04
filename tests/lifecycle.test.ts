@@ -334,21 +334,20 @@ describe('probeRunPosition', () => {
     expect.soft(probeRunPosition(specEntry)).toEqual({ kind: 'crashed', phase: 'spec' });
   });
 
-  test('a pre-feature run with no workflow field restores through the full machine', async ({ projectDir, run }) => {
-    // The actual hydration path, not just workflowOf: drive to a persisted gate
-    // snapshot, strip the workflow field from the saved state (an old/hand-written
-    // state.json), and confirm probeRunPosition still resolves the same position
-    // through machineFor('full').
-    run.workflow = 'full';
-    saveRunState(run);
+  test('a state file with no workflow field materializes full at load and restores through the full machine', async ({ projectDir, run }) => {
+    // The actual hydration path, not just the normalize: drive to a persisted
+    // gate snapshot, strip the workflow field from the saved state (a
+    // remodel-era or hand-written state.json — createRun materializes it now),
+    // and confirm the load materializes 'full' and probeRunPosition still
+    // resolves the same position through machineFor('full').
     await driveToQuiescence(run, undefined, { machine: scriptedMachine([advanced]).machine, notify: quiet });
     expect.soft(probeRunPosition(loadRunState(projectDir, run.runId))).toEqual({ kind: 'gate', phase: 'frame' });
 
     const stripped = loadRunState(projectDir, run.runId);
-    delete stripped.workflow;
+    delete (stripped as { workflow?: string }).workflow;
     saveRunState(stripped);
     const migrated = loadRunState(projectDir, run.runId);
-    expect.soft(migrated.workflow).toBeUndefined();
+    expect.soft(migrated.workflow).toBe('full');
     expect.soft(probeRunPosition(migrated)).toEqual({ kind: 'gate', phase: 'frame' });
   });
 

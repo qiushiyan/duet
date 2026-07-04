@@ -107,11 +107,13 @@ export interface RunState {
    */
   specPath?: string;
   /**
-   * Which workflow arc this run is on (additive — set at creation). A missing
-   * value (a pre-feature or hand-written state.json) resolves to `'full'` via
-   * `workflowOf`; old state files are never rewritten on read.
+   * Which workflow this run is on — materialized at `createRun` (the gatesAt
+   * discipline), so past the load boundary it is always present. A state file
+   * that lacks it (written by the remodel-era code before the materialization,
+   * or by hand) normalizes to `'full'` in `normalizeRunState` — the shipped
+   * default those runs ran on.
    */
-  workflow?: WorkflowName;
+  workflow: WorkflowName;
   /** Project briefing from --framing — the only place project knowledge enters. */
   framing?: string;
   /** The run's working branch (captured at creation; updated by create_branch). */
@@ -393,11 +395,6 @@ export interface WorkerSessionRecord {
  */
 export type SessionKey = `${StageName}.${Duty}` | 'consultant';
 
-/** The run's workflow, defaulting a missing/pre-feature value to `'full'`. */
-export function workflowOf(state: RunState): WorkflowName {
-  return state.workflow ?? 'full';
-}
-
 /**
  * Whether a phase's exit gate is attended by the human (vs pre-authorized at
  * run start). Absent gatesAt means every gate is attended; the workflow's
@@ -405,7 +402,7 @@ export function workflowOf(state: RunState): WorkflowName {
  * mechanism) are attended unconditionally.
  */
 export function gateAttended(state: RunState, phase: GatePhase): boolean {
-  if ((WORKFLOWS[workflowOf(state)].forceAttend as readonly string[]).includes(phase)) return true;
+  if ((WORKFLOWS[state.workflow].forceAttend as readonly string[]).includes(phase)) return true;
   return state.gatesAt === undefined || state.gatesAt.includes(phase);
 }
 
@@ -435,7 +432,7 @@ export function budgetFor(
   phase: PhaseName,
 ): { worker: number | undefined; orchestrator: number | undefined } {
   if (state.budget === undefined) return { worker: undefined, orchestrator: undefined };
-  const spec = phaseSpec(workflowOf(state), phase);
+  const spec = phaseSpec(state.workflow, phase);
   return {
     worker: spec.workerBudgetUsd * state.budget,
     orchestrator: spec.orchestratorBudgetUsd * state.budget,
@@ -521,7 +518,7 @@ export const DEFAULT_RETRY_INFRA = 3;
 
 export function createRun(opts: {
   cwd: string;
-  /** The run's workflow arc (absent ⇒ the `full` default via `workflowOf`). */
+  /** The run's workflow (absent ⇒ the `full` default, materialized onto the state). */
   workflow?: WorkflowName;
   specPath?: string;
   /** The framing body the orchestrator sees (frontmatter already stripped). */
@@ -551,7 +548,7 @@ export function createRun(opts: {
     runId,
     createdAt: now.toISOString(),
     cwd: opts.cwd,
-    ...(opts.workflow ? { workflow: opts.workflow } : {}),
+    workflow: wf,
     ...(opts.specPath ? { specPath: opts.specPath } : {}),
     ...(opts.framing ? { framing: opts.framing } : {}),
     ...(opts.branch ? { branch: opts.branch } : {}),
@@ -591,6 +588,22 @@ export function loadRunState(cwd: string, runId: string): RunState {
 }
 
 /**
+ * A run dir the load boundary RECOGNIZES but refuses to load — the deliberate
+ * no-backward-compatibility rejection (a pre-remodel state file, a retired
+ * workflow name). Its own class so listing surfaces can tell "refused, and
+ * here is the way out" (reported, never silent) from a genuinely corrupt or
+ * foreign dir (skipped quietly).
+ */
+export class UnloadableRunError extends Error {
+  readonly runId: string;
+  constructor(runId: string, message: string) {
+    super(message);
+    this.name = 'UnloadableRunError';
+    this.runId = runId;
+  }
+}
+
+/**
  * The load boundary. Pre-remodel state files (seat-keyed bindings, no `duties`
  * map) are REJECTED with a prescriptive error rather than translated — the
  * domain remodel deliberately keeps no backward compatibility (decision 10:
@@ -599,19 +612,27 @@ export function loadRunState(cwd: string, runId: string): RunState {
  * boundary every reader trusts the one duty-keyed shape.
  */
 function normalizeRunState(state: RunState): RunState {
-  const legacy = state as RunState & { workerSessions?: unknown };
+  const legacy = state as RunState & { workerSessions?: unknown; workflow?: string };
   if ((state.bindings as { duties?: unknown } | undefined)?.duties === undefined || legacy.workerSessions !== undefined) {
-    throw new Error(
+    throw new UnloadableRunError(
+      state.runId,
       `run ${state.runId} predates the duty-keyed remodel (its state binds implementer/reviewer seats) — duet no longer loads it. Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .duet/runs/${state.runId}.`,
     );
   }
   // A persisted workflow the registry no longer names (the retired design/rir
   // spellings) is the same era — reject with the same manual path out.
-  if (state.workflow !== undefined && !(state.workflow in WORKFLOWS)) {
-    throw new Error(
-      `run ${state.runId} names the retired workflow "${state.workflow}" (the standard library is ${Object.keys(WORKFLOWS).join(' · ')}) — duet no longer loads it. Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .duet/runs/${state.runId}.`,
+  // Object.hasOwn, not `in`: `in` sees prototype-inherited keys, so a
+  // hand-written `workflow: "toString"` would pass the guard and crash later.
+  if (legacy.workflow !== undefined && !Object.hasOwn(WORKFLOWS, legacy.workflow)) {
+    throw new UnloadableRunError(
+      state.runId,
+      `run ${state.runId} names the retired workflow "${legacy.workflow}" (the standard library is ${Object.keys(WORKFLOWS).join(' · ')}) — duet no longer loads it. Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .duet/runs/${state.runId}.`,
     );
   }
+  // Materialized at createRun since the remodel's follow-up; a state file from
+  // the remodel-era code (created before the materialization) or a hand-written
+  // one lacks it — 'full' is the shipped default those runs ran on.
+  legacy.workflow ??= 'full';
   state.sessions ??= {};
   return state;
 }
@@ -978,19 +999,35 @@ export function appendNote(state: RunState, author: 'human' | 'orchestrator', no
   appendFileSync(path, `- ${new Date().toISOString()} [${author}] ${note}\n`);
 }
 
-export function listRuns(cwd: string): RunState[] {
+/**
+ * Every run dir in the project, split by loadability: `runs` are the loadable
+ * ones (newest first), `unloadable` the dirs the boundary RECOGNIZED and
+ * refused (UnloadableRunError — a pre-remodel run, a retired workflow name),
+ * each carrying its prescriptive reason so listing surfaces can report the
+ * refusal instead of silently hiding the run (a post-upgrade `duet status`
+ * must never read as "you have no runs" when the truth is "your run no longer
+ * loads, and here is the way out"). A genuinely corrupt or foreign dir is
+ * still skipped quietly — there is nothing prescriptive to say about it.
+ */
+export function scanRuns(cwd: string): { runs: RunState[]; unloadable: Array<{ runId: string; reason: string }> } {
   const root = runsRoot(cwd);
-  if (!existsSync(root)) return [];
+  if (!existsSync(root)) return { runs: [], unloadable: [] };
   const runs: RunState[] = [];
+  const unloadable: Array<{ runId: string; reason: string }> = [];
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     try {
       runs.push(loadRunState(cwd, entry.name));
-    } catch {
-      // Not a run dir (or corrupt state) — skip rather than break the listing.
+    } catch (err) {
+      if (err instanceof UnloadableRunError) unloadable.push({ runId: entry.name, reason: err.message });
+      // else: not a run dir (or corrupt state) — skip rather than break the listing.
     }
   }
-  return runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return { runs: runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), unloadable };
+}
+
+export function listRuns(cwd: string): RunState[] {
+  return scanRuns(cwd).runs;
 }
 
 export function latestRun(cwd: string): RunState | undefined {

@@ -187,7 +187,7 @@ const duetSetup = setup({
  * The statechart for a given workflow's arc. `buildStates` returns a
  * `Record<string, object>`, so every workflow's machine shares one type (state
  * values are `string`, not a literal union) — the lifecycle hydrates any run
- * through `machineFor(workflowOf(state))` with no per-workflow typing.
+ * through `machineFor(state.workflow)` with no per-workflow typing.
  */
 export function machineFor(workflow: WorkflowName): ReturnType<typeof createDuetMachine> {
   return createDuetMachine(WORKFLOWS[workflow]);

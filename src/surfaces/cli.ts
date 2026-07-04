@@ -37,15 +37,14 @@ import {
   appendNote,
   clearPendingTurn,
   createRun,
-  latestRun,
   listRuns,
   loadMachineSnapshot,
   loadRunState,
   markAbandoned,
   runDirOf,
   saveRunState,
+  scanRuns,
   stageHumanInput,
-  workflowOf,
 } from '../run/store.ts';
 import type { RunState, Voice } from '../run/store.ts';
 import { purgeRun } from '../voices/sessions.ts';
@@ -120,8 +119,15 @@ function fail(message: string): never {
  * `never` narrows the result to non-null at the call site.
  */
 function resolveRun(cwd: string, runId: string | undefined, notFoundMsg: string): RunState {
-  const state = runId ? loadRunState(cwd, runId) : latestRun(cwd);
-  if (!state) fail(notFoundMsg);
+  if (runId) return loadRunState(cwd, runId); // a named unloadable run throws its own prescriptive rejection
+  const { runs, unloadable } = scanRuns(cwd);
+  const state = runs[0];
+  if (!state) {
+    // "No runs found" must never hide a run the boundary refused: name each
+    // refusal with its manual-resume pointer instead of reading as an empty
+    // project. With nothing refused, the caller's message stays byte-identical.
+    fail(unloadable.length === 0 ? notFoundMsg : `${notFoundMsg}\n\n${unloadable.map((u) => u.reason).join('\n')}`);
+  }
   return state;
 }
 
@@ -137,7 +143,7 @@ function resolveRun(cwd: string, runId: string | undefined, notFoundMsg: string)
 function gatelessNote(state: RunState, where: 'start' | 'rest'): string {
   const walk = where === 'start' ? 'walk away from the start' : 'full-send the rest';
   if (!state.bindings.consultant) return `gateless: ${walk} — ask_human and the merge stay yours`;
-  if (!workflowHasConsultantBackstop(workflowOf(state)))
+  if (!workflowHasConsultantBackstop(state.workflow))
     return `gateless: ${walk}; the consultant runs only its framing third-opinion on this arc — its bet audit is off and there is no acceptance-contract backstop here. ask_human and the merge stay yours`;
   return `gateless: ${walk}; the consultant runs its framing third-opinion and the acceptance-contract backstop — bet audits off, but the verify still self-heals and holds a contract that stays broken. ask_human and the merge stay yours`;
 }
@@ -151,7 +157,7 @@ function gatelessNote(state: RunState, where: 'start' | 'rest'): string {
 function restoreFacts(state: RunState): RestoredFacts | null {
   const snapshot = loadMachineSnapshot(state);
   if (!snapshot) return null;
-  const restored = createActor(machineFor(workflowOf(state)), {
+  const restored = createActor(machineFor(state.workflow), {
     input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
     snapshot,
   }).getSnapshot();
@@ -405,7 +411,7 @@ program
     // Echo the resolved manifest — workflow, each stage's duty bindings, the
     // consultant, and any degraded continuity edges (the 717d fix: a run's
     // frozen inputs are visible at creation, not discovered from state.json).
-    const wf = workflowOf(state);
+    const wf = state.workflow;
     console.log(`workflow: ${wf} — ${WORKFLOWS[wf].displayName}`);
     console.log(`orchestrator: ${formatBinding(bindings.orchestrator)}`);
     for (const stage of stagesOf(wf)) {
@@ -443,7 +449,7 @@ program
       return;
     }
     const pid = spawnDrive(state);
-    const entry = entryOf(workflowOf(state));
+    const entry = entryOf(state.workflow);
     const startLabel = state.specPath && entry.specSkipsTo
       ? `${entry.specSkipsTo.toUpperCase()} review loop`
       : `${entry.firstPhase.toUpperCase()} phase`;
@@ -647,7 +653,7 @@ program
       }
       // Bare afk → the empty "attend none" posture; a named arg → an existing
       // preset/list (no new presets). parseGatesAt validates against the workflow.
-      const posture = presetArg ? parseGatesAt(presetArg, workflowOf(state)) : [];
+      const posture = presetArg ? parseGatesAt(presetArg, state.workflow) : [];
       split = await enterAfk(state, posture, { gateless: Boolean(options.gateless) });
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
@@ -792,7 +798,7 @@ program
           delete handed.orchestrationHost;
           saveRunState(handed);
           const pid = spawnDrive(handed);
-          printWatchHints(handed, pid, opts.headless ? 'handed off to headless' : handoffWatchLabel(workflowOf(handed)));
+          printWatchHints(handed, pid, opts.headless ? 'handed off to headless' : handoffWatchLabel(handed.workflow));
           return;
         }
         const rest = probeRunPosition(loadRunState(cwd, state.runId));
@@ -877,7 +883,7 @@ program
     const state = resolveRun(cwd, runId, 'no runs found in this project');
     const position = probeRunPosition(state);
     if (position.kind !== 'running' && position.kind !== 'crashed') {
-      fail(steerRefusal(workflowOf(state), position, state.runId) ?? `nothing to steer at ${position.kind}`);
+      fail(steerRefusal(state.workflow, position, state.runId) ?? `nothing to steer at ${position.kind}`);
     }
     const note = await resolveHumanText(
       text,
@@ -1107,8 +1113,8 @@ program
   .command('runs')
   .description('List known runs in this project.')
   .action(() => {
-    const all = listRuns(process.cwd());
-    if (all.length === 0) {
+    const { runs: all, unloadable } = scanRuns(process.cwd());
+    if (all.length === 0 && unloadable.length === 0) {
       console.log('no runs');
       return;
     }
@@ -1116,6 +1122,9 @@ program
       const waiting = r.abandoned ? 'abandoned' : r.pendingQuestion ? 'waiting-on-answer' : '';
       console.log(`${r.runId}  ${r.machineState ?? '?'}  ${waiting}  ${r.specPath ?? '(framing-only)'}`);
     }
+    // A recognized-but-refused run is reported, never hidden: each reason
+    // already carries the run id and the manual-resume pointer.
+    for (const u of unloadable) console.log(u.reason);
   });
 
 // Read-only inspector for the effective snippet library (shipped base + the user

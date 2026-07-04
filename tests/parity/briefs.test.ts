@@ -132,6 +132,14 @@ const CASES: Array<{ name: string; phase: PhaseName; opts: ParityRunOpts }> = [
     phase: 'implement',
     opts: { workflow: 'blueprint', spec: true, warmSessions: true, consultant: true, contract: 'frozen' },
   },
+  {
+    // The no-contract verify skip on a DESIGN-gate workflow — pins the derived
+    // gate name ("authored at the design phase", not full's plan) in the one
+    // brief text shared across the verify-carrying builds.
+    name: 'blueprint-implement.consultant-no-contract',
+    phase: 'implement',
+    opts: { workflow: 'blueprint', spec: true, warmSessions: true, consultant: true },
+  },
   { name: 'blueprint-finish.default', phase: 'finish', opts: { workflow: 'blueprint', spec: true, warmSessions: true } },
 
   // ---- relay: the fixer arc (design's shape; writing reviewer owns the tails) ----

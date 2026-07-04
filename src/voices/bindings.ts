@@ -2,7 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
-import { continuityEdgeFor, stageOfDuty, stagesOf } from '../registry/workflows.ts';
+import { DUTIES, continuityEdgeFor, stageOfDuty, stageOfDutyLane, stagesOf } from '../registry/workflows.ts';
 import type { Duty, WorkflowName } from '../registry/workflows.ts';
 
 /**
@@ -86,7 +86,10 @@ export function defaultBindingFor(address: BindAddress): Binding {
   }
 }
 
-const BIND_ADDRESSES: readonly BindAddress[] = ['architect', 'analyst', 'builder', 'critic', 'judge', 'orchestrator', 'consultant'];
+// Derived from the registry's closed vocabulary, never a hand list — a duty
+// added there is bindable here the same commit, instead of compiling fine
+// while `--bind <newduty>=…` silently rejects it.
+const BIND_ADDRESSES: readonly BindAddress[] = [...DUTIES, 'orchestrator', 'consultant'];
 
 /**
  * Parse a bind address — the `<duty>` of `--bind <duty>=…` or the `<key>` of a
@@ -107,7 +110,7 @@ export function parseBindAddress(raw: string): BindAddress {
     }
   }
   throw new Error(
-    `bind address "${name}" is not bindable — use a duty (architect, analyst, builder, critic, judge) or a run-long voice (orchestrator, consultant)`,
+    `bind address "${name}" is not bindable — use a duty (${DUTIES.join(', ')}) or a run-long voice (orchestrator, consultant)`,
   );
 }
 
@@ -177,10 +180,14 @@ function parseBindingTable(address: BindAddress, raw: unknown, tableName: string
     // it serves the maker duties only — a read-only interactive checker is a
     // production item (interactive-transport spec §"Path to production").
     // Reject loudly so a misconfiguration can never silently grant a read-only
-    // voice write access.
-    if (transport === 'interactive' && address !== 'architect' && address !== 'builder') {
+    // voice write access. The rule IS the lane, read from the registry (never
+    // duty-name literals): the run-long voices are not duties, so they narrow
+    // out first and stay rejected.
+    const makerDuty = address !== 'orchestrator' && address !== 'consultant' && stageOfDutyLane(address) === 'maker';
+    if (transport === 'interactive' && !makerDuty) {
+      const makers = DUTIES.filter((d) => stageOfDutyLane(d) === 'maker');
       throw new Error(
-        `config: [${tableName}].transport = "interactive" — the interactive transport serves the maker duties only in the spike (it runs read-write/bypass; a read-only interactive checker is a production item). Bind it on [duties.architect] or [duties.builder].`,
+        `config: [${tableName}].transport = "interactive" — the interactive transport serves the maker duties only in the spike (it runs read-write/bypass; a read-only interactive checker is a production item). Bind it on ${makers.map((d) => `[duties.${d}]`).join(' or ')}.`,
       );
     }
   }
@@ -219,7 +226,7 @@ function loadConfigFile(configPath: string): { byAddress: Partial<Record<BindAdd
   const config = parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>;
   if (config['roles'] !== undefined) {
     throw new Error(
-      'config: the [roles.*] tables are retired — bindings are duty-keyed now: top-level [orchestrator] and [consultant] tables plus [duties.<duty>] tables (architect, analyst, builder, critic, judge)',
+      `config: the [roles.*] tables are retired — bindings are duty-keyed now: top-level [orchestrator] and [consultant] tables plus [duties.<duty>] tables (${DUTIES.join(', ')})`,
     );
   }
   for (const voice of ['orchestrator', 'consultant'] as const) {

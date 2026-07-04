@@ -1067,6 +1067,17 @@ export function validateRegistry(workflows: Record<string, WorkflowSpecInput>): 
         }
       }
     }
+    // The acceptance contract is one chain — author → freeze → verify — so a
+    // workflow declares BOTH ends or NEITHER: a verify with no author has
+    // nothing to check (its brief would render a skip forever), an author with
+    // no verify freezes a target nothing ever checks. The verify brief's
+    // gate-name derivation (contractAuthorPhaseOf) leans on this pairing.
+    const checkpointModes = new Set(wf.phases.map((p) => p.consultantCheckpoint).filter((m) => m !== undefined));
+    if (checkpointModes.has('verify') !== checkpointModes.has('contract')) {
+      throw new Error(
+        `registry: workflow "${wfName}" declares a "${checkpointModes.has('verify') ? 'verify' : 'contract'}" consultant checkpoint without its "${checkpointModes.has('verify') ? 'contract' : 'verify'}" counterpart — the acceptance contract is author → freeze → verify as one chain; a workflow carries both or neither`,
+      );
+    }
     // The stage topology — the invariants the duty-keyed runtime rests on,
     // checked as TOPOLOGY ONLY (the registry cannot see bindings; the
     // binding-dependent check — the provider-crossing edge degrade — runs at

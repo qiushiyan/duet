@@ -96,7 +96,7 @@ export function sessionKeyFor(duty: Duty): SessionKey {
  * decision has exactly one derivation and no persisted copy.
  */
 export function liveContinuityEdgeFor(state: RunState, duty: Duty): Duty | undefined {
-  const from = continuityEdgeFor(state.workflow ?? 'full', duty);
+  const from = continuityEdgeFor(state.workflow, duty);
   if (!from) return undefined;
   return sessionCompatible(dutyBindingFor(state.bindings, from), dutyBindingFor(state.bindings, duty)) ? from : undefined;
 }
@@ -124,6 +124,14 @@ export function sessionRecordFor(state: RunState, address: VoiceAddress): Worker
  * that edge walks to. Clearing only the own slot would leave the next send
  * walking the edge straight back into the very session the reset meant to
  * drop (the wedged-past-its-ceiling case).
+ *
+ * The stated trade: clearing the planning slot forfeits that era's RECORD —
+ * `duet takeover` of the planning duty finds no session afterward, and a
+ * later `--purge` no longer locates that transcript (the transcript itself
+ * stays on disk in the provider's tree). Accepted deliberately: state.json is
+ * a hint and the transcripts are truth, so losing the hint beats a
+ * consumed-edge marker (a new persisted concept) bought for forensic
+ * convenience on a rare recovery path.
  */
 export function sessionSlotsToReset(state: RunState, address: VoiceAddress): SessionKey[] {
   if (address === 'consultant') return ['consultant'];
@@ -236,7 +244,7 @@ const CHECKER_WRITE_GRANTS: Partial<Record<ReviewPosture, ReadonlySet<string>>> 
 export function writeAuthorityFor(state: RunState, phase: PhaseName, address: VoiceAddress, action: string): boolean {
   if (!policyFor(address).readOnly) return true;
   if (address === 'consultant') return false;
-  const semantics = phaseSpec(state.workflow ?? 'full', phase).semantics;
+  const semantics = phaseSpec(state.workflow, phase).semantics;
   switch (semantics.block) {
     case 'build':
       return (
@@ -257,7 +265,7 @@ export function writeAuthorityFor(state: RunState, phase: PhaseName, address: Vo
  * a foreign stage's duty nor drop the bound consultant.
  */
 export function phaseAddressesFor(state: RunState, phase: PhaseName): VoiceAddress[] {
-  const workflow = state.workflow ?? 'full';
+  const workflow = state.workflow;
   const [maker, checker] = dutiesOf(workflow, stageOf(workflow, phase));
   return state.bindings.consultant ? [maker, checker, 'consultant'] : [maker, checker];
 }
@@ -270,7 +278,7 @@ export function phaseAddressesFor(state: RunState, phase: PhaseName): VoiceAddre
  * surface routed through phaseAddressesFor would silently drop it.
  */
 export function voicesFor(state: RunState): Voice[] {
-  const workflow = state.workflow ?? 'full';
+  const workflow = state.workflow;
   const duties = stagesOf(workflow).flatMap((stage) => dutiesOf(workflow, stage.name));
   return state.bindings.consultant ? ['orchestrator', ...duties, 'consultant'] : ['orchestrator', ...duties];
 }

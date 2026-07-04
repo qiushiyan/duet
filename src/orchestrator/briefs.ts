@@ -14,7 +14,7 @@ import type { ArtifactKind, ExamplesKey, GatePhase, PhaseName, PhaseSemantics, P
 import { voiceBindingFor } from '../voices/bindings.ts';
 import { checkerDutyOf, fixerDutyFor, makerDutyOf, stageOf } from '../registry/workflows.ts';
 import { liveContinuityEdgeFor } from '../voices/policy.ts';
-import { gateAttended, workflowOf } from '../run/store.ts';
+import { gateAttended } from '../run/store.ts';
 import type { RunState } from '../run/store.ts';
 import type { Steer } from '../run/steers.ts';
 
@@ -186,7 +186,7 @@ function hasFixerBuild(workflow: WorkflowName): boolean {
  * fixer workflow's judge is still read-only.
  */
 export function orchestratorSystemPrompt(state: RunState): string {
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   const clauses = [
     ORCHESTRATOR_SYSTEM_PROMPT,
     ...(state.bindings.consultant ? [consultantIdentityClause(workflow)] : []),
@@ -331,7 +331,7 @@ This phase's exit gate is pre-authorized: the human granted approval at run star
  */
 function approvalClause(state: RunState, gatePhase: GatePhase, attended: string, preAuthorized: string): string {
   if (gateAttended(state, gatePhase)) return attended;
-  const gateState = phaseSpec(workflowOf(state), gatePhase).gate.state;
+  const gateState = phaseSpec(state.workflow, gatePhase).gate.state;
   const autoCrossed = (state.autoApprovals ?? []).some((a) => a.gate === gateState);
   return autoCrossed ? preAuthorized : attended;
 }
@@ -374,11 +374,11 @@ Branch: the run works on exactly one branch, fixed before your first worker prom
  * false, the exact pre-feature routing.
  */
 function checkpointLive(state: RunState, phase: PhaseName): boolean {
-  return consultantCheckpointLive(workflowOf(state), phase, { consultant: Boolean(state.bindings.consultant), gateless: state.gateless });
+  return consultantCheckpointLive(state.workflow, phase, { consultant: Boolean(state.bindings.consultant), gateless: state.gateless });
 }
 
 function analysisSendStep(state: RunState, phase: PhaseName): string {
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   const stage = stageOf(workflow, phase);
   const maker = makerDutyOf(workflow, stage);
   const checker = checkerDutyOf(workflow, stage);
@@ -390,7 +390,7 @@ function analysisSendStep(state: RunState, phase: PhaseName): string {
 }
 
 function synthesisStep(state: RunState, phase: PhaseName): string {
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   const stage = stageOf(workflow, phase);
   const maker = makerDutyOf(workflow, stage);
   const checker = checkerDutyOf(workflow, stage);
@@ -405,7 +405,7 @@ function synthesisStep(state: RunState, phase: PhaseName): string {
  * `seedNote` names exactly what to curate into the ephemeral session.
  */
 function consultantAuditStep(state: RunState, phase: PhaseName, seedNote: string): string {
-  const snippet = consultantSnippetFor(workflowOf(state), phase);
+  const snippet = consultantSnippetFor(state.workflow, phase);
   if (!checkpointLive(state, phase) || !snippet) return '';
   return `
 
@@ -431,7 +431,7 @@ Consultant checkpoint (the consultant is bound for this run): before you advance
  * spec_path lands only at advance_phase, after the contract is authored).
  */
 function consultantContractStep(state: RunState, placement: { when: string; seed: string }): string {
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   const authorPhase = contractAuthorPhaseOf(workflow);
   if (!authorPhase) return '';
   const snippet = consultantSnippetFor(workflow, authorPhase);
@@ -445,25 +445,31 @@ Consultant checkpoint — author the acceptance contract (the consultant is boun
 }
 
 /**
- * The acceptance-contract VERIFY injection (full's implement) — supplants the
- * open-ended implGate bet audit there. A fresh consultant session verifies the
- * frozen contract against the built system; any failure routes to the
- * workflow's fixer duty first for a bounded fix → re-verify loop (universal —
- * attended and gateless alike), and only an assertion still failing after that
- * holds the gate as a high
- * (the preserved AFK backstop, the conscious softening of "a failure always
- * holds"). Absent a frozen contract (authoring failed and the human proceeded
- * anyway), it degrades to a noted skip — never silently, and never a fallback
- * audit. Empty when no consultant is bound.
+ * The acceptance-contract VERIFY injection (the verify-carrying builds:
+ * full's, blueprint's, and relay's implement) — supplants the open-ended
+ * implGate bet audit there. A fresh consultant session verifies the frozen
+ * contract against the built system; any failure routes to the workflow's
+ * fixer duty first for a bounded fix → re-verify loop (universal — attended
+ * and gateless alike), and only an assertion still failing after that holds
+ * the gate as a high (the preserved AFK backstop, the conscious softening of
+ * "a failure always holds"). Absent a frozen contract (authoring failed and
+ * the human proceeded anyway), it degrades to a noted skip — never silently,
+ * and never a fallback audit. Empty when no consultant is bound. The gate the
+ * prose names is DERIVED (contractAuthorPhaseOf — full freezes at plan,
+ * blueprint/relay at design), never a hardcoded phase.
  */
 function consultantVerifyStep(state: RunState): string {
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   const snippet = consultantSnippetFor(workflow, 'implement');
   if (!checkpointLive(state, 'implement') || !snippet) return '';
+  // Verify pairs with a contract author (validateRegistry holds the two as one
+  // chain), so a workflow that authors none reaches no verify text here.
+  const authorPhase = contractAuthorPhaseOf(workflow);
+  if (!authorPhase) return '';
   if (!state.acceptanceContract) {
     return `
 
-Consultant checkpoint — no frozen acceptance contract exists for this run (none was authored at the plan phase), so there is nothing to verify: skip the consultant here and note in your advance_phase packet that the implementation shipped without a frozen contract to verify against.`;
+Consultant checkpoint — no frozen acceptance contract exists for this run (none was authored at the ${authorPhase} phase), so there is nothing to verify: skip the consultant here and note in your advance_phase packet that the implementation shipped without a frozen contract to verify against.`;
   }
   const { path } = state.acceptanceContract;
   // Who self-heals a failed assertion: the duty that owns fixing the build at
@@ -473,7 +479,7 @@ Consultant checkpoint — no frozen acceptance contract exists for this run (non
   const fixer = fixerDutyFor(workflow);
   return `
 
-Consultant checkpoint — verify the frozen acceptance contract, then let the ${fixer} self-heal any failure (the consultant is bound for this run): run this as your FINAL step before advance — after the docs reconcile and the CEO summary — so it certifies the exact state you are shipping (a later code- or doc-changing turn would leave the verification stale). Send the consultant a ${snippet} prompt over a fresh, ephemeral, read-only session pointed at the frozen contract at ${path} (committed and ratified at the plan gate). It re-reads each assertion, exercises the built system for evidence (run the tests, run the CLI, read logs — never edit or commit), and returns a per-assertion pass/fail with the evidence it cited. "Every assertion holds — ship" is a first-class expected outcome.
+Consultant checkpoint — verify the frozen acceptance contract, then let the ${fixer} self-heal any failure (the consultant is bound for this run): run this as your FINAL step before advance — after the docs reconcile and the CEO summary — so it certifies the exact state you are shipping (a later code- or doc-changing turn would leave the verification stale). Send the consultant a ${snippet} prompt over a fresh, ephemeral, read-only session pointed at the frozen contract at ${path} (committed and ratified at the ${authorPhase} gate). It re-reads each assertion, exercises the built system for evidence (run the tests, run the CLI, read logs — never edit or commit), and returns a per-assertion pass/fail with the evidence it cited. "Every assertion holds — ship" is a first-class expected outcome.
 
 Route a failed assertion to the ${fixer} first, not to the human — it is a fact the ${fixer} can usually just fix, and the human cares only about the ones that resist fixing. Send the failing assertions and their evidence to the ${fixer} as a fix request (like routing a review finding), let it fix, then re-verify by sending a fresh ${snippet} consultant turn — a new session each time, so the check stays independent and a fix only counts when an independent re-run confirms it. Repeat this fix-then-re-verify a round or two; an assertion that passes on an independent re-run is resolved and needs nothing from the human.
 
@@ -485,7 +491,7 @@ function documentsBlock(state: RunState): string {
   // draft-spec; blueprint/relay: draft-design-doc), derived from the entry
   // phase's label so the tag and the brief's prose can't disagree about what
   // the document is.
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   const entryPhase = entryOf(workflow).specSkipsTo;
   const draftName = entryPhase ? `draft-${phaseSpec(workflow, entryPhase).artifactLabel.replace(/\s+/g, '-')}` : 'draft-spec';
   const docs = [
@@ -577,7 +583,7 @@ function renderDocLoopBrief(state: RunState, spec: PhaseSpec, semantics: Extract
 function specDocBrief(state: RunState, spec: PhaseSpec): string {
   const roundCap = spec.roundCap;
   if (!state.specPath) return specDraftBrief(state, roundCap);
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   const maker = makerDutyOf(workflow, 'planning');
   const checker = checkerDutyOf(workflow, 'planning');
   return `${documentsBlock(state)}
@@ -599,7 +605,7 @@ ${SPEC_EXAMPLES}
 }
 
 function specDraftBrief(state: RunState, roundCap: number): string {
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   const maker = makerDutyOf(workflow, 'planning');
   const checker = checkerDutyOf(workflow, 'planning');
   return `<task>
@@ -624,7 +630,7 @@ ${SPEC_EXAMPLES}
 
 function planDocBrief(state: RunState, spec: PhaseSpec): string {
   const roundCap = spec.roundCap;
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   const maker = makerDutyOf(workflow, 'planning');
   const checker = checkerDutyOf(workflow, 'planning');
   const specRef = state.specPath ?? 'the approved spec file (you know its path from the spec phase)';
@@ -687,7 +693,7 @@ const DESIGN_CONTRACT_PLACEMENT = {
 function designDocBrief(state: RunState, spec: PhaseSpec): string {
   const roundCap = spec.roundCap;
   if (!state.specPath) return designDraftBrief(state, roundCap);
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   const maker = makerDutyOf(workflow, 'planning');
   const checker = checkerDutyOf(workflow, 'planning');
   return `${documentsBlock(state)}
@@ -709,7 +715,7 @@ ${DESIGN_EXAMPLES}
 }
 
 function designDraftBrief(state: RunState, roundCap: number): string {
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   const maker = makerDutyOf(workflow, 'planning');
   const checker = checkerDutyOf(workflow, 'planning');
   return `<task>
@@ -791,7 +797,7 @@ function midpointStep(sizeSignal: string, checker: string): string {
 // reconcile as the last build step, then the CEO summary leading the packet.
 // `deviationsFrom` names the settled document the packet reports drift against.
 function implReviewTail(state: RunState, roundCap: number, deviationsFrom: string): string {
-  const checker = checkerDutyOf(workflowOf(state), 'delivery');
+  const checker = checkerDutyOf(state.workflow, 'delivery');
   return `6. When all slices are in: implementation-handoff from the builder, then the review loop — review-implementation to the ${checker}, respond-review to the builder, -again variants for later rounds, fix commits as they're accepted. The backstop cap for this phase is ${roundCap} review rounds; converge well before it.
 7. When the review loop has converged, reconcile the docs with what shipped — docs are part of the work the Ship gate reviews now, not a later step, so they run here on the finished, reviewed code. Send the builder the reconcile-docs prompt. Your one decision is the doc method, by precedence: if the framing names a doc-update skill or document, name it in the prompt — relay the framing's path or skill faithfully and treat it as authoritative; the builder locates and follows it, so you needn't (and can't) verify it exists. If the framing names none, send the snippet's default unchanged — it has the builder find the project's own doc skill, then reconcile by hand if there is none. Never substitute your own survey for a method the framing named — that drops the human's explicit instruction. The builder commits the docs; they ride the branch into the PR that FINISH opens (there is no docs gate — the human reviews them in the Ship packet and again in the PR). A doc-scope product call it surfaces — deleting a documented concept, rewriting a design claim, pruning a superseded doc — is yours to ask_human (it pauses the run).
 8. Last, after the docs are committed: send the builder ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review history (rounds run, points raised, resolved, disputed), the docs reconciled, deviations from the ${deviationsFrom}, and the test state. The human returns from hours away and decides to ship — code and docs together — from this packet alone, so it must carry everything.${consultantVerifyStep(state)}`;
@@ -870,7 +876,7 @@ const CRITIQUE_BUILD_BRIEFS: Partial<Record<ExamplesKey, CritiqueBuildData>> = {
 };
 
 function critiqueBuildBrief(state: RunState, spec: PhaseSpec, data: CritiqueBuildData): string {
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   const builder = makerDutyOf(workflow, 'delivery');
   const claudeBuilder = voiceBindingFor(state.bindings, builder).provider === 'claude';
   const edgeLive = liveContinuityEdgeFor(state, builder) !== undefined;
@@ -930,7 +936,7 @@ ${data.examples}
 function renderFinishBrief(state: RunState, spec: PhaseSpec, semantics: Extract<PhaseSemantics, { block: 'finish' }>): string {
   const phase = spec.name;
   const roundCap = spec.roundCap;
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   const owner = semantics.finishOwner === 'checker' ? checkerDutyOf(workflow, 'delivery') : makerDutyOf(workflow, 'delivery');
   const openPrAttended = gateAttended(state, phase);
   const priorPhase = priorPhaseOf(workflow, phase);
@@ -1014,7 +1020,7 @@ const FIXER_BUILD_BRIEFS: Partial<Record<ExamplesKey, FixerBuildData>> = {
  * is why it runs last and why its self-heal routes fixes to the judge.
  */
 function fixerBuildBrief(state: RunState, spec: PhaseSpec, data: FixerBuildData): string {
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   const builder = makerDutyOf(workflow, 'delivery');
   const judge = checkerDutyOf(workflow, 'delivery');
   // Single-world: the round-cap follow-up clause may only point at "the verify
@@ -1064,7 +1070,7 @@ ${data.examples}
  */
 function writableBuildBrief(state: RunState, spec: PhaseSpec, data: WritableBuildData): string {
   const roundCap = spec.roundCap;
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   const builder = makerDutyOf(workflow, 'delivery');
   const checker = checkerDutyOf(workflow, 'delivery');
   return `<task>
@@ -1130,7 +1136,7 @@ function renderBuildBrief(state: RunState, spec: PhaseSpec, semantics: Extract<P
  * so each caller owns its own phaseStarted/consume bookkeeping.
  */
 export function buildPhaseBrief(state: RunState, phase: PhaseName): string {
-  const workflow = workflowOf(state);
+  const workflow = state.workflow;
   const spec = phaseSpec(workflow, phase);
   const semantics = spec.semantics;
   switch (semantics.block) {
