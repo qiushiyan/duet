@@ -29,10 +29,10 @@
  *   full:   frame → Direction → spec → Commit-spec → plan → Plan-approval
  *           (walk away) → implement (AFK; build → review → reconcile docs) → Ship
  *           → finish (open the PR) → Open-PR → done
- *   design: frame → Direction → design → Design (walk away) → implement (AFK;
- *           build → review → reconcile docs) → Ship → finish (open the PR) →
- *           Open-PR → done — one committed design doc replaces spec + plan
- *   rir:    research → Direction (walk away) → implement (AFK; build → review →
+ *   blueprint: frame → Direction → design → Design (walk away) → implement
+ *           (AFK; build → review → reconcile docs) → Ship → finish (open the PR)
+ *           → Open-PR → done — one committed design doc replaces spec + plan
+ *   short:    research → Direction (walk away) → implement (AFK; build → review →
  *           reconcile docs) → Ship → finish (open the PR) → Open-PR → done
  *
  * The arcs share the `implement` and `finish` phase names — legal because phase
@@ -87,8 +87,8 @@ export type ArtifactKind = 'spec' | 'plan' | 'design';
 
 /**
  * How the build phase enters: full compacts the planning session down to the
- * committed spec + plan (`compact-for-impl`), the design arc re-anchors on its
- * one committed doc (`implement-design`), rir builds directly from the
+ * committed spec + plan (`compact-for-impl`), the blueprint arc re-anchors on its
+ * one committed doc (`implement-design`), short builds directly from the
  * research decisions (`implement-direct`), and relay seeds a FRESH builder
  * session from the committed design doc (`fresh-seed` — the provider-switched
  * builder never held the planning context, so there is nothing to compact;
@@ -107,7 +107,7 @@ export type EntrySeed = 'compact-for-impl' | 'implement-design' | 'implement-dir
 export type ReviewPosture = 'critique' | 'writable' | 'fixer';
 
 /** The worked-example set a phase's brief appends — per-arc data, keyed not inlined. */
-export type ExamplesKey = 'frame' | 'research' | 'spec' | 'plan' | 'design' | 'impl' | 'design-impl' | 'rir-impl' | 'relay-impl';
+export type ExamplesKey = 'frame' | 'research' | 'spec' | 'plan' | 'design' | 'impl' | 'blueprint-impl' | 'short-impl' | 'relay-impl';
 
 /** A phase's block identity + knob values (discriminated on `block`). */
 export type PhaseSemantics =
@@ -120,9 +120,9 @@ export type PhaseSemantics =
       readonly midpoint: 'judgment' | 'none';
       /**
        * Whether the Ship packet leads with the CEO summary (`ceo-summary`) or
-       * stays lean (rir's deliberate choice — the human reads what shipped, the
+       * stays lean (short's deliberate choice — the human reads what shipped, the
        * docs, and the review outcome). The knob T7 predicted: the snippet
-       * derivation forces the full/design-vs-rir difference to be explicit.
+       * derivation forces the full/blueprint-vs-short difference to be explicit.
        */
       readonly shipPacket: 'ceo-summary' | 'lean';
       /** Who runs the build tail (reconcile-docs + ceo-summary — inside implement, strictly before verify). */
@@ -157,9 +157,9 @@ const ARTIFACT_SNIPPETS: Record<ArtifactKind, readonly string[]> = {
 /**
  * What each entry seed brings to the build's front: the persistent-session
  * arcs enter through the design→implementation boundary compaction
- * (compact-for-impl), and the design arc adds its doc seed on top —
- * implement-design re-anchors the build on the ONE committed doc, NOT rir's
- * implement-direct (that body assumes no design artifact exists). rir enters
+ * (compact-for-impl), and the blueprint arc adds its doc seed on top —
+ * implement-design re-anchors the build on the ONE committed doc, NOT short's
+ * implement-direct (that body assumes no design artifact exists). short enters
  * directly from the research decisions, no compaction ceremony.
  */
 const ENTRY_SEED_SNIPPETS: Record<EntrySeed, readonly string[]> = {
@@ -486,7 +486,7 @@ export const WORKFLOWS = {
         // state. No consultant checkpoint (the verify checkpoint already ran at
         // implement); compact-for-cleanup stays reachable for the rare
         // bloated-context case (it inherits an already-focused context from
-        // implement, so it is not a default step). Mirror of rir's `finish` — same
+        // implement, so it is not a default step). Mirror of short's `finish` — same
         // shape, same entry brief (openPrPhaseEntryPrompt).
         name: 'finish',
         semantics: { block: 'finish', finishOwner: 'implementer' },
@@ -531,7 +531,7 @@ export const WORKFLOWS = {
       /**
        * Walk away from the START, keeping every safety net — the missing rung that
        * completes overnight → skip-plan → afk → gateless. Attends NO gate (mirrors
-       * rir's afk), but with `gateless` OFF, so the consultant's holding bet-audit
+       * short's afk), but with `gateless` OFF, so the consultant's holding bet-audit
        * AND the correctness backstop both still fire (that is the ONLY difference
        * from --gateless; for a no-consultant run the two collapse to attend-none).
        */
@@ -550,15 +550,15 @@ export const WORKFLOWS = {
     forceAttend: [],
     defaultPreAuthorized: ['plan', 'implement', 'finish'],
   },
-  design: {
+  blueprint: {
     // The middle arc (docs/specs/2026-07-02-design-arc.md): for serious work on
     // a trusted frontier-model implementer, ONE committed design document —
     // product sections on top (spec altitude), technical sections below (plan
     // altitude minus enumeration) — replaces full's spec + plan pair. One review
     // loop, one attended gate by default, then full's AFK build and finishing
     // tail reused as registry data.
-    name: 'design',
-    displayName: 'Design (frame → design → implement → ship → PR)',
+    name: 'blueprint',
+    displayName: 'Blueprint (frame → design doc → implement → ship → PR)',
     phases: [
       {
         // Identical in substance to full's frame — only the arc that follows
@@ -617,7 +617,7 @@ export const WORKFLOWS = {
         // checkpoint, 90-min wall-clock cap. One substitution: the build seed is
         // the implement-design snippet (the committed design doc is the build's
         // authority for what and why) rather than full's plan-driven custom
-        // prompt. NOT rir's implement-direct — that body assumes no design
+        // prompt. NOT short's implement-direct — that body assumes no design
         // artifact exists.
         name: 'implement',
         semantics: {
@@ -627,7 +627,7 @@ export const WORKFLOWS = {
           midpoint: 'judgment',
           shipPacket: 'ceo-summary',
           buildTailOwner: 'implementer',
-          examplesKey: 'design-impl',
+          examplesKey: 'blueprint-impl',
         },
         gate: {
           state: 'shipGate',
@@ -696,7 +696,7 @@ export const WORKFLOWS = {
     // CONFIG-tier — the `build` override on each worker binding — never
     // registry data; this arc works on any binding.
     name: 'relay',
-    displayName: 'Relay (frame → design → codex build → fixer review → PR)',
+    displayName: 'Relay (frame → design doc → fresh build → judge review-and-fix → PR)',
     phases: [
       {
         name: 'frame',
@@ -716,7 +716,7 @@ export const WORKFLOWS = {
         consultantCheckpoint: 'frame',
       },
       {
-        // Byte-for-byte the design arc's one artifact phase — same loop, same
+        // Byte-for-byte the blueprint arc's one artifact phase — same loop, same
         // late-authored contract, same handoff-and-ratification gate.
         name: 'design',
         semantics: { block: 'doc-loop', artifactKind: 'design', examplesKey: 'design' },
@@ -738,7 +738,7 @@ export const WORKFLOWS = {
         // The fixer build: a fresh builder seeds from the committed design doc
         // (fresh-seed — a provider-switched builder held no planning context),
         // the reviewer reviews WITH write access (one review-and-fix round,
-        // cap 1 like rir's writable round — the verify self-heal's fix
+        // cap 1 like short's writable round — the verify self-heal's fix
         // follow-ups ride the established frame, not new rounds) and owns the
         // build tail. Verify matters MORE here: the maker-vs-critic
         // adversariality collapses into build-then-judge, so the consultant's
@@ -805,9 +805,9 @@ export const WORKFLOWS = {
     forceAttend: [],
     defaultPreAuthorized: ['frame', 'implement', 'finish'],
   },
-  rir: {
-    name: 'rir',
-    displayName: 'Research → Implement → Review',
+  short: {
+    name: 'short',
+    displayName: 'Short (research → implement → ship → PR)',
     phases: [
       {
         name: 'research',
@@ -837,7 +837,7 @@ export const WORKFLOWS = {
           midpoint: 'none',
           shipPacket: 'lean',
           buildTailOwner: 'implementer',
-          examplesKey: 'rir-impl',
+          examplesKey: 'short-impl',
         },
         gate: {
           state: 'shipGate',
@@ -852,13 +852,13 @@ export const WORKFLOWS = {
         orchestratorBudgetUsd: 30,
         workerBudgetUsd: 25,
         // The AFK build cap — the same wall-clock 90-min bound as full's `implement`
-        // (S3). The measurement spans both arcs (rir's implement-direct turns run
+        // (S3). The measurement spans both arcs (short's implement-direct turns run
         // up to 25 min), so leaving the two build phases split would be unmotivated.
         workerTurnTimeoutMs: 90 * 60_000,
         consultantCheckpoint: 'implGate',
       },
       {
-        // The finishing tail for rir — now SHARES full's `finish` name (phase
+        // The finishing tail for short — now SHARES full's `finish` name (phase
         // identity is workflow-scoped, so both arcs may name it `finish`). Same
         // shape, same entry brief (openPrPhaseEntryPrompt): write the PR
         // description → gh pr create. Docs no longer reconcile here — they moved
@@ -873,7 +873,7 @@ export const WORKFLOWS = {
         gate: {
           // Gate-state name reused from Full — legal because resolution is
           // workflow-scoped (phaseOfGateState(workflow, …)); reusing it lights up
-          // status's opensPr and the shared reject-amend clause for rir too.
+          // status's opensPr and the shared reject-amend clause for short too.
           state: 'openPrGate',
           heading: 'OPEN-PR gate — docs reconciled, PR open',
           ready: 'Open-PR gate — PR open, ready for your review',
@@ -1213,9 +1213,9 @@ function servePhases(workflow: WorkflowName): readonly PhaseSpec[] {
 // served here too.
 const SERVED_PHASES: Record<WorkflowName, readonly PhaseSpec[]> = {
   full: servePhases('full'),
-  design: servePhases('design'),
+  blueprint: servePhases('blueprint'),
   relay: servePhases('relay'),
-  rir: servePhases('rir'),
+  short: servePhases('short'),
 };
 
 /** A workflow's ordered phases. */
@@ -1350,7 +1350,7 @@ export function priorPhaseOf(workflow: WorkflowName, phase: PhaseName): PhaseNam
 /**
  * Whether `phase` sits strictly AFTER its workflow's handoff gate — the "doing"
  * set that begins once the run crosses into the AFK build. full's handoffGate is
- * `plan`, so its post-handoff phases are {implement, finish}; rir's is `research`,
+ * `plan`, so its post-handoff phases are {implement, finish}; short's is `research`,
  * so its are {implement, finish}. Pure arc topology (registry-derived), the twin
  * of `priorPhaseOf`.
  *
@@ -1480,7 +1480,7 @@ export const CONSULTANT_SNIPPETS: ReadonlySet<string> = new Set(Object.values(CO
  * gateless's rule falls out as `kind !== 'challenge'`: gateless drops only the
  * holding bet-audit, keeping the non-holding generative frame and the correctness
  * backstop. This one record is the single source — both `isBackstopCheckpoint`
- * (which `workflowHasConsultantBackstop` reads to tell full from rir) and
+ * (which `workflowHasConsultantBackstop` reads to tell full from short) and
  * `survivesGateless` (the gateless predicate) derive from it, never from a
  * parallel set.
  */
@@ -1543,16 +1543,16 @@ export function consultantCheckpointLive(workflow: WorkflowName, phase: PhaseNam
   return !opts.gateless || survivesGateless(workflow, phase);
 }
 
-/** Whether a workflow has any backstop checkpoint — full does (contract+verify), rir does not. */
+/** Whether a workflow has any backstop checkpoint — full does (contract+verify), short does not. */
 export function workflowHasConsultantBackstop(workflow: WorkflowName): boolean {
   return phasesOf(workflow).some((p) => isBackstopCheckpoint(workflow, p.name));
 }
 
 /**
  * The consultant snippets a WORKFLOW's checkpoints actually reach — full's
- * {frame, spec, contract, verify} snippets; rir's {frame, impl}. The flat
+ * {frame, spec, contract, verify} snippets; short's {frame, impl}. The flat
  * `all=true` renderer filters the consultant bucket against this so a bound run's
- * library exposes only the snippets ITS arc can use: a bound rir run never sees
+ * library exposes only the snippets ITS arc can use: a bound short run never sees
  * `consultant-contract`/`consultant-verify` (nor the Full-only `consultant-spec`)
  * — the contract feature does not leak into the arc that deferred it, and the
  * surface stays per-arc honest, not merely "any consultant snippet". A GATELESS

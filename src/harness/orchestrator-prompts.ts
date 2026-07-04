@@ -134,7 +134,7 @@ This run also binds a consultant — an optional third voice the workflow consul
 /**
  * The acceptance-contract addendum to the consultant clause — appended ONLY for an
  * arc that authors a contract (full: the `contract`/`verify` checkpoints). An arc
- * without them (rir) never sees it, so a bound rir run's identity is byte-for-byte
+ * without them (short) never sees it, so a bound short run's identity is byte-for-byte
  * the base clause above — the contract feature does not leak into the arc that
  * deferred it. It narrows "read-only" for the two checkpoints that relax it.
  */
@@ -145,7 +145,7 @@ const CONSULTANT_CONTRACT_CLAUSE = `On this arc, two of those checkpoints relax 
  * addendum only when the arc authors a contract (full). The single source BOTH
  * hosts use when a consultant is bound: the headless system prompt
  * (`orchestratorSystemPrompt`), and the interactive identity the launcher composes
- * into the run-dir file (`orchestrate.ts`). Arc-scoped so rir stays byte-for-byte.
+ * into the run-dir file (`orchestrate.ts`). Arc-scoped so short stays byte-for-byte.
  */
 export function consultantIdentityClause(workflow: WorkflowName): string {
   return contractAuthorPhaseOf(workflow)
@@ -353,7 +353,7 @@ Branch: the run works on exactly one branch, fixed before your first worker prom
  * two-analysis text byte-for-byte; bound returns a three-send / three-voice
  * shape. The snippet name comes from the registry (consultantSnippetFor).
  *
- * The critical/contract-mode injections (consultantAuditStep for spec and rir's
+ * The critical/contract-mode injections (consultantAuditStep for spec and short's
  * implement; consultantContractStep at plan; consultantVerifyStep at impl — all
  * below) stay append-style: there the checkpoint is its own gate-adjacent step,
  * not a rewrite of an existing one.
@@ -495,7 +495,7 @@ function documentsBlock(state: RunState): string {
 interface FrameBriefData {
   /** The task's opening line — what this phase is and what its gate decides. */
   opening: string;
-  /** Extra advance-packet duty (rir: the decisions ARE the design), or ''. */
+  /** Extra advance-packet duty (short: the decisions ARE the design), or ''. */
   advanceClause: string;
   examples: string;
 }
@@ -802,7 +802,7 @@ const CRITIQUE_BUILD_BRIEFS: Partial<Record<ExamplesKey, CritiqueBuildData>> = {
   // snippet carries the how (the implementer slices the work itself; the doc
   // fixes shape and test standards, not build order). No "plan" vocabulary
   // reaches a design-arc worker — the arc has none.
-  'design-impl': {
+  'blueprint-impl': {
     approvedAttended: 'The human approved the design doc and walked away —',
     approvedPreauth: 'The design gate was pre-authorized at run start and auto-crossed; the human is away —',
     commitStep:
@@ -851,7 +851,7 @@ ${data.examples}
  * create`, then the Open-PR gate. Docs were already reconciled and committed at
  * the tail of `implement` (the Ship gate reviewed them), so they ride the branch
  * into the PR and `finish` never touches them. The gate sits AFTER the open:
- * pre-authorized (full's sleep posture / rir's afk), the PR opens and the gate
+ * pre-authorized (full's sleep posture / short's afk), the PR opens and the gate
  * auto-crosses to done; attended (`finish` in gates_at), the run stops at the
  * opened PR — approve completes the run, reject re-enters to amend it
  * (feedbackResumePrompt's amend clause). The open is idempotent by a worker-side
@@ -899,7 +899,7 @@ Throughout: flag product or direction questions with ask_human; tactical questio
 }
 
 /**
- * The writable-posture build's per-arc data — rir's today. The posture's
+ * The writable-posture build's per-arc data — short's today. The posture's
  * discipline (a direct build from the settled decisions, one writable review
  * round, docs reconciled last, a lean Ship packet) lives in
  * writableBuildBrief; the data carries what the run committed and the
@@ -914,7 +914,7 @@ interface WritableBuildData {
 }
 
 const WRITABLE_BUILD_BRIEFS: Partial<Record<ExamplesKey, WritableBuildData>> = {
-  'rir-impl': {
+  'short-impl': {
     approvedAttended: 'The human approved the direction and walked away —',
     approvedPreauth: 'The Direction gate was pre-authorized at run start and auto-crossed; the human is away —',
     auditSeedNote:

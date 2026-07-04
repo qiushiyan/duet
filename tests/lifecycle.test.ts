@@ -1098,7 +1098,7 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
    */
   const contractRun = async (
     projectDir: string,
-    opts: { consultant?: boolean; writeContract?: boolean; draft?: boolean; workflow?: 'full' | 'design'; draftPath?: string | null } = {},
+    opts: { consultant?: boolean; writeContract?: boolean; draft?: boolean; workflow?: 'full' | 'blueprint'; draftPath?: string | null } = {},
   ): Promise<{ state: RunState; specPath: string; contractPath: string }> => {
     await initGit(projectDir);
     const specPath = 'docs/specs/test.md';
@@ -1209,7 +1209,7 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
     // The design arc's draft flow authors the contract in the same phase that
     // writes the doc, so the settle-time marker carries no path; the freeze
     // derives the path at crossing time and verifies the file there.
-    const { state, contractPath } = await contractRun(projectDir, { workflow: 'design', draftPath: null });
+    const { state, contractPath } = await contractRun(projectDir, { workflow: 'blueprint', draftPath: null });
 
     await freezeContractAt(state, 'design');
 
@@ -1219,7 +1219,7 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
   });
 
   test('design arc: the plan gate name does nothing — only the design gate freezes', async ({ projectDir }) => {
-    const { state } = await contractRun(projectDir, { workflow: 'design' });
+    const { state } = await contractRun(projectDir, { workflow: 'blueprint' });
     const head = await headOf(projectDir);
 
     await freezeContractAt(state, 'implement'); // not the design arc's contract gate

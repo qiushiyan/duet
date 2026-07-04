@@ -25,7 +25,7 @@ function startActor(machine: ReturnType<typeof scriptedMachine>['machine'], hasS
 // The arcs under test. The coherence + spine-walk assertions derive from
 // `phasesOf(workflow)`, so every workflow's machine is checked against its own
 // registry entry, not a single hardcoded arc.
-const ARCS: WorkflowName[] = ['full', 'design', 'rir'];
+const ARCS: WorkflowName[] = ['full', 'blueprint', 'short'];
 
 describe('phase table ⇄ machine coherence (per workflow)', () => {
   test.each(ARCS)('%s: every phase contributes its loop, flag-wait, and gate, with the right tags', (wf) => {
@@ -93,7 +93,7 @@ describe('entry routing', () => {
   });
 
   test('a design-arc spec entry skips frame and starts at the design loop (--spec = a draft of the primary artifact)', async () => {
-    const { machine, calls } = scriptedMachine([{ type: 'phase.advance' }], 'design');
+    const { machine, calls } = scriptedMachine([{ type: 'phase.advance' }], 'blueprint');
     const actor = startActor(machine, true);
     const snap = await waitFor(actor, quiescent);
     expect(snap.value).toBe('designGate');
@@ -323,7 +323,7 @@ describe('the design arc', () => {
         { type: 'phase.advance' }, // implement → ship gate
         { type: 'phase.advance' }, // finish (open the PR) → open-pr gate
       ],
-      'design',
+      'blueprint',
     );
     const actor = startActor(machine);
 
@@ -364,7 +364,7 @@ describe('the RIR arc', () => {
   test('research → Direction → implement → Ship → finish → Open-PR → done, three gates, no full-only states', async () => {
     const { machine, calls } = scriptedMachine(
       [{ type: 'phase.advance' }, { type: 'phase.advance' }, { type: 'phase.advance' }],
-      'rir',
+      'short',
     );
     const actor = startActor(machine);
 

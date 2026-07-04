@@ -57,8 +57,8 @@ describe('role policy helpers', () => {
 
   test('writeAuthorityFor: the implementer writes everywhere; read-only roles gain nothing on the current arcs', ({
     run,
-    rirRun,
-    designRun,
+    shortRun,
+    blueprintRun,
     consultantRun,
   }) => {
     // The implementer's authority is the static policy — any phase, any action.
@@ -70,8 +70,8 @@ describe('role policy helpers', () => {
     expect.soft(writeAuthorityFor(run, 'implement', 'reviewer', 'review-implementation')).toBe(false);
     expect.soft(writeAuthorityFor(run, 'implement', 'reviewer', 'reconcile-docs')).toBe(false);
     expect.soft(writeAuthorityFor(run, 'finish', 'reviewer', 'pr-description')).toBe(false);
-    expect.soft(writeAuthorityFor(rirRun, 'implement', 'reviewer', 'review-direct')).toBe(false);
-    expect.soft(writeAuthorityFor(designRun, 'design', 'reviewer', 'review-design')).toBe(false);
+    expect.soft(writeAuthorityFor(shortRun, 'implement', 'reviewer', 'review-direct')).toBe(false);
+    expect.soft(writeAuthorityFor(blueprintRun, 'design', 'reviewer', 'review-design')).toBe(false);
     // The consultant's contract/verify relaxations are PROMPT-scoped — the
     // resolver never widens it, so author-never-commits holds mechanically.
     expect.soft(writeAuthorityFor(consultantRun, 'plan', 'consultant', 'consultant-contract')).toBe(false);

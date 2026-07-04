@@ -205,7 +205,7 @@ describe('run creation', () => {
     // rir ships defaultPreAuthorized: [] → defaultPosture returns undefined →
     // gatesAt stays absent (attend-all). (full now materializes the overnight
     // posture ['frame','spec'] — see the default-posture test below.)
-    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('rir'), workflow: 'rir' });
+    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('short'), workflow: 'short' });
     expect.soft(created.gatesAt).toBeUndefined();
     expect.soft(loadRunState(projectDir, created.runId).gatesAt).toBeUndefined();
   });

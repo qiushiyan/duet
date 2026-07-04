@@ -37,7 +37,7 @@ describe('gateless drops the consultant bet-audit in the phase briefs, keeping f
   });
 
   test('rir implement: gateless drops the open-ended bet audit', ({ projectDir }) => {
-    const rir = createRun({ cwd: projectDir, bindings: consultantBindingsFor('rir'), workflow: 'rir', framing: 'x' });
+    const rir = createRun({ cwd: projectDir, bindings: consultantBindingsFor('short'), workflow: 'short', framing: 'x' });
     expect.soft(buildPhaseBrief(rir, 'implement')).toContain('bet audit');
     rir.gateless = true;
     expect.soft(buildPhaseBrief(rir, 'implement')).not.toContain('bet audit');
@@ -60,7 +60,7 @@ describe('the scratch guardrail keeps a worker out of the live run state', () =>
   });
 
   test('rir implement: same guardrail and per-run scratch path', ({ projectDir }) => {
-    const rir = createRun({ cwd: projectDir, bindings: defaultBindingsFor('rir'), workflow: 'rir', framing: 'x' });
+    const rir = createRun({ cwd: projectDir, bindings: defaultBindingsFor('short'), workflow: 'short', framing: 'x' });
     const brief = buildPhaseBrief(rir, 'implement');
     expect.soft(brief).toContain(`.duet/runs/${rir.runId}/scratch/`);
     expect.soft(brief).toContain('never delete .duet/');

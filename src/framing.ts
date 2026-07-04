@@ -54,31 +54,31 @@ export const FRAMING_TEMPLATE = `---
 # Machine-parsed options (fixed values the harness acts on; judgment-weighed
 # detail belongs in the prose below). Uncomment to use.
 # workflow: full          — full (default): frame → spec → plan → implement →
-#                           finish (reconcile docs, open a PR). design:
+#                           finish (reconcile docs, open a PR). blueprint:
 #                           frame → design (one design doc replaces spec +
 #                           plan) → implement → finish, for serious work on a
-#                           trusted frontier-model implementer. relay:
-#                           design's arc, but the reviewer reviews with write
-#                           access — it fixes findings directly and owns the
-#                           docs + PR (bind providers per stage via
-#                           [roles.*].build). rir: research → implement →
-#                           review → finish (open a PR; no spec/plan), for
-#                           small, well-understood work.
+#                           trusted frontier-model builder. relay:
+#                           blueprint's shape, but delivery is born fresh and
+#                           its judge reviews with write access — it fixes
+#                           findings directly and owns the docs + PR (bind
+#                           providers per duty, e.g. bind.builder: codex).
+#                           short: research → implement → finish (open a PR;
+#                           no spec/plan), for small, well-understood work.
 # gates_at: overnight     — phases whose gates you attend; the rest are
 #                           pre-authorized and auto-cross with packets
 #                           recorded. Presets are workflow-specific: full →
 #                           skip-plan (walk away at spec approval, return at the
-#                           Ship gate) / overnight (= frame,spec); design/rir →
+#                           Ship gate) / overnight (= frame,spec); the others →
 #                           afk (attend none). Or a list, e.g. "frame, spec".
 #                           Default for full: overnight — attend frame and spec;
 #                           plan, Ship, and the Open-PR gate all auto-cross. List
 #                           "finish" to stop and review the opened PR. Default
-#                           for design: attend the design gate only (one
-#                           interruption). rir attends all three of its gates
+#                           for blueprint/relay: attend the design gate only (one
+#                           interruption). short attends all three of its gates
 #                           by default.
 # spec: path/to/draft.md  — enter at the primary-artifact review loop, skipping
-#                           FRAME (full: the spec; design: the design doc). Not
-#                           for rir, which has no such document.
+#                           FRAME (full: the spec; blueprint/relay: the design
+#                           doc). Not for short, which has no such document.
 # bind.<duty>: provider[:model] — bind a duty for this run, e.g.
 #                           "bind.builder: codex" or "bind.judge:
 #                           claude:claude-fable-5". Duties: architect/analyst
@@ -585,7 +585,7 @@ export async function resolveRunInputs(
   // the returned `gateless` flag onto RunState. Because gateless already
   // pre-authorizes every gate, naming gates to attend is a contradiction — reject
   // an explicit attend-something gates_at rather than silently dropping it. An
-  // explicit attend-NONE preset (rir's afk → []) is compatible (same posture).
+  // explicit attend-NONE preset (short's afk → []) is compatible (same posture).
   const gateless = opts.gateless ?? meta.gateless ?? false; // flag wins over frontmatter
   if (gateless) {
     if (gatesAt && gatesAt.length > 0) {
@@ -600,10 +600,10 @@ export async function resolveRunInputs(
   const specInput = opts.spec ?? meta.spec; // flag wins over frontmatter
   if (specInput) {
     // --spec means "a draft of the arc's primary artifact" — only an arc whose
-    // entry route admits one (full's spec, design's design doc) can take it.
+    // entry route admits one (full's spec, blueprint's design doc) can take it.
     if (entryOf(workflow).specSkipsTo === undefined) {
       throw new Error(
-        `--workflow ${workflow} takes no --spec: this arc has no primary design document — its research decisions are the design. Use full (a spec) or design (a design doc) for a draft-entry run.`,
+        `--workflow ${workflow} takes no --spec: this arc has no primary design document — its research decisions are the design. Use full (a spec) or blueprint (a design doc) for a draft-entry run.`,
       );
     }
     specPath = relative(cwd, resolve(cwd, specInput));

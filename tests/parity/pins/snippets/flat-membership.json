@@ -259,7 +259,7 @@
     "consultant-contract",
     "consultant-verify"
   ],
-  "bound.design": [
+  "bound.blueprint": [
     "think-holistic",
     "compare-notes",
     "write-spec",
@@ -311,7 +311,7 @@
     "consultant-contract",
     "consultant-verify"
   ],
-  "bound.design.gateless": [
+  "bound.blueprint.gateless": [
     "think-holistic",
     "compare-notes",
     "write-spec",
@@ -467,7 +467,7 @@
     "consultant-contract",
     "consultant-verify"
   ],
-  "bound.rir": [
+  "bound.short": [
     "think-holistic",
     "compare-notes",
     "write-spec",
@@ -518,7 +518,7 @@
     "consultant-frame",
     "consultant-impl"
   ],
-  "bound.rir.gateless": [
+  "bound.short.gateless": [
     "think-holistic",
     "compare-notes",
     "write-spec",

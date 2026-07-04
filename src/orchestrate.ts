@@ -10,7 +10,7 @@ import { locateSessionTranscripts } from './sessions.ts';
 /**
  * The `duet orchestrate <runId>` launcher (Stage 1) — the one place that brings
  * up the human's interactive Claude Code session wired to drive a run over its
- * attended arc up to the workflow's handoff gate (full: FRAME → PLAN; rir:
+ * attended arc up to the workflow's handoff gate (full: FRAME → PLAN; short:
  * RESEARCH → Direction), and the one place that applies the single gate-safety
  * permission rule. The orchestrator role can't be installed by a slash command
  * (a skill can't do launch-time wiring — the runId is dynamic), so the launcher

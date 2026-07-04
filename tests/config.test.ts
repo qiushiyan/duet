@@ -228,7 +228,7 @@ describe('the freeze-time continuity degrade — legitimate, echoed, never silen
   });
 
   test('a checker-lane crossing degrades its own edge independently', ({ projectDir }) => {
-    const { degradedEdges } = resolveRunConfig({ workflow: 'rir', flagBinds: { critic: 'claude' } }, missing(projectDir));
+    const { degradedEdges } = resolveRunConfig({ workflow: 'short', flagBinds: { critic: 'claude' } }, missing(projectDir));
     expect(degradedEdges).toEqual([{ into: 'critic', from: 'analyst', reason: 'codex → claude' }]);
   });
 

@@ -27,7 +27,7 @@ describe('orchestrator system prompt pins', () => {
     // Default-off byte-for-byte: no consultant ⇒ the constant itself, and the
     // arc cannot leak in (rir renders identically).
     expect.soft(orchestratorSystemPrompt(state)).toBe(ORCHESTRATOR_SYSTEM_PROMPT);
-    expect.soft(orchestratorSystemPrompt(parityRun(projectDir, { workflow: 'rir' }))).toBe(ORCHESTRATOR_SYSTEM_PROMPT);
+    expect.soft(orchestratorSystemPrompt(parityRun(projectDir, { workflow: 'short' }))).toBe(ORCHESTRATOR_SYSTEM_PROMPT);
     await expect(orchestratorSystemPrompt(state)).toMatchFileSnapshot('./pins/system-prompt/base.txt');
   });
 
@@ -36,7 +36,7 @@ describe('orchestrator system prompt pins', () => {
       orchestratorSystemPrompt(parityRun(projectDir, { consultant: true })),
     ).toMatchFileSnapshot('./pins/system-prompt/consultant-full.txt');
     await expect(
-      orchestratorSystemPrompt(parityRun(projectDir, { workflow: 'design', consultant: true })),
+      orchestratorSystemPrompt(parityRun(projectDir, { workflow: 'blueprint', consultant: true })),
     ).toMatchFileSnapshot('./pins/system-prompt/consultant-design.txt');
   });
 
@@ -44,7 +44,7 @@ describe('orchestrator system prompt pins', () => {
     projectDir,
   }) => {
     await expect(
-      orchestratorSystemPrompt(parityRun(projectDir, { workflow: 'rir', consultant: true })),
+      orchestratorSystemPrompt(parityRun(projectDir, { workflow: 'short', consultant: true })),
     ).toMatchFileSnapshot('./pins/system-prompt/consultant-rir.txt');
   });
 
@@ -66,14 +66,14 @@ const FEEDBACK_CASES: Array<[WorkflowName, PhaseName]> = [
   ['full', 'plan'],
   ['full', 'implement'],
   ['full', 'finish'],
-  ['design', 'design'],
-  ['design', 'implement'],
+  ['blueprint', 'design'],
+  ['blueprint', 'implement'],
   ['relay', 'design'],
   ['relay', 'implement'],
   ['relay', 'finish'],
-  ['rir', 'research'],
-  ['rir', 'implement'],
-  ['rir', 'finish'],
+  ['short', 'research'],
+  ['short', 'implement'],
+  ['short', 'finish'],
 ];
 
 describe('resume prompt pins', () => {

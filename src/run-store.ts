@@ -606,6 +606,13 @@ function normalizeRunState(state: RunState): RunState {
       `run ${state.runId} predates the duty-keyed remodel (its state binds implementer/reviewer seats) — duet no longer loads it. Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .duet/runs/${state.runId}.`,
     );
   }
+  // A persisted workflow the registry no longer names (the retired design/rir
+  // spellings) is the same era — reject with the same manual path out.
+  if (state.workflow !== undefined && !(state.workflow in WORKFLOWS)) {
+    throw new Error(
+      `run ${state.runId} names the retired workflow "${state.workflow}" (the standard library is ${Object.keys(WORKFLOWS).join(' · ')}) — duet no longer loads it. Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .duet/runs/${state.runId}.`,
+    );
+  }
   state.sessions ??= {};
   return state;
 }

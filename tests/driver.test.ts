@@ -83,14 +83,14 @@ describe('buildPhaseBrief (the shared entry-prompt renderer — headless parity)
   // Each phase is built against a run of its own arc.
   test.for([
     ...phasesOf('full').map((p) => ['full', p.name] as const),
-    ...phasesOf('design').map((p) => ['design', p.name] as const),
-    ...phasesOf('rir').map((p) => ['rir', p.name] as const),
+    ...phasesOf('blueprint').map((p) => ['blueprint', p.name] as const),
+    ...phasesOf('short').map((p) => ['short', p.name] as const),
   ])('%s builds a non-empty brief', ([workflow, phase], { projectDir }) => {
     expect(buildPhaseBrief(runOf(projectDir, workflow), phase).trim().length).toBeGreaterThan(0);
   });
 
   test('the design-arc briefs anchor on the design doc — no plan vocabulary reaches a design-arc worker prompt', ({ projectDir }) => {
-    const design = runOf(projectDir, 'design');
+    const design = runOf(projectDir, 'blueprint');
     const designBrief = buildPhaseBrief(design, 'design');
     expect.soft(designBrief).toContain('write-design');
     expect.soft(designBrief).toContain('review-design');
@@ -112,7 +112,7 @@ describe('buildPhaseBrief (the shared entry-prompt renderer — headless parity)
   // — and the `Verification (pending)` checklist that carries the env-verify
   // reminder onto a PR opened after an auto-crossed Ship gate. (The old literal
   // tests pinned the surrounding prose and were brittle; these pin the contract.)
-  test.for([['full', 'finish'], ['design', 'finish'], ['rir', 'finish']] as const)(
+  test.for([['full', 'finish'], ['blueprint', 'finish'], ['short', 'finish']] as const)(
     '%s opens the PR idempotently and leads with the verification checklist',
     ([workflow, phase], { projectDir }) => {
       const brief = buildPhaseBrief(runOf(projectDir, workflow), phase);
@@ -133,7 +133,7 @@ describe('feedbackResumePrompt — the human feedback reaches the worker', () =>
   // that re-pinning was the brittleness the old literal tests carried.
   test.for([
     ['full', 'spec'], ['full', 'plan'], ['full', 'implement'], ['full', 'finish'],
-    ['rir', 'research'], ['rir', 'implement'], ['rir', 'finish'],
+    ['short', 'research'], ['short', 'implement'], ['short', 'finish'],
   ] as const)(
     '%s carries the human feedback verbatim',
     ([workflow, phase]) => {
@@ -155,8 +155,10 @@ describe('the orchestrator system prompt is arc-neutral', () => {
     // The loop discipline is not weakened — review-*/update-*/respond-*/-again still taught.
     expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('update-*');
     expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('-again');
-    // No arc names in the always-on prompt — arcs live in the registry and briefs.
-    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT.toLowerCase()).not.toContain('rir');
+    // No workflow names in the always-on prompt — workflows live in the
+    // registry and briefs. ("short" and "relay" are unpinnable as words —
+    // plain English — so the distinctive name stands in for the check.)
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT.toLowerCase()).not.toContain('blueprint');
     expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).not.toContain('spec and plan loops');
   });
 });
@@ -839,7 +841,7 @@ describe('provider-agnostic onboarding — workers get document paths, not slash
     // research is a rir phase — build it against a rir run (the brief resolves its
     // consultant snippet against the run's own arc).
     const frame = buildPhaseBrief(run, 'frame');
-    const research = buildPhaseBrief(runOf(projectDir, 'rir'), 'research');
+    const research = buildPhaseBrief(runOf(projectDir, 'short'), 'research');
     const finish = buildPhaseBrief(run, 'finish');
 
     for (const p of [frame, research, finish]) {
@@ -856,7 +858,7 @@ describe('provider-agnostic onboarding — workers get document paths, not slash
     // what the framing named, and a doc-scope product call still surfaces via
     // ask_human. finish is now PR-only and no longer carries this text.
     const fullImplement = buildPhaseBrief(run, 'implement');
-    const rirImplement = buildPhaseBrief(runOf(projectDir, 'rir'), 'implement');
+    const rirImplement = buildPhaseBrief(runOf(projectDir, 'short'), 'implement');
     for (const impl of [fullImplement, rirImplement]) {
       expect.soft(impl).toContain('path or skill faithfully');
       expect.soft(impl).toMatch(/doc-scope product call[\s\S]*ask_human/);

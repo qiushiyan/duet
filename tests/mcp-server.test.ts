@@ -127,10 +127,10 @@ describe('duet _mcp refuses a run/phase it cannot host', () => {
   });
 
   test('a Full-only phase is refused for a RIR run; RIR’s own phases build', ({ projectDir }) => {
-    const rir = createRun({ cwd: projectDir, bindings: defaultBindingsFor('rir'), workflow: 'rir', framing: 'x' });
+    const rir = createRun({ cwd: projectDir, bindings: defaultBindingsFor('short'), workflow: 'short', framing: 'x' });
     // plan/docs are Full-only — a RIR run must not host their tools.
     expect.soft(() => buildKernelTools(projectDir, rir.runId, 'plan')).toThrow(
-      /not a phase of the "rir" workflow.*one of research, implement/s,
+      /not a phase of the "short" workflow.*one of research, implement/s,
     );
     // research/implement build fine.
     expect.soft(buildKernelTools(projectDir, rir.runId, 'research').phase).toBe('research');

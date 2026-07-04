@@ -110,8 +110,8 @@ describe('the duet-concierge skill coheres with the CLI', () => {
     // also pinned to exist on `duet new` by the per-file verb/flag guard above.
     expect.soft(markdown).toContain('--workflow');
     expect.soft(markdown).toContain('workflow:'); // the framing frontmatter key
-    expect.soft(markdown.toLowerCase()).toContain('rir');
-    expect.soft(markdown.toLowerCase()).toContain('design'); // the middle arc
+    expect.soft(markdown.toLowerCase()).toContain('short');
+    expect.soft(markdown.toLowerCase()).toContain('blueprint'); // the middle workflow
     expect.soft(markdown).toContain('afk'); // the walk-away preset
   });
 });
@@ -220,7 +220,7 @@ describe('the duet-frame skill coheres with the CLI', () => {
     // can choose between them.
     expect.soft(duetFrameMd).toContain('--workflow');
     expect.soft(publicCommands.get('new')?.options.some((o) => o.long === '--workflow')).toBe(true);
-    expect.soft(duetFrameMd.toLowerCase()).toContain('rir');
+    expect.soft(duetFrameMd.toLowerCase()).toContain('short');
     expect.soft(duetFrameMd).toContain('`design`'); // the middle arc, named as a choosable workflow
     expect.soft(duetFrameMd).toContain('afk'); // the walk-away preset
   });
@@ -263,7 +263,7 @@ describe('no CLI help / template copy carries a Full-only-arc claim', () => {
       const lower = text.toLowerCase();
       for (const marker of FULL_ONLY_MARKERS) {
         if (lower.includes(marker.toLowerCase())) {
-          expect.soft(lower, `"${label}" carries Full-only copy "${marker}" without naming rir`).toContain('rir');
+          expect.soft(lower, `"${label}" carries Full-only copy "${marker}" without naming rir`).toContain('short');
         }
       }
     }
@@ -295,25 +295,25 @@ describe('no CLI help / template copy carries a Full-only-arc claim', () => {
     const opt = (cmd: string, long: string) =>
       (publicCommands.get(cmd)?.options.find((o) => o.long === long)?.description ?? '').toLowerCase();
     // --gates-at: every arc's presets, including the walk-away afk.
-    expect.soft(opt('new', '--gates-at')).toContain('rir');
+    expect.soft(opt('new', '--gates-at')).toContain('short');
     expect.soft(opt('new', '--gates-at')).toContain('design');
     expect.soft(opt('new', '--gates-at')).toContain('afk');
     // --interactive and orchestrate: the handoff gate per arc.
-    expect.soft(opt('new', '--interactive')).toContain('rir');
+    expect.soft(opt('new', '--interactive')).toContain('short');
     expect.soft(opt('new', '--interactive')).toContain('design');
-    expect.soft(publicCommands.get('orchestrate')?.description().toLowerCase()).toContain('rir');
+    expect.soft(publicCommands.get('orchestrate')?.description().toLowerCase()).toContain('short');
     expect.soft(publicCommands.get('orchestrate')?.description().toLowerCase()).toContain('design');
   });
 
-  test('the framing template seed names every arc (workflow:, design, rir, afk)', () => {
+  test('the framing template seed names every workflow (workflow:, blueprint, short, afk)', () => {
     expect.soft(FRAMING_TEMPLATE).toContain('workflow:');
-    expect.soft(FRAMING_TEMPLATE.toLowerCase()).toContain('rir');
-    expect.soft(FRAMING_TEMPLATE.toLowerCase()).toContain('design:');
+    expect.soft(FRAMING_TEMPLATE.toLowerCase()).toContain('short:');
+    expect.soft(FRAMING_TEMPLATE.toLowerCase()).toContain('blueprint:');
     expect.soft(FRAMING_TEMPLATE).toContain('afk');
     // No Full-only-arc claim survives in the seed.
     for (const marker of FULL_ONLY_MARKERS) {
       if (FRAMING_TEMPLATE.toLowerCase().includes(marker.toLowerCase())) {
-        expect.soft(FRAMING_TEMPLATE.toLowerCase(), `template carries "${marker}" without rir`).toContain('rir');
+        expect.soft(FRAMING_TEMPLATE.toLowerCase(), `template carries "${marker}" without rir`).toContain('short');
       }
     }
   });

@@ -24,19 +24,19 @@ describe('formatGatePosture (the single source for the three posture surfaces)',
 });
 
 describe('workflow-neutral status surfaces (RIR)', () => {
-  const rirRun = (projectDir: string): RunState =>
-    createRun({ cwd: projectDir, bindings: defaultBindingsFor('rir'), workflow: 'rir', framing: 'x' });
+  const shortRun = (projectDir: string): RunState =>
+    createRun({ cwd: projectDir, bindings: defaultBindingsFor('short'), workflow: 'short', framing: 'x' });
 
   test('describeStop completion claims the PR for both arcs now (rir opens one too)', ({ projectDir }) => {
-    const rir = rirRun(projectDir);
+    const rir = shortRun(projectDir);
     expect.soft(describeStop(rir, true)).toBe('run complete — the PR is open');
     expect.soft(describeStop({ ...rir, workflow: 'full' }, true)).toBe('run complete — the PR is open');
   });
 
   test('the model carries the workflow and scopes rounds to the RIR arc', ({ projectDir }) => {
-    const model = buildStatusModel(rirRun(projectDir), { kind: 'gate', phase: 'implement' }, []);
-    expect.soft(model.workflow).toBe('rir');
-    expect.soft(model.workflowDisplayName).toBe('Research → Implement → Review');
+    const model = buildStatusModel(shortRun(projectDir), { kind: 'gate', phase: 'implement' }, []);
+    expect.soft(model.workflow).toBe('short');
+    expect.soft(model.workflowDisplayName).toBe('Short (research → implement → ship → PR)');
     // Only RIR phases appear in rounds — no Full phases leak in.
     expect.soft(model.rounds.map((r) => r.phase)).toEqual(['implement']);
   });
@@ -44,7 +44,7 @@ describe('workflow-neutral status surfaces (RIR)', () => {
   test('the done summary reads the run’s last phase (finish), and the render claims the PR', ({
     projectDir,
   }) => {
-    const rir = rirRun(projectDir);
+    const rir = shortRun(projectDir);
     rir.phaseSummaries.finish = { summary: 'opened the PR', artifacts: [] };
     const model = buildStatusModel(rir, { kind: 'done' }, []);
     expect.soft(model.stop.kind === 'done' && model.stop.summary).toBe('opened the PR');
@@ -52,18 +52,18 @@ describe('workflow-neutral status surfaces (RIR)', () => {
     expect.soft(text).toContain('run complete');
     expect.soft(text).toContain('the PR is open'); // rir opens a (real) PR now too
     expect.soft(text).not.toContain('spec:'); // RIR still has no spec phase
-    expect.soft(text).toContain('workflow: Research → Implement → Review');
+    expect.soft(text).toContain('workflow: Short (research → implement → ship → PR)');
   });
 
   test('the brief headline reports the open PR on completion', ({ projectDir }) => {
-    const brief = buildBrief(buildStatusModel(rirRun(projectDir), { kind: 'done' }, []));
+    const brief = buildBrief(buildStatusModel(shortRun(projectDir), { kind: 'done' }, []));
     expect(brief.headline).toBe('run complete — the PR is open');
   });
 
   test('an empty gatesAt (afk: attend none) renders explicit copy and survives in the JSON model', ({
     projectDir,
   }) => {
-    const rir = rirRun(projectDir);
+    const rir = shortRun(projectDir);
     rir.gatesAt = []; // the afk posture: every gate pre-authorized
     rir.machineState = 'shipGate';
     const model = buildStatusModel(rir, { kind: 'gate', phase: 'implement' }, []);

@@ -1133,7 +1133,7 @@ describe('createWorkers', () => {
   test('per-stage duty bindings SWITCH THE PROVIDER at the stage boundary — the criss-cross falls out per phase', () => {
     // The T4 wiring: effectiveBindingFor resolves BEFORE the provider branch,
     // so the same bindings construct different worker classes per phase.
-    const base = defaultBindingsFor('design');
+    const base = defaultBindingsFor('blueprint');
     const crisscross: VoiceBindings = {
       ...base,
       duties: {
@@ -1145,11 +1145,11 @@ describe('createWorkers', () => {
     };
     const rails = { workerBudgetUsd: 10, timeoutMs: 60_000 };
     // Planning: implementer on claude, reviewer on codex (the base pair).
-    const planning = createWorkers(crisscross, 'design', 'design', rails);
+    const planning = createWorkers(crisscross, 'blueprint', 'design', rails);
     expect.soft(planning.implementer).toBeInstanceOf(ClaudeWorker);
     expect.soft(planning.reviewer.name).toBe('codex');
     // Post-handoff: the providers swap — codex builds, claude judges.
-    const build = createWorkers(crisscross, 'design', 'implement', rails);
+    const build = createWorkers(crisscross, 'blueprint', 'implement', rails);
     expect.soft(build.implementer.name).toBe('codex');
     expect.soft(build.reviewer).toBeInstanceOf(ClaudeWorker);
     expect.soft(build.reviewer.name).toBe('claude');

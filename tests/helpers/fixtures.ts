@@ -125,13 +125,13 @@ export interface Fixtures {
   /** A framing-only run with a consultant bound (the opt-in second reviewer). */
   consultantRun: RunState;
   /** A framing-only run on the rir arc (for arc-scoped brief/render tests). */
-  rirRun: RunState;
+  shortRun: RunState;
   /** A consultant-bound run on the rir arc (for arc-scoped brief/render tests). */
-  rirConsultantRun: RunState;
+  shortConsultantRun: RunState;
   /** A framing-only run on the design arc (for arc-scoped brief/render tests). */
-  designRun: RunState;
+  blueprintRun: RunState;
   /** A consultant-bound run on the design arc (for arc-scoped brief/render tests). */
-  designConsultantRun: RunState;
+  blueprintConsultantRun: RunState;
 }
 
 export const test = base.extend<Fixtures>({
@@ -152,16 +152,16 @@ export const test = base.extend<Fixtures>({
   consultantRun: async ({ projectDir }, use) => {
     await use(createRun({ cwd: projectDir, bindings: consultantBindingsFor('full'), framing: 'test framing' }));
   },
-  rirRun: async ({ projectDir }, use) => {
-    await use(createRun({ cwd: projectDir, bindings: defaultBindingsFor('rir'), workflow: 'rir', framing: 'test framing' }));
+  shortRun: async ({ projectDir }, use) => {
+    await use(createRun({ cwd: projectDir, bindings: defaultBindingsFor('short'), workflow: 'short', framing: 'test framing' }));
   },
-  rirConsultantRun: async ({ projectDir }, use) => {
-    await use(createRun({ cwd: projectDir, bindings: consultantBindingsFor('rir'), workflow: 'rir', framing: 'test framing' }));
+  shortConsultantRun: async ({ projectDir }, use) => {
+    await use(createRun({ cwd: projectDir, bindings: consultantBindingsFor('short'), workflow: 'short', framing: 'test framing' }));
   },
-  designRun: async ({ projectDir }, use) => {
-    await use(createRun({ cwd: projectDir, bindings: defaultBindingsFor('design'), workflow: 'design', framing: 'test framing' }));
+  blueprintRun: async ({ projectDir }, use) => {
+    await use(createRun({ cwd: projectDir, bindings: defaultBindingsFor('blueprint'), workflow: 'blueprint', framing: 'test framing' }));
   },
-  designConsultantRun: async ({ projectDir }, use) => {
-    await use(createRun({ cwd: projectDir, bindings: consultantBindingsFor('design'), workflow: 'design', framing: 'test framing' }));
+  blueprintConsultantRun: async ({ projectDir }, use) => {
+    await use(createRun({ cwd: projectDir, bindings: consultantBindingsFor('blueprint'), workflow: 'blueprint', framing: 'test framing' }));
   },
 });

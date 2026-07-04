@@ -275,8 +275,8 @@ describe('the snippet library', () => {
       if (!key.startsWith('review')) continue;
       expect.soft(ACTION_CATALOG[key], `review-family snippet "${key}" is not in the action catalog`).toBeDefined();
     }
-    expect.soft(consultantSnippetFor('rir', 'research')).toBe('consultant-frame');
-    expect.soft(consultantSnippetFor('rir', 'implement')).toBe('consultant-impl');
+    expect.soft(consultantSnippetFor('short', 'research')).toBe('consultant-frame');
+    expect.soft(consultantSnippetFor('short', 'implement')).toBe('consultant-impl');
     expect.soft(consultantSnippetFor('full', 'finish'), 'finish carries no consultant checkpoint').toBeUndefined();
   });
 
@@ -347,7 +347,7 @@ describe('the snippet library', () => {
   });
 
   test('the phase-grouped view renders a RIR phase against the RIR arc', () => {
-    const rendered = renderSnippetLibrary({ phase: 'research', workflow: 'rir' });
+    const rendered = renderSnippetLibrary({ phase: 'research', workflow: 'short' });
     expect.soft(rendered.startsWith('<snippet_library phase="research">')).toBe(true);
     // anytime helper, in full
     expect.soft(rendered).toContain('<snippet key="reread-context">');
@@ -437,7 +437,7 @@ describe('the snippet library', () => {
     });
 
     test('bound: a RIR phase shows only its arc’s checkpoints (no spec checkpoint — RIR has no spec)', () => {
-      const atResearch = renderSnippetLibrary({ phase: 'research', workflow: 'rir', consultantBound: true });
+      const atResearch = renderSnippetLibrary({ phase: 'research', workflow: 'short', consultantBound: true });
       expect.soft(atResearch).toContain('<snippet key="consultant-frame">'); // research owns frame mode
       expect.soft(atResearch).toContain('consultant-impl'); // implement owns implGate → indexed
       expect.soft(atResearch).not.toContain('consultant-spec'); // RIR has no spec checkpoint
@@ -659,7 +659,7 @@ describe('byte-for-byte identity — no override files ⇒ today’s served libr
     ['all=true', { all: true }],
     ['phase: spec', { phase: 'spec', workflow: 'full' }],
     ['phase: plan / full', { phase: 'plan', workflow: 'full' }],
-    ['phase: research / rir', { phase: 'research', workflow: 'rir' }],
+    ['phase: research / rir', { phase: 'research', workflow: 'short' }],
     ['phase: impl / full + all', { phase: 'implement', workflow: 'full', all: true }],
     ['consultant-bound, frame, all', { phase: 'frame', workflow: 'full', consultantBound: true, all: true }],
   ])('%s renders identically with an empty libraryContext', ([, opts]) => {

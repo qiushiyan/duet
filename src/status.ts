@@ -24,7 +24,7 @@ import type { ErrorClass } from './worker-health.ts';
  * breaking change to the shipped skill (and fails the pinned-keys test).
  */
 
-/** Whether a workflow's arc ends by opening a PR — true when a phase carries the Open-PR gate (both arcs do: full's `finish`, rir's `finish`). */
+/** Whether a workflow's arc ends by opening a PR — true when a phase carries the Open-PR gate (both arcs do: full's `finish`, short's `finish`). */
 function opensPr(workflow: WorkflowName): boolean {
   return phasesOf(workflow).some((p) => p.gate?.state === 'openPrGate');
 }
@@ -38,7 +38,7 @@ function completionLine(workflow: WorkflowName): string {
  * Whether a workflow's arc fills the spec slot (so a missing spec is worth
  * reporting). Keyed on the entry route, not a phase literally named `spec`:
  * any arc that admits a `--spec` draft entry (full's spec, design's design doc)
- * produces a primary artifact at specPath; rir has no such slot.
+ * produces a primary artifact at specPath; short has no such slot.
  */
 function hasSpecPhase(workflow: WorkflowName): boolean {
   return entryOf(workflow).specSkipsTo !== undefined;
