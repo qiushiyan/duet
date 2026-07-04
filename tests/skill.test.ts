@@ -215,13 +215,15 @@ describe('the duet-frame skill coheres with the CLI', () => {
   });
 
   test('the framing author picks the workflow and emits the --workflow selector', () => {
-    // Slice 7: duet-frame settles the arc and emits it; --workflow must be a
-    // real flag of `duet new`, and the skill must name every arc so the author
+    // duet-frame settles the workflow and emits it; --workflow must be a real
+    // flag of `duet new`, and the skill must name every workflow so the author
     // can choose between them.
     expect.soft(duetFrameMd).toContain('--workflow');
     expect.soft(publicCommands.get('new')?.options.some((o) => o.long === '--workflow')).toBe(true);
     expect.soft(duetFrameMd.toLowerCase()).toContain('short');
-    expect.soft(duetFrameMd).toContain('`design`'); // the middle arc, named as a choosable workflow
+    expect.soft(duetFrameMd).toContain('`blueprint`'); // the middle workflow, named as choosable
+    expect.soft(duetFrameMd).toContain('`relay`'); // the criss-crossed delivery, with its bind.* economy
+    expect.soft(duetFrameMd).toContain('bind.'); // the frontmatter binding grammar the author records
     expect.soft(duetFrameMd).toContain('afk'); // the walk-away preset
   });
 });
