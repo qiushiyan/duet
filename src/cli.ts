@@ -29,7 +29,7 @@ import { serveKernelStdio, serveRunScopedKernelStdio } from './harness/mcp-serve
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
 import { buildStatsModel, renderStats } from './stats.ts';
 import { runOrchestrate } from './orchestrate.ts';
-import { entryOf, handoffWatchLabel, workflowHasConsultantBackstop } from './phases.ts';
+import { WORKFLOWS, entryOf, handoffWatchLabel, workflowHasConsultantBackstop } from './phases.ts';
 import { getEffectiveSnippet, loadEffectiveSnippets, runtimeLibraryContext } from './snippets.ts';
 import type { EffectiveSnippet } from './snippets.ts';
 import { buildBrief, buildStatusModel, formatGatePosture, renderBrief, renderStatus, steerRefusal } from './status.ts';
@@ -393,6 +393,10 @@ program
     if (framingFile === DEFAULT_FRAMING_FILE) unlinkSync(join(cwd, DEFAULT_FRAMING_FILE));
     console.log(`run ${state.runId} created`);
     if (opts.tmux) await openTmuxView(state);
+    // Echo the resolved manifest — workflow first (the 717d fix: a run's frozen
+    // inputs must be visible at creation, not discovered from state.json later).
+    const wf = workflowOf(state);
+    console.log(`workflow: ${wf} — ${WORKFLOWS[wf].displayName}`);
     // The implementer field shows the post-handoff split when a build override
     // is bound (base → build binding); absent, it reads exactly as before.
     const implBuild = bindings.implementer.build;

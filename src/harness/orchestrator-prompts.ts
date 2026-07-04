@@ -383,9 +383,9 @@ function analysisSendStep(state: RunState, phase: PhaseName): string {
 
 function synthesisStep(state: RunState, phase: PhaseName): string {
   if (!checkpointLive(state, phase)) {
-    return "Send the reviewer's analysis to the implementer with compare-notes: critique, synthesize, don't capitulate.";
+    return "send the reviewer's analysis to the implementer with compare-notes: critique, synthesize, don't capitulate.";
   }
-  return "Send the reviewer's AND the consultant's analyses to the implementer with compare-notes, presented as two anonymized peers (do not label either by role, so the implementer stays blind to reviewer identity): critique and synthesize across all three voices, don't capitulate or average. The consultant's analysis is a synthesis input to the direction, like the reviewer's — not a gate-holding finding.";
+  return "send the reviewer's AND the consultant's analyses to the implementer with compare-notes, presented as two anonymized peers (do not label either by role, so the implementer stays blind to reviewer identity): critique and synthesize across all three voices, don't capitulate or average. The consultant's analysis is a synthesis input to the direction, like the reviewer's — not a gate-holding finding.";
 }
 
 /**
@@ -527,10 +527,10 @@ The shape of the phase:
 1. Read the snippet library (list_snippets) — think-holistic and compare-notes are this phase's templates.
 2. Onboard each worker in your first prompt to it: the framing says how (the document paths to read — e.g. an onboarding or skill file named by path). Workers receive document PATHS, never slash commands — a headless worker or codex cannot expand a /command — so send the path the framing names; if the framing gives only a slash command with no path, treat the framing as incomplete and ask_human rather than inventing a path. Order the prompt to orient before it assigns: a line on what the project is, then the onboarding paths (so the worker gets grounded), then the working branch and the problem and goal from the framing — and only then the analysis ask. The worker reads it cold, so lead with the work in plain terms, not duet's machinery (the arc, gate, or checkpoint names).
 3. ${analysisSendStep(state, spec.name)}
-4. ${synthesisStep(state, spec.name)}
-5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. ${data.advanceClause}The human decides "does this direction match what I meant?" from it. (The backstop cap of ${spec.roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
+4. As soon as the fan-out settles, ${synthesisStep(state, spec.name)} Fire the synthesis unconditionally: a product or direction question an analysis raised is synthesis input — fold it into the compare-notes body as an open item for the synthesis to weigh — never a reason to hold the settled analyses while you wait for an answer.
+5. Call advance_phase with the synthesized direction as the summary — the approaches weighed, the one recommended, and why. ${data.advanceClause}Carry each open product or direction question from the analyses into human_decisions (high when the answer could redirect the work), so it reaches the human at the Direction gate wrapped in the synthesis that weighs it. The human decides "does this direction match what I meant?" from it. (The backstop cap of ${spec.roundCap} review rounds rarely matters here — analysis turns aren't review rounds.)
 
-Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
+Throughout: the Direction gate is where product and direction questions reach the human — this phase's whole job is bringing them there inside a synthesized packet, so reserve ask_human for what genuinely cannot wait for the gate: an environment blocker, or a question so load-bearing that synthesizing without its answer would be throwaway work. Tactical questions bounce back to the worker that raised them.
 
 ${data.examples}
 </task>`;
