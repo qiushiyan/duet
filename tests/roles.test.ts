@@ -10,7 +10,7 @@ import {
   workerRolesFor,
   writeAuthorityFor,
 } from '../src/roles.ts';
-import { DEFAULT_BINDINGS } from '../src/config.ts';
+import { defaultBindingsFor } from '../src/config.ts';
 import { createRun } from '../src/run-store.ts';
 import { test } from './helpers/fixtures.ts';
 
@@ -79,7 +79,7 @@ describe('role policy helpers', () => {
   });
 
   test('writeAuthorityFor on relay: the fixer writes action-scoped, never phase-blanket', ({ projectDir }) => {
-    const relay = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'relay', framing: 'x' });
+    const relay = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), workflow: 'relay', framing: 'x' });
     // The fixer's grant: review-and-fix, and the reviewer-owned tails.
     expect.soft(writeAuthorityFor(relay, 'implement', 'reviewer', 'review-and-fix')).toBe(true);
     expect.soft(writeAuthorityFor(relay, 'implement', 'reviewer', 'reconcile-docs')).toBe(true); // buildTailOwner
@@ -110,12 +110,13 @@ describe('role policy helpers', () => {
   test('sessionIdFor: a provider mismatch against the phase-effective binding derives a FRESH session (T1)', ({
     run,
   }) => {
-    // The implementer plans on claude and builds on codex — its planning-era
-    // claude session must never be resumed through the codex CLI. The reset is
-    // DERIVED at the read, not evented: no crash window, idempotent on any host.
+    // The maker lane plans on claude (architect) and builds on codex
+    // (builder) — its planning-era claude session must never be resumed
+    // through the codex CLI. The reset is DERIVED at the read, not evented:
+    // no crash window, idempotent on any host.
     run.bindings = {
       ...run.bindings,
-      implementer: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless', build: { provider: 'codex' } },
+      duties: { ...run.bindings.duties, builder: { provider: 'codex' } },
     };
     run.workerSessions = { implementer: { provider: 'claude', id: 'planning-era' } };
     expect.soft(sessionIdFor(run, 'implementer', 'plan')).toBe('planning-era'); // pre-handoff: same provider, resume

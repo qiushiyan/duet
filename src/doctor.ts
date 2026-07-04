@@ -1,8 +1,11 @@
-import { bindingFor } from './config.ts';
+import { allBindings, effectiveBindingFor } from './config.ts';
+import { entryOf } from './phases.ts';
 import { aliveDriverPid, probeRunPosition } from './harness/lifecycle.ts';
 import { voicesFor } from './roles.ts';
 import { resolveSessions, readRoleTranscriptTail } from './sessions.ts';
+import { workflowOf } from './run-store.ts';
 import type { RunState, Voice } from './run-store.ts';
+import type { PhaseName } from './phases.ts';
 import { localStamp } from './timefmt.ts';
 import {
   RETRY_WINDOW_MS,
@@ -104,8 +107,11 @@ function inFlightFor(
   return { inFlightSince: startedAt, retriesSince: startedAt };
 }
 
-function roleRow(role: Voice, state: RunState, opts: { now: number; home?: string; driverAlive: boolean; phaseMidFlight: boolean }): RoleHealthRow {
-  const provider = bindingFor(state.bindings, role).provider;
+function roleRow(role: Voice, state: RunState, opts: { now: number; home?: string; driverAlive: boolean; phaseMidFlight: boolean; phase: PhaseName }): RoleHealthRow {
+  // The phase-effective binding at the run's current position — the fallback
+  // provider before a voice's first session record exists (a known session's
+  // record stays the provider source below, via resolveSessions).
+  const provider = effectiveBindingFor(state.bindings, role, workflowOf(state), opts.phase).provider;
   const known = resolveSessions(state).find((s) => s.role === role);
   const { inFlightSince, retriesSince } = inFlightFor(role, state, opts.now, opts.driverAlive, opts.phaseMidFlight);
   const inFlight = inFlightSince !== undefined;
@@ -158,9 +164,10 @@ export async function buildDoctorModel(
   const phaseMidFlight = position.kind === 'running' || position.kind === 'interactive';
 
   const voices = voicesFor(state);
-  const roles = voices.map((role) => roleRow(role, state, { now: opts.now, ...(opts.home !== undefined ? { home: opts.home } : {}), driverAlive, phaseMidFlight }));
+  const phase = 'phase' in position ? position.phase : entryOf(workflowOf(state)).firstPhase;
+  const roles = voices.map((role) => roleRow(role, state, { now: opts.now, ...(opts.home !== undefined ? { home: opts.home } : {}), driverAlive, phaseMidFlight, phase }));
 
-  const hasClaude = voices.some((r) => bindingFor(state.bindings, r).provider === 'claude');
+  const hasClaude = allBindings(state.bindings).some((b) => b.binding.provider === 'claude');
   let connectivity: Connectivity;
   try {
     connectivity = hasClaude ? await probeAnthropic(opts.fetch ?? (globalThis.fetch as unknown as FetchLike)) : { target: 'none', status: 'not probed' };

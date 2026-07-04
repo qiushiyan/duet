@@ -39,8 +39,8 @@ import type { PhaseName } from '../src/phases.ts';
 import { contextSafetyPercent, createRun, loadRunState, markPendingTurn, recordContextUsage, runDirOf, saveRunState, stageHumanInput, workflowOf } from '../src/run-store.ts';
 import { listPendingSteers, stageSteer } from '../src/steer-store.ts';
 import type { RunState } from '../src/run-store.ts';
-import { DEFAULT_BINDINGS } from '../src/config.ts';
-import { DeferredWorker, FakeWorker, SyncThrowWorker, consultantBindings, test } from './helpers/fixtures.ts';
+import { defaultBindingsFor } from '../src/config.ts';
+import { DeferredWorker, FakeWorker, SyncThrowWorker, consultantBindingsFor, test } from './helpers/fixtures.ts';
 import { claudeApiRetry, claudeToolUse, claudeUserToolResult, codexExecCommand, jsonl, plantClaudeTranscript, plantCodexRollout } from './helpers/transcripts.ts';
 
 /**
@@ -482,13 +482,13 @@ describe('send_prompt', () => {
     projectDir,
     run,
   }) => {
-    // relay's implementer half: planning ran on claude (the persisted record),
-    // the build phase runs on codex via the build override. The send must NOT
+    // The criss-cross maker lane: planning ran on claude (the persisted
+    // record), the delivery builder is bound to codex. The send must NOT
     // resume the claude session through codex; the settle must qualify the new
     // record with the provider that actually ran and ledger the switch.
     run.bindings = {
       ...run.bindings,
-      implementer: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless', build: { provider: 'codex' } },
+      duties: { ...run.bindings.duties, builder: { provider: 'codex' } },
     };
     run.workerSessions = { implementer: { provider: 'claude', id: 'planning-era-sess' } };
     saveRunState(run);
@@ -673,9 +673,13 @@ describe('send_prompt', () => {
       workflow: 'relay',
       framing: 'x',
       bindings: {
-        ...DEFAULT_BINDINGS,
-        implementer: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless', build: { provider: 'codex' } },
-        reviewer: { provider: 'codex', build: { provider: 'claude', model: 'claude-opus-4-8' } },
+        ...defaultBindingsFor('relay'),
+        duties: {
+          architect: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' },
+          analyst: { provider: 'codex' },
+          builder: { provider: 'codex' },
+          judge: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' },
+        },
       },
     });
     recordContextUsage(relay, 'reviewer', { usedTokens: 100_000, windowTokens: 1_000_000 });
@@ -2392,7 +2396,7 @@ describe('acceptance contract at the tool altitude (get_task + list_snippets)', 
 // not see contract/verify at any tool surface — the feature does not leak into rir.
 describe('RIR + consultant: the contract feature does not leak into the deferred arc', () => {
   const rirConsultantRun = (projectDir: string): RunState =>
-    createRun({ cwd: projectDir, workflow: 'rir', bindings: consultantBindings, framing: 'f' });
+    createRun({ cwd: projectDir, workflow: 'rir', bindings: consultantBindingsFor('rir'), framing: 'f' });
 
   test('orchestratorSystemPrompt is byte-for-byte the BASE consultant clause — no contract/verify text', ({ projectDir }) => {
     const prompt = orchestratorSystemPrompt(rirConsultantRun(projectDir));
@@ -2402,7 +2406,7 @@ describe('RIR + consultant: the contract feature does not leak into the deferred
     expect.soft(prompt.toLowerCase()).not.toContain('execute-to-observe');
     // Contrast: a bound FULL run DOES gain the addendum (proves it is arc-scoped, not absent).
     const full = orchestratorSystemPrompt(
-      createRun({ cwd: projectDir, workflow: 'full', bindings: consultantBindings, framing: 'f' }),
+      createRun({ cwd: projectDir, workflow: 'full', bindings: consultantBindingsFor('full'), framing: 'f' }),
     );
     expect.soft(full.toLowerCase()).toContain('acceptance contract');
   });
@@ -3003,7 +3007,7 @@ describe('the library and the journal', () => {
   test('list_snippets renders the run’s own arc (a RIR run sees RIR phases, not Full’s)', async ({ projectDir }) => {
     // Finding #2 — exercise the tool surface, not just renderSnippetLibrary: a
     // workflow:'rir' run on the research phase indexes the RIR arc only.
-    const rir = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'build a thing' });
+    const rir = createRun({ cwd: projectDir, bindings: defaultBindingsFor('rir'), workflow: 'rir', framing: 'build a thing' });
     const { call } = harness(rir, { phase: 'research' });
     const library = text(await call('list_snippets'));
 

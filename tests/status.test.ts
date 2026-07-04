@@ -4,7 +4,7 @@ import type { StopModel } from '../src/status.ts';
 import { createRun } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
 import type { RunPosition } from '../src/harness/lifecycle.ts';
-import { DEFAULT_BINDINGS } from '../src/config.ts';
+import { defaultBindingsFor } from '../src/config.ts';
 import { localStamp } from '../src/timefmt.ts';
 import { test } from './helpers/fixtures.ts';
 
@@ -25,7 +25,7 @@ describe('formatGatePosture (the single source for the three posture surfaces)',
 
 describe('workflow-neutral status surfaces (RIR)', () => {
   const rirRun = (projectDir: string): RunState =>
-    createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'x' });
+    createRun({ cwd: projectDir, bindings: defaultBindingsFor('rir'), workflow: 'rir', framing: 'x' });
 
   test('describeStop completion claims the PR for both arcs now (rir opens one too)', ({ projectDir }) => {
     const rir = rirRun(projectDir);
@@ -606,7 +606,7 @@ describe('displayState — the truthful state label (F5)', () => {
   });
 
   test('an interactive run with no machineState shows its phase, never "(not started)"', ({ projectDir }) => {
-    const interactive = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, framing: 'x' });
+    const interactive = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), framing: 'x' });
     interactive.orchestrationHost = 'interactive';
     const out = renderStatus(buildStatusModel(interactive, { kind: 'interactive', phase: 'frame' }, []));
     expect.soft(out).toContain('state:    frame');

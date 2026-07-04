@@ -1,5 +1,5 @@
 import { DEFAULT_CLAUDE_MODEL, effectiveBindingFor } from '../config.ts';
-import type { RoleBindings } from '../config.ts';
+import type { VoiceBindings } from '../config.ts';
 import type { PhaseName, WorkflowName } from '../phases.ts';
 import { ClaudeWorker } from './claude.ts';
 import { CodexWorker } from './codex.ts';
@@ -20,17 +20,16 @@ import type { WorkerProvider, WorkerProviders, WorkerRole } from './types.ts';
  * model and the deadline but no budget cap — the flat quota has no per-turn
  * dollar ceiling to pass.
  *
- * Every worker's binding is PHASE-EFFECTIVE: `effectiveBindingFor` resolves the
- * base binding through planning and the optional post-handoff `build` override
- * after the handoff gate — a provider switch included — so the same run can
- * plan on one binding and build on another. It resolves BEFORE the provider
- * branch, which is what makes the codex-vs-claude construction fall out per
- * phase — hence the `workflow`+`phase` parameters (the handoff boundary is
- * arc-specific, and this is already the per-phase construction site for
- * budget/timeout).
+ * Every worker's binding is PHASE-EFFECTIVE: `effectiveBindingFor` looks it up
+ * in the frozen manifest by the phase's stage + duty — a provider switch
+ * across the stage boundary included — so the same run can plan on one
+ * binding and build on another. It resolves BEFORE the provider branch, which
+ * is what makes the codex-vs-claude construction fall out per phase — hence
+ * the `workflow`+`phase` parameters (the stage split is workflow-specific,
+ * and this is already the per-phase construction site for budget/timeout).
  */
 export function createWorkers(
-  bindings: RoleBindings,
+  bindings: VoiceBindings,
   workflow: WorkflowName,
   phase: PhaseName,
   rails: { workerBudgetUsd: number | undefined; timeoutMs: number },
@@ -38,7 +37,7 @@ export function createWorkers(
   const forRole = (role: WorkerRole): WorkerProvider => {
     const binding = effectiveBindingFor(bindings, role, workflow, phase);
     if (binding.provider !== 'claude') return new CodexWorker({ timeoutMs: rails.timeoutMs });
-    const model = binding.model ?? DEFAULT_CLAUDE_MODEL[role];
+    const model = binding.model ?? DEFAULT_CLAUDE_MODEL;
     if (binding.transport === 'interactive') {
       return new InteractiveClaudeWorker({ model, timeoutMs: rails.timeoutMs });
     }

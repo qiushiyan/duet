@@ -10,7 +10,7 @@ import {
   buildPhaseBrief,
   feedbackResumePrompt,
 } from '../src/harness/orchestrator-prompts.ts';
-import { DEFAULT_BINDINGS } from '../src/config.ts';
+import { defaultBindingsFor } from '../src/config.ts';
 import { phasesOf } from '../src/phases.ts';
 import type { WorkflowName } from '../src/phases.ts';
 import { budgetFor, createRun, loadRunState, saveRunState } from '../src/run-store.ts';
@@ -74,7 +74,7 @@ const quiesce = (cwd: string, runId: string): void => {
 // run's own workflow (phase identity is workflow-scoped), so a brief must be
 // built against a run of that phase's arc.
 const runOf = (cwd: string, workflow: WorkflowName): RunState =>
-  createRun({ cwd, bindings: DEFAULT_BINDINGS, framing: 'test framing', workflow });
+  createRun({ cwd, bindings: defaultBindingsFor(workflow), framing: 'test framing', workflow });
 
 describe('buildPhaseBrief (the shared entry-prompt renderer — headless parity)', () => {
   // The rendered briefs themselves are pinned byte-identical by the parity

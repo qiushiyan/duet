@@ -17,7 +17,7 @@ import { renderSnippetLibrary } from '../src/snippets.ts';
 import { FakeWorker, test } from './helpers/fixtures.ts';
 import { createRun, loadRunState, markAbandoned, runDirOf, saveMachineSnapshot, saveRunState, stageHumanInput } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
-import { DEFAULT_BINDINGS } from '../src/config.ts';
+import { defaultBindingsFor } from '../src/config.ts';
 
 const CLI_ENTRY = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 
@@ -127,7 +127,7 @@ describe('duet _mcp refuses a run/phase it cannot host', () => {
   });
 
   test('a Full-only phase is refused for a RIR run; RIR’s own phases build', ({ projectDir }) => {
-    const rir = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'x' });
+    const rir = createRun({ cwd: projectDir, bindings: defaultBindingsFor('rir'), workflow: 'rir', framing: 'x' });
     // plan/docs are Full-only — a RIR run must not host their tools.
     expect.soft(() => buildKernelTools(projectDir, rir.runId, 'plan')).toThrow(
       /not a phase of the "rir" workflow.*one of research, implement/s,

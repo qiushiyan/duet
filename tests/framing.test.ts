@@ -479,3 +479,43 @@ describe('resolveRunInputs', () => {
     await expect(resolveRunInputs(projectDir, {})).rejects.toThrow(/editor exited with an error/);
   });
 });
+
+describe('parseFramingFile — the bind.* manifest tier', () => {
+  const framed = (block: string) => `---\n${block}\n---\n\nbody\n`;
+
+  test('bind.<duty> keys peel off in the pre-pass and land on meta.binds, validated', () => {
+    const { meta, body } = parseFramingFile(framed('bind.builder: codex\nbind.judge: claude:claude-fable-5'));
+    expect.soft(meta.binds).toEqual({ builder: 'codex', judge: 'claude:claude-fable-5' });
+    expect.soft(body).toBe('body\n');
+  });
+
+  test('a bind value is validated at parse time — a typo fails at duet new, not at the freeze', () => {
+    expect.soft(() => parseFramingFile(framed('bind.builder: codux'))).toThrow(/provider must be "claude" or "codex"/);
+    expect.soft(() => parseFramingFile(framed('bind.builder: codex:gpt-6'))).toThrow(/codex has no model key/);
+  });
+
+  test('an unknown bind address rejects naming the vocabulary; the stage.duty form points at the bare spelling', () => {
+    expect.soft(() => parseFramingFile(framed('bind.implementer: codex'))).toThrow(/not bindable — use a duty/);
+    expect.soft(() => parseFramingFile(framed('bind.delivery.builder: codex'))).toThrow(/spell it bare: "builder"/);
+  });
+
+  test('a duplicated key in one source rejects, never last-wins — bind.* and plain keys alike', () => {
+    expect.soft(() => parseFramingFile(framed('bind.builder: codex\nbind.builder: claude'))).toThrow(/repeats "bind.builder"/);
+    expect.soft(() => parseFramingFile(framed('workflow: full\nworkflow: rir'))).toThrow(/repeats "workflow"/);
+  });
+
+  test('consultant: off beside bind.consultant is a rejected one-source contradiction; on beside it is compatible', () => {
+    expect.soft(() => parseFramingFile(framed('consultant: off\nbind.consultant: claude'))).toThrow(/cannot say both/);
+    const { meta } = parseFramingFile(framed('consultant: on\nbind.consultant: claude'));
+    expect.soft(meta.consultant).toBe('on');
+    expect.soft(meta.binds).toEqual({ consultant: 'claude' });
+  });
+
+  test('binds flow through resolveRunInputs untouched (the CLI hands them to the freeze)', async ({ projectDir }) => {
+    const file = 'framing.md';
+    writeFileSync(join(projectDir, file), framed('workflow: relay\nbind.builder: codex'));
+    const inputs = await resolveRunInputs(projectDir, { framing: file });
+    expect.soft(inputs.workflow).toBe('relay');
+    expect.soft(inputs.binds).toEqual({ builder: 'codex' });
+  });
+});

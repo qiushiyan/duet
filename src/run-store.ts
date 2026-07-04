@@ -3,8 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { Snapshot } from 'xstate';
-import { bindingFor } from './config.ts';
-import type { RoleBinding, RoleBindings, RoleOverride } from './config.ts';
+import type { VoiceBindings } from './config.ts';
 import { WORKFLOWS, defaultPosture, defaultPreAuthorizedOf, gatePhasesOf, phaseSpec } from './phases.ts';
 import type { GatePhase, PhaseName, WorkflowName } from './phases.ts';
 import type { ContextUsage, WorkerRole } from './providers/types.ts';
@@ -118,7 +117,8 @@ export interface RunState {
   framing?: string;
   /** The run's working branch (captured at creation; updated by create_branch). */
   branch?: string;
-  bindings: RoleBindings;
+  /** The frozen manifest's voice bindings — resolved once at createRun, never re-resolved. */
+  bindings: VoiceBindings;
   /**
    * The resolved per-turn budget multiplier (#3a — account/billing posture, the
    * same family as the bindings' `transport`). FROZEN at creation, never mutated
@@ -528,7 +528,7 @@ export function createRun(opts: {
   /** The verbatim file the human wrote, for the run-dir archive. */
   framingRaw?: string;
   branch?: string;
-  bindings: RoleBindings;
+  bindings: VoiceBindings;
   /** The resolved per-turn budget multiplier (frozen here; absent ⇒ off). */
   budget?: number;
   gatesAt?: GatePhase[];
@@ -590,27 +590,18 @@ export function loadRunState(cwd: string, runId: string): RunState {
 }
 
 /**
- * Parse-don't-validate at the load boundary: legacy persisted shapes normalize
- * ONCE here, so every downstream reader sees one shape and a sibling-map drift
- * (e.g. a separate sessionProviders record) is never representable.
- *
- * - A legacy bare-string worker session (pre provider-qualification) becomes a
- *   record carrying the BASE binding's provider — correct by construction,
- *   because no post-handoff override existed when such state was written.
- * - A persisted implementer binding still spelling the pre-generalization
- *   `impl` key becomes `build` (the same knob, renamed).
+ * The load boundary. Pre-remodel state files (seat-keyed bindings, no `duties`
+ * map) are REJECTED with a prescriptive error rather than translated — the
+ * domain remodel deliberately keeps no backward compatibility (decision 10:
+ * old runs don't load; the transcripts stay intact and manually resumable, so
+ * nothing is lost that the augmentation principle promised). Past this
+ * boundary every reader trusts the one duty-keyed shape.
  */
 function normalizeRunState(state: RunState): RunState {
-  for (const role of workerRolesFor(state)) {
-    const record: WorkerSessionRecord | string | undefined = state.workerSessions[role];
-    if (typeof record === 'string') {
-      state.workerSessions[role] = { provider: bindingFor(state.bindings, role).provider, id: record };
-    }
-  }
-  const implementer = state.bindings.implementer as RoleBinding & { impl?: RoleOverride };
-  if (implementer.impl) {
-    const { impl, ...rest } = implementer;
-    state.bindings.implementer = { ...rest, ...(rest.build ? {} : { build: impl }) };
+  if ((state.bindings as { duties?: unknown } | undefined)?.duties === undefined) {
+    throw new Error(
+      `run ${state.runId} predates the duty-keyed remodel (its state binds implementer/reviewer seats) — duet no longer loads it. Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .duet/runs/${state.runId}.`,
+    );
   }
   return state;
 }
@@ -834,11 +825,11 @@ export interface PurgeResult {
  *
  * Transcripts are gathered from the in-memory state and removed before the run
  * dir, since the dir holds the only copy of the session ids on disk. `home` is
- * injectable (the environment seam, like loadRoleBindings's configPath) so
+ * injectable (the environment seam, like resolveRunConfig's configPath) so
  * tests resolve transcripts under a tmp dir.
  */
 export function purgeRun(state: RunState, home: string = homedir()): PurgeResult {
-  const sessions: Array<{ provider: RoleBinding['provider']; sessionId: string }> = [];
+  const sessions: Array<{ provider: 'claude' | 'codex'; sessionId: string }> = [];
   if (state.orchestratorSessionId) {
     sessions.push({ provider: state.bindings.orchestrator.provider, sessionId: state.orchestratorSessionId });
   }

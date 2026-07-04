@@ -1,12 +1,12 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { DEFAULT_BINDINGS } from '../../src/config.ts';
-import type { RoleBindings } from '../../src/config.ts';
+import { defaultBindingsFor } from '../../src/config.ts';
+import type { VoiceBindings } from '../../src/config.ts';
 import { acceptanceContractPathForSpec } from '../../src/phases.ts';
 import type { GatePhase, WorkflowName } from '../../src/phases.ts';
 import { createRun } from '../../src/run-store.ts';
 import type { RunState } from '../../src/run-store.ts';
-import { consultantBindings } from '../helpers/fixtures.ts';
+import { consultantBindingsFor } from '../helpers/fixtures.ts';
 
 /**
  * The parity matrix — deterministic run states for the byte-identical pins
@@ -56,10 +56,13 @@ export interface ParityRunOpts {
 }
 
 export function parityRun(projectDir: string, opts: ParityRunOpts = {}): RunState {
-  const bindings: RoleBindings = {
-    ...(opts.consultant ? consultantBindings : DEFAULT_BINDINGS),
-    ...(opts.codexImplementer ? { implementer: { provider: 'codex' } } : {}),
-  };
+  const wf = opts.workflow ?? 'full';
+  const bindings: VoiceBindings = opts.consultant ? consultantBindingsFor(wf) : defaultBindingsFor(wf);
+  if (opts.codexImplementer) {
+    // The whole maker lane on codex — both stages, so every phase's brief
+    // renders the codex-implementer world.
+    bindings.duties = { ...bindings.duties, architect: { provider: 'codex' }, builder: { provider: 'codex' } };
+  }
   if (opts.spec) {
     const specFile = join(projectDir, SPEC_PATH);
     mkdirSync(dirname(specFile), { recursive: true });

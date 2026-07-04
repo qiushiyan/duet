@@ -176,7 +176,7 @@ function makeInProcessHost(runTurn: RunOrchestratorTurn): PhaseHost {
  *  present. */
 export function buildOrchestratorOptions(state: RunState, budget: ReturnType<typeof budgetFor>): Options {
   return {
-    model: state.bindings.orchestrator.model ?? DEFAULT_CLAUDE_MODEL.orchestrator,
+    model: state.bindings.orchestrator.model ?? DEFAULT_CLAUDE_MODEL,
     cwd: state.cwd,
     tools: [],
     strictMcpConfig: true,

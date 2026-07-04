@@ -6,7 +6,7 @@ import { describe, expect, vi } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { createActor, fromCallback } from 'xstate';
 import type { EventObject } from 'xstate';
-import { DEFAULT_BINDINGS } from '../src/config.ts';
+import { defaultBindingsFor } from '../src/config.ts';
 import { runPhase } from '../src/harness/driver.ts';
 import type { RunOrchestratorTurn } from '../src/harness/driver.ts';
 import type { PhaseInput } from '../src/harness/host-runner.ts';
@@ -28,7 +28,7 @@ import {
 import { acceptanceContractPathForSpec } from '../src/phases.ts';
 import { createRun, gateAttended, loadMachineSnapshot, loadRunState, markAbandoned, runDirOf, saveMachineSnapshot, saveRunState, stageHumanInput } from '../src/run-store.ts';
 import type { RunState } from '../src/run-store.ts';
-import { consultantBindings, test } from './helpers/fixtures.ts';
+import { consultantBindingsFor, test } from './helpers/fixtures.ts';
 import { scriptedMachine, wedgedMachine } from './helpers/scripted-machine.ts';
 
 /**
@@ -330,7 +330,7 @@ describe('probeRunPosition', () => {
   test('no snapshot and no driver is a crash in the first phase, by entry mode', ({ projectDir, run }) => {
     expect.soft(probeRunPosition(run)).toEqual({ kind: 'crashed', phase: 'frame' });
 
-    const specEntry = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, specPath: 'docs/spec.md' });
+    const specEntry = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), specPath: 'docs/spec.md' });
     expect.soft(probeRunPosition(specEntry)).toEqual({ kind: 'crashed', phase: 'spec' });
   });
 
@@ -440,7 +440,7 @@ describe('probeRunPosition — the interactive resting model (Stage 1)', () => {
   }) => {
     expect.soft(probeRunPosition(interactiveRun)).toEqual({ kind: 'interactive', phase: 'frame' });
 
-    const specEntry = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, specPath: 'docs/spec.md' });
+    const specEntry = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), specPath: 'docs/spec.md' });
     specEntry.orchestrationHost = 'interactive';
     saveRunState(specEntry);
     expect.soft(probeRunPosition(specEntry)).toEqual({ kind: 'interactive', phase: 'spec' });
@@ -1108,7 +1108,7 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
     await execa('git', ['commit', '-qm', 'spec'], { cwd: projectDir });
     const state = createRun({
       cwd: projectDir,
-      bindings: opts.consultant === false ? DEFAULT_BINDINGS : consultantBindings,
+      bindings: opts.consultant === false ? defaultBindingsFor(opts.workflow ?? 'full') : consultantBindingsFor(opts.workflow ?? 'full'),
       framing: 'f',
       specPath,
       ...(opts.workflow ? { workflow: opts.workflow } : {}),

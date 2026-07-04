@@ -11,8 +11,8 @@ import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn, sessi
 import { claudePaneLaunchCommand } from '../src/providers/pane.ts';
 import { createWorkers, providerFor } from '../src/providers/index.ts';
 import { BudgetCutoffError } from '../src/providers/types.ts';
-import { DEFAULT_BINDINGS } from '../src/config.ts';
-import type { RoleBindings } from '../src/config.ts';
+import { defaultBindingsFor } from '../src/config.ts';
+import type { VoiceBindings } from '../src/config.ts';
 import type { PhaseName } from '../src/phases.ts';
 import { FakePane } from './helpers/fake-pane.ts';
 import {
@@ -1076,7 +1076,7 @@ describe('reconstructCodexTurn (the codex event-stream seam)', () => {
 
 describe('createWorkers', () => {
   test('binds each role to its provider with the phase rails applied', () => {
-    const workers = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
+    const workers = createWorkers(defaultBindingsFor('full'), 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
     expect.soft(workers.implementer.name).toBe('claude');
     expect.soft(workers.reviewer.name).toBe('codex');
   });
@@ -1085,17 +1085,18 @@ describe('createWorkers', () => {
     // The undefined cap is now a legal rail (budgets off); it flows to the
     // ClaudeWorker's config, where claudeArgs leaves --max-budget-usd off the
     // argv (pinned directly by the claudeArgs omission test above).
-    const workers = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: undefined, timeoutMs: 60_000 });
+    const workers = createWorkers(defaultBindingsFor('full'), 'full', 'spec', { workerBudgetUsd: undefined, timeoutMs: 60_000 });
     expect.soft(workers.implementer).toBeInstanceOf(ClaudeWorker);
     expect.soft(workers.implementer.name).toBe('claude');
   });
 
   test('an interactive claude binding builds the interactive transport; headless stays ClaudeWorker', () => {
-    const headless = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
+    const headless = createWorkers(defaultBindingsFor('full'), 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
     expect.soft(headless.implementer).toBeInstanceOf(ClaudeWorker);
 
+    const base = defaultBindingsFor('full');
     const interactive = createWorkers(
-      { ...DEFAULT_BINDINGS, implementer: { provider: 'claude', model: 'claude-opus-4-8', transport: 'interactive' } },
+      { ...base, duties: { ...base.duties, architect: { provider: 'claude', model: 'claude-opus-4-8', transport: 'interactive' } } },
       'full',
       'spec',
       { workerBudgetUsd: 10, timeoutMs: 60_000 },
@@ -1104,18 +1105,15 @@ describe('createWorkers', () => {
     expect.soft(interactive.implementer.name).toBe('claude'); // the same WorkerProvider contract name
   });
 
-  test('the implementer builds with its post-handoff model after the handoff gate, the base model before', async () => {
+  test('the maker builds with the builder duty\u2019s model in delivery, the architect\u2019s in planning', async () => {
     // The true wiring, exercised through the public interface (createWorkers →
-    // runTurn → the execa argv): a bound `impl` model shows up on the --model flag
-    // only for a post-handoff phase; a planning phase keeps the base model.
-    const bindings: RoleBindings = {
-      ...DEFAULT_BINDINGS,
-      implementer: {
-        provider: 'claude',
-        model: 'claude-opus-4-8',
-        transport: 'headless',
-        build: { provider: 'claude', model: 'claude-sonnet-5' },
-      },
+    // runTurn → the execa argv): the builder duty's model shows up on the
+    // --model flag only for a delivery phase; a planning phase keeps the
+    // architect's binding.
+    const base = defaultBindingsFor('full');
+    const bindings: VoiceBindings = {
+      ...base,
+      duties: { ...base.duties, builder: { provider: 'claude', model: 'claude-sonnet-5', transport: 'headless' } },
     };
     const modelOnArgv = async (phase: PhaseName): Promise<string> => {
       let argv: string[] = [];
@@ -1132,13 +1130,18 @@ describe('createWorkers', () => {
     expect.soft(await modelOnArgv('implement')).toBe('claude-sonnet-5'); // the build switches to the impl model
   });
 
-  test('a build override SWITCHES THE PROVIDER post-handoff — relay\u2019s criss-cross falls out per phase', () => {
+  test('per-stage duty bindings SWITCH THE PROVIDER at the stage boundary — the criss-cross falls out per phase', () => {
     // The T4 wiring: effectiveBindingFor resolves BEFORE the provider branch,
     // so the same bindings construct different worker classes per phase.
-    const crisscross: RoleBindings = {
-      ...DEFAULT_BINDINGS,
-      implementer: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless', build: { provider: 'codex' } },
-      reviewer: { provider: 'codex', build: { provider: 'claude', model: 'claude-fable-5' } },
+    const base = defaultBindingsFor('design');
+    const crisscross: VoiceBindings = {
+      ...base,
+      duties: {
+        architect: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' },
+        analyst: { provider: 'codex' },
+        builder: { provider: 'codex' },
+        critic: { provider: 'claude', model: 'claude-fable-5', transport: 'headless' },
+      },
     };
     const rails = { workerBudgetUsd: 10, timeoutMs: 60_000 };
     // Planning: implementer on claude, reviewer on codex (the base pair).
@@ -1153,12 +1156,12 @@ describe('createWorkers', () => {
   });
 
   test('the consultant provider is built only when bound; an un-enabled run has exactly today’s two', () => {
-    const unbound = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
+    const unbound = createWorkers(defaultBindingsFor('full'), 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
     expect.soft(unbound).not.toHaveProperty('consultant');
     expect.soft(unbound.consultant).toBeUndefined();
 
     const bound = createWorkers(
-      { ...DEFAULT_BINDINGS, consultant: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' } },
+      { ...defaultBindingsFor('full'), consultant: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' } },
       'full',
       'spec',
       { workerBudgetUsd: 10, timeoutMs: 60_000 },
@@ -1170,13 +1173,13 @@ describe('createWorkers', () => {
 
 describe('providerFor (narrow-or-prescribed-error over the optional consultant)', () => {
   test('returns a built provider, and throws a prescribed-recovery error for an unbuilt role', () => {
-    const unbound = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
+    const unbound = createWorkers(defaultBindingsFor('full'), 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
     expect.soft(providerFor(unbound, 'implementer').name).toBe('claude');
     expect.soft(providerFor(unbound, 'reviewer').name).toBe('codex');
     expect.soft(() => providerFor(unbound, 'consultant')).toThrow(/no consultant worker is built/);
 
     const bound = createWorkers(
-      { ...DEFAULT_BINDINGS, consultant: { provider: 'codex' } },
+      { ...defaultBindingsFor('full'), consultant: { provider: 'codex' } },
       'full',
       'spec',
       { workerBudgetUsd: 10, timeoutMs: 60_000 },

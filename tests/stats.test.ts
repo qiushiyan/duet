@@ -194,12 +194,10 @@ describe('buildStatsModel — the fs composer over real appendVoiceLog output', 
     expect.soft(renderStats(model)).toContain('━━━ duet stats');
   });
 
-  test('labels each phase with the model that ran it — base through planning, impl model after handoff', ({ run }) => {
-    run.bindings.implementer = {
-      provider: 'claude',
-      model: 'claude-opus-4-8',
-      transport: 'headless',
-      build: { provider: 'claude', model: 'claude-sonnet-5' },
+  test('labels each phase with the model that ran it — the architect through planning, the builder in delivery', ({ run }) => {
+    run.bindings.duties = {
+      ...run.bindings.duties,
+      builder: { provider: 'claude', model: 'claude-sonnet-5', transport: 'headless' },
     };
     appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=plan)', 'brief');
     appendVoiceLog(run, 'orchestrator', 'advance_phase (plan)', 'ok');
@@ -211,8 +209,8 @@ describe('buildStatsModel — the fs composer over real appendVoiceLog output', 
     expect.soft(byPhase['implement']).toBe('claude-sonnet-5'); // the build ran on the impl model
   });
 
-  test('a codex implementer labels its phases "codex" — it has no model to resolve', ({ run }) => {
-    run.bindings.implementer = { provider: 'codex' };
+  test('a codex maker labels its phases "codex" — it has no model to resolve', ({ run }) => {
+    run.bindings.duties = { ...run.bindings.duties, architect: { provider: 'codex' }, builder: { provider: 'codex' } };
     appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=implement)', 'brief');
     appendVoiceLog(run, 'orchestrator', 'advance_phase (implement)', 'ok');
 

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEFAULT_CLAUDE_MODEL, effectiveBindingFor } from './config.ts';
-import type { RoleBindings } from './config.ts';
+import type { VoiceBindings } from './config.ts';
 import { phasesOf } from './phases.ts';
 import type { PhaseName, WorkflowName } from './phases.ts';
 import { workerRolesFor } from './roles.ts';
@@ -248,15 +248,15 @@ export function buildStats(
 }
 
 /**
- * The implementer model label for a phase — the phase-EFFECTIVE binding's
- * claude model (base through planning, the build override after the handoff
- * gate), or the provider name ("codex") when the effective binding is codex,
- * which has no model. The single view-time reuse of `effectiveBindingFor` for
- * the stats column, so the label can never drift from what actually ran.
+ * The maker model label for a phase — the phase-EFFECTIVE binding's claude
+ * model (the stage's maker duty in the frozen manifest), or the provider name
+ * ("codex") when the effective binding is codex, which has no model. The
+ * single view-time reuse of `effectiveBindingFor` for the stats column, so
+ * the label can never drift from what actually ran.
  */
-function implementerModelLabel(bindings: RoleBindings, workflow: WorkflowName, phase: PhaseName): string {
+function implementerModelLabel(bindings: VoiceBindings, workflow: WorkflowName, phase: PhaseName): string {
   const binding = effectiveBindingFor(bindings, 'implementer', workflow, phase);
-  return binding.provider === 'claude' ? binding.model ?? DEFAULT_CLAUDE_MODEL.implementer : binding.provider;
+  return binding.provider === 'claude' ? binding.model ?? DEFAULT_CLAUDE_MODEL : binding.provider;
 }
 
 /** The fs composer: read the voice logs for a run and build the model. */

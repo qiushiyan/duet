@@ -11,6 +11,7 @@ import {
   priorPhaseOf,
 } from '../phases.ts';
 import type { ArtifactKind, ExamplesKey, GatePhase, PhaseName, PhaseSemantics, PhaseSpec, WorkflowName } from '../phases.ts';
+import { effectiveBindingFor } from '../config.ts';
 import { workerRolesFor } from '../roles.ts';
 import { gateAttended, workflowOf } from '../run-store.ts';
 import type { RunState } from '../run-store.ts';
@@ -819,7 +820,7 @@ const CRITIQUE_BUILD_BRIEFS: Partial<Record<ExamplesKey, CritiqueBuildData>> = {
 };
 
 function critiqueBuildBrief(state: RunState, spec: PhaseSpec, data: CritiqueBuildData): string {
-  const claudeImplementer = state.bindings.implementer.provider === 'claude';
+  const claudeImplementer = effectiveBindingFor(state.bindings, 'implementer', workflowOf(state), spec.name).provider === 'claude';
   const priorPhase = priorPhaseOf(workflowOf(state), spec.name);
 
   return `<task>

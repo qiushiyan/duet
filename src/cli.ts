@@ -8,8 +8,8 @@ import { createActor } from 'xstate';
 import { colorizeDriverLine, colorizeVoiceLine } from './colorize.ts';
 import { continuePlanner } from './continue-planner.ts';
 import type { ContinueEventType, RestoredFacts } from './continue-planner.ts';
-import { DEFAULT_CLAUDE_MODEL, loadRunConfig } from './config.ts';
-import type { BindableRole } from './config.ts';
+import { dutyBindingFor, formatBinding, parseBindAddress, resolveRunConfig } from './config.ts';
+import type { BindAddress } from './config.ts';
 import { sessionPolicyFor, voicesFor } from './roles.ts';
 import { DEFAULT_FRAMING_FILE, composeInEditor, parseGatesAt, resolveHumanText, resolveRunInputs } from './framing.ts';
 import {
@@ -29,12 +29,13 @@ import { serveKernelStdio, serveRunScopedKernelStdio } from './harness/mcp-serve
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
 import { buildStatsModel, renderStats } from './stats.ts';
 import { runOrchestrate } from './orchestrate.ts';
-import { WORKFLOWS, entryOf, handoffWatchLabel, workflowHasConsultantBackstop } from './phases.ts';
+import { WORKFLOWS, entryOf, handoffWatchLabel, stagesOf, workflowHasConsultantBackstop } from './phases.ts';
 import { getEffectiveSnippet, loadEffectiveSnippets, runtimeLibraryContext } from './snippets.ts';
 import type { EffectiveSnippet } from './snippets.ts';
 import { buildBrief, buildStatusModel, formatGatePosture, renderBrief, renderStatus, steerRefusal } from './status.ts';
 import { openTmuxView } from './tmux-view.ts';
 import {
+  appendNote,
   clearPendingTurn,
   createRun,
   latestRun,
@@ -228,11 +229,12 @@ export type TakeoverPlan =
   | { kind: 'clear-orphan'; ephemeral: boolean }
   | { kind: 'no-session' };
 
-export function takeoverPlan(state: RunState, role: BindableRole): TakeoverPlan {
+export function takeoverPlan(state: RunState, role: Voice): TakeoverPlan {
   const ephemeral = role !== 'orchestrator' && sessionPolicyFor(role) === 'ephemeral';
-  // A worker's provider comes from its SESSION RECORD, never the base binding —
-  // a post-handoff build override makes the binding wrong for a switched role,
-  // and a wrong provider here would hand the human the wrong resume CLI.
+  // A worker's provider comes from its SESSION RECORD, never the binding — a
+  // stage-boundary provider switch makes any single binding wrong for a
+  // switched voice, and a wrong provider here would hand the human the wrong
+  // resume CLI.
   const session =
     role === 'orchestrator'
       ? state.orchestratorSessionId
@@ -300,18 +302,13 @@ program
     '--budget <off|default|N>',
     'opt-in per-turn cost caps: off (default — unbounded, the flat-quota posture), default (the built-in per-phase profile), or a positive multiplier N scaling it (e.g. 0.5, 2). Overrides the config budget key; one knob covers both the worker and orchestrator caps',
   )
-  .option('--orchestrator <provider[:model]>', 'role binding override (claude[:model] only in v1)')
-  .option('--impl <provider[:model]>', 'implementer binding override (the model used for every phase)')
   .option(
-    '--impl-model <provider[:model]>',
-    "the implementer's binding from the implementation phase onward: plan on the base binding, build & finish on this (usually cheaper) one — another model or another provider (config form: [roles.<worker>].build)",
+    '--bind <duty=provider[:model]>',
+    'bind a duty (or run-long voice) for this run, repeatable — e.g. --bind builder=codex --bind judge=claude:claude-fable-5. Duties: architect/analyst (planning), builder/critic-or-judge (delivery); a duty alone names its stage. orchestrator (claude-only) and consultant (binding one implies it is on) ride the same grammar. Precedence per key: flags > framing bind.* > config > defaults',
+    (value: string, prev: string[]) => [...prev, value],
+    [] as string[],
   )
-  .option('--reviewer <provider[:model]>', 'reviewer binding override')
-  .option(
-    '--consultant <provider[:model]>',
-    'enable the optional consultant — an independent cross-family second reviewer (read-only). provider[:model], e.g. claude:claude-opus-4-8; defaults to claude-opus-4-8 when no model is named. Off by default; settable for every run via [roles.consultant] in the config',
-  )
-  .option('--no-consultant', 'disable the consultant for this run even when the config binds one')
+  .option('--no-consultant', 'disable the consultant for this run even when the config or framing binds one')
   .option(
     '--gateless',
     "walk away from the START: pre-authorize every gate so the run flows to an open PR, AND narrow the consultant to its NON-HOLDING work — its framing third-opinion still informs the direction and the acceptance-contract verify still self-heals and holds a contract that stays broken, but its holding bet audits don't fire. A genuine product/direction high (or a missing contract) can still stop the run; ask_human and the merge stay yours. Conflicts with --gates-at; also settable via a gateless: framing key (flag wins)",
@@ -320,7 +317,7 @@ program
   .option('--interactive', "orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over the attended arc up to the workflow's handoff gate (full: through the plan gate; design: through the design gate; rir: through the Direction gate); implementation onward runs headless after that handoff")
   .option('--no-interactive', 'force headless orchestration even when the framing carries interactive: true (the flag wins over the frontmatter)')
   .option('--resume-session <id>', 'warm-start the interactive orchestrator from an existing Claude Code session: resume that session (its discussion context intact) as this run’s orchestrator instead of opening a fresh one. Needs --interactive; capture the id with `printenv CLAUDE_CODE_SESSION_ID` inside the session you want to continue')
-  .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; budget?: string; orchestrator?: string; impl?: string; implModel?: string; reviewer?: string; consultant?: string | boolean; gateless?: boolean; tmux?: boolean; interactive?: boolean; resumeSession?: string }) => {
+  .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; budget?: string; bind: string[]; consultant: boolean; gateless?: boolean; tmux?: boolean; interactive?: boolean; resumeSession?: string }) => {
     const cwd = process.cwd();
 
     // The framing's frontmatter is the machine/prose boundary: parsed
@@ -334,8 +331,8 @@ program
     }
 
     // Pull the frontmatter launch/binding hints out of the run inputs — they
-    // pick the host and the consultant binding, not createRun. Flags win over them.
-    const { framingFile, interactive: framingInteractive, consultantToggle, ...runInputs } = inputs;
+    // feed the host choice and the manifest freeze, not createRun. Flags win over them.
+    const { framingFile, interactive: framingInteractive, consultantToggle, binds: framingBinds, ...runInputs } = inputs;
     // Flags win over the frontmatter: an explicit --interactive/--no-interactive
     // (true/false) overrides; only an absent flag (undefined) defers to the framing.
     const interactive = opts.interactive ?? framingInteractive ?? false;
@@ -359,20 +356,32 @@ program
       );
     }
 
-    const { bindings, budget } = loadRunConfig({
-      roleOverrides: {
-        ...(opts.orchestrator ? { orchestrator: opts.orchestrator } : {}),
-        ...(opts.impl ? { implementer: opts.impl } : {}),
-        ...(opts.reviewer ? { reviewer: opts.reviewer } : {}),
-        // --consultant carries a spec (string); --no-consultant arrives as `false`.
-        ...(typeof opts.consultant === 'string' ? { consultant: opts.consultant } : {}),
-      },
-      ...(opts.consultant === false ? { noConsultant: true } : {}),
-      // The framing `consultant: on|off` toggle; the flags above win over it (loadRunConfig).
-      ...(consultantToggle ? { consultantToggle } : {}),
-      ...(opts.budget !== undefined ? { budgetOverride: opts.budget } : {}),
-      ...(opts.implModel !== undefined ? { implModelOverride: opts.implModel } : {}),
-    });
+    // The manifest freeze: every voice resolves per key through flags >
+    // framing > config > shipped defaults, once, here. --bind values parse
+    // into an address→spec map; a duplicated address in the flags is a
+    // one-source contradiction, rejected like a duplicated framing key.
+    let resolved;
+    try {
+      const flagBinds: Partial<Record<BindAddress, string>> = {};
+      for (const raw of opts.bind) {
+        const eq = raw.indexOf('=');
+        if (eq === -1) throw new Error(`--bind ${raw}: expected <duty>=<provider[:model]> (e.g. --bind builder=codex)`);
+        const address = parseBindAddress(raw.slice(0, eq));
+        if (flagBinds[address] !== undefined) throw new Error(`--bind names ${address} twice — a duplicated key is rejected rather than last-wins`);
+        flagBinds[address] = raw.slice(eq + 1);
+      }
+      resolved = resolveRunConfig({
+        workflow: runInputs.workflow,
+        flagBinds,
+        ...(framingBinds ? { framingBinds } : {}),
+        ...(opts.consultant === false ? { noConsultant: true } : {}),
+        ...(consultantToggle ? { consultantToggle } : {}),
+        ...(opts.budget !== undefined ? { budgetOverride: opts.budget } : {}),
+      });
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+    }
+    const { bindings, degradedEdges, budget } = resolved;
 
     let branch: string | undefined;
     try {
@@ -393,19 +402,24 @@ program
     if (framingFile === DEFAULT_FRAMING_FILE) unlinkSync(join(cwd, DEFAULT_FRAMING_FILE));
     console.log(`run ${state.runId} created`);
     if (opts.tmux) await openTmuxView(state);
-    // Echo the resolved manifest — workflow first (the 717d fix: a run's frozen
-    // inputs must be visible at creation, not discovered from state.json later).
+    // Echo the resolved manifest — workflow, each stage's duty bindings, the
+    // consultant, and any degraded continuity edges (the 717d fix: a run's
+    // frozen inputs are visible at creation, not discovered from state.json).
     const wf = workflowOf(state);
     console.log(`workflow: ${wf} — ${WORKFLOWS[wf].displayName}`);
-    // The implementer field shows the post-handoff split when a build override
-    // is bound (base → build binding); absent, it reads exactly as before.
-    const implBuild = bindings.implementer.build;
-    const implModelSplit = implBuild
-      ? ` → build:${implBuild.provider === 'claude' ? implBuild.model ?? DEFAULT_CLAUDE_MODEL.implementer : implBuild.provider}`
-      : '';
-    console.log(
-      `roles: orchestrator=${bindings.orchestrator.provider}:${bindings.orchestrator.model ?? ''} implementer=${bindings.implementer.provider}${bindings.implementer.model ? ':' + bindings.implementer.model : ''}${implModelSplit} reviewer=${bindings.reviewer.provider}${bindings.reviewer.model ? ':' + bindings.reviewer.model : ''}${bindings.consultant ? ` consultant=${bindings.consultant.provider}${bindings.consultant.model ? ':' + bindings.consultant.model : ''}` : ''}`,
-    );
+    console.log(`orchestrator: ${formatBinding(bindings.orchestrator)}`);
+    for (const stage of stagesOf(wf)) {
+      const pair = [stage.duties.maker, stage.duties.checker]
+        .map((duty) => `${duty}=${formatBinding(dutyBindingFor(bindings, duty))}`)
+        .join(' · ');
+      console.log(`${stage.name}: ${pair}`);
+    }
+    console.log(`consultant: ${bindings.consultant ? formatBinding(bindings.consultant) : 'off'}`);
+    for (const edge of degradedEdges) {
+      const line = `continuity: ${edge.into}←${edge.from} degraded to fresh (${edge.reason}) — ${edge.into} starts a fresh session at the stage boundary`;
+      console.log(line);
+      appendNote(state, 'human', line); // ledgered for the morning review, never silent
+    }
     // gatesAt: [] is the afk "attend none" posture — explicit copy, not an empty join.
     if (state.gatesAt)
       console.log(

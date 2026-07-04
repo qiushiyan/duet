@@ -2,34 +2,29 @@ import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
-import { isPostHandoffPhase } from './phases.ts';
-import type { PhaseName, WorkflowName } from './phases.ts';
+import { checkerDutyOf, continuityEdgeFor, makerDutyOf, stageOf, stageOfDuty, stagesOf } from './phases.ts';
+import type { Duty, PhaseName, WorkflowName } from './phases.ts';
 
 /**
- * Run config — the one config duet ships (docs/automation-design.md
- * §"Roles are decoupled from providers"). Scoped to role→provider/model
- * bindings AND account/billing posture (transport, budget) — and nothing else;
- * project knowledge never goes here. If a key that isn't a role binding or
+ * Voice bindings — the one config duet ships (docs/automation-design.md
+ * §"Roles are decoupled from providers"; the duty-keyed shape is the domain
+ * remodel, docs/specs/2026-07-04-domain-remodel.md). Scoped to voice→provider/
+ * model bindings AND account/billing posture (transport, budget) — and nothing
+ * else; project knowledge never goes here. If a key that isn't a binding or
  * billing posture is about to land in this file, that's the design failing.
+ *
+ * A binding attaches to an ADDRESS: one of the five duties (per (stage, duty) —
+ * relay's criss-cross is just four duty bindings), or the two run-long voices
+ * (orchestrator, consultant). The run manifest resolves each address
+ * independently through flags > framing > config > shipped defaults
+ * (`resolveRunConfig`), and the result freezes on the run at creation.
  */
 
-/**
- * The REQUIRED role set: every run binds all three. It keys `DEFAULT_BINDINGS`,
- * the total config loops, and `RoleBindings`' required half — so widening the
- * worker roles never forces a persisted-state change for an unbound run.
- */
-export type Role = 'orchestrator' | 'implementer' | 'reviewer';
+export type Provider = 'claude' | 'codex';
 
-/**
- * The roles a `[roles.*]` table or a `--<role>` flag may bind: the required base
- * plus the optional `consultant`. Distinct from `Role` precisely so the optional
- * consultant lives outside the required set — present-only, never persisted by
- * default.
- */
-export type BindableRole = Role | 'consultant';
-
-export interface RoleBinding {
-  provider: 'claude' | 'codex';
+/** Which provider (and model/transport, for claude) a voice runs on. */
+export interface Binding {
+  provider: Provider;
   /** Anthropic model ID. Only meaningful for the claude provider; the codex
    * provider deliberately has no model key (~/.codex/config.toml governs). */
   model?: string;
@@ -37,248 +32,160 @@ export interface RoleBinding {
    * How duet talks to a claude worker: "headless" (default) is `claude -p`,
    * which draws the metered Agent-SDK credit pool; "interactive" drives the
    * interactive `claude` TUI so the work bills the flat subscription quota.
-   * Config-file only (the `--<role>` grammar can't express it). Meaningless
-   * for codex (rejected there) — codex already bills the subscription.
+   * Config-file only (the `--bind` grammar can't express it). Meaningless for
+   * codex (rejected there) — codex already bills the subscription.
    */
   transport?: 'headless' | 'interactive';
-  /**
-   * The role's post-handoff BUILD override (present-only, worker roles only):
-   * the binding this worker switches to for phases strictly after the
-   * workflow's handoff gate (the AFK build + finishing tail). A provider
-   * switch is allowed — relay's criss-cross plans on claude and builds on
-   * codex for the implementer, the inverse for the reviewer. A `RoleOverride`,
-   * not a `RoleBinding`, precisely because it carries no transport — a claude
-   * override runs headless (the interactive-transport combination is rejected
-   * at the config boundary). Written as `build` in the config table; `impl`
-   * is accepted as an alias on the implementer (the pre-generalization
-   * spelling) and parses into this same field. ABSENT ⇒ byte-for-byte today:
-   * the role runs its base binding in every phase.
-   */
-  build?: RoleOverride;
+}
+
+/** The addresses a binding can attach to: the duty vocabulary plus the run-long voices. */
+export type BindAddress = Duty | 'orchestrator' | 'consultant';
+
+/**
+ * A run's frozen bindings, per voice. `duties` carries EXACTLY the run's
+ * workflow's four duties (a binding for a duty the workflow lacks is an
+ * illegal state, rejected at the freeze); dynamic access goes through
+ * `dutyBindingFor`, never a bare index (`noUncheckedIndexedAccess`). An
+ * absent `consultant` is the default-off state — nothing reads it unless
+ * present.
+ */
+export interface VoiceBindings {
+  orchestrator: Binding;
+  consultant?: Binding;
+  duties: Partial<Record<Duty, Binding>>;
 }
 
 /**
- * Required base plus an optional consultant. An *absent* consultant makes a
- * run's persisted `bindings` byte-for-byte today's — strictly stronger than
- * growing a closed `Record<BindableRole, RoleBinding>`, which would change every
- * state file. Dynamic `bindings[role]` (a `WorkerRole`/`Voice` variable) yields
- * `RoleBinding | undefined` under `noUncheckedIndexedAccess`, so such sites go
- * through `bindingFor`, never a bare index.
+ * The shipped claude-model default, one constant for every address (Opus 4.8
+ * across the board since 2026-06-15). A costlier model — e.g. Fable 5 at ~2×
+ * Opus — binds to any single address per run via `--bind` or the config file
+ * when an artifact-heavy feature warrants it.
  */
-export type RoleBindings = Record<Role, RoleBinding> & { consultant?: RoleBinding };
-
-/**
- * A CLI `--<role> provider[:model]` override. Deliberately has NO transport
- * field: the override grammar cannot express transport, so a model-only
- * override must never manufacture a `transport:"headless"` that overwrites a
- * configured `interactive`. The merge in loadRoleBindings carries a configured
- * claude transport forward instead. Keeping this type separate from RoleBinding
- * (whose parseBinding DOES default the transport) is what makes that clobber
- * unrepresentable rather than merely avoided.
- */
-export interface RoleOverride {
-  provider: 'claude' | 'codex';
-  model?: string;
-}
-
-/**
- * Per-role claude-model defaults: Opus 4.8 across the board (updated
- * 2026-06-15 from the earlier Fable-5 implementer default). A more capable
- * or costlier model — e.g. Fable 5, which prices at ~2× Opus — can be bound
- * to any single role per run via the config file or a `--<role>` flag when
- * an artifact-heavy feature warrants it; the shipped default keeps every
- * claude role on Opus 4.8.
- */
-export const DEFAULT_CLAUDE_MODEL: Record<BindableRole, string> = {
-  orchestrator: 'claude-opus-4-8',
-  implementer: 'claude-opus-4-8',
-  reviewer: 'claude-opus-4-8',
-  // The consultant's no-model default. A PARSE-TIME default (read only when a
-  // consultant binding is being parsed) — never written into DEFAULT_BINDINGS,
-  // so an unbound run's persisted state is untouched. Opus only as a default;
-  // the cross-family binding is fully configurable and that is the point.
-  consultant: 'claude-opus-4-8',
-};
-
-/**
- * The BINDING a worker role runs on at `phase` — the one resolver answering
- * "who runs this turn" (T4; it replaces the model-only `implementerModelFor`),
- * and the opt-in resolver the design mirrors on `budgetFor`/`gateAttended`
- * (pure, absent-knob ⇒ identity). Pre-/at-handoff phases run the base
- * binding; phases strictly after the handoff gate (the AFK build + finishing
- * tail) run the role's optional `build` override when one is bound — a full
- * REPLACEMENT binding (provider switch allowed), never a mutation of the
- * base. Absent `build` ⇒ the base binding for every phase, byte-for-byte.
- *
- * The returned binding is trustworthy by the config boundary's guards
- * (loadRunConfig): a build override never rides an interactive-transport
- * base, and the orchestrator can't carry one — so no downstream site
- * re-checks. `createWorkers` consumes this BEFORE its provider branch, which
- * is what makes the codex-vs-claude construction fall out per phase.
- */
-export function effectiveBindingFor(bindings: RoleBindings, role: BindableRole, workflow: WorkflowName, phase: PhaseName): RoleBinding {
-  const base = bindingFor(bindings, role);
-  const override = base.build;
-  if (!override || !isPostHandoffPhase(workflow, phase)) return base;
-  return override.provider === 'claude'
-    ? { provider: 'claude', model: override.model ?? DEFAULT_CLAUDE_MODEL[role], transport: 'headless' }
-    : { provider: 'codex' };
-}
-
-/** Shipped default when no config file is present (claude roles on Opus 4.8, reviewer on codex). */
-export const DEFAULT_BINDINGS: RoleBindings = {
-  orchestrator: { provider: 'claude', model: DEFAULT_CLAUDE_MODEL.orchestrator, transport: 'headless' },
-  implementer: { provider: 'claude', model: DEFAULT_CLAUDE_MODEL.implementer, transport: 'headless' },
-  reviewer: { provider: 'codex' },
-};
+export const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-8';
 
 export const CONFIG_PATH = join(homedir(), '.config', 'duet', 'config.toml');
 
 /**
- * Narrow a dynamic role index into a present binding, or throw a
- * prescribed-recovery error. The binding-map twin of `providerFor`
- * (src/providers/index.ts): `RoleBindings` carries an OPTIONAL consultant, so
- * indexing `bindings[role]` by a dynamic `WorkerRole`/`Voice`/`BindableRole`
- * yields `RoleBinding | undefined` under `noUncheckedIndexedAccess` — every such
- * site routes through here, never a bare index. The three required base roles
- * always resolve; only an unbound consultant can throw.
+ * The shipped default binding per address, built FRESH per call (never a
+ * shared object — a frozen manifest must own its values outright, so an
+ * accidental in-place write can't leak across runs). Maker lanes and the
+ * run-long claude voices ride claude/Opus headless; the checker lanes ride
+ * codex — the cross-family review is the shipped posture.
  */
-export function bindingFor(bindings: RoleBindings, role: BindableRole): RoleBinding {
-  const binding = bindings[role];
-  if (!binding) {
-    throw new Error(
-      `no binding for role "${role}" on this run — a consultant is bound only when --consultant or [roles.consultant] is set, so the enumerating surface should not have reached an unbound role here.`,
-    );
+export function defaultBindingFor(address: BindAddress): Binding {
+  switch (address) {
+    case 'orchestrator':
+    case 'consultant':
+    case 'architect':
+    case 'builder':
+      return { provider: 'claude', model: DEFAULT_CLAUDE_MODEL, transport: 'headless' };
+    case 'analyst':
+    case 'critic':
+    case 'judge':
+      return { provider: 'codex' };
   }
-  return binding;
+}
+
+const BIND_ADDRESSES: readonly BindAddress[] = ['architect', 'analyst', 'builder', 'critic', 'judge', 'orchestrator', 'consultant'];
+
+/**
+ * Parse a bind address — the `<duty>` of `--bind <duty>=…` or the `<key>` of a
+ * framing `bind.<key>:`. Duties alone name their stage (globally stage-unique,
+ * enforced by validateRegistry), so the bare form is total; the explicit
+ * `<stage>.<duty>` long form is RESERVED for a future workflow that collides
+ * duty names — documented, rejected with a pointer at the bare spelling.
+ */
+export function parseBindAddress(raw: string): BindAddress {
+  const name = raw.trim();
+  if ((BIND_ADDRESSES as readonly string[]).includes(name)) return name as BindAddress;
+  if (name.includes('.')) {
+    const bare = name.slice(name.indexOf('.') + 1);
+    if ((BIND_ADDRESSES as readonly string[]).includes(bare)) {
+      throw new Error(
+        `bind address "${name}": the explicit stage.duty form is reserved and not yet accepted — duty names are globally stage-unique, so spell it bare: "${bare}"`,
+      );
+    }
+  }
+  throw new Error(
+    `bind address "${name}" is not bindable — use a duty (architect, analyst, builder, critic, judge) or a run-long voice (orchestrator, consultant)`,
+  );
 }
 
 /**
- * Validate the provider + model of a binding spec — the part shared by config
- * tables and CLI overrides. Defaults a claude binding's model per role and
- * rejects a model on codex; deliberately says NOTHING about transport, which is
- * a config-only concern parseBinding layers on top (so an override can never
- * inherit a transport default through this path).
+ * Parse a `provider[:model]` binding spec — THE one binding grammar, shared by
+ * `--bind` values, framing `bind.*` values, and the config tables' field pair.
+ * Deliberately says nothing about transport (config-file only; the merge in
+ * `resolveRunConfig` carries a configured claude transport forward so a
+ * model-only override can never silently flip a subscription-billed voice back
+ * to metered headless).
  */
-function parseProviderModel(role: BindableRole, table: Record<string, unknown>): RoleOverride {
+export function parseBindingSpec(address: BindAddress, spec: string): { provider: Provider; model?: string } {
+  if (spec.trim() === '') {
+    throw new Error(`the ${address} binding is empty — set it to "provider[:model]" (e.g. "codex", "claude:claude-sonnet-5"), or omit it for the default`);
+  }
+  const [provider, ...rest] = spec.split(':');
+  const model = rest.length > 0 ? rest.join(':') : undefined;
+  return parseProviderModel(address, model === undefined ? { provider } : { provider, model });
+}
+
+/**
+ * Validate the provider + model pair — the part shared by the spec grammar and
+ * the config tables. Defaults a claude binding's model and rejects a model on
+ * codex.
+ */
+function parseProviderModel(address: BindAddress, table: Record<string, unknown>): { provider: Provider; model?: string } {
   const provider = table['provider'];
   if (provider !== 'claude' && provider !== 'codex') {
-    throw new Error(`config: [roles.${role}].provider must be "claude" or "codex", got ${JSON.stringify(provider)}`);
+    throw new Error(`config: the ${address} binding's provider must be "claude" or "codex", got ${JSON.stringify(provider)}`);
   }
   const model = table['model'];
   if (model !== undefined && typeof model !== 'string') {
-    throw new Error(`config: [roles.${role}].model must be a string`);
+    throw new Error(`config: the ${address} binding's model must be a string`);
   }
   if (provider === 'codex' && model !== undefined) {
     throw new Error(
-      `config: [roles.${role}] sets a model for the codex provider — codex has no model key by design; configure the model in ~/.codex/config.toml instead`,
+      `config: the ${address} binding sets a model for the codex provider — codex has no model key by design; configure the model in ~/.codex/config.toml instead`,
     );
   }
-  if (provider === 'claude' && model === undefined) {
-    return { provider, model: DEFAULT_CLAUDE_MODEL[role] };
-  }
+  if (provider === 'claude' && model === undefined) return { provider, model: DEFAULT_CLAUDE_MODEL };
   return model === undefined ? { provider } : { provider, model };
 }
 
-/**
- * The config-file `build` field (`[roles.<worker>].build = "provider[:model]"`),
- * or its `impl` alias on the implementer (the pre-generalization spelling), or
- * undefined when absent. Worker-roles-only — the orchestrator never switches
- * mid-run — and the alias is implementer-only, so a stray `impl` on another
- * role still rejects by name. This is the config-file half of the one boundary
- * that makes `binding.build` trustworthy downstream; the flag half and the
- * cross-source transport guard live in loadRunConfig.
- */
-function parseBuildField(role: BindableRole, table: Record<string, unknown>): RoleOverride | undefined {
-  const rawBuild = table['build'];
-  const rawImpl = table['impl'];
-  if (rawImpl !== undefined && role !== 'implementer') {
-    throw new Error(
-      `config: [roles.${role}].impl is implementer-only (it is the legacy alias of "build") — spell the post-handoff override [roles.${role}].build`,
-    );
-  }
-  if (rawBuild !== undefined && rawImpl !== undefined) {
-    throw new Error(
-      `config: [roles.implementer] sets both "build" and its alias "impl" — keep one (they are the same knob)`,
-    );
-  }
-  const raw = rawBuild ?? rawImpl;
-  if (raw === undefined) return undefined;
-  const key = rawBuild !== undefined ? 'build' : 'impl';
-  if (role === 'orchestrator') {
-    throw new Error(
-      `config: [roles.orchestrator].${key} — the post-handoff build override is a worker knob; the orchestrator runs one binding across the whole arc`,
-    );
-  }
-  if (typeof raw !== 'string') {
-    throw new Error(`config: [roles.${role}].${key} must be a "provider[:model]" string, got ${JSON.stringify(raw)}`);
-  }
-  return parseRoleOverride(role, raw);
-}
-
-function parseBinding(role: BindableRole, raw: unknown): RoleBinding {
-  if (typeof raw !== 'object' || raw === null) throw new Error(`config: [roles.${role}] must be a table`);
+/** A config-table binding: provider/model plus the config-only transport knob. */
+function parseBindingTable(address: BindAddress, raw: unknown, tableName: string): Binding {
+  if (typeof raw !== 'object' || raw === null) throw new Error(`config: [${tableName}] must be a table`);
   const table = raw as Record<string, unknown>;
-  const base = parseProviderModel(role, table);
-  const build = parseBuildField(role, table);
+  for (const dead of ['build', 'impl']) {
+    if (table[dead] !== undefined) {
+      throw new Error(
+        `config: [${tableName}].${dead} — the post-handoff build override is retired; bind the delivery duty directly instead (e.g. [duties.builder] provider = "codex")`,
+      );
+    }
+  }
+  const base = parseProviderModel(address, table);
   const transport = table['transport'];
   if (transport !== undefined) {
     if (base.provider === 'codex') {
       throw new Error(
-        `config: [roles.${role}] sets a transport for the codex provider — transport is a claude-only knob (codex already bills the subscription); remove it`,
+        `config: [${tableName}] sets a transport for the codex provider — transport is a claude-only knob (codex already bills the subscription); remove it`,
       );
     }
     if (transport !== 'headless' && transport !== 'interactive') {
-      throw new Error(
-        `config: [roles.${role}].transport must be "headless" or "interactive", got ${JSON.stringify(transport)}`,
-      );
+      throw new Error(`config: [${tableName}].transport must be "headless" or "interactive", got ${JSON.stringify(transport)}`);
     }
-    // The interactive transport always drives a read-write/bypass session, so in
-    // the spike it serves the implementer only — a read-only interactive reviewer
-    // is a production item (spec §"Path to production"). Reject it loudly here so
-    // a misconfiguration can never silently grant a read-only role write access.
-    if (transport === 'interactive' && role !== 'implementer') {
+    // The interactive transport always drives a read-write/bypass session, so
+    // it serves the maker duties only — a read-only interactive checker is a
+    // production item (interactive-transport spec §"Path to production").
+    // Reject loudly so a misconfiguration can never silently grant a read-only
+    // voice write access.
+    if (transport === 'interactive' && address !== 'architect' && address !== 'builder') {
       throw new Error(
-        `config: [roles.${role}].transport = "interactive" — the interactive transport is implementer-only in the spike (it runs read-write/bypass; a read-only interactive reviewer is a production item). Only [roles.implementer] may set it.`,
+        `config: [${tableName}].transport = "interactive" — the interactive transport serves the maker duties only in the spike (it runs read-write/bypass; a read-only interactive checker is a production item). Bind it on [duties.architect] or [duties.builder].`,
       );
     }
   }
-  // Claude bindings always carry a transport (default headless, alongside the
-  // model default); codex bindings never do. The build override rides either
-  // base provider — the switch is the point (relay's reviewer is codex-based
-  // with a claude build override).
-  return base.provider === 'claude'
-    ? { ...base, transport: (transport as 'headless' | 'interactive' | undefined) ?? 'headless', ...(build ? { build } : {}) }
-    : { ...base, ...(build ? { build } : {}) };
-}
-
-/**
- * Parse a `--<role> provider[:model]` CLI override, e.g. "claude:claude-opus-4-6"
- * or "codex". Returns a RoleOverride (no transport) — the grammar can't express
- * transport, and the merge in loadRoleBindings owns the effective transport.
- */
-export function parseRoleOverride(role: BindableRole, spec: string): RoleOverride {
-  const [provider, ...rest] = spec.split(':');
-  const model = rest.length > 0 ? rest.join(':') : undefined;
-  return parseProviderModel(role, model === undefined ? { provider } : { provider, model });
-}
-
-/**
- * Parse a build-override spec — the `--impl-model` flag or a
- * `[roles.<worker>].build` value, the same `provider[:model]` grammar as
- * parseRoleOverride. A provider switch is a supported value now (the
- * generalization relay rides): `codex` hands the post-handoff phases to
- * codex, `claude:model` swaps the claude model. The one parse boundary for
- * the build knob; the cross-source guards (interactive transport) live in
- * loadRunConfig.
- */
-export function parseImplOverride(spec: string): RoleOverride {
-  if (spec.trim() === '') {
-    throw new Error(
-      'the build override is empty — set it to a "provider[:model]" spec (e.g. "codex", "claude:claude-sonnet-5"), or omit it to keep the base binding in every phase',
-    );
-  }
-  return parseRoleOverride('implementer', spec);
+  // Claude bindings always carry a transport (default headless); codex never does.
+  return base.provider === 'claude' ? { ...base, transport: (transport as 'headless' | 'interactive' | undefined) ?? 'headless' } : base;
 }
 
 /**
@@ -305,148 +212,243 @@ export function parseBudget(value: unknown): number | undefined {
   return n;
 }
 
-/**
- * Load a run's config: the role bindings AND the resolved per-turn budget. The
- * single config entry point — `loadRoleBindings` is a bindings-only wrapper over
- * it (so existing callers stay unchanged). Budget precedence: the `--budget`
- * flag (`budgetOverride`) wins over the config `budget` key, which wins over the
- * absent default (off). An absent result means OFF (budgetFor reads undefined
- * caps); it is never `0`.
- */
-export function loadRunConfig(
-  opts: {
-    roleOverrides?: Partial<Record<BindableRole, string>>;
-    budgetOverride?: string;
-    /** The `--impl-model provider[:model]` flag — the implementer's post-handoff model, winning over a config `[roles.implementer].impl`. */
-    implModelOverride?: string;
-    noConsultant?: boolean;
-    /** The framing `consultant: on|off` toggle — flips a config-bound consultant for one run (the --consultant/--no-consultant flags win over it). */
-    consultantToggle?: 'on' | 'off';
-  } = {},
-  configPath: string = CONFIG_PATH,
-): { bindings: RoleBindings; budget?: number } {
-  const bindings: RoleBindings = { ...DEFAULT_BINDINGS };
-  let configBudget: number | undefined;
-
-  if (existsSync(configPath)) {
-    const config = parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>;
-    const roles = config['roles'];
-    if (typeof roles === 'object' && roles !== null) {
-      for (const role of ['orchestrator', 'implementer', 'reviewer'] as const) {
-        const raw = (roles as Record<string, unknown>)[role];
-        if (raw !== undefined) bindings[role] = parseBinding(role, raw);
+/** The account-level config file: per-address binding tables + the budget key. */
+function loadConfigFile(configPath: string): { byAddress: Partial<Record<BindAddress, Binding>>; budget?: number } {
+  const byAddress: Partial<Record<BindAddress, Binding>> = {};
+  if (!existsSync(configPath)) return { byAddress };
+  const config = parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+  if (config['roles'] !== undefined) {
+    throw new Error(
+      'config: the [roles.*] tables are retired — bindings are duty-keyed now: top-level [orchestrator] and [consultant] tables plus [duties.<duty>] tables (architect, analyst, builder, critic, judge)',
+    );
+  }
+  for (const voice of ['orchestrator', 'consultant'] as const) {
+    if (config[voice] !== undefined) byAddress[voice] = parseBindingTable(voice, config[voice], voice);
+  }
+  const duties = config['duties'];
+  if (duties !== undefined) {
+    if (typeof duties !== 'object' || duties === null) throw new Error('config: [duties] must be a table of per-duty tables, e.g. [duties.builder]');
+    for (const [key, raw] of Object.entries(duties as Record<string, unknown>)) {
+      const address = parseBindAddress(key);
+      if (address === 'orchestrator' || address === 'consultant') {
+        throw new Error(`config: [duties.${key}] — ${key} is a run-long voice, not a duty; bind it as a top-level [${key}] table`);
       }
-      // The consultant is the optional binding: parsed only when present, never
-      // defaulted in — so an unbound run keeps today's byte-for-byte bindings.
-      const rawConsultant = (roles as Record<string, unknown>)['consultant'];
-      if (rawConsultant !== undefined) bindings.consultant = parseBinding('consultant', rawConsultant);
-    }
-    if (config['budget'] !== undefined) configBudget = parseBudget(config['budget']);
-  }
-
-  for (const role of ['orchestrator', 'implementer', 'reviewer'] as const) {
-    const spec = opts.roleOverrides?.[role];
-    if (!spec) continue;
-    const override = parseRoleOverride(role, spec);
-    const prev = bindings[role];
-    // Compute the effective transport in the merge — the override can't express
-    // it. Carry a configured claude transport forward when the override keeps
-    // the provider claude; default headless only when the override changes the
-    // provider (nothing to carry) or no prior claude transport existed. This is
-    // the billing footgun the RoleOverride/RoleBinding split prevents: a
-    // model-only override must not silently flip a subscription-billed run back
-    // to metered headless.
-    // Carry a configured post-handoff `build` forward on either branch: the
-    // `--<role>` grammar can't express it, so a base override must not silently
-    // discard the role's build-phase binding — and unlike transport (claude-only),
-    // the build override rides either base provider.
-    if (override.provider === 'claude') {
-      const carried = prev.provider === 'claude' ? prev.transport : undefined;
-      bindings[role] = { ...override, transport: carried ?? 'headless', ...(prev.build ? { build: prev.build } : {}) };
-    } else {
-      bindings[role] = { ...override, ...(prev.build ? { build: prev.build } : {}) };
+      byAddress[address] = parseBindingTable(address, raw, `duties.${key}`);
     }
   }
+  const budget = config['budget'] !== undefined ? parseBudget(config['budget']) : undefined;
+  return { byAddress, ...(budget !== undefined ? { budget } : {}) };
+}
 
-  // The implementer's post-handoff build override: the `--impl-model` flag wins
-  // over a configured `[roles.implementer].build`, applied AFTER the role
-  // overrides so the guard below sees the final implementer transport.
-  if (opts.implModelOverride !== undefined) {
-    // REPLACE the implementer object, never mutate it: when no config table and no
-    // `--impl` override supplied one, `bindings.implementer` is still the SHARED
-    // `DEFAULT_BINDINGS.implementer` reference (`bindings` is only a shallow copy of
-    // DEFAULT_BINDINGS above), so `bindings.implementer.build = …` would write the
-    // build override onto the process-global default and leak it into every later
-    // default-binding load — breaking the absent-knob invariant. A fresh object
-    // leaves the default pristine (the same replace-don't-mutate discipline the
-    // transport merge above already follows).
-    bindings.implementer = { ...bindings.implementer, build: parseImplOverride(opts.implModelOverride) };
+/**
+ * Narrow a dynamic duty index into a present binding, or throw a
+ * prescribed-recovery error. The frozen manifest carries exactly the run's
+ * workflow's duties, so only a foreign duty (a caller bug) can throw.
+ */
+export function dutyBindingFor(bindings: VoiceBindings, duty: Duty): Binding {
+  const binding = bindings.duties[duty];
+  if (!binding) {
+    throw new Error(
+      `no binding for duty "${duty}" on this run — the frozen manifest binds exactly the run's workflow's duties (${Object.keys(bindings.duties).join(', ')}), so the caller reached a duty this workflow doesn't have.`,
+    );
   }
-  // The cross-source transport guard, per worker role: a build override never
-  // rides an interactive-transport base — the interactive pane launches with one
-  // binding, and a swap-on-resume there is unverified. Checked after both
-  // sources so a config `build` plus a `--implementer` transport carry, or a
-  // `--impl-model` on an interactive base, both reject rather than reach a worker.
-  for (const role of ['implementer', 'reviewer', 'consultant'] as const) {
-    const binding = bindings[role];
-    if (binding?.build && binding.transport === 'interactive') {
+  return binding;
+}
+
+/**
+ * Whether a continuity edge between two frozen bindings can actually carry a
+ * session: same provider, and (for claude) the same transport — a provider
+ * switch has no transcript to resume, and an interactive↔headless swap-on-
+ * resume is unverified. The one compatibility rule the freeze-time degrade and
+ * the session walk both read.
+ */
+export function sessionCompatible(a: Binding, b: Binding): boolean {
+  if (a.provider !== b.provider) return false;
+  if (a.provider === 'claude' && (a.transport ?? 'headless') !== (b.transport ?? 'headless')) return false;
+  return true;
+}
+
+/** A continuity edge degraded to fresh at manifest freeze — echoed and noted, never silent. */
+export interface DegradedEdge {
+  into: Duty;
+  from: Duty;
+  /** Human-readable why, e.g. "claude → codex" or "interactive → headless". */
+  reason: string;
+}
+
+/**
+ * The registry edges these frozen bindings DEGRADE to fresh — a legitimate
+ * configuration (plan-on-claude / build-on-codex on full is expressible and
+ * kept), so never an error; never silent either (`duet new` echoes it, the
+ * run notes it). Pure: derivable from the frozen state anywhere, so the
+ * decision is one source with no persisted copy.
+ */
+export function degradedEdgesFor(bindings: VoiceBindings, workflow: WorkflowName): DegradedEdge[] {
+  const out: DegradedEdge[] = [];
+  for (const stage of stagesOf(workflow)) {
+    for (const duty of [stage.duties.maker, stage.duties.checker]) {
+      const from = continuityEdgeFor(workflow, duty);
+      if (!from) continue;
+      const a = dutyBindingFor(bindings, from);
+      const b = dutyBindingFor(bindings, duty);
+      if (sessionCompatible(a, b)) continue;
+      const reason =
+        a.provider !== b.provider
+          ? `${a.provider} → ${b.provider}`
+          : `${a.transport ?? 'headless'} → ${b.transport ?? 'headless'}`;
+      out.push({ into: duty, from, reason });
+    }
+  }
+  return out;
+}
+
+/**
+ * THE binding resolver for a turn — "who runs this" as a frozen-manifest
+ * lookup by the phase's stage + duty; no band logic remains. The seat-name
+ * signature (implementer = the stage's maker, reviewer = its checker) is the
+ * BRIDGE while the tool surface still routes by seat; it dissolves into
+ * direct duty addressing with the remodel's slice 2c.
+ */
+export function effectiveBindingFor(
+  bindings: VoiceBindings,
+  role: 'orchestrator' | 'implementer' | 'reviewer' | 'consultant',
+  workflow: WorkflowName,
+  phase: PhaseName,
+): Binding {
+  if (role === 'orchestrator') return bindings.orchestrator;
+  if (role === 'consultant') {
+    if (!bindings.consultant) {
       throw new Error(
-        `the ${role}'s build override is unsupported with the interactive transport in v1 — the interactive pane launches with one binding and a swap-on-resume is unverified there; use a headless ${role} for the post-handoff split`,
+        'no consultant is bound on this run — a consultant is bound only when --bind consultant=…, a framing bind.consultant/consultant: on, or a config [consultant] table sets one, so the enumerating surface should not have reached it here.',
       );
     }
+    return bindings.consultant;
+  }
+  const stage = stageOf(workflow, phase);
+  const duty = role === 'implementer' ? makerDutyOf(workflow, stage) : checkerDutyOf(workflow, stage);
+  return dutyBindingFor(bindings, duty);
+}
+
+/** Every bound (address, binding) pair — the enumeration for echoes and provider scans. */
+export function allBindings(bindings: VoiceBindings): Array<{ address: BindAddress; binding: Binding }> {
+  return [
+    { address: 'orchestrator' as const, binding: bindings.orchestrator },
+    ...(Object.entries(bindings.duties) as Array<[Duty, Binding]>).map(([address, binding]) => ({ address, binding })),
+    ...(bindings.consultant ? [{ address: 'consultant' as const, binding: bindings.consultant }] : []),
+  ];
+}
+
+/**
+ * Resolve a run's config into its frozen manifest half: the voice bindings
+ * (per-key precedence flags > framing > config > shipped defaults), the
+ * degraded continuity edges, and the budget. The ONE config entry point — the
+ * old four parsers (role tables, role flags, build fields, the impl alias)
+ * collapse into the one spec grammar above.
+ *
+ * Per-KEY precedence: each address resolves independently — a framing that
+ * binds only the judge leaves the builder on config/defaults. A flag or
+ * framing spec (which cannot express transport) landing on a claude provider
+ * carries a configured claude transport forward; a provider switch drops it.
+ *
+ * The consultant's on/off axis composes with its binding: `--no-consultant`
+ * beats everything; a framing `consultant: off` beats a framing/config
+ * binding; `bind.consultant` alone implies bound; toggle + bind in ONE source
+ * is a rejected contradiction (callers reject it at their parse boundary —
+ * the framing parser and the CLI both do).
+ */
+export function resolveRunConfig(
+  opts: {
+    workflow: WorkflowName;
+    /** `--bind <address>=<spec>` values, keyed by parsed address (the flags tier). */
+    flagBinds?: Partial<Record<BindAddress, string>>;
+    /** Framing `bind.<address>:` values (the framing tier). */
+    framingBinds?: Partial<Record<BindAddress, string>>;
+    /** `--no-consultant` — wins over every other consultant source. */
+    noConsultant?: boolean;
+    /** The framing `consultant: on|off` toggle (flags win over it). */
+    consultantToggle?: 'on' | 'off';
+    budgetOverride?: string;
+  },
+  configPath: string = CONFIG_PATH,
+): { bindings: VoiceBindings; degradedEdges: DegradedEdge[]; budget?: number } {
+  const { byAddress: configBinds, budget: configBudget } = loadConfigFile(configPath);
+  if (opts.noConsultant && opts.flagBinds?.consultant !== undefined) {
+    throw new Error('--no-consultant and --bind consultant=… contradict each other — drop one');
   }
 
-  // The consultant override: `--no-consultant` removes a config-bound consultant
-  // for one run (it wins, so the disable is unambiguous); else `--consultant
-  // provider[:model]` binds/replaces it. A fresh binding has no prior transport
-  // to carry, and the override grammar can't express `interactive` (rejected
-  // anyway — the consultant is read-only by policy), so a claude consultant is
-  // always headless.
-  // A consultant binding from a spec: a claude consultant is always headless (it's
-  // read-only by policy and the override grammar can't express interactive); a
-  // non-claude spec carries its own. Shared by the explicit --consultant binding
-  // and the frontmatter toggle-on default, so the two can't materialize divergently.
-  const consultantBinding = (spec: string): RoleBinding => {
-    const override = parseRoleOverride('consultant', spec);
-    return override.provider === 'claude' ? { ...override, transport: 'headless' } : override;
+  // One address through the tiers. A flag/framing spec can't express
+  // transport, so when it keeps the provider claude, the configured claude
+  // transport carries forward; the shipped default is headless.
+  const resolveAddress = (address: BindAddress): Binding => {
+    const spec = opts.flagBinds?.[address] ?? opts.framingBinds?.[address];
+    const configured = configBinds[address];
+    if (spec === undefined) return configured ?? defaultBindingFor(address);
+    const parsed = parseBindingSpec(address, spec);
+    if (parsed.provider !== 'claude') return parsed;
+    const carried = configured?.provider === 'claude' ? configured.transport : undefined;
+    return { ...parsed, transport: carried ?? 'headless' };
   };
-  if (opts.noConsultant) {
-    delete bindings.consultant;
-  } else {
-    const consultantSpec = opts.roleOverrides?.consultant;
-    if (consultantSpec) {
-      // An explicit --consultant binding wins over the frontmatter toggle.
-      bindings.consultant = consultantBinding(consultantSpec);
-    } else if (opts.consultantToggle === 'off') {
-      // The framing toggled it off — disable a config-bound consultant for this run.
-      delete bindings.consultant;
-    } else if (opts.consultantToggle === 'on' && !bindings.consultant) {
-      // The framing toggled it on with none config-bound — enable the default
-      // claude consultant (a different family from the codex reviewer is the point;
-      // pick a specific model with --consultant / [roles.consultant] instead).
-      bindings.consultant = consultantBinding('claude');
+
+  const duties: Partial<Record<Duty, Binding>> = {};
+  const runDuties = stagesOf(opts.workflow).flatMap((s) => [s.duties.maker, s.duties.checker]);
+  for (const source of [opts.flagBinds, opts.framingBinds] as const) {
+    for (const key of Object.keys(source ?? {})) {
+      const address = key as BindAddress;
+      if (address !== 'orchestrator' && address !== 'consultant' && !runDuties.includes(address as Duty)) {
+        throw new Error(
+          `bind.${address}: the "${opts.workflow}" workflow has no ${address} duty (its duties: ${runDuties.join(', ')}) — a binding for a duty the workflow lacks is rejected rather than silently ignored`,
+        );
+      }
     }
   }
+  for (const duty of runDuties) duties[duty] = resolveAddress(duty);
 
+  const orchestrator = resolveAddress('orchestrator');
   // The orchestrator's capability contract (custom harness tools, cooperative
   // pause/resume) is only implemented by the claude provider in v1. The codex
   // path is designed but unbuilt — docs/open-questions.md Q17.
-  if (bindings.orchestrator.provider !== 'claude') {
+  if (orchestrator.provider !== 'claude') {
     throw new Error(
-      'the orchestrator role requires the claude provider in v1 (codex-as-orchestrator is designed but unbuilt — see docs/open-questions.md Q17)',
+      'the orchestrator requires the claude provider in v1 (codex-as-orchestrator is designed but unbuilt — see docs/open-questions.md Q17)',
     );
   }
 
-  // Flag overrides config; config overrides the off default. parseBudget("off")
-  // is undefined, so an explicit `--budget off` overrides a config budget to off.
+  // The consultant: presence first (per-tier; a toggle+bind contradiction in
+  // ONE source is rejected at that source's parse boundary, so here the tiers
+  // just rank — and a framing `off` still beats a framing bind defensively),
+  // then the binding through the same tiers.
+  const consultantBound = (() => {
+    if (opts.noConsultant) return false;
+    if (opts.flagBinds?.consultant !== undefined) return true;
+    if (opts.consultantToggle === 'off') return false;
+    if (opts.consultantToggle === 'on') return true;
+    if (opts.framingBinds?.consultant !== undefined) return true;
+    return configBinds.consultant !== undefined;
+  })();
+  const consultant = consultantBound ? resolveAddress('consultant') : undefined;
+
+  const bindings: VoiceBindings = { orchestrator, duties, ...(consultant ? { consultant } : {}) };
   const budget = opts.budgetOverride !== undefined ? parseBudget(opts.budgetOverride) : configBudget;
-  return { bindings, ...(budget !== undefined ? { budget } : {}) };
+  return { bindings, degradedEdges: degradedEdgesFor(bindings, opts.workflow), ...(budget !== undefined ? { budget } : {}) };
 }
 
-/** Bindings-only view of loadRunConfig — the compatibility wrapper existing callers use. */
-export function loadRoleBindings(
-  overrides?: Partial<Record<Role, string>>,
-  configPath: string = CONFIG_PATH,
-): RoleBindings {
-  return loadRunConfig({ roleOverrides: overrides }, configPath).bindings;
+/** Format a binding for echoes and status: `provider[:model][ (interactive)]`. */
+export function formatBinding(binding: Binding): string {
+  const model = binding.provider === 'claude' && binding.model ? `:${binding.model}` : '';
+  const transport = binding.transport === 'interactive' ? ' (interactive)' : '';
+  return `${binding.provider}${model}${transport}`;
 }
+
+/** The shipped default manifest for a workflow — the no-config, no-flag freeze. */
+export function defaultBindingsFor(workflow: WorkflowName): VoiceBindings {
+  const duties: Partial<Record<Duty, Binding>> = {};
+  for (const stage of stagesOf(workflow)) {
+    for (const duty of [stage.duties.maker, stage.duties.checker]) duties[duty] = defaultBindingFor(duty);
+  }
+  return { orchestrator: defaultBindingFor('orchestrator'), duties };
+}
+
+// Re-exported for the surfaces that name a duty's stage without reaching into
+// the registry module themselves (the CLI's --bind grammar help).
+export { stageOfDuty };
+export type { Duty };

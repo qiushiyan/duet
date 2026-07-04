@@ -1,7 +1,7 @@
 import { closeSync, existsSync, openSync, readSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { RoleBinding } from './config.ts';
+import type { Provider } from './config.ts';
 import { workerRolesFor } from './roles.ts';
 // Type-only — run-store.ts value-imports THIS module, so a value import back
 // would close a runtime cycle. RunState/Voice are erased at build.
@@ -22,7 +22,6 @@ import type { RunState, Voice } from './run-store.ts';
  * instead of mutating `$HOME`.
  */
 
-type Provider = RoleBinding['provider'];
 
 /**
  * Claude transcripts live at `~/.claude/projects/<encoded-cwd>/<id>.jsonl`.

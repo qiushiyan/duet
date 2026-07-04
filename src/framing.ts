@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 import { execa } from "execa";
 import { z } from "zod";
+import { parseBindAddress, parseBindingSpec } from "./config.ts";
+import type { BindAddress } from "./config.ts";
 import { WORKFLOWS, entryOf, gatePhasesOf } from "./phases.ts";
 import type { GatePhase, WorkflowName } from "./phases.ts";
 import { ensureDuetDir } from "./run-store.ts";
@@ -77,6 +79,13 @@ export const FRAMING_TEMPLATE = `---
 # spec: path/to/draft.md  — enter at the primary-artifact review loop, skipping
 #                           FRAME (full: the spec; design: the design doc). Not
 #                           for rir, which has no such document.
+# bind.<duty>: provider[:model] — bind a duty for this run, e.g.
+#                           "bind.builder: codex" or "bind.judge:
+#                           claude:claude-fable-5". Duties: architect/analyst
+#                           (planning), builder/critic-or-judge (delivery);
+#                           bind.consultant also works (and implies consultant
+#                           on). Flags (--bind) win; unbound duties take
+#                           config/defaults.
 ---
 
 # Problem
@@ -293,12 +302,21 @@ export interface FramingFrontmatter {
   /** Orchestrate this run from the human's interactive session (the --interactive flag by another door). */
   interactive?: boolean;
   /**
-   * A per-run consultant TOGGLE — flip a config-bound consultant on or off for this
-   * run, the posture-shaped half of the consultant knob. The BINDING (which
-   * provider/model) stays config/--consultant: a fixed value the harness acts on
-   * earns frontmatter; a role binding does not.
+   * A per-run consultant TOGGLE — flip a config-bound consultant on or off for
+   * this run. Composes with the bindings below: `consultant: off` beside a
+   * `bind.consultant:` in the same framing is a rejected contradiction.
    */
   consultant?: 'on' | 'off';
+  /**
+   * Duty/voice bindings from `bind.<address>:` keys — the framing tier of the
+   * run manifest (flags win over these; these win over config). A binding
+   * spec is a fixed value with a deterministic consumer, so it earns
+   * frontmatter under the boundary rule — this deliberately reverses the
+   * 2026-06-22 toggle-vs-binding line: a binding is workflow intent, not only
+   * billing posture. Values stay raw `provider[:model]` strings (validated
+   * here, resolved once at the manifest freeze).
+   */
+  binds?: Partial<Record<BindAddress, string>>;
 }
 
 const frontmatterSchema = z.object({
@@ -418,7 +436,12 @@ export function parseFramingFile(content: string): { meta: FramingFrontmatter; b
   const afterClose = content.indexOf("\n", end + 1);
   const body = afterClose === -1 ? "" : content.slice(afterClose + 1).replace(/^\n/, "");
 
+  // `bind.*` keys peel off in a PRE-PASS ahead of the strict schema (dynamic
+  // keys can't live in a closed zod shape); every key — bind.* or plain —
+  // rejects on duplication rather than last-wins, so a framing can never
+  // silently half-apply.
   const raw: Record<string, string> = {};
+  const binds: Partial<Record<BindAddress, string>> = {};
   for (const line of block.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
@@ -429,7 +452,20 @@ export function parseFramingFile(content: string): { meta: FramingFrontmatter; b
       );
     }
     const key = trimmed.slice(0, colon).trim();
-    raw[key] = trimmed.slice(colon + 1).trim();
+    const value = trimmed.slice(colon + 1).trim();
+    if (key.startsWith("bind.")) {
+      const address = parseBindAddress(key.slice("bind.".length));
+      if (binds[address] !== undefined) {
+        throw new Error(`framing frontmatter repeats "bind.${address}" — a duplicated key is rejected rather than last-wins`);
+      }
+      parseBindingSpec(address, value); // validate now; the freeze re-parses the raw spec
+      binds[address] = value;
+      continue;
+    }
+    if (raw[key] !== undefined) {
+      throw new Error(`framing frontmatter repeats "${key}" — a duplicated key is rejected rather than last-wins`);
+    }
+    raw[key] = value;
   }
 
   const parsed = frontmatterSchema.strict().safeParse(raw);
@@ -437,12 +473,21 @@ export function parseFramingFile(content: string): { meta: FramingFrontmatter; b
     const unknown = Object.keys(raw).filter((k) => !(k in frontmatterSchema.shape));
     throw new Error(
       unknown.length > 0
-        ? `framing frontmatter has unknown key(s): ${unknown.join(", ")} — valid keys are gates_at, spec, retry_infra, workflow, gateless, interactive, and consultant. Everything the orchestrator should weigh with judgment belongs in the prose body, not here.`
+        ? `framing frontmatter has unknown key(s): ${unknown.join(", ")} — valid keys are gates_at, spec, retry_infra, workflow, gateless, interactive, consultant, and bind.<duty>. Everything the orchestrator should weigh with judgment belongs in the prose body, not here.`
         : `framing frontmatter is invalid: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
     );
   }
 
+  // The one-source contradiction: this framing both binds a consultant and
+  // toggles it off — reject rather than pick a winner inside one file.
+  if (parsed.data.consultant !== undefined && parsed.data.consultant.trim().toLowerCase() === "off" && binds.consultant !== undefined) {
+    throw new Error(
+      "framing frontmatter both sets consultant: off and binds bind.consultant — one framing cannot say both; drop one",
+    );
+  }
+
   const meta: FramingFrontmatter = {};
+  if (Object.keys(binds).length > 0) meta.binds = binds;
   if (parsed.data.workflow !== undefined) meta.workflow = parseWorkflow(parsed.data.workflow);
   // gates_at validates against the frontmatter's own workflow (default full);
   // resolveRunInputs re-validates if the --workflow flag overrides it. Guard is
@@ -480,6 +525,8 @@ export interface RunInputs {
    */
   interactive?: boolean;
   consultantToggle?: "on" | "off";
+  /** Framing-tier duty/voice bindings (`bind.*`) — resolved at the manifest freeze; flags win. */
+  binds?: Partial<Record<BindAddress, string>>;
   /** The framing file used, when one was (the CLI consumes the editor draft after archiving). */
   framingFile?: string;
 }
@@ -576,6 +623,7 @@ export async function resolveRunInputs(
     // Frontmatter passthrough — the CLI resolves these against its flags (flags win).
     ...(meta.interactive !== undefined ? { interactive: meta.interactive } : {}),
     ...(meta.consultant !== undefined ? { consultantToggle: meta.consultant } : {}),
+    ...(meta.binds !== undefined ? { binds: meta.binds } : {}),
     ...(framingFile ? { framingFile } : {}),
   };
 }
