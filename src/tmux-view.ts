@@ -1,6 +1,6 @@
 import { join, resolve } from 'node:path';
 import { execa } from 'execa';
-import { ROLE_GLYPH, ROLE_TMUX_COLOR } from './colorize.ts';
+import { VOICE_GLYPH, VOICE_TMUX_COLOR } from './colorize.ts';
 import { voicesFor } from './roles.ts';
 import { dutiesOf, entryOf, stageOf } from './phases.ts';
 import type { PhaseName } from './phases.ts';
@@ -70,7 +70,7 @@ function paneBranch(voices: Voice[], then: (v: Voice) => string): string {
   // Match the full `glyph voice` title, not the glyph alone — lanes share a
   // glyph across stages (architect/builder are both ■), so a glyph match
   // would route a builder pane to the architect's sidecar.
-  return `#{?#{m:${ROLE_GLYPH[head]} ${head},#{pane_title}},${then(head)},${paneBranch(rest, then)}}`;
+  return `#{?#{m:${VOICE_GLYPH[head]} ${head},#{pane_title}},${then(head)},${paneBranch(rest, then)}}`;
 }
 
 /** The detached-session viewer is created at this fixed width (no client to size it), so it always lands in the wide/2-column branch. */
@@ -187,7 +187,7 @@ async function layoutPanes(state: RunState, orchestratorPane: string, displayWid
       : await stackLayout(state, orchestratorPane);
   await tmux('set-option', '-w', '-t', orchestratorPane, 'pane-border-status', 'top');
   for (const [voice, pane] of panes) {
-    await tmux('select-pane', '-t', pane, '-T', `${ROLE_GLYPH[voice]} ${voice}`);
+    await tmux('select-pane', '-t', pane, '-T', `${VOICE_GLYPH[voice]} ${voice}`);
   }
   // Color each border title by role, keyed on the title's leading glyph —
   // tmux has no per-pane border-style, but the border format can branch.
@@ -201,7 +201,7 @@ async function layoutPanes(state: RunState, orchestratorPane: string, displayWid
   const ctxCat = (name: string) => `#(cat ${shq(join(runDirOf(state.cwd, state.runId), 'context', name))} 2>/dev/null)`;
   const ctxFor = (voice: Voice) => (voice === 'orchestrator' ? `${ctxCat('phase')} ${ctxCat(voice)}` : ctxCat(voice));
   const voices = voicesFor(state);
-  const colorBranch = paneBranch(voices, (v) => `#[fg=${ROLE_TMUX_COLOR[v]}]`);
+  const colorBranch = paneBranch(voices, (v) => `#[fg=${VOICE_TMUX_COLOR[v]}]`);
   const ctxBranch = paneBranch(voices, ctxFor);
   const fmt = ` ${colorBranch}#{pane_title}#[default] ${ctxBranch} `;
   await tmux('set-option', '-w', '-t', orchestratorPane, 'pane-border-format', fmt);

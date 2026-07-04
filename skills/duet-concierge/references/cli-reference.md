@@ -6,7 +6,7 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 
 | Command | What it does |
 |---|---|
-| `duet new --framing <file>` | Start a run from a framing file (the project briefing — the only place project knowledge enters). Returns immediately; the first phase runs in a detached driver. Runs the **full** arc unless `--workflow` says otherwise. |
+| `duet new --framing <file>` | Start a run from a framing file (the project briefing — the only place project knowledge enters). Returns immediately; the first phase runs in a detached driver. Runs the **full** workflow unless `--workflow` says otherwise. |
 | `duet new --workflow <full\|blueprint\|relay\|short> --framing <file>` | Pick the workflow. **full** (default): frame → spec → plan → implementation → PR. **blueprint**: frame → design (one committed design doc replaces spec + plan) → implementation → PR — for serious work on a trusted frontier-model builder. **relay**: blueprint's shape with delivery criss-crossed — a fresh builder implements the doc, the judge reviews *and fixes* directly, then owns the docs pass and the PR; the per-duty model pairing comes from `--bind`/`bind.*`/`[duties.*]`. **short**: research → implement (build, review, reconcile docs) → `finish` (open the PR), with no spec or plan — for small, well-understood work. Also settable as `workflow:` in the framing frontmatter; the flag wins. |
 | `duet new --framing <file> --gates-at <phases>` | Same, attending only the listed gates; the rest are pre-authorized and auto-cross with their packets recorded. Phases and presets are **workflow-specific**. full: gates `frame, spec, plan, implement, finish` — **default `overnight` (= frame,spec)**; presets `skip-plan` (= walk away at spec approval, return at the Ship gate) and `afk` (= attend none from the start — every gate pre-authorized, the consultant's safety nets intact). The Open-PR gate (end of `finish`) sits *after* the open — the PR auto-opens and the gate auto-crosses to done; list `finish` to attend a post-open review stop. blueprint and relay: gates `frame, design, implement, finish` — **default attend `design` only** (one interruption: the Direction gate auto-crosses, the human ratifies the design doc, then the run is AFK to done); preset `afk` (= attend none). short: gates `research, implement, finish` — or the preset `afk` (= attend none, run straight to done with the PR open). |
 | `duet new --framing <file> --gateless` | Walk away from the **start**: pre-authorize every gate (the run flows to an open PR with no attended stop) and, if a consultant is bound, keep only its **non-holding** work — its framing third-opinion still folds into the direction and the acceptance-contract **verify** still guards the build, with its mid-run bet audits off. A genuine product `high` or a contract that can't be met still stops it; `ask_human` and the merge stay the human's. Conflicts with `--gates-at` and `--interactive`. Also settable as `gateless:` in the framing frontmatter (the flag wins). |
@@ -52,7 +52,7 @@ Top-level fields:
 | `specPath` | The spec file, once one exists (absent on framing-only entry until the spec phase reports it). |
 | `machineState` | The last quiescent stop's statechart state — a display hint; `stop` is what you act on. |
 | `stop` | The discriminated stop (below): what the run is waiting on, with the command that acts there. |
-| `gatesAt` | Phases whose gates the human attends, when gate pre-authorization is active. Absent = every gate attended; `[]` = attend none (the `afk` preset on any arc — all gates pre-authorized). |
+| `gatesAt` | Phases whose gates the human attends, when gate pre-authorization is active. Absent = every gate attended; `[]` = attend none (the `afk` preset on any workflow — all gates pre-authorized). |
 | `autoApprovals` | Gates auto-crossed under pre-authorization: `{ gate, at, headline }` — surface these as "while you were away". |
 | `rounds` | Review rounds per phase against their backstop caps: `{ phase, used, cap }`. |
 | `costs` | `{ orchestratorUsd, claudeWorkersUsd, codexTokens: { input, output } }`. |
@@ -120,7 +120,7 @@ Top-level fields:
 }
 ```
 
-**`done`** — the run is complete. Every arc opens a PR, so the `summary` leads with the PR URL.
+**`done`** — the run is complete. Every workflow opens a PR, so the `summary` leads with the PR URL.
 
 ```json
 { "kind": "done", "summary": "PR: https://github.com/…" }
@@ -181,7 +181,7 @@ A markdown file: an optional `---`-fenced frontmatter block holding only fixed m
 - Environment-only actions (migrations, deploys): flag the human — never attempt.
 
 # Docs
-<for reconciling docs at the end of the implement phase (every arc — docs are
+<for reconciling docs at the end of the implement phase (every workflow — docs are
  reconciled as the last build step, before the Ship gate): a docs-update skill if
  one exists, else where docs live and what a change like this should update>
 ```

@@ -14,7 +14,7 @@ import { localClock, localTime } from './timefmt.ts';
 // One hue per LANE (maker blue, checker yellow), so a voice's color says its
 // lane at a glance across stages; the orchestrator and consultant keep their
 // own hues.
-export const ROLE_GLYPH: Record<Voice, string> = {
+export const VOICE_GLYPH: Record<Voice, string> = {
   orchestrator: '◆',
   architect: '■',
   builder: '■',
@@ -25,7 +25,7 @@ export const ROLE_GLYPH: Record<Voice, string> = {
 };
 
 /** tmux color names for pane borders — same hues the colorizer uses. */
-export const ROLE_TMUX_COLOR: Record<Voice, string> = {
+export const VOICE_TMUX_COLOR: Record<Voice, string> = {
   orchestrator: 'cyan',
   architect: 'blue',
   builder: 'blue',
@@ -35,7 +35,7 @@ export const ROLE_TMUX_COLOR: Record<Voice, string> = {
   consultant: 'magenta',
 };
 
-const ROLE_PAINT: Record<Voice, (s: string) => string> = {
+const VOICE_PAINT: Record<Voice, (s: string) => string> = {
   orchestrator: pc.cyan,
   architect: pc.blue,
   builder: pc.blue,
@@ -76,7 +76,7 @@ export function colorizeVoiceLine(voice: Voice, line: string): string {
   const iso = match[1] ?? '';
   const header = match[2] ?? '';
   if (header.startsWith(ACTIVITY_MARKER)) return colorizeActivity(voice, iso, header);
-  const paint = header.startsWith('✗') ? pc.red : header.startsWith('⏳') ? pc.dim : ROLE_PAINT[voice];
+  const paint = header.startsWith('✗') ? pc.red : header.startsWith('⏳') ? pc.dim : VOICE_PAINT[voice];
   return `${pc.dim(localClock(iso))} ${paint(header)}`;
 }
 
@@ -90,7 +90,7 @@ function colorizeActivity(voice: Voice, iso: string, header: string): string {
   const subject = sp === -1 ? '' : rest.slice(sp + 1);
   const tag = ACTIVITY_TAG[verb];
   if (tag === undefined) return `${pc.dim(localClock(iso))} ${pc.dim(header)}`;
-  return `${ROLE_PAINT[voice](`[${tag}]`)} ${subject} ${pc.dim(localTime(iso))}`;
+  return `${VOICE_PAINT[voice](`[${tag}]`)} ${subject} ${pc.dim(localTime(iso))}`;
 }
 
 /** Driver-narration `[tag]` prefixes — the one palette every view applies. */

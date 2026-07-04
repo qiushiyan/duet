@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { ROLE_GLYPH, ROLE_TMUX_COLOR, colorizeVoiceLine } from '../src/colorize.ts';
+import { VOICE_GLYPH, VOICE_TMUX_COLOR, colorizeVoiceLine } from '../src/colorize.ts';
 
 /**
  * View-time colorizing. The consultant is a fourth voice, so the exhaustive
@@ -8,15 +8,15 @@ import { ROLE_GLYPH, ROLE_TMUX_COLOR, colorizeVoiceLine } from '../src/colorize.
  */
 describe('colorize carries the consultant voice', () => {
   test('the Record<Voice> maps have a consultant entry, distinct from the other voices', () => {
-    expect.soft(ROLE_GLYPH.consultant).toBeTruthy();
-    expect.soft(ROLE_TMUX_COLOR.consultant).toBeTruthy();
+    expect.soft(VOICE_GLYPH.consultant).toBeTruthy();
+    expect.soft(VOICE_TMUX_COLOR.consultant).toBeTruthy();
     // A distinct glyph so the panes/logs are visually separable.
-    const glyphs = new Set([ROLE_GLYPH.orchestrator, ROLE_GLYPH.architect, ROLE_GLYPH.analyst, ROLE_GLYPH.consultant]);
+    const glyphs = new Set([VOICE_GLYPH.orchestrator, VOICE_GLYPH.architect, VOICE_GLYPH.analyst, VOICE_GLYPH.consultant]);
     expect.soft(glyphs.size).toBe(4);
   });
 
-  test('colorizeVoiceLine handles a consultant header line (ROLE_PAINT.consultant resolves)', () => {
-    // The load-bearing guard: an undefined ROLE_PAINT[voice] would throw on a
+  test('colorizeVoiceLine handles a consultant header line (VOICE_PAINT.consultant resolves)', () => {
+    // The load-bearing guard: an undefined VOICE_PAINT[voice] would throw on a
     // header line, so a clean return proves the paint map gained the entry.
     // (picocolors no-ops under vitest's non-TTY, so the exact escapes aren't
     // asserted — colorization is verified TTY-side, not here.)
