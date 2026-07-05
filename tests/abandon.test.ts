@@ -3,11 +3,13 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect } from 'vitest';
-import { aliveDriverPid, driveToQuiescence, killDriver, probeRunPosition } from '../src/harness/lifecycle.ts';
-import type { PhaseEvent } from '../src/harness/phase-events.ts';
-import { loadRunState, markAbandoned, purgeRun, runDirOf, saveRunState } from '../src/run-store.ts';
-import { locateSessionTranscripts } from '../src/sessions.ts';
-import { buildStatusModel, renderStatus, steerRefusal } from '../src/status.ts';
+import { driveToQuiescence, killDriver } from '../src/surfaces/lifecycle.ts';
+import { aliveDriverPid, probeRunPosition } from '../src/run/position.ts';
+import type { PhaseEvent } from '../src/run/phase-events.ts';
+import { loadRunState, markAbandoned, runDirOf, saveRunState } from '../src/run/store.ts';
+import { purgeRun } from '../src/voices/sessions.ts';
+import { locateSessionTranscripts } from '../src/voices/sessions.ts';
+import { buildStatusModel, renderStatus, steerRefusal } from '../src/surfaces/status.ts';
 import { test } from './helpers/fixtures.ts';
 import { scriptedMachine } from './helpers/scripted-machine.ts';
 
@@ -129,7 +131,7 @@ describe('purgeRun', () => {
     const bystanderCodex = writeCodexRollout(h, 'unrelated');
 
     run.orchestratorSessionId = 'orch-1';
-    run.workerSessions = { implementer: { provider: 'claude', id: 'impl-2' }, reviewer: { provider: 'codex', id: 'rev-3' } };
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-2' }, 'planning.analyst': { provider: 'codex', id: 'rev-3' } };
     saveRunState(run);
 
     const result = purgeRun(loadRunState(projectDir, run.runId), h);
@@ -156,7 +158,7 @@ describe('purgeRun', () => {
     // An earlier checkpoint's session — state tracks only the latest id, so this
     // was never recorded, and purge (exact-id match, no directory sweep) leaves it.
     const prior = writeClaudeTranscript(h, '-proj', 'consult-prior');
-    consultantRun.workerSessions = { consultant: { provider: 'claude', id: 'consult-latest' } };
+    consultantRun.sessions = { consultant: { provider: 'claude', id: 'consult-latest' } };
     saveRunState(consultantRun);
 
     const result = purgeRun(loadRunState(projectDir, consultantRun.runId), h);

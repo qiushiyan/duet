@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
-import { GATE_ASK_RULE, KICKOFF_PROMPT, RESUME_KICKOFF_PROMPT, buildLaunchSpec, gateAskRuleLive, runOrchestrate } from '../src/orchestrate.ts';
-import type { ClaudeLauncher } from '../src/orchestrate.ts';
-import { CONSULTANT_IDENTITY_CLAUSE } from '../src/harness/orchestrator-prompts.ts';
-import { loadRunState, runDirOf, saveRunState } from '../src/run-store.ts';
+import { GATE_ASK_RULE, KICKOFF_PROMPT, RESUME_KICKOFF_PROMPT, buildLaunchSpec, gateAskRuleLive, runOrchestrate } from '../src/orchestrator/hosts/orchestrate.ts';
+import type { ClaudeLauncher } from '../src/orchestrator/hosts/orchestrate.ts';
+import { CONSULTANT_IDENTITY_CLAUSE } from '../src/orchestrator/briefs.ts';
+import { loadRunState, runDirOf, saveRunState } from '../src/run/store.ts';
 import { test } from './helpers/fixtures.ts';
 import { plantClaudeTranscript } from './helpers/transcripts.ts';
 
@@ -315,7 +315,7 @@ describe('consultant identity composition (parity with the headless clause)', ()
     // the consultant clause verbatim — the SAME clause the headless system prompt
     // appends, so the two hosts gain it identically.
     const body = readFileSync(composed, 'utf8');
-    expect.soft(body).toContain('two-agent engineering workflow'); // the shipped base survived
+    expect.soft(body).toContain('two-worker engineering workflow'); // the shipped base survived
     expect.soft(body).toContain(CONSULTANT_IDENTITY_CLAUSE); // the appended clause, byte-identical to headless
   });
 

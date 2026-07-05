@@ -5,7 +5,7 @@ Parity steer: prefer the smaller diff.
 <human_steer staged_at="2026-07-03T00:01:00.000Z">
 Parity steer: skip the rename.
 </human_steer>
-The human sent this mid-phase guidance just now. It is the editor-in-chief’s voice — fold it into your routing from this point; it outranks reviewer opinions and does not count toward any cap.
+The human sent this mid-phase guidance just now. It is the editor-in-chief’s voice — fold it into your routing from this point; it outranks checker opinions and does not count toward any cap.
 
 === carried ===
 <human_steer staged_at="2026-07-03T00:00:00.000Z" staged_during="implement phase">

@@ -1,12 +1,12 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { DEFAULT_BINDINGS } from '../../src/config.ts';
-import type { RoleBindings } from '../../src/config.ts';
-import { acceptanceContractPathForSpec } from '../../src/phases.ts';
-import type { GatePhase, WorkflowName } from '../../src/phases.ts';
-import { createRun } from '../../src/run-store.ts';
-import type { RunState } from '../../src/run-store.ts';
-import { consultantBindings } from '../helpers/fixtures.ts';
+import { defaultBindingsFor } from '../../src/voices/bindings.ts';
+import type { VoiceBindings } from '../../src/voices/bindings.ts';
+import { acceptanceContractPathForSpec } from '../../src/registry/workflows.ts';
+import type { GatePhase, WorkflowName } from '../../src/registry/workflows.ts';
+import { createRun } from '../../src/run/store.ts';
+import type { RunState } from '../../src/run/store.ts';
+import { consultantBindingsFor } from '../helpers/fixtures.ts';
 
 /**
  * The parity matrix — deterministic run states for the byte-identical pins
@@ -27,7 +27,7 @@ const SPEC_CONTENT = `# Parity fixture spec
 
 A fixed document the parity pins read through documentsBlock. Its content is
 frozen so the rendered briefs are byte-stable; it stands in for a real spec,
-plan seed, or design doc depending on the arc under pin.
+plan seed, or design doc depending on the workflow under pin.
 `;
 
 const FRAMING = 'Parity framing: a fixed briefing used only by the parity pins.';
@@ -56,10 +56,13 @@ export interface ParityRunOpts {
 }
 
 export function parityRun(projectDir: string, opts: ParityRunOpts = {}): RunState {
-  const bindings: RoleBindings = {
-    ...(opts.consultant ? consultantBindings : DEFAULT_BINDINGS),
-    ...(opts.codexImplementer ? { implementer: { provider: 'codex' } } : {}),
-  };
+  const wf = opts.workflow ?? 'full';
+  const bindings: VoiceBindings = opts.consultant ? consultantBindingsFor(wf) : defaultBindingsFor(wf);
+  if (opts.codexImplementer) {
+    // The whole maker lane on codex — both stages, so every phase's brief
+    // renders the codex-implementer world.
+    bindings.duties = { ...bindings.duties, architect: { provider: 'codex' }, builder: { provider: 'codex' } };
+  }
   if (opts.spec) {
     const specFile = join(projectDir, SPEC_PATH);
     mkdirSync(dirname(specFile), { recursive: true });
@@ -95,7 +98,7 @@ export function parityRun(projectDir: string, opts: ParityRunOpts = {}): RunStat
     }
   }
   if (opts.warmSessions) {
-    state.workerSessions = { implementer: { provider: 'claude', id: 'parity-impl-session' }, reviewer: { provider: 'codex', id: 'parity-rev-session' } };
+    state.sessions = { 'planning.architect': { provider: 'claude', id: 'parity-impl-session' }, 'planning.analyst': { provider: 'codex', id: 'parity-rev-session' } };
   }
   return state;
 }

@@ -1,7 +1,7 @@
 <snippet_library phase="frame">
-Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in arc order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).
+Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in workflow order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).
 <phase_templates phase="frame">
-<snippet key="think-holistic" already_sent_this_phase_to="implementer, reviewer">
+<snippet key="think-holistic" already_sent_this_phase_to="architect, analyst">
 This turn is analysis, not building — work through the problem and the design before any code changes. Reason holistically, grounded in the actual code, not assumptions.
 
 1. **Read the relevant code** to see how things work today. Trace real data/control flow, note existing constraints and why they exist, cite the files/functions you read. Without this, "first principles" is guessing.
@@ -12,7 +12,7 @@ This turn is analysis, not building — work through the problem and the design 
 
 Don't patch a flawed design with another patch, and don't shy from structural change when it's justified — but back a "structurally wrong" claim with code and name its cost. Preparatory refactoring is earned only when the structure genuinely blocks the goal, never license to rewrite what merely looks imperfect.
 </snippet>
-<snippet key="compare-notes" already_sent_this_phase_to="implementer">
+<snippet key="compare-notes" already_sent_this_phase_to="architect">
 Another engineer analyzed the same problem independently. Compare notes and build the sharper direction — take what's genuinely stronger in their reasoning and combine it with yours, rather than defending your draft or averaging the two. **Update where they're right; hold where they're not**, and say why — don't shift just because they disagree, and **don't split the difference**. Settle a factual disagreement on what the code actually shows, not on who argued it better; where a difference is a real judgment call rather than a matter of fact, surface it as an open choice rather than forcing agreement.
 
 Their analysis below:
@@ -97,7 +97,7 @@ Can't find a referenced skill? Tell me immediately for the exact path. **Don't s
 **Most importantly:** does this solve the core UX problem while maintaining a clean technical design?
 </snippet>
 </anytime_helpers>
-<coming_next note="the nominal arc — gate rejects loop back and pre-authorized gates skip the stop; orientation for forward-looking work, not a cue to reach ahead">
+<coming_next note="the workflow’s nominal order — gate rejects loop back and pre-authorized gates skip the stop; orientation for forward-looking work, not a cue to reach ahead">
 <phase name="spec">write-spec, review-spec, update-spec, review-spec-again, update-spec-again</phase>
 <phase name="plan">start-plan, review-plan, update-plan, review-plan-again, update-plan-again</phase>
 <phase name="implement">compact-for-impl, midpoint-status, review-midpoint, respond-midpoint, compact-for-review, implementation-handoff, review-implementation, respond-review, review-implementation-again, respond-review-again, reconcile-docs, ceo-summary</phase>

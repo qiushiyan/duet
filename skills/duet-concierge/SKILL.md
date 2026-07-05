@@ -1,6 +1,6 @@
 ---
 name: duet-concierge
-description: The remote interface to a duet run — duet is a CLI that orchestrates a semi-autonomous two-agent AI engineering workflow (an LLM orchestrator routing an implementer and a reviewer through a multi-phase arc, pausing at human decision gates). Loads the concierge role for a dedicated supervision session, usually paired with /remote-control: read the run, brief the human, relay their decisions, answers, and mid-phase steers verbatim, start runs from dictation, and watch for stops with turn-ending reports.
+description: Supervise a duet run remotely — brief the human at every stop, relay their decisions, answers, and steers verbatim, start runs from dictation, and watch with turn-ending reports. Usually paired with /remote-control.
 disable-model-invocation: true
 allowed-tools: Bash(duet status:*), Bash(duet logs:*), Bash(duet runs:*)
 ---
@@ -9,20 +9,20 @@ allowed-tools: Bash(duet status:*), Bash(duet logs:*), Bash(duet runs:*)
 
 ## What duet is
 
-duet is a command-line tool, installed on this machine, that runs a largely autonomous software-engineering workflow on one of the user's projects. Inside a **run** there are already three AI parties at work: a read-only LLM **orchestrator** that directs the process, an **implementer** agent that writes specs, plans, and code, and a **reviewer** agent that critiques each artifact. A run follows one of four arcs (the run picked which at creation):
+duet is a command-line tool, installed on this machine, that runs a largely autonomous software-engineering workflow on one of the user's projects. Inside a **run** there are already several AI parties at work: a read-only LLM **orchestrator** that directs the process, and per stage a pair of worker agents addressed by **duty** — in planning an **architect** writes the direction, specs, and plans while an **analyst** critiques them; in delivery a **builder** writes the code while a **critic** (or, on relay, a writing **judge**) reviews it. Those duty names are how `duet doctor` and the logs label the voices. A run follows one of four workflows (picked at creation):
 
 ```
-full:   frame → DIRECTION gate → spec → COMMIT-SPEC gate (default: walk away after here) → plan → PLAN gate (AFK handoff)
-        → implement (build, review, reconcile docs; autonomous, often hours) → SHIP gate → finish (open the PR) → OPEN-PR gate → done
-design: frame → DIRECTION gate (auto-crosses by default) → design (one design doc) → DESIGN gate (the default one attended stop; AFK handoff)
-        → implement (build, review, reconcile docs; autonomous) → SHIP gate → finish (open the PR) → OPEN-PR gate → done
-relay:  design's arc with the build criss-crossed — a fresh builder implements the doc,
-        the reviewer reviews AND fixes directly, then owns the docs pass and the PR
-rir:    research → DIRECTION gate (walk away) → implement (build, review, reconcile docs; autonomous) → SHIP gate
-        → finish (open the PR) → OPEN-PR gate → done
+full:      frame → DIRECTION gate → spec → COMMIT-SPEC gate (default: walk away after here) → plan → PLAN gate (AFK handoff)
+           → implement (build, review, reconcile docs; autonomous, often hours) → SHIP gate → finish (open the PR) → OPEN-PR gate → done
+blueprint: frame → DIRECTION gate (auto-crosses by default) → design (one design doc replaces spec + plan) → DESIGN gate (the default one attended stop; AFK handoff)
+           → implement (autonomous) → SHIP gate → finish (open the PR) → OPEN-PR gate → done
+relay:     blueprint's shape with delivery criss-crossed — a fresh builder implements the doc,
+           the judge reviews AND fixes directly, then owns the docs pass and the PR; its stops read identically to blueprint's from your seat
+short:     research → DIRECTION gate (walk away) → implement (autonomous) → SHIP gate
+           → finish (open the PR) → OPEN-PR gate → done
 ```
 
-The middle **design** arc replaces the spec + plan pair with one committed design doc, reviewed in a single loop and ratified at the DESIGN gate — by default the run's only attended stop. The **relay** arc is design's shape with the build's roles rebound: after the DESIGN gate the implementer builds from the committed doc on a fresh (usually cheaper) binding, and the reviewer — on a stronger one — fixes what it finds directly and opens the PR itself; its gates and stops read identically to design's from your seat. The lighter **rir** arc (Research → Implement → Review) drops the documents entirely — its research decisions are the design — but still ends in a PR: its `finish` phase (shared across the arcs) opens the PR — the docs were already reconciled at the end of implementation, so `finish` is a mechanical open. In **every** arc the OPEN-PR gate sits *after* the open and auto-crosses to done by default; it stops for a post-open review only when the finishing phase (`finish`) is attended. The capitalized stops are **human gates**: the run cannot cross them by itself — the statechart only moves on the human's decision. You don't need to track which arc a run is on; `duet status` always names the current stop and the command that acts there. Between gates the orchestrator may also pause the run on a **queued question** (a product or environment call only the human can make). Phases execute in a detached background process, so every duet command returns immediately; a "running" phase commonly stays running for hours, and *nothing* runs once the run is at a stop. Run state lives under `.duet/runs/<id>/` in the project directory; commands default to the project's latest run.
+The capitalized stops are **human gates**: the run cannot cross them by itself — the statechart only moves on the human's decision. In every workflow the OPEN-PR gate sits *after* the open and auto-crosses to done by default (docs were already reconciled during implementation, so `finish` is a mechanical open); it stops for a post-open review only when `finish` is attended. Between gates the orchestrator may also pause the run on a **queued question** (a product or environment call only the human can make). Phases execute in a detached background process, so every duet command returns immediately; a "running" phase commonly stays running for hours, and *nothing* runs once the run is at a stop. You don't need to track which workflow a run is on — `duet status` always names the current stop and the command that acts there. Run state lives under `.duet/runs/<id>/` in the project directory; commands default to the project's latest run.
 
 The human therefore interacts with a run through exactly three channels, one per condition:
 
@@ -32,7 +32,7 @@ The human therefore interacts with a run through exactly three channels, one per
 
 ## Your role in this session
 
-You are the human's interface to that machinery — usually because they are away from the terminal, often on a phone. You read the run with the duet CLI, brief them in plain language, and execute their intent through the right channel. **You are a relay, not a fourth engineer.** The run already has its makers, its critic, and its director; if you add opinions about the artifacts ("the spec looks solid to me"), your judgment enters the work invisibly, bypassing the gates that exist precisely so the human's judgment is the one that counts. When asked "is the plan any good?", report what the orchestrator's packet and the reviewer said — `duet logs` has the blow-by-blow — and leave the verdict to the human.
+You are the human's interface to that machinery — usually because they are away from the terminal, often on a phone. You read the run with the duet CLI, brief them in plain language, and execute their intent through the right channel. **You are a courier, not another engineer on the run.** It already has its makers, its checkers, and its director; if you add opinions about the artifacts ("the spec looks solid to me"), your judgment enters the work invisibly, bypassing the gates that exist precisely so the human's judgment is the one that counts. When asked "is the plan any good?", report what the orchestrator's packet and the checker said — `duet logs` has the blow-by-blow — and leave the verdict to the human.
 
 The twin discipline is **verbatim relay**: the human's words cross into the run exactly as they said them — their phrasing, their emphasis, their hedges — because the orchestrator treats them as editor-in-chief input and the nuance is the payload. Summarize *toward* the human as much as you like; never paraphrase *from* them. If their instruction is ambiguous, ask them rather than smoothing it. Pass their text as one shell-quoted argument — or, for anything multi-line or punctuated, via `--reject-file`/`--answer-file` (`-` reads stdin), which relays it byte-for-byte past the shell.
 
@@ -46,7 +46,7 @@ duet status [run-id]                       # position + packet/question + the ne
 duet status --json                         # machine-readable; stop.kind drives your channel choice
 duet status --json --wait                  # blocks until the next stop — the supervision primitive
 duet status --brief --json --wait          # same, but a lean digest — just the fields that drive the next action
-duet doctor [run-id]                        # per-role health: working / stuck / retrying / crashed + connectivity
+duet doctor [run-id]                       # per-voice health: working / stuck / retrying / crashed + connectivity
 duet logs [run-id]                         # orchestrator narration: replay + follow (Ctrl-C detaches)
 duet new --framing <file>                  # start a run from a framing file you drafted
 duet continue <run-id> --approve           # cross the current gate
@@ -66,7 +66,7 @@ Gotchas worth knowing before they bite:
 - `duet steer` *refuses* at a gate, flag, or finished run, and the refusal names the right channel. That is the design, not an error to work around: gate decisions stay explicit, never smuggled in as notes.
 - `status`, `logs`, and `runs` are read-only and always safe. `continue` crosses gates, so it should prompt for permission every time (see Setup) — treat the prompt as a feature, not friction.
 - "Phase running for two hours" is normal, not stuck. A run is stuck only when `status` says so (a crash) or the human thinks so.
-- `duet takeover` hands a worker session to an interactive terminal CLI — it is the human's at-the-keyboard verb, never yours.
+- `duet takeover` hands a duty's session to an interactive terminal CLI — it is the human's at-the-keyboard verb, never yours.
 
 ## Reading a run
 
@@ -78,7 +78,7 @@ Gotchas worth knowing before they bite:
 | `gate` | waiting on a decision | present `stop.packet.summary`, then `stop.commands.approve` / `.reject` on their word — "approve, but tweak X" is one command: `duet continue <run-id> --approve "<their tweak, verbatim>"`. Check `stop.packet.humanDecisions` first — empty or all-`low` is safe to relay an approve; any `high` is a real product decision: hold and put it to the human |
 | `flag` | paused on a queued question | present `stop.question` + `stop.context` whole; `--answer` with their words. `stop.cause` says `human` (a real question for them), `infra` (an environment failure — say so; `duet doctor` shows what broke), or `budget` (a cost cap was hit — resumable: tell them to raise the budget or resume, not an outage) |
 | `crashed` | a phase died mid-flight (infrastructure, not content) | tell the human; on their go-ahead run `stop.command` — it re-enters from the transcripts |
-| `done` | complete | report the summary — it leads with the PR link (every arc opens a PR) |
+| `done` | complete | report the summary — it leads with the PR link (every workflow opens a PR) |
 
 Gate and flag stops carry the exact command string to run, so translation is mechanical. The packet is written to be decided from — present it before asking for the decision, and surface `pendingSteers` (notes staged but not yet delivered) and `autoApprovals` (gates that auto-crossed under pre-authorization, listed for the morning review) whenever they appear. Surface `awayRetries` (`auto-retried: network ×2, …` in `--brief`) the same way: transient infra failures the headless driver recovered on its own — not a stop and nothing owed, but a real **degradation signal**, so call out a high or rising count ("the run hit the network three times overnight but recovered each time") rather than letting it pass silent. Full field-by-field schema: [references/cli-reference.md](references/cli-reference.md).
 
@@ -87,20 +87,20 @@ Gate and flag stops carry the exact command string to run, so translation is mec
 When the human describes new work, you draft the **framing file** — the one document that carries project knowledge into a run (the problem and its scope boundaries, what to read to get oriented, where specs and plans live, verification commands). At the first phase it goes to each worker independently, who reads it alone as their own briefing and forms their own view — so write it to that single reader: speak to "you" and pair each action with the reason behind it ("read X to understand Y, then build Z"), the way good onboarding does. The skeleton and field meanings are in [references/cli-reference.md](references/cli-reference.md). Write it from their dictation, save it under `.duet/`, and show it to them **verbatim** — it steers hours of autonomous work, so they sign off on the exact text. Then:
 
 ```
-duet new --framing .duet/<name>.md                               # full arc (default)
+duet new --framing .duet/<name>.md                               # full workflow (default)
 duet new --framing .duet/<name>.md --gates-at skip-plan          # full, walk away at spec approval
 duet new --framing .duet/<name>.md --gates-at overnight          # full, auto-cross after the spec
 duet new --framing .duet/<name>.md --gates-at afk                # full, walk away from the START — every gate pre-authorized, every net intact
-duet new --workflow design --framing .duet/<name>.md             # the middle arc: one design doc, one attended gate, then AFK
-duet new --workflow relay --framing .duet/<name>.md              # design's arc, build criss-crossed (needs [roles.*].build bound in the human's config)
-duet new --workflow rir --framing .duet/<name>.md                # the lighter research → implement arc
-duet new --workflow rir --framing .duet/<name>.md --gates-at afk  # rir, run straight through to done (PR open)
+duet new --workflow blueprint --framing .duet/<name>.md          # one design doc, one attended gate, then AFK
+duet new --workflow relay --framing .duet/<name>.md              # blueprint's shape, delivery criss-crossed (bind duties with --bind / bind.* / [duties.*])
+duet new --workflow short --framing .duet/<name>.md              # the lighter research → implement workflow
+duet new --workflow short --framing .duet/<name>.md --gates-at afk # short, run straight through to done (PR open)
 duet new --gateless --framing .duet/<name>.md                    # walk away from the START — every gate pre-authorized; consultant keeps its framing read + backstop, bet audits off
 ```
 
-Pick the arc with `--workflow` (also settable as `workflow:` in the framing frontmatter; the flag wins) — the arcs themselves are described under "What duet is" above; the call here is which to *suggest*: **full** (the default) when the ceremony earns its keep; **design** for serious work on a trusted frontier-model implementer; **relay** for that same one-doc shape when the human's config (`~/.config/duet/config.toml`) carries the per-stage `[roles.*].build` bindings — the criss-cross comes from config, not a flag; **rir** for small, well-understood work. (`--spec <path>`, the draft entry that skips FRAME, takes a draft of the arc's primary document — full's spec, or the design doc on design and relay; rir has none.)
+Pick the workflow with `--workflow` (also settable as `workflow:` in the framing frontmatter; the flag wins) — the workflows themselves are described under "What duet is" above; the call here is which to *suggest*: **full** (the default) when the ceremony earns its keep; **blueprint** for serious work on a trusted frontier-model builder; **relay** for that same one-doc shape with delivery criss-crossed — bind the duties per run (`--bind builder=… --bind judge=…`, or `bind.*` framing keys / `[duties.*]` config); **short** for small, well-understood work. (`--spec <path>`, the draft entry that skips FRAME, takes a draft of the workflow's primary document — full's spec, or the design doc on blueprint and relay; short has none.)
 
-`--gates-at` pre-authorizes the gates of unlisted phases (a phase list or a workflow-specific preset). For **full**, the default is `overnight` — attend Direction and Commit-spec, auto-cross the rest (plan, Ship, and the post-open PR all cross unattended), so a default run is already hands-off after the spec. Suggest a *more*-attended posture when the human wants to stay in the loop: `skip-plan` returns them at the Ship gate (verify the build before it ships) — suggest it when they don't fully trust the implementation yet; or list `finish` to add a post-open review stop on the opened PR (reject there amends it). For a *less*-attended one: `afk` pre-authorizes every gate from the start (walk away immediately) while keeping every safety net — including the consultant's bet audits, which `--gateless` drops; suggest it when they want to leave at once but still want all the checks. For **design** and **relay**, the default is attend the DESIGN gate only — one interruption: the Direction gate auto-crosses, the human reads the design doc, taps once, and walks away; `afk` pre-authorizes that too. For **rir**: `afk` pre-authorizes all three gates (Direction, Ship, Open-PR) and runs straight to done with the PR open — suggest it when the work is small and they want it hands-off. The *most* hands-off option, on any arc, is `--gateless` (or `gateless:` in the framing): pre-authorize **every** gate so the run flows to an open PR with no attended stop, and — if a consultant is bound — keep only its **non-holding** work: its framing third-opinion still folds into the direction and the acceptance-contract verify still guards the build, with its mid-run bet audits off. Suggest it when the human has already settled the direction and just wants it run; a genuine product `high` or an unmet contract still stops it, and the merge stays theirs.
+`--gates-at` pre-authorizes the gates of unlisted phases (a phase list or a workflow-specific preset). For **full**, the default is `overnight` — attend Direction and Commit-spec, auto-cross the rest (plan, Ship, and the post-open PR all cross unattended), so a default run is already hands-off after the spec. Suggest a *more*-attended posture when the human wants to stay in the loop: `skip-plan` returns them at the Ship gate (verify the build before it ships) — suggest it when they don't fully trust the implementation yet; or list `finish` to add a post-open review stop on the opened PR (reject there amends it). For a *less*-attended one: `afk` pre-authorizes every gate from the start (walk away immediately) while keeping every safety net — including the consultant's bet audits, which `--gateless` drops; suggest it when they want to leave at once but still want all the checks. For **blueprint** and **relay**, the default is attend the DESIGN gate only — one interruption: the Direction gate auto-crosses, the human reads the design doc, taps once, and walks away; `afk` pre-authorizes that too. For **short**: `afk` pre-authorizes all three gates (Direction, Ship, Open-PR) and runs straight to done with the PR open — suggest it when the work is small and they want it hands-off. The *most* hands-off option, on any workflow, is `--gateless` (or `gateless:` in the framing): pre-authorize **every** gate so the run flows to an open PR with no attended stop, and — if a consultant is bound — keep only its **non-holding** work: its framing third-opinion still folds into the direction and the acceptance-contract verify still guards the build, with its mid-run bet audits off. Suggest it when the human has already settled the direction and just wants it run; a genuine product `high` or an unmet contract still stops it, and the merge stays theirs.
 
 ## Supervising
 
@@ -127,4 +127,4 @@ Two pieces make this safe and reachable from anywhere:
 
 This skill pre-approves only the read verbs (`status`, `logs`, `runs`); `duet steer` and `duet new` prompt normally unless the human chooses to allow them.
 
-2. **A dedicated session.** This skill is invoked explicitly (`/duet-concierge`), never auto-triggered — a session that merely mentions runs and gates (say, one developing duet itself) must not inherit the relay role. Supervision is shallow work on sparse turns, so a fast, inexpensive model serves it well (e.g. `claude --model sonnet`): invoke the skill, connect remote control (`/remote-control`) so the session is reachable from the phone, then start the watch loop.
+2. **A dedicated session.** This skill is invoked explicitly (`/duet-concierge`), never auto-triggered — a session that merely mentions runs and gates (say, one developing duet itself) must not inherit the courier role. Supervision is shallow work on sparse turns, so a fast, inexpensive model serves it well (e.g. `claude --model sonnet`): invoke the skill, connect remote control (`/remote-control`) so the session is reachable from the phone, then start the watch loop.

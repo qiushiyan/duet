@@ -2,18 +2,19 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
-import { COMPACT_CONFIRMATION, ClaudeWorker, claudeArgs, claudeExecaOptions, parseClaudeTurn, recoverClaudeFailure } from '../src/providers/claude.ts';
-import { CodexWorker, codexThreadOptions, parseRolloutContext, reconstructCodexTurn, recoverCodexAbort } from '../src/providers/codex.ts';
-import { ContextDeadlineExceededError, WALL_CLOCK_DRAIN_GRACE_MS, WALL_CLOCK_TICK_MS, WallClockExceededError } from '../src/providers/wall-clock.ts';
-import { classifyError } from '../src/worker-health.ts';
+import { COMPACT_CONFIRMATION, ClaudeWorker, claudeArgs, claudeExecaOptions, parseClaudeTurn, recoverClaudeFailure } from '../src/voices/providers/claude.ts';
+import { CodexWorker, codexThreadOptions, parseRolloutContext, reconstructCodexTurn, recoverCodexAbort } from '../src/voices/providers/codex.ts';
+import { ContextDeadlineExceededError, WALL_CLOCK_DRAIN_GRACE_MS, WALL_CLOCK_TICK_MS, WallClockExceededError } from '../src/voices/providers/wall-clock.ts';
+import { classifyError } from '../src/voices/health.ts';
 import type { ThreadEvent } from '@openai/codex-sdk';
-import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn, sessionIdForNonce } from '../src/providers/interactive-claude.ts';
-import { claudePaneLaunchCommand } from '../src/providers/pane.ts';
-import { createWorkers, providerFor } from '../src/providers/index.ts';
-import { BudgetCutoffError } from '../src/providers/types.ts';
-import { DEFAULT_BINDINGS } from '../src/config.ts';
-import type { RoleBindings } from '../src/config.ts';
-import type { PhaseName } from '../src/phases.ts';
+import { InteractiveClaudeWorker, claudeProjectSlug, parseInteractiveTurn, sessionIdForNonce } from '../src/voices/providers/interactive-claude.ts';
+import { claudePaneLaunchCommand } from '../src/voices/providers/pane.ts';
+import { createWorkers, providerFor } from '../src/voices/providers/index.ts';
+import { BudgetCutoffError } from '../src/voices/providers/types.ts';
+import { defaultBindingsFor } from '../src/voices/bindings.ts';
+import type { VoiceBindings } from '../src/voices/bindings.ts';
+import { makerDutyOf, stageOf } from '../src/registry/workflows.ts';
+import type { PhaseName } from '../src/registry/workflows.ts';
 import { FakePane } from './helpers/fake-pane.ts';
 import {
   assistantFinal,
@@ -520,7 +521,7 @@ describe('InteractiveClaudeWorker (driving over FakePane + a tmpdir, no live aut
       rmSync(dir, { recursive: true, force: true });
     }));
 
-  test('refuses a read-only turn before spawning anything (implementer-only transport)', async () => {
+  test('refuses a read-only turn before spawning anything (architect-only transport)', async () => {
     let paneBuilt = false;
     const worker = new InteractiveClaudeWorker({
       model: 'claude-opus-4-8',
@@ -1001,7 +1002,7 @@ describe('claudeArgs (the session-flag + budget-cap seams)', () => {
   });
 
   test('always launches bypassPermissions and never --disallowed-tools — both roles run full-permission', () => {
-    // The reviewer hint no longer restricts the headless argv: full permissions
+    // The analyst hint no longer restricts the headless argv: full permissions
     // for every worker, review-only enforced by the prompt instead — claudeArgs
     // takes no readOnly at all. Fresh and resume builds both bypassPermissions.
     const fresh = claudeArgs({ sessionId: 's', resume: false }, { model: 'claude-opus-4-8' });
@@ -1015,7 +1016,7 @@ describe('claudeArgs (the session-flag + budget-cap seams)', () => {
 
 describe('codexThreadOptions (the sandbox-deferral seam)', () => {
   test('never sets sandboxMode — codex defers the sandbox to ~/.codex/config.toml', () => {
-    // The reviewer hint (a read-only role) must NOT derive an OS sandbox: the
+    // The analyst hint (a read-only role) must NOT derive an OS sandbox: the
     // old read-only/workspace-write mapping overrode the user's config and broke
     // read-only tooling ($TMPDIR IPC sockets, outbound reads). Omitting it lets
     // the codex CLI fall back to the user's configured posture.
@@ -1076,46 +1077,44 @@ describe('reconstructCodexTurn (the codex event-stream seam)', () => {
 
 describe('createWorkers', () => {
   test('binds each role to its provider with the phase rails applied', () => {
-    const workers = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
-    expect.soft(workers.implementer.name).toBe('claude');
-    expect.soft(workers.reviewer.name).toBe('codex');
+    const workers = createWorkers(defaultBindingsFor('full'), 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
+    expect.soft(workers.architect?.name).toBe('claude');
+    expect.soft(workers.analyst?.name).toBe('codex');
   });
 
   test('a workerBudgetUsd: undefined rail builds a ClaudeWorker (off → the cap is omitted downstream)', () => {
     // The undefined cap is now a legal rail (budgets off); it flows to the
     // ClaudeWorker's config, where claudeArgs leaves --max-budget-usd off the
     // argv (pinned directly by the claudeArgs omission test above).
-    const workers = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: undefined, timeoutMs: 60_000 });
-    expect.soft(workers.implementer).toBeInstanceOf(ClaudeWorker);
-    expect.soft(workers.implementer.name).toBe('claude');
+    const workers = createWorkers(defaultBindingsFor('full'), 'full', 'spec', { workerBudgetUsd: undefined, timeoutMs: 60_000 });
+    expect.soft(workers.architect).toBeInstanceOf(ClaudeWorker);
+    expect.soft(workers.architect?.name).toBe('claude');
   });
 
   test('an interactive claude binding builds the interactive transport; headless stays ClaudeWorker', () => {
-    const headless = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
-    expect.soft(headless.implementer).toBeInstanceOf(ClaudeWorker);
+    const headless = createWorkers(defaultBindingsFor('full'), 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
+    expect.soft(headless.architect).toBeInstanceOf(ClaudeWorker);
 
+    const base = defaultBindingsFor('full');
     const interactive = createWorkers(
-      { ...DEFAULT_BINDINGS, implementer: { provider: 'claude', model: 'claude-opus-4-8', transport: 'interactive' } },
+      { ...base, duties: { ...base.duties, architect: { provider: 'claude', model: 'claude-opus-4-8', transport: 'interactive' } } },
       'full',
       'spec',
       { workerBudgetUsd: 10, timeoutMs: 60_000 },
     );
-    expect.soft(interactive.implementer).toBeInstanceOf(InteractiveClaudeWorker);
-    expect.soft(interactive.implementer.name).toBe('claude'); // the same WorkerProvider contract name
+    expect.soft(interactive.architect).toBeInstanceOf(InteractiveClaudeWorker);
+    expect.soft(interactive.architect?.name).toBe('claude'); // the same WorkerProvider contract name
   });
 
-  test('the implementer builds with its post-handoff model after the handoff gate, the base model before', async () => {
+  test('the maker builds with the builder duty\u2019s model in delivery, the architect\u2019s in planning', async () => {
     // The true wiring, exercised through the public interface (createWorkers →
-    // runTurn → the execa argv): a bound `impl` model shows up on the --model flag
-    // only for a post-handoff phase; a planning phase keeps the base model.
-    const bindings: RoleBindings = {
-      ...DEFAULT_BINDINGS,
-      implementer: {
-        provider: 'claude',
-        model: 'claude-opus-4-8',
-        transport: 'headless',
-        build: { provider: 'claude', model: 'claude-sonnet-5' },
-      },
+    // runTurn → the execa argv): the builder duty's model shows up on the
+    // --model flag only for a delivery phase; a planning phase keeps the
+    // architect's binding.
+    const base = defaultBindingsFor('full');
+    const bindings: VoiceBindings = {
+      ...base,
+      duties: { ...base.duties, builder: { provider: 'claude', model: 'claude-sonnet-5', transport: 'headless' } },
     };
     const modelOnArgv = async (phase: PhaseName): Promise<string> => {
       let argv: string[] = [];
@@ -1125,40 +1124,46 @@ describe('createWorkers', () => {
           stdout: JSON.stringify([{ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 's' }]),
         });
       });
-      await createWorkers(bindings, 'full', phase, { workerBudgetUsd: 10, timeoutMs: 60_000 }).implementer.runTurn({ prompt: 'go', cwd: '/x' });
+      const maker = makerDutyOf('full', stageOf('full', phase));
+      await providerFor(createWorkers(bindings, 'full', phase, { workerBudgetUsd: 10, timeoutMs: 60_000 }), maker).runTurn({ prompt: 'go', cwd: '/x' });
       return argv[argv.indexOf('--model') + 1]!;
     };
-    expect.soft(await modelOnArgv('plan')).toBe('claude-opus-4-8'); // planning keeps the smart base
-    expect.soft(await modelOnArgv('implement')).toBe('claude-sonnet-5'); // the build switches to the impl model
+    expect.soft(await modelOnArgv('plan')).toBe('claude-opus-4-8'); // planning: the architect's smart base
+    expect.soft(await modelOnArgv('implement')).toBe('claude-sonnet-5'); // delivery: the builder duty's own binding
   });
 
-  test('a build override SWITCHES THE PROVIDER post-handoff — relay\u2019s criss-cross falls out per phase', () => {
+  test('per-stage duty bindings SWITCH THE PROVIDER at the stage boundary — the criss-cross falls out per phase', () => {
     // The T4 wiring: effectiveBindingFor resolves BEFORE the provider branch,
     // so the same bindings construct different worker classes per phase.
-    const crisscross: RoleBindings = {
-      ...DEFAULT_BINDINGS,
-      implementer: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless', build: { provider: 'codex' } },
-      reviewer: { provider: 'codex', build: { provider: 'claude', model: 'claude-fable-5' } },
+    const base = defaultBindingsFor('blueprint');
+    const crisscross: VoiceBindings = {
+      ...base,
+      duties: {
+        architect: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' },
+        analyst: { provider: 'codex' },
+        builder: { provider: 'codex' },
+        critic: { provider: 'claude', model: 'claude-fable-5', transport: 'headless' },
+      },
     };
     const rails = { workerBudgetUsd: 10, timeoutMs: 60_000 };
-    // Planning: implementer on claude, reviewer on codex (the base pair).
-    const planning = createWorkers(crisscross, 'design', 'design', rails);
-    expect.soft(planning.implementer).toBeInstanceOf(ClaudeWorker);
-    expect.soft(planning.reviewer.name).toBe('codex');
-    // Post-handoff: the providers swap — codex builds, claude judges.
-    const build = createWorkers(crisscross, 'design', 'implement', rails);
-    expect.soft(build.implementer.name).toBe('codex');
-    expect.soft(build.reviewer).toBeInstanceOf(ClaudeWorker);
-    expect.soft(build.reviewer.name).toBe('claude');
+    // Planning: architect on claude, analyst on codex (the base pair).
+    const planning = createWorkers(crisscross, 'blueprint', 'design', rails);
+    expect.soft(planning.architect).toBeInstanceOf(ClaudeWorker);
+    expect.soft(planning.analyst?.name).toBe('codex');
+    // Delivery: the providers criss-cross — codex builds, claude critiques.
+    const build = createWorkers(crisscross, 'blueprint', 'implement', rails);
+    expect.soft(build.builder?.name).toBe('codex');
+    expect.soft(build.critic).toBeInstanceOf(ClaudeWorker);
+    expect.soft(build.critic?.name).toBe('claude');
   });
 
   test('the consultant provider is built only when bound; an un-enabled run has exactly today’s two', () => {
-    const unbound = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
+    const unbound = createWorkers(defaultBindingsFor('full'), 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
     expect.soft(unbound).not.toHaveProperty('consultant');
     expect.soft(unbound.consultant).toBeUndefined();
 
     const bound = createWorkers(
-      { ...DEFAULT_BINDINGS, consultant: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' } },
+      { ...defaultBindingsFor('full'), consultant: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' } },
       'full',
       'spec',
       { workerBudgetUsd: 10, timeoutMs: 60_000 },
@@ -1170,13 +1175,13 @@ describe('createWorkers', () => {
 
 describe('providerFor (narrow-or-prescribed-error over the optional consultant)', () => {
   test('returns a built provider, and throws a prescribed-recovery error for an unbuilt role', () => {
-    const unbound = createWorkers(DEFAULT_BINDINGS, 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
-    expect.soft(providerFor(unbound, 'implementer').name).toBe('claude');
-    expect.soft(providerFor(unbound, 'reviewer').name).toBe('codex');
+    const unbound = createWorkers(defaultBindingsFor('full'), 'full', 'spec', { workerBudgetUsd: 10, timeoutMs: 60_000 });
+    expect.soft(providerFor(unbound, 'architect').name).toBe('claude');
+    expect.soft(providerFor(unbound, 'analyst').name).toBe('codex');
     expect.soft(() => providerFor(unbound, 'consultant')).toThrow(/no consultant worker is built/);
 
     const bound = createWorkers(
-      { ...DEFAULT_BINDINGS, consultant: { provider: 'codex' } },
+      { ...defaultBindingsFor('full'), consultant: { provider: 'codex' } },
       'full',
       'spec',
       { workerBudgetUsd: 10, timeoutMs: 60_000 },

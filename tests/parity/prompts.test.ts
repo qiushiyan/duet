@@ -7,9 +7,9 @@ import {
   nudgeContinuePrompt,
   orchestratorSystemPrompt,
   renderSteerBlock,
-} from '../../src/harness/orchestrator-prompts.ts';
-import type { PhaseName, WorkflowName } from '../../src/phases.ts';
-import type { Steer } from '../../src/steer-store.ts';
+} from '../../src/orchestrator/briefs.ts';
+import type { PhaseName, WorkflowName } from '../../src/registry/workflows.ts';
+import type { Steer } from '../../src/run/steers.ts';
 import { test } from '../helpers/fixtures.ts';
 import { parityRun } from './matrix.ts';
 
@@ -22,33 +22,33 @@ import { parityRun } from './matrix.ts';
  */
 
 describe('orchestrator system prompt pins', () => {
-  test('unbound: the base prompt verbatim, consultant-free on every arc', async ({ projectDir }) => {
+  test('unbound: the base prompt verbatim, consultant-free on every workflow', async ({ projectDir }) => {
     const state = parityRun(projectDir);
     // Default-off byte-for-byte: no consultant ⇒ the constant itself, and the
-    // arc cannot leak in (rir renders identically).
+    // workflow cannot leak in (short renders identically).
     expect.soft(orchestratorSystemPrompt(state)).toBe(ORCHESTRATOR_SYSTEM_PROMPT);
-    expect.soft(orchestratorSystemPrompt(parityRun(projectDir, { workflow: 'rir' }))).toBe(ORCHESTRATOR_SYSTEM_PROMPT);
+    expect.soft(orchestratorSystemPrompt(parityRun(projectDir, { workflow: 'short' }))).toBe(ORCHESTRATOR_SYSTEM_PROMPT);
     await expect(orchestratorSystemPrompt(state)).toMatchFileSnapshot('./pins/system-prompt/base.txt');
   });
 
-  test('consultant-bound: contract-authoring arcs carry the contract addendum', async ({ projectDir }) => {
+  test('consultant-bound: contract-authoring workflows carry the contract addendum', async ({ projectDir }) => {
     await expect(
       orchestratorSystemPrompt(parityRun(projectDir, { consultant: true })),
     ).toMatchFileSnapshot('./pins/system-prompt/consultant-full.txt');
     await expect(
-      orchestratorSystemPrompt(parityRun(projectDir, { workflow: 'design', consultant: true })),
-    ).toMatchFileSnapshot('./pins/system-prompt/consultant-design.txt');
+      orchestratorSystemPrompt(parityRun(projectDir, { workflow: 'blueprint', consultant: true })),
+    ).toMatchFileSnapshot('./pins/system-prompt/consultant-blueprint.txt');
   });
 
-  test('consultant-bound rir: the base clause only — the contract feature never leaks into the arc that deferred it', async ({
+  test('consultant-bound short: the base clause only — the contract feature never leaks into the workflow that deferred it', async ({
     projectDir,
   }) => {
     await expect(
-      orchestratorSystemPrompt(parityRun(projectDir, { workflow: 'rir', consultant: true })),
-    ).toMatchFileSnapshot('./pins/system-prompt/consultant-rir.txt');
+      orchestratorSystemPrompt(parityRun(projectDir, { workflow: 'short', consultant: true })),
+    ).toMatchFileSnapshot('./pins/system-prompt/consultant-short.txt');
   });
 
-  test('a fixer arc appends the writing-reviewer clause; other arcs stay byte-identical', async ({ projectDir }) => {
+  test('a fixer workflow appends the writing-judge clause; other workflows stay byte-identical', async ({ projectDir }) => {
     const relay = orchestratorSystemPrompt(parityRun(projectDir, { workflow: 'relay' }));
     expect.soft(relay.startsWith(ORCHESTRATOR_SYSTEM_PROMPT)).toBe(true); // append-only, never a rewrite
     await expect(relay).toMatchFileSnapshot('./pins/system-prompt/relay.txt');
@@ -66,14 +66,14 @@ const FEEDBACK_CASES: Array<[WorkflowName, PhaseName]> = [
   ['full', 'plan'],
   ['full', 'implement'],
   ['full', 'finish'],
-  ['design', 'design'],
-  ['design', 'implement'],
+  ['blueprint', 'design'],
+  ['blueprint', 'implement'],
   ['relay', 'design'],
   ['relay', 'implement'],
   ['relay', 'finish'],
-  ['rir', 'research'],
-  ['rir', 'implement'],
-  ['rir', 'finish'],
+  ['short', 'research'],
+  ['short', 'implement'],
+  ['short', 'finish'],
 ];
 
 describe('resume prompt pins', () => {

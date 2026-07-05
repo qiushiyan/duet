@@ -10,7 +10,7 @@ import {
   type ErrorClass,
   type RetryState,
   type Verdict,
-} from '../src/worker-health.ts';
+} from '../src/voices/health.ts';
 import {
   claudeApiError,
   claudeApiRetry,

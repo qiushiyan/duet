@@ -1,0 +1,237 @@
+import { fromCallback, setup } from 'xstate';
+import type { EventObject } from 'xstate';
+import type { PhaseEvent } from './phase-events.ts';
+import { WORKFLOWS } from '../registry/workflows.ts';
+import type { PhaseName, WorkflowName, WorkflowSpecInput } from '../registry/workflows.ts';
+
+/**
+ * The harness statechart — Layer 1 of the three-layer architecture
+ * (docs/automation-design.md). Each phase is a state that runs the
+ * orchestrator agent (an invoked actor that emits a phase.* event when its
+ * session resolves); each gate and flag-wait is an actor-less state that
+ * transitions ONLY on human events. Agent code has no channel to send the
+ * human events, so gate-skipping is unrepresentable, not merely forbidden.
+ *
+ * Two event vocabularies, kept distinct: `phase.advance`/`phase.flag` are
+ * internal, valid only from phase states; `human.approve|reject|answer` are
+ * authority, valid only from gate/flag-wait states. A gate has no `phase.*`
+ * handler, so `advance_phase` parks but cannot cross — a property of the
+ * vocabulary, not a prompt (src/run/phase-events.ts).
+ *
+ * The states are built from a workflow's phases (`machineFor(workflow)`, over
+ * the registry in src/registry/workflows.ts) — the arc is a linear chain, so each phase
+ * contributes `<name>Loop` + `<name>FlagWait` + its gate state; a gate's approve
+ * targets the next phase's loop (or `done` when it gates the last phase, as
+ * Full's `finish` does), its reject re-enters the loop it gates. Every phase
+ * gates (the registry makes `gate` non-nullable), so each loop advances to its
+ * own gate. `machineFor('full')` is the linear arc:
+ *
+ * ```
+ * route ─(no spec)─▶ frameLoop ──▶ directionGate ─approve─▶ specLoop ──▶ commitSpecGate
+ *   └──(spec given)───────────────────────────────────────────▲              │ approve
+ *                                                                            ▼
+ *               shipGate ◀── implementLoop ◀─approve── planApprovalGate ◀── planLoop
+ *                  │ approve                                  ▲ (walk away)
+ *                  ▼
+ *               finishLoop ──▶ openPrGate ─approve─▶ done
+ *               (opens the PR)      │ reject (amend the open PR)
+ *                                   └──────────────▶ finishLoop
+ * ```
+ *
+ * Persistence guardrail: snapshots are persisted only in `quiescent`-tagged states
+ * (no live actors), so a restored snapshot never has to blind-restart an
+ * in-flight invoke. The machine's context is the run id + cwd + entry mode —
+ * all operational state lives on disk in the run dir, owned by the driver.
+ */
+
+export interface MachineInput {
+  runId: string;
+  cwd: string;
+  /** Spec-entry runs (a draft spec exists) skip the frame phase. */
+  hasSpec: boolean;
+}
+
+/**
+ * What the machine's `phaseDriver` actor hands each host to drive one phase:
+ * which run, where, which phase. Owned by the machine (the actor's input
+ * type); the hosts import it from here.
+ */
+export interface PhaseInput {
+  runId: string;
+  cwd: string;
+  phase: PhaseName;
+}
+
+/**
+ * The machine-state name of a phase's flag-wait. The one place the naming
+ * convention lives — the position probe (run/position.ts) resolves
+ * state values back to phases through it. (Gate state names are domain
+ * names, owned by the phase table.)
+ */
+export function flagWaitStateOf(phase: PhaseName): string {
+  return `${phase}FlagWait`;
+}
+
+function phaseState(
+  phase: PhaseName,
+  targets: { advanced: string; flagWait: string },
+): object {
+  return {
+    tags: ['phase'],
+    invoke: {
+      src: 'phaseDriver',
+      input: ({ context }: { context: MachineInput }) => ({
+        runId: context.runId,
+        cwd: context.cwd,
+        phase,
+      }),
+      // Driver errors are caught inside runPhase (and the actor's own catch)
+      // and surfaced as phase.flag; this is the backstop for an error escaping
+      // both — e.g. a synchronous throw building the actor input.
+      onError: { target: targets.flagWait },
+    },
+    // The phase driver emits exactly one of these when its session resolves.
+    on: {
+      'phase.advance': { target: targets.advanced },
+      'phase.flag': { target: targets.flagWait },
+    },
+  };
+}
+
+function flagWaitState(resumeTarget: string): object {
+  return {
+    tags: ['quiescent', 'flag-wait'],
+    on: {
+      'human.answer': { target: resumeTarget },
+    },
+  };
+}
+
+function gateState(targets: { approve: string; reject: string }): object {
+  return {
+    tags: ['quiescent', 'gate'],
+    on: {
+      'human.approve': { target: targets.approve },
+      'human.reject': { target: targets.reject },
+    },
+  };
+}
+
+/**
+ * Build the chart's states for one workflow's arc. The entry `route` is a
+ * transient choice — `specSkipsTo` (when the workflow admits a draft-spec
+ * entry) gives a `hasSpec`-guarded shortcut to that phase, else the route wires
+ * straight to the first phase's loop.
+ */
+function buildStates(spec: WorkflowSpecInput): Record<string, object> {
+  const phases = spec.phases;
+  const states: Record<string, object> = {
+    // Transient entry choice — never persisted (not quiescent-tagged), the
+    // machine moves through it immediately.
+    route: {
+      always: spec.entry.specSkipsTo
+        ? [
+            { guard: 'hasSpec', target: `${spec.entry.specSkipsTo}Loop` },
+            { target: `${spec.entry.firstPhase}Loop` },
+          ]
+        : [{ target: `${spec.entry.firstPhase}Loop` }],
+    },
+  };
+  phases.forEach((p, i) => {
+    const name = p.name as PhaseName;
+    const loop = `${name}Loop`;
+    const flagWait = flagWaitStateOf(name);
+    const next = phases[i + 1];
+    // Every phase gates (the registry makes `gate` non-nullable): the loop
+    // advances to its own gate, and the gate's approve targets the next phase's
+    // loop (or `done` when it gates the last phase).
+    states[loop] = phaseState(name, { advanced: p.gate.state, flagWait });
+    states[flagWait] = flagWaitState(loop);
+    states[p.gate.state] = gateState({ approve: next ? `${next.name}Loop` : 'done', reject: loop });
+  });
+  states['done'] = { type: 'final', tags: ['quiescent'] };
+  return states;
+}
+
+/** The shared machine setup — types, the hasSpec guard, and a driver-less phaseDriver slot. */
+const duetSetup = setup({
+  types: {} as {
+    context: MachineInput;
+    input: MachineInput;
+    events:
+      | { type: 'human.approve' }
+      | { type: 'human.reject' }
+      | { type: 'human.answer' }
+      | PhaseEvent;
+  },
+  guards: {
+    hasSpec: ({ context }) => context.hasSpec,
+  },
+  actors: {
+    // The GRAMMAR ships with no phase driver — a host provides one through the
+    // `machine.provide` seam (drivenMachineFor's in-process runPhase in
+    // driver.ts, stdioPhaseMachine's transport actor, interactiveMachineFor's
+    // inert actor below). This keeps the machine importing only downward
+    // (registry + phase-events): the statechart is run-level grammar; judgment
+    // and transports live above it. Starting the bare grammar is a wiring bug;
+    // the throw routes onError → the phase's flag-wait rather than hanging the
+    // run silently. Never-started restores (the position probe, the CLI's
+    // restoreFacts) never invoke it.
+    phaseDriver: fromCallback<EventObject, PhaseInput>(() => {
+      throw new Error('no phase driver provided — drive with drivenMachineFor (in-process), stdioPhaseMachine (stdio), or interactiveMachineFor (inert)');
+    }),
+  },
+});
+
+/**
+ * The statechart for a given workflow's arc. `buildStates` returns a
+ * `Record<string, object>`, so every workflow's machine shares one type (state
+ * values are `string`, not a literal union) — the lifecycle hydrates any run
+ * through `machineFor(state.workflow)` with no per-workflow typing.
+ */
+export function machineFor(workflow: WorkflowName): ReturnType<typeof createDuetMachine> {
+  return createDuetMachine(WORKFLOWS[workflow]);
+}
+
+function createDuetMachine(spec: WorkflowSpecInput) {
+  return duetSetup.createMachine({
+    id: 'duet',
+    context: ({ input }) => input,
+    initial: 'route',
+    states: buildStates(spec),
+  });
+}
+
+/** The Full arc's machine — the canonical type for `LifecycleDeps.machine` etc. */
+export const duetMachine = machineFor('full');
+
+/**
+ * The interactive variant — Stage 1's host, where the human's Claude Code
+ * session drives each phase by calling kernel tools and `duet continue`
+ * (crossInteractive) applies the gate events. The phaseDriver is replaced via
+ * the same `machine.provide` seam stdioPhaseMachine and the test scriptedMachine
+ * use, but with an INERT actor: it runs no session and never sendBacks a
+ * phase.* event. The machine therefore advances only on events sent to it, never
+ * on its own.
+ *
+ * `provide` swaps the actor, it does NOT remove the phase states' `invoke` — so
+ * a restored phase-loop snapshot still re-invokes this actor, but harmlessly,
+ * because it carries no in-flight work to lose. That is exactly the property the
+ * persistence guardrail needs (never blind-restart an actor with live work):
+ * here restability comes from the actor being inert, not absent, which makes a
+ * phase loop a legitimate RESTING state for an interactive run (for the real
+ * driver the same snapshot would be mid-flight, hence never persisted).
+ */
+export function interactiveMachineFor(workflow: WorkflowName): typeof duetMachine {
+  return machineFor(workflow).provide({
+    actors: {
+      phaseDriver: fromCallback<EventObject, PhaseInput>(() => {
+        // Inert by design: the interactive session is the driver. No runPhase, no
+        // sendBack — the machine waits for the events crossInteractive applies.
+      }),
+    },
+  });
+}
+
+/** The Full arc's interactive machine — kept as a named export. */
+export const interactiveMachine: typeof duetMachine = interactiveMachineFor('full');

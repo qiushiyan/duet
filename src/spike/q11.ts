@@ -42,9 +42,9 @@ import { execa } from 'execa';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ClaudeWorker } from '../providers/claude.ts';
-import { CodexWorker } from '../providers/codex.ts';
-import type { WorkerProvider } from '../providers/types.ts';
+import { ClaudeWorker } from '../voices/providers/claude.ts';
+import { CodexWorker } from '../voices/providers/codex.ts';
+import type { WorkerProvider } from '../voices/providers/types.ts';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const STATE_DIR = join(REPO_ROOT, '.duet', 'spike-q11');

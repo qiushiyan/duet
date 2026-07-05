@@ -2,17 +2,20 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test as base } from 'vitest';
-import { DEFAULT_BINDINGS } from '../../src/config.ts';
-import type { RoleBindings } from '../../src/config.ts';
-import type { RunTurnOptions, WorkerProvider, WorkerTurn } from '../../src/providers/types.ts';
-import { createRun, saveRunState } from '../../src/run-store.ts';
-import type { RunState } from '../../src/run-store.ts';
+import { defaultBindingsFor } from '../../src/voices/bindings.ts';
+import type { VoiceBindings } from '../../src/voices/bindings.ts';
+import type { WorkflowName } from '../../src/registry/workflows.ts';
+import type { RunTurnOptions, WorkerProvider, WorkerTurn } from '../../src/voices/providers/types.ts';
+import { createRun, saveRunState } from '../../src/run/store.ts';
+import type { RunState } from '../../src/run/store.ts';
 
-/** The default bindings plus a claude consultant — the opt-in second reviewer. */
-export const consultantBindings: RoleBindings = {
-  ...DEFAULT_BINDINGS,
-  consultant: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' },
-};
+/** A workflow's default bindings plus a claude consultant — the opt-in second reviewer. */
+export function consultantBindingsFor(workflow: WorkflowName = 'full'): VoiceBindings {
+  return {
+    ...defaultBindingsFor(workflow),
+    consultant: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' },
+  };
+}
 
 /**
  * Shared fixtures (the test.extend DI chain): a throwaway project dir, and a
@@ -122,13 +125,13 @@ export interface Fixtures {
   /** A framing-only run with a consultant bound (the opt-in second reviewer). */
   consultantRun: RunState;
   /** A framing-only run on the rir arc (for arc-scoped brief/render tests). */
-  rirRun: RunState;
+  shortRun: RunState;
   /** A consultant-bound run on the rir arc (for arc-scoped brief/render tests). */
-  rirConsultantRun: RunState;
+  shortConsultantRun: RunState;
   /** A framing-only run on the design arc (for arc-scoped brief/render tests). */
-  designRun: RunState;
+  blueprintRun: RunState;
   /** A consultant-bound run on the design arc (for arc-scoped brief/render tests). */
-  designConsultantRun: RunState;
+  blueprintConsultantRun: RunState;
 }
 
 export const test = base.extend<Fixtures>({
@@ -138,27 +141,27 @@ export const test = base.extend<Fixtures>({
     rmSync(dir, { recursive: true, force: true });
   },
   run: async ({ projectDir }, use) => {
-    await use(createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, framing: 'test framing' }));
+    await use(createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), framing: 'test framing' }));
   },
   interactiveRun: async ({ projectDir }, use) => {
-    const state = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, framing: 'test framing' });
+    const state = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), framing: 'test framing' });
     state.orchestrationHost = 'interactive';
     saveRunState(state);
     await use(state);
   },
   consultantRun: async ({ projectDir }, use) => {
-    await use(createRun({ cwd: projectDir, bindings: consultantBindings, framing: 'test framing' }));
+    await use(createRun({ cwd: projectDir, bindings: consultantBindingsFor('full'), framing: 'test framing' }));
   },
-  rirRun: async ({ projectDir }, use) => {
-    await use(createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'test framing' }));
+  shortRun: async ({ projectDir }, use) => {
+    await use(createRun({ cwd: projectDir, bindings: defaultBindingsFor('short'), workflow: 'short', framing: 'test framing' }));
   },
-  rirConsultantRun: async ({ projectDir }, use) => {
-    await use(createRun({ cwd: projectDir, bindings: consultantBindings, workflow: 'rir', framing: 'test framing' }));
+  shortConsultantRun: async ({ projectDir }, use) => {
+    await use(createRun({ cwd: projectDir, bindings: consultantBindingsFor('short'), workflow: 'short', framing: 'test framing' }));
   },
-  designRun: async ({ projectDir }, use) => {
-    await use(createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'design', framing: 'test framing' }));
+  blueprintRun: async ({ projectDir }, use) => {
+    await use(createRun({ cwd: projectDir, bindings: defaultBindingsFor('blueprint'), workflow: 'blueprint', framing: 'test framing' }));
   },
-  designConsultantRun: async ({ projectDir }, use) => {
-    await use(createRun({ cwd: projectDir, bindings: consultantBindings, workflow: 'design', framing: 'test framing' }));
+  blueprintConsultantRun: async ({ projectDir }, use) => {
+    await use(createRun({ cwd: projectDir, bindings: consultantBindingsFor('blueprint'), workflow: 'blueprint', framing: 'test framing' }));
   },
 });

@@ -42,8 +42,8 @@
  * <session>.jsonl` lines into a fixture and re-run the Slice 1 / Slice 4 tests.
  */
 
-import { InteractiveClaudeWorker } from '../providers/interactive-claude.ts';
-import type { WorkerTurn } from '../providers/types.ts';
+import { InteractiveClaudeWorker } from '../voices/providers/interactive-claude.ts';
+import type { WorkerTurn } from '../voices/providers/types.ts';
 
 const MODEL = process.env['DUET_SPIKE_MODEL'] ?? 'claude-opus-4-8';
 const TIMEOUT_MS = 10 * 60_000;

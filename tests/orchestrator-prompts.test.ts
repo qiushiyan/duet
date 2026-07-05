@@ -1,8 +1,8 @@
 import { describe, expect } from 'vitest';
-import { buildPhaseBrief } from '../src/harness/orchestrator-prompts.ts';
-import { DEFAULT_BINDINGS } from '../src/config.ts';
-import { createRun } from '../src/run-store.ts';
-import { consultantBindings, test } from './helpers/fixtures.ts';
+import { buildPhaseBrief } from '../src/orchestrator/briefs.ts';
+import { defaultBindingsFor } from '../src/voices/bindings.ts';
+import { createRun } from '../src/run/store.ts';
+import { consultantBindingsFor, test } from './helpers/fixtures.ts';
 
 // A gateless run drops only the consultant's HOLDING bet audit (spec/implement)
 // from the phase briefs; its non-holding generative framing read and the
@@ -37,7 +37,7 @@ describe('gateless drops the consultant bet-audit in the phase briefs, keeping f
   });
 
   test('rir implement: gateless drops the open-ended bet audit', ({ projectDir }) => {
-    const rir = createRun({ cwd: projectDir, bindings: consultantBindings, workflow: 'rir', framing: 'x' });
+    const rir = createRun({ cwd: projectDir, bindings: consultantBindingsFor('short'), workflow: 'short', framing: 'x' });
     expect.soft(buildPhaseBrief(rir, 'implement')).toContain('bet audit');
     rir.gateless = true;
     expect.soft(buildPhaseBrief(rir, 'implement')).not.toContain('bet audit');
@@ -51,7 +51,7 @@ describe('gateless drops the consultant bet-audit in the phase briefs, keeping f
 // trigger) are gone; scratch now rides the run's own lifecycle.
 describe('the scratch guardrail keeps a worker out of the live run state', () => {
   test('full impl: per-run scratch path, no cleanup step, deleting under .duet/ forbidden', ({ projectDir }) => {
-    const run = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, framing: 'x' });
+    const run = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), framing: 'x' });
     const brief = buildPhaseBrief(run, 'implement');
     expect.soft(brief).toContain(`.duet/runs/${run.runId}/scratch/`); // inside the run dir, not a shared parent
     expect.soft(brief).toContain('never delete .duet/'); // the hard guardrail, with its reason in the brief
@@ -60,7 +60,7 @@ describe('the scratch guardrail keeps a worker out of the live run state', () =>
   });
 
   test('rir implement: same guardrail and per-run scratch path', ({ projectDir }) => {
-    const rir = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'x' });
+    const rir = createRun({ cwd: projectDir, bindings: defaultBindingsFor('short'), workflow: 'short', framing: 'x' });
     const brief = buildPhaseBrief(rir, 'implement');
     expect.soft(brief).toContain(`.duet/runs/${rir.runId}/scratch/`);
     expect.soft(brief).toContain('never delete .duet/');
@@ -75,7 +75,7 @@ describe('the scratch guardrail keeps a worker out of the live run state', () =>
 // the human) — the forensics fix for a held gate narrated as auto-crossed.
 describe('the approval clause narrates from the ledger, not the posture', () => {
   test('a pre-authorized gate narrates auto-crossed only when it actually auto-crossed', ({ projectDir }) => {
-    const run = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, framing: 'x' });
+    const run = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), framing: 'x' });
     run.gatesAt = ['frame', 'spec']; // the overnight posture — plan pre-authorized
 
     // Held-then-approved: no ledger entry for the plan gate → the human decided it.
@@ -87,7 +87,7 @@ describe('the approval clause narrates from the ledger, not the posture', () => 
   });
 
   test('an attended gate always narrates the human approval, ledger or not', ({ projectDir }) => {
-    const run = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, framing: 'x' });
+    const run = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), framing: 'x' });
     run.gatesAt = ['frame', 'spec', 'plan'];
     run.autoApprovals = [{ gate: 'directionGate', at: '2026-07-01T00:00:00.000Z' }];
     expect(buildPhaseBrief(run, 'implement')).toContain('The human approved the plan');
@@ -104,7 +104,7 @@ describe('verify self-heal (universal, when a contract is frozen)', () => {
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc' };
     const brief = buildPhaseBrief(consultantRun, 'implement');
     expect.soft(brief).toContain('self-heal'); // the universal loop
-    expect.soft(brief).toContain('implementer first'); // route failures to the implementer, not the human
+    expect.soft(brief).toContain('builder first'); // route failures to the implementer, not the human
     expect.soft(brief).toContain('re-verify'); // a fresh, independent re-check
     expect.soft(brief).toContain('still fails after'); // only a stuck assertion holds the gate
   });

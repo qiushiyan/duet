@@ -2,8 +2,8 @@ import { existsSync, readFileSync, readdirSync, mkdirSync, rmSync, writeFileSync
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
 import type { Snapshot } from 'xstate';
-import { DEFAULT_BINDINGS } from '../src/config.ts';
-import { claudeArgs } from '../src/providers/claude.ts';
+import { defaultBindingsFor } from '../src/voices/bindings.ts';
+import { claudeArgs } from '../src/voices/providers/claude.ts';
 import {
   acquireMcpOwner,
   appendVoiceLog,
@@ -19,6 +19,7 @@ import {
   holdsMcpOwner,
   clearTurnActive,
   listRuns,
+  scanRuns,
   loadMachineSnapshot,
   loadRunState,
   markTurnActive,
@@ -29,8 +30,7 @@ import {
   saveRunState,
   scratchDirOf,
   stageHumanInput,
-  workflowOf,
-} from '../src/run-store.ts';
+  } from '../src/run/store.ts';
 import { test } from './helpers/fixtures.ts';
 
 describe('recordPhaseLabel — the view-only tmux phase sidecar', () => {
@@ -45,51 +45,51 @@ describe('recordPhaseLabel — the view-only tmux phase sidecar', () => {
 
 describe('context readings — last honest reading + high-water since compact', () => {
   test('a later lower reading keeps the high-water for safety, the last reading for display', ({ run }) => {
-    recordContextUsage(run, 'implementer', { usedTokens: 170_000, windowTokens: 1_000_000 });
-    recordContextUsage(run, 'implementer', { usedTokens: 500_000, windowTokens: 1_000_000 });
-    recordContextUsage(run, 'implementer', { usedTokens: 300_000, windowTokens: 1_000_000 });
-    const reading = run.contextUsage?.implementer;
+    recordContextUsage(run, 'architect', { usedTokens: 170_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 500_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 300_000, windowTokens: 1_000_000 });
+    const reading = run.contextUsage?.architect;
     expect.soft(reading?.usedTokens).toBe(300_000); // display: the last honest reading
     expect.soft(reading?.highWaterTokens).toBe(500_000); // safety: the mark holds through the drop
-    expect.soft(contextSafetyPercent(run, 'implementer')).toBe(50);
+    expect.soft(contextSafetyPercent(run, 'architect')).toBe(50);
     expect.soft(contextPercent(reading!)).toBe(30);
   });
 
   test('a climbing reading needs no separate mark — usedTokens IS the high-water', ({ run }) => {
-    recordContextUsage(run, 'implementer', { usedTokens: 170_000, windowTokens: 1_000_000 });
-    recordContextUsage(run, 'implementer', { usedTokens: 500_000, windowTokens: 1_000_000 });
-    expect.soft(run.contextUsage?.implementer?.highWaterTokens).toBeUndefined();
-    expect.soft(contextSafetyPercent(run, 'implementer')).toBe(50);
+    recordContextUsage(run, 'architect', { usedTokens: 170_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 500_000, windowTokens: 1_000_000 });
+    expect.soft(run.contextUsage?.architect?.highWaterTokens).toBeUndefined();
+    expect.soft(contextSafetyPercent(run, 'architect')).toBe(50);
   });
 
   test('a window change (mid-run model swap) restarts the mark — cross-window token math is meaningless', ({ run }) => {
-    recordContextUsage(run, 'implementer', { usedTokens: 800_000, windowTokens: 1_000_000 });
-    recordContextUsage(run, 'implementer', { usedTokens: 100_000, windowTokens: 200_000 });
-    expect.soft(run.contextUsage?.implementer?.highWaterTokens).toBeUndefined();
-    expect.soft(contextSafetyPercent(run, 'implementer')).toBe(50); // 100k of the NEW 200k window
+    recordContextUsage(run, 'architect', { usedTokens: 800_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 100_000, windowTokens: 200_000 });
+    expect.soft(run.contextUsage?.architect?.highWaterTokens).toBeUndefined();
+    expect.soft(contextSafetyPercent(run, 'architect')).toBe(50); // 100k of the NEW 200k window
   });
 
   test('clearContextUsage drops the reading and the sidecar; the safety percent stands down', ({ projectDir, run }) => {
-    recordContextUsage(run, 'implementer', { usedTokens: 978_000, windowTokens: 1_000_000 });
-    const sidecar = join(runDirOf(projectDir, run.runId), 'context', 'implementer');
+    recordContextUsage(run, 'architect', { usedTokens: 978_000, windowTokens: 1_000_000 });
+    const sidecar = join(runDirOf(projectDir, run.runId), 'context', 'architect');
     expect.soft(existsSync(sidecar)).toBe(true);
-    clearContextUsage(run, 'implementer');
-    expect.soft(run.contextUsage?.implementer).toBeUndefined();
+    clearContextUsage(run, 'architect');
+    expect.soft(run.contextUsage?.architect).toBeUndefined();
     expect.soft(existsSync(sidecar)).toBe(false);
-    expect.soft(contextSafetyPercent(run, 'implementer')).toBeUndefined();
+    expect.soft(contextSafetyPercent(run, 'architect')).toBeUndefined();
   });
 });
 
 describe('a vanished .duet self-heals on the next harness write (ensureRunDir)', () => {
-  // Regression for the observed failure: an implementer cleaning its scratch ran
+  // Regression for the observed failure: an architect cleaning its scratch ran
   // `rm -rf .duet` mid-run, and the next voice-log append threw ENOENT, ending
   // the phase with no advance and no flag. The write must now recover the dir.
   test('appendVoiceLog recreates a deleted .duet (with its .gitignore) and writes', ({ projectDir, run }) => {
     rmSync(join(projectDir, '.duet'), { recursive: true, force: true });
     expect(existsSync(join(projectDir, '.duet'))).toBe(false);
 
-    appendVoiceLog(run, 'implementer', 'build complete'); // would have thrown ENOENT before the fix
-    const log = join(runDirOf(projectDir, run.runId), 'implementer.log');
+    appendVoiceLog(run, 'architect', 'build complete'); // would have thrown ENOENT before the fix
+    const log = join(runDirOf(projectDir, run.runId), 'architect.log');
     expect.soft(readFileSync(log, 'utf8')).toContain('build complete');
     expect.soft(readFileSync(join(projectDir, '.duet', '.gitignore'), 'utf8')).toBe('*\n'); // self-ignore restored
   });
@@ -153,7 +153,7 @@ describe('run creation', () => {
   test('the framing archive prefers the verbatim file over the stripped body', ({ projectDir }) => {
     const run = createRun({
       cwd: projectDir,
-      bindings: DEFAULT_BINDINGS,
+      bindings: defaultBindingsFor('full'),
       framing: 'body only',
       framingRaw: '---\ngates_at: frame\n---\n\nbody only',
     });
@@ -180,46 +180,66 @@ describe('run creation', () => {
     expect(() => loadRunState(projectDir, 'nope')).toThrow(/is nope a run of this project/);
   });
 
-  test('loadRunState normalizes legacy shapes once at the boundary (parse-don\u2019t-validate, T1)', ({
+  test('loadRunState REJECTS a pre-remodel state file with a prescriptive error (no backward compatibility)', ({
     projectDir,
     run,
   }) => {
-    // Hand-write a PRE-FEATURE state file: bare-string sessions and the old
-    // `impl` binding key, exactly as an existing run on disk would carry them.
+    // Hand-write a seat-keyed state file, exactly as a pre-remodel run on disk
+    // would carry it: bindings keyed architect/analyst, no duties map.
     const legacy = JSON.parse(readFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), 'utf8'));
-    legacy.workerSessions = { implementer: 'legacy-impl-sess', reviewer: 'legacy-rev-sess' };
-    legacy.bindings.implementer = {
-      provider: 'claude',
-      model: 'claude-opus-4-8',
-      transport: 'headless',
-      impl: { provider: 'claude', model: 'claude-sonnet-5' },
+    legacy.bindings = {
+      orchestrator: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' },
+      architect: { provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' },
+      analyst: { provider: 'codex' },
     };
     writeFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), JSON.stringify(legacy, null, 2));
 
-    const loaded = loadRunState(projectDir, run.runId);
-    // Bare strings become provider-qualified records carrying the BASE
-    // binding's provider — correct by construction (no override existed when
-    // legacy state was written).
-    expect.soft(loaded.workerSessions.implementer).toEqual({ provider: 'claude', id: 'legacy-impl-sess' });
-    expect.soft(loaded.workerSessions.reviewer).toEqual({ provider: 'codex', id: 'legacy-rev-sess' });
-    // The pre-generalization `impl` key becomes `build` — one shape downstream.
-    expect.soft(loaded.bindings.implementer.build).toEqual({ provider: 'claude', model: 'claude-sonnet-5' });
-    expect.soft(loaded.bindings.implementer).not.toHaveProperty('impl');
+    // The error names what happened AND the manual path out — transcripts are
+    // intact, so the augmentation promise (finish by hand) survives the break.
+    expect(() => loadRunState(projectDir, run.runId)).toThrow(/predates the duty-keyed remodel[\s\S]*claude --resume/);
   });
 
-  test('createRun without gatesAt leaves it absent when defaultPreAuthorized is empty (rir — legacy attend-all)', ({
+  test('loadRunState REJECTS a state file carrying the seat-keyed workerSessions map (the other pre-remodel signature)', ({
+    projectDir,
+    run,
+  }) => {
+    // A pre-remodel run persisted sessions under seat names; its presence is a
+    // rejection signature of its own, even beside a plausible bindings shape.
+    const legacy = JSON.parse(readFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), 'utf8'));
+    legacy.workerSessions = { implementer: { provider: 'claude', id: 's-1' } };
+    writeFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), JSON.stringify(legacy, null, 2));
+
+    expect(() => loadRunState(projectDir, run.runId)).toThrow(/predates the duty-keyed remodel[\s\S]*claude --resume/);
+  });
+
+  test('loadRunState REJECTS a persisted retired workflow name with the standard library and the manual path', ({
+    projectDir,
+    run,
+  }) => {
+    // A hand-crafted state with the NEW bindings shape but a retired workflow
+    // spelling must still die at the boundary, not fall through to a lookup crash.
+    const legacy = JSON.parse(readFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), 'utf8'));
+    legacy.workflow = 'design';
+    writeFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), JSON.stringify(legacy, null, 2));
+
+    expect(() => loadRunState(projectDir, run.runId)).toThrow(
+      /retired workflow "design"[\s\S]*full · blueprint · relay · short[\s\S]*claude --resume/,
+    );
+  });
+
+  test('createRun without gatesAt leaves it absent when defaultPreAuthorized is empty (short — legacy attend-all)', ({
     projectDir,
   }) => {
-    // rir ships defaultPreAuthorized: [] → defaultPosture returns undefined →
+    // short ships defaultPreAuthorized: [] → defaultPosture returns undefined →
     // gatesAt stays absent (attend-all). (full now materializes the overnight
     // posture ['frame','spec'] — see the default-posture test below.)
-    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir' });
+    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('short'), workflow: 'short' });
     expect.soft(created.gatesAt).toBeUndefined();
     expect.soft(loadRunState(projectDir, created.runId).gatesAt).toBeUndefined();
   });
 
   test('createRun persists an explicit gatesAt unchanged (materialization does not override it)', ({ projectDir }) => {
-    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, gatesAt: ['frame', 'spec'] });
+    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), gatesAt: ['frame', 'spec'] });
     expect.soft(created.gatesAt).toEqual(['frame', 'spec']);
     expect.soft(loadRunState(projectDir, created.runId).gatesAt).toEqual(['frame', 'spec']);
   });
@@ -227,17 +247,17 @@ describe('run creation', () => {
   test('createRun persists an explicit empty gatesAt ([]) as first-class attend-none (bare duet afk relies on it)', ({
     projectDir,
   }) => {
-    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, gatesAt: [] });
+    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), gatesAt: [] });
     expect.soft(created.gatesAt).toEqual([]); // not coerced to absent — [] is a real "attend none" posture
     expect.soft(loadRunState(projectDir, created.runId).gatesAt).toEqual([]);
   });
 
   test('createRun persists the gateless flag present-only (default-off byte-for-byte)', ({ projectDir }) => {
-    const gateless = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, gatesAt: [], gateless: true });
+    const gateless = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), gatesAt: [], gateless: true });
     expect.soft(gateless.gateless).toBe(true);
     expect.soft(loadRunState(projectDir, gateless.runId).gateless).toBe(true);
     // Absent on every non-gateless run — the surface reads byte-for-byte as before.
-    const plain = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
+    const plain = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full') });
     expect.soft(plain.gateless).toBeUndefined();
     expect.soft('gateless' in loadRunState(projectDir, plain.runId)).toBe(false);
   });
@@ -245,19 +265,19 @@ describe('run creation', () => {
   test('createRun materializes the default retry budget (3), nullish so 0 stays 0 and N stays N (S6)', ({ projectDir }) => {
     // Default-on for NEW runs, via materialization (the gatesAt discipline). An
     // absent opt ⇒ DEFAULT_RETRY_INFRA; an explicit 0 ⇒ 0 (off); an explicit N ⇒ N.
-    const dflt = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
+    const dflt = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full') });
     expect.soft(dflt.retryInfra).toBe(DEFAULT_RETRY_INFRA);
     expect.soft(loadRunState(projectDir, dflt.runId).retryInfra).toBe(3);
 
-    const off = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, retryInfra: 0 });
+    const off = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), retryInfra: 0 });
     expect.soft(off.retryInfra).toBe(0); // nullish, not truthy — the explicit opt-out survives
 
-    const five = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, retryInfra: 5 });
+    const five = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), retryInfra: 5 });
     expect.soft(five.retryInfra).toBe(5);
   });
 
   test('createRun freezes the resolved budget; a later budgetFor reads it back (scaled)', ({ projectDir }) => {
-    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, budget: 2 });
+    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), budget: 2 });
     expect.soft(created.budget).toBe(2);
     const reloaded = loadRunState(projectDir, created.runId);
     expect.soft(reloaded.budget).toBe(2);
@@ -265,7 +285,7 @@ describe('run creation', () => {
   });
 
   test('createRun omits budget when off (absent) ⇒ budgetFor reads off', ({ projectDir }) => {
-    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
+    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full') });
     expect.soft(created.budget).toBeUndefined();
     expect.soft('budget' in loadRunState(projectDir, created.runId)).toBe(false);
     expect.soft(budgetFor(created, 'implement')).toEqual({ worker: undefined, orchestrator: undefined });
@@ -294,22 +314,22 @@ describe('the mutate discipline (concurrency-safe crash-state)', () => {
     // Two in-memory copies of the same on-disk run, each unaware of the other.
     const copyA = loadRunState(projectDir, run.runId);
     const copyB = loadRunState(projectDir, run.runId);
-    markTurnActive(copyA, 'implementer', 'impl-tag');
+    markTurnActive(copyA, 'architect', 'impl-tag');
     // copyB was loaded before A's write, but markTurnActive reloads fresh and
-    // merges its own role surgically — so the implementer entry survives.
-    markTurnActive(copyB, 'reviewer', 'rev-tag');
+    // merges its own role surgically — so the architect entry survives.
+    markTurnActive(copyB, 'analyst', 'rev-tag');
     const disk = loadRunState(projectDir, run.runId);
-    expect(disk.activeTurns?.implementer?.tag).toBe('impl-tag');
-    expect(disk.activeTurns?.reviewer?.tag).toBe('rev-tag');
+    expect(disk.activeTurns?.architect?.tag).toBe('impl-tag');
+    expect(disk.activeTurns?.analyst?.tag).toBe('rev-tag');
   });
 
   test('a no-op clear does not save its stale copy over a concurrent sibling write', ({ projectDir, run }) => {
     const stale = loadRunState(projectDir, run.runId); // captured before the sibling write
-    markTurnActive(run, 'reviewer', 'rev-tag'); // a sibling writes the reviewer entry to disk
-    // The implementer entry is absent for `stale`, so the clear is a no-op — and
-    // must NOT save `stale`'s (reviewer-less) snapshot over the live write.
-    clearTurnActive(stale, 'implementer');
-    expect(loadRunState(projectDir, run.runId).activeTurns?.reviewer?.tag).toBe('rev-tag');
+    markTurnActive(run, 'analyst', 'rev-tag'); // a sibling writes the analyst entry to disk
+    // The architect entry is absent for `stale`, so the clear is a no-op — and
+    // must NOT save `stale`'s (analyst-less) snapshot over the live write.
+    clearTurnActive(stale, 'architect');
+    expect(loadRunState(projectDir, run.runId).activeTurns?.analyst?.tag).toBe('rev-tag');
   });
 });
 
@@ -364,19 +384,19 @@ describe('gate attendance', () => {
   test('a new Full run materializes the overnight posture — plan, Ship, and the Open-PR gate auto-cross by default (D)', ({ projectDir }) => {
     // A new default Full run materializes gatesAt = ['frame','spec']: plan, impl
     // (Ship), and finish (Open-PR) are all pre-authorized.
-    const fresh = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
+    const fresh = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full') });
     expect.soft(fresh.gatesAt).toEqual(['frame', 'spec']);
     expect.soft(gateAttended(fresh, 'plan')).toBe(false);
     expect.soft(gateAttended(fresh, 'implement')).toBe(false);
     expect.soft(gateAttended(fresh, 'finish')).toBe(false);
 
     // Listing finish restores the post-open review stop (opt-in).
-    const attended = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, gatesAt: ['finish'] });
+    const attended = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), gatesAt: ['finish'] });
     expect.soft(gateAttended(attended, 'finish')).toBe(true);
 
     // A legacy run (absent gatesAt, predating the change) still attends every
     // gate — the overnight default never reaches an in-flight legacy run.
-    const legacy = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
+    const legacy = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full') });
     delete legacy.gatesAt;
     expect.soft(gateAttended(legacy, 'finish')).toBe(true);
   });
@@ -433,17 +453,20 @@ describe('budgetFor — the opt-in knob', () => {
 });
 
 describe('workflow identity', () => {
-  test('a created run defaults to the full workflow', ({ run }) => {
-    expect(workflowOf(run)).toBe('full');
+  test('a created run materializes the full workflow by default — persisted, not defaulted at read time', ({ projectDir, run }) => {
+    expect.soft(run.workflow).toBe('full');
+    const onDisk = readFileSync(join(projectDir, '.duet', 'runs', run.runId, 'state.json'), 'utf8');
+    expect(JSON.parse(onDisk).workflow).toBe('full');
   });
 
-  test('a state with no workflow field (pre-feature) resolves to full', ({ run }) => {
-    delete run.workflow;
-    expect(workflowOf(run)).toBe('full');
+  test('a state file with no workflow field (remodel-era or hand-written) materializes full at the load boundary', ({ projectDir, run }) => {
+    delete (run as { workflow?: string }).workflow;
+    saveRunState(run);
+    expect(loadRunState(projectDir, run.runId).workflow).toBe('full');
   });
 
   test('createRun persists an explicit workflow', ({ projectDir }) => {
-    const created = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'full', framing: 'f' });
+    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), workflow: 'full', framing: 'f' });
     expect(created.workflow).toBe('full');
     expect(loadRunState(projectDir, created.runId).workflow).toBe('full');
   });
@@ -454,10 +477,35 @@ describe('run listing', () => {
     mkdirSync(join(projectDir, '.duet', 'runs', 'junk'));
     writeFileSync(join(projectDir, '.duet', 'runs', 'junk-file'), 'not a dir');
 
-    const newer = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS });
+    const newer = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full') });
     newer.createdAt = new Date(Date.now() + 60_000).toISOString();
     saveRunState(newer);
 
     expect(listRuns(projectDir).map((r) => r.runId)).toEqual([newer.runId, run.runId]);
+  });
+
+  test('scanRuns REPORTS a recognized-but-refused run (never silently hidden) while a corrupt dir still skips quietly', ({
+    projectDir,
+    run,
+  }) => {
+    // One loadable run (the fixture), one pre-remodel run (recognized, refused),
+    // one corrupt dir (nothing prescriptive to say — quiet skip).
+    const old = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full') });
+    const oldState = JSON.parse(readFileSync(join(runDirOf(projectDir, old.runId), 'state.json'), 'utf8'));
+    delete oldState.bindings.duties;
+    writeFileSync(join(runDirOf(projectDir, old.runId), 'state.json'), JSON.stringify(oldState, null, 2));
+    mkdirSync(join(projectDir, '.duet', 'runs', 'corrupt'));
+    writeFileSync(join(projectDir, '.duet', 'runs', 'corrupt', 'state.json'), 'not json at all');
+
+    const { runs, unloadable } = scanRuns(projectDir);
+    expect.soft(runs.map((r) => r.runId)).toEqual([run.runId]);
+    // The refusal carries the run id and the prescriptive way out, so a listing
+    // surface can print it verbatim — a post-upgrade `duet status` must never
+    // read as "no runs" when the truth is "your run no longer loads".
+    expect.soft(unloadable).toHaveLength(1);
+    expect.soft(unloadable[0]?.runId).toBe(old.runId);
+    expect.soft(unloadable[0]?.reason).toMatch(/predates the duty-keyed remodel[\s\S]*claude --resume/);
+    // listRuns stays the loadable view.
+    expect.soft(listRuns(projectDir).map((r) => r.runId)).toEqual([run.runId]);
   });
 });

@@ -4,7 +4,7 @@ import {
   CONTEXT_EMERGENCY_PERCENT,
   contextBand,
   latestTranscriptUsageTokens,
-} from '../src/context-guard.ts';
+} from '../src/voices/context.ts';
 
 describe('contextBand — the pressure bands', () => {
   test.for<[number | undefined, string]>([

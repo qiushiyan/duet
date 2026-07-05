@@ -1,9 +1,0 @@
-<task>
-The human approved the Ship gate — the implementation is verified and shipping. Run the FINISH phase — write the PR description and open the PR, in one continuous pass. The docs were already reconciled and committed at the end of implementation, so they are on the branch and this phase does not touch them:
-
-1. Write the PR description: send the implementer the pr-description snippet. The body must LEAD with a "Verification (pending)" checklist of the environment checks owed before merge — migrations, smoke tests, anything the Ship packet flagged — the human's standing reminder to run them before merging (when the Ship gate auto-crossed unattended they have not run these yet, so the checklist rides the PR until they do). A review round on the description is available when it warrants one (backstop cap 2); most are a single pass.
-2. Open the PR, idempotently. Have the implementer first check whether a PR already exists for this branch (gh pr view, or gh pr list --head <branch>): if none exists, push the branch and run gh pr create with the title and description; if one already exists (a re-entry, a resumed run, or a PR already on the branch), don't create a second one — amend it in place (gh pr edit for the body, push any new commits). Report the PR URL. If the push or PR creation fails for an environment reason (auth, remote, permissions), that's the human's to fix: ask_human with the error.
-3. Call advance_phase with the PR URL leading the summary — this is the Open-PR packet. The Open-PR gate is attended: the human reads the packet and the opened PR, then approves (the run completes) or rejects with feedback (you re-enter to amend the open PR).
-
-Throughout: flag product or direction questions with ask_human; tactical questions bounce to the worker.
-</task>

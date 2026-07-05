@@ -124,7 +124,7 @@
       "compact-for-cleanup"
     ]
   },
-  "design.frame": {
+  "blueprint.frame": {
     "base": [
       "think-holistic",
       "compare-notes"
@@ -140,7 +140,7 @@
       "consultant-frame"
     ]
   },
-  "design.design": {
+  "blueprint.design": {
     "base": [
       "write-design",
       "review-design",
@@ -165,7 +165,7 @@
       "consultant-contract"
     ]
   },
-  "design.implement": {
+  "blueprint.implement": {
     "base": [
       "compact-for-impl",
       "implement-design",
@@ -214,7 +214,7 @@
       "consultant-verify"
     ]
   },
-  "design.finish": {
+  "blueprint.finish": {
     "base": [
       "pr-description",
       "compact-for-cleanup"
@@ -317,7 +317,7 @@
       "compact-for-cleanup"
     ]
   },
-  "rir.research": {
+  "short.research": {
     "base": [
       "think-holistic",
       "compare-notes"
@@ -333,7 +333,7 @@
       "consultant-frame"
     ]
   },
-  "rir.implement": {
+  "short.implement": {
     "base": [
       "implement-direct",
       "handoff-direct",
@@ -357,7 +357,7 @@
       "reconcile-docs"
     ]
   },
-  "rir.finish": {
+  "short.finish": {
     "base": [
       "pr-description",
       "compact-for-cleanup"
@@ -396,12 +396,12 @@
     "consultant-contract",
     "consultant-verify"
   ],
-  "consultant-reach.design": [
+  "consultant-reach.blueprint": [
     "consultant-frame",
     "consultant-contract",
     "consultant-verify"
   ],
-  "consultant-reach.design.gateless": [
+  "consultant-reach.blueprint.gateless": [
     "consultant-frame",
     "consultant-contract",
     "consultant-verify"
@@ -416,11 +416,11 @@
     "consultant-contract",
     "consultant-verify"
   ],
-  "consultant-reach.rir": [
+  "consultant-reach.short": [
     "consultant-frame",
     "consultant-impl"
   ],
-  "consultant-reach.rir.gateless": [
+  "consultant-reach.short.gateless": [
     "consultant-frame"
   ]
 }

@@ -1,9 +1,9 @@
 import { describe, expect } from 'vitest';
-import { driveToQuiescence } from '../src/harness/lifecycle.ts';
-import { runPhaseOverStdio, stdioPhaseMachine } from '../src/harness/stdio-host.ts';
-import type { Orchestrate } from '../src/harness/stdio-host.ts';
-import { loadRunState, saveRunState } from '../src/run-store.ts';
-import { listPendingSteers, stageSteer } from '../src/steer-store.ts';
+import { driveToQuiescence } from '../src/surfaces/lifecycle.ts';
+import { runPhaseOverStdio, stdioPhaseMachine } from '../src/orchestrator/hosts/stdio-host.ts';
+import type { Orchestrate } from '../src/orchestrator/hosts/stdio-host.ts';
+import { loadRunState, saveRunState } from '../src/run/store.ts';
+import { listPendingSteers, stageSteer } from '../src/run/steers.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**

@@ -2,12 +2,13 @@ import { describe, expect, test } from 'vitest';
 import {
   ANYTIME_SNIPPETS,
   UNLISTED_SNIPPETS,
+  WORKFLOWS as REGISTRY_WORKFLOWS,
   consultantSnippetsForWorkflow,
   phaseSnippetsFor,
   phasesOf,
-} from '../../src/phases.ts';
-import type { PhaseName, WorkflowName } from '../../src/phases.ts';
-import { renderSnippetLibrary } from '../../src/snippets.ts';
+} from '../../src/registry/workflows.ts';
+import type { PhaseName, WorkflowName } from '../../src/registry/workflows.ts';
+import { renderSnippetLibrary } from '../../src/orchestrator/library.ts';
 
 /**
  * The snippet-surface parity pins, at the two seams the refactor commits must
@@ -23,7 +24,9 @@ import { renderSnippetLibrary } from '../../src/snippets.ts';
  *   key lists, since variants differ only by which blocks they include).
  */
 
-const WORKFLOWS: readonly WorkflowName[] = ['full', 'design', 'relay', 'rir'];
+// Derived from the registry, never a hand list — a new workflow's snippet
+// surface is pinned the same commit it ships.
+const WORKFLOW_NAMES = Object.keys(REGISTRY_WORKFLOWS) as readonly WorkflowName[];
 
 const keysOf = (rendered: string): string[] =>
   [...rendered.matchAll(/<snippet key="([^"]+)"/g)].map((m) => m[1] as string);
@@ -31,7 +34,7 @@ const keysOf = (rendered: string): string[] =>
 describe('effective snippet-list pins', () => {
   test('per-phase lists across consultant/gateless, plus the fixed sets', async () => {
     const lists: Record<string, unknown> = {};
-    for (const workflow of WORKFLOWS) {
+    for (const workflow of WORKFLOW_NAMES) {
       for (const phase of phasesOf(workflow)) {
         lists[`${workflow}.${phase.name}`] = {
           base: phaseSnippetsFor(workflow, phase.name, { consultant: false }),
@@ -42,7 +45,7 @@ describe('effective snippet-list pins', () => {
     }
     lists['anytime'] = ANYTIME_SNIPPETS;
     lists['unlisted'] = UNLISTED_SNIPPETS;
-    for (const workflow of WORKFLOWS) {
+    for (const workflow of WORKFLOW_NAMES) {
       lists[`consultant-reach.${workflow}`] = [...consultantSnippetsForWorkflow(workflow)];
       lists[`consultant-reach.${workflow}.gateless`] = [...consultantSnippetsForWorkflow(workflow, { gateless: true })];
     }
@@ -67,7 +70,7 @@ describe('served library pins — flat', () => {
       'bound.no-workflow': keysOf(renderSnippetLibrary({ all: true, consultantBound: true })),
       'bound.no-workflow.gateless': keysOf(renderSnippetLibrary({ all: true, consultantBound: true, gateless: true })),
     };
-    for (const workflow of WORKFLOWS) {
+    for (const workflow of WORKFLOW_NAMES) {
       membership[`bound.${workflow}`] = keysOf(renderSnippetLibrary({ all: true, consultantBound: true, workflow }));
       membership[`bound.${workflow}.gateless`] = keysOf(
         renderSnippetLibrary({ all: true, consultantBound: true, workflow, gateless: true }),
@@ -85,10 +88,10 @@ describe('served library pins — phase-scoped', () => {
     { name: 'full-spec.unbound', phase: 'spec', workflow: 'full' },
     { name: 'full-plan.bound', phase: 'plan', workflow: 'full', consultant: true },
     { name: 'full-implement.bound', phase: 'implement', workflow: 'full', consultant: true },
-    { name: 'design-design.bound', phase: 'design', workflow: 'design', consultant: true },
+    { name: 'blueprint-design.bound', phase: 'design', workflow: 'blueprint', consultant: true },
     { name: 'relay-implement.bound', phase: 'implement', workflow: 'relay', consultant: true },
-    { name: 'rir-implement.bound', phase: 'implement', workflow: 'rir', consultant: true },
-    { name: 'rir-implement.bound-gateless', phase: 'implement', workflow: 'rir', consultant: true, gateless: true },
+    { name: 'short-implement.bound', phase: 'implement', workflow: 'short', consultant: true },
+    { name: 'short-implement.bound-gateless', phase: 'implement', workflow: 'short', consultant: true, gateless: true },
   ];
 
   for (const c of CASES) {
@@ -109,7 +112,7 @@ describe('served library pins — phase-scoped', () => {
       renderSnippetLibrary({
         phase: 'frame',
         workflow: 'full',
-        sentTo: { 'think-holistic': ['implementer', 'reviewer'], 'compare-notes': ['implementer'] },
+        sentTo: { 'think-holistic': ['architect', 'analyst'], 'compare-notes': ['architect'] },
       }),
     ).toMatchFileSnapshot('./pins/snippets/phase-full-frame.sent-to.txt');
   });

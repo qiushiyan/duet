@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { localClock, localStamp, localTime } from '../src/timefmt.ts';
+import { localClock, localStamp, localTime } from '../src/view/timefmt.ts';
 
 /**
  * View-time timestamp helpers. The stored artifact stays UTC ISO; these only

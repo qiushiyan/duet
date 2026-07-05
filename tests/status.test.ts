@@ -1,11 +1,11 @@
 import { describe, expect } from 'vitest';
-import { buildBrief, buildStatusModel, describeStop, displayState, formatGatePosture, renderBrief, renderStatus, steerRefusal } from '../src/status.ts';
-import type { StopModel } from '../src/status.ts';
-import { createRun } from '../src/run-store.ts';
-import type { RunState } from '../src/run-store.ts';
-import type { RunPosition } from '../src/harness/lifecycle.ts';
-import { DEFAULT_BINDINGS } from '../src/config.ts';
-import { localStamp } from '../src/timefmt.ts';
+import { buildBrief, buildStatusModel, describeStop, displayState, formatGatePosture, renderBrief, renderStatus, steerRefusal } from '../src/surfaces/status.ts';
+import type { StopModel } from '../src/surfaces/status.ts';
+import { createRun } from '../src/run/store.ts';
+import type { RunState } from '../src/run/store.ts';
+import type { RunPosition } from '../src/run/position.ts';
+import { defaultBindingsFor } from '../src/voices/bindings.ts';
+import { localStamp } from '../src/view/timefmt.ts';
 import { test } from './helpers/fixtures.ts';
 
 const render = (run: RunState, position: RunPosition): string =>
@@ -24,19 +24,19 @@ describe('formatGatePosture (the single source for the three posture surfaces)',
 });
 
 describe('workflow-neutral status surfaces (RIR)', () => {
-  const rirRun = (projectDir: string): RunState =>
-    createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, workflow: 'rir', framing: 'x' });
+  const shortRun = (projectDir: string): RunState =>
+    createRun({ cwd: projectDir, bindings: defaultBindingsFor('short'), workflow: 'short', framing: 'x' });
 
   test('describeStop completion claims the PR for both arcs now (rir opens one too)', ({ projectDir }) => {
-    const rir = rirRun(projectDir);
+    const rir = shortRun(projectDir);
     expect.soft(describeStop(rir, true)).toBe('run complete — the PR is open');
     expect.soft(describeStop({ ...rir, workflow: 'full' }, true)).toBe('run complete — the PR is open');
   });
 
   test('the model carries the workflow and scopes rounds to the RIR arc', ({ projectDir }) => {
-    const model = buildStatusModel(rirRun(projectDir), { kind: 'gate', phase: 'implement' }, []);
-    expect.soft(model.workflow).toBe('rir');
-    expect.soft(model.workflowDisplayName).toBe('Research → Implement → Review');
+    const model = buildStatusModel(shortRun(projectDir), { kind: 'gate', phase: 'implement' }, []);
+    expect.soft(model.workflow).toBe('short');
+    expect.soft(model.workflowDisplayName).toBe('Short (research → implement → ship → PR)');
     // Only RIR phases appear in rounds — no Full phases leak in.
     expect.soft(model.rounds.map((r) => r.phase)).toEqual(['implement']);
   });
@@ -44,7 +44,7 @@ describe('workflow-neutral status surfaces (RIR)', () => {
   test('the done summary reads the run’s last phase (finish), and the render claims the PR', ({
     projectDir,
   }) => {
-    const rir = rirRun(projectDir);
+    const rir = shortRun(projectDir);
     rir.phaseSummaries.finish = { summary: 'opened the PR', artifacts: [] };
     const model = buildStatusModel(rir, { kind: 'done' }, []);
     expect.soft(model.stop.kind === 'done' && model.stop.summary).toBe('opened the PR');
@@ -52,18 +52,18 @@ describe('workflow-neutral status surfaces (RIR)', () => {
     expect.soft(text).toContain('run complete');
     expect.soft(text).toContain('the PR is open'); // rir opens a (real) PR now too
     expect.soft(text).not.toContain('spec:'); // RIR still has no spec phase
-    expect.soft(text).toContain('workflow: Research → Implement → Review');
+    expect.soft(text).toContain('workflow: Short (research → implement → ship → PR)');
   });
 
   test('the brief headline reports the open PR on completion', ({ projectDir }) => {
-    const brief = buildBrief(buildStatusModel(rirRun(projectDir), { kind: 'done' }, []));
+    const brief = buildBrief(buildStatusModel(shortRun(projectDir), { kind: 'done' }, []));
     expect(brief.headline).toBe('run complete — the PR is open');
   });
 
   test('an empty gatesAt (afk: attend none) renders explicit copy and survives in the JSON model', ({
     projectDir,
   }) => {
-    const rir = rirRun(projectDir);
+    const rir = shortRun(projectDir);
     rir.gatesAt = []; // the afk posture: every gate pre-authorized
     rir.machineState = 'shipGate';
     const model = buildStatusModel(rir, { kind: 'gate', phase: 'implement' }, []);
@@ -185,7 +185,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     run.gatesAt = ['implement', 'finish'];
     run.autoApprovals = [{ gate: 'directionGate', at: '2026-06-12T03:14:00.000Z' }];
     run.autoRetries = [{ phase: 'implement', errorClass: 'network', attempt: 1, at: '2026-06-12T03:15:00.000Z' }];
-    run.lastActivity = 'send_prompt → reviewer';
+    run.lastActivity = 'send_prompt → critic';
     const model = buildStatusModel(run, { kind: 'gate', phase: 'implement' }, [
       { file: 'f.json', text: 'note', stagedAt: 'now' },
     ]);
@@ -303,26 +303,26 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     expect.soft(brief.nextCommand).toContain('--answer');
   });
 
-  test('sessions[] surfaces the known voices and is [] on a fresh run', ({ run }) => {
+  test('sessions[] surfaces the known slots and is [] on a fresh run', ({ run }) => {
     expect.soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions).toEqual([]);
     run.orchestratorSessionId = 'orch-1';
-    run.workerSessions = { reviewer: { provider: 'codex', id: 'rev-1' } };
+    run.sessions = { 'planning.analyst': { provider: 'codex', id: 'rev-1' } };
     expect.soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions).toEqual([
-      { role: 'orchestrator', provider: 'claude', sessionId: 'orch-1' },
-      { role: 'reviewer', provider: 'codex', sessionId: 'rev-1' },
+      { key: 'orchestrator', provider: 'claude', sessionId: 'orch-1' },
+      { key: 'planning.analyst', provider: 'codex', sessionId: 'rev-1' },
     ]);
   });
 
   test('context fill per voice carries the computed percent', ({ run }) => {
     run.contextUsage = {
       orchestrator: { usedTokens: 83_000, windowTokens: 200_000, at: 't1' },
-      reviewer: { usedTokens: 62_228, windowTokens: 258_400, at: 't2' },
+      critic: { usedTokens: 62_228, windowTokens: 258_400, at: 't2' },
     };
     const model = buildStatusModel(run, { kind: 'running', pid: 1, phase: 'implement' }, []);
 
     expect.soft(model.context).toEqual([
-      { role: 'orchestrator', usedTokens: 83_000, windowTokens: 200_000, percent: 42, at: 't1' },
-      { role: 'reviewer', usedTokens: 62_228, windowTokens: 258_400, percent: 24, at: 't2' },
+      { voice: 'orchestrator', usedTokens: 83_000, windowTokens: 200_000, percent: 42, at: 't1' },
+      { voice: 'critic', usedTokens: 62_228, windowTokens: 258_400, percent: 24, at: 't2' },
     ]);
   });
 
@@ -335,27 +335,27 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
 
   test('pendingTurns surfaces the interactive in-flight/settled turns, and the text names check_turns', ({ run }) => {
     run.pendingTurns = {
-      implementer: { tag: 'write-spec', startedAt: 't1', status: 'running' },
-      reviewer: { tag: 'review-spec', startedAt: 't2', status: 'ready' },
+      architect: { tag: 'write-spec', startedAt: 't1', status: 'running' },
+      analyst: { tag: 'review-spec', startedAt: 't2', status: 'ready' },
     };
     const model = buildStatusModel(run, { kind: 'interactive', phase: 'spec' }, []);
     expect.soft(model.pendingTurns).toEqual([
-      { role: 'implementer', tag: 'write-spec', status: 'running', startedAt: 't1' },
-      { role: 'reviewer', tag: 'review-spec', status: 'ready', startedAt: 't2' },
+      { duty: 'architect', tag: 'write-spec', status: 'running', startedAt: 't1' },
+      { duty: 'analyst', tag: 'review-spec', status: 'ready', startedAt: 't2' },
     ]);
     const out = renderStatus(model);
-    expect.soft(out).toContain('implementer (write-spec): running in the background');
-    expect.soft(out).toContain('reviewer (review-spec): ready — collect with check_turns');
+    expect.soft(out).toContain('architect (write-spec): running in the background');
+    expect.soft(out).toContain('analyst (review-spec): ready — collect with check_turns');
 
     // The lean --brief path surfaces them too (review finding 2): narrowed to
     // role/tag/status (startedAt dropped), with a concise role/status render —
     // so the remote/concierge supervisor sees the turn to collect.
     const brief = buildBrief(model);
     expect.soft(brief.pendingTurns).toEqual([
-      { role: 'implementer', tag: 'write-spec', status: 'running' },
-      { role: 'reviewer', tag: 'review-spec', status: 'ready' },
+      { duty: 'architect', tag: 'write-spec', status: 'running' },
+      { duty: 'analyst', tag: 'review-spec', status: 'ready' },
     ]);
-    expect.soft(renderBrief(brief)).toContain('pending turns: implementer running · reviewer ready');
+    expect.soft(renderBrief(brief)).toContain('pending turns: architect running · analyst ready');
   });
 
   test('pendingTurns is absent when no turn is in flight, in both the full model and the brief (additive — omitted, not empty)', ({
@@ -370,18 +370,19 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     run,
     consultantRun,
   }) => {
-    // sessions[] (worker surface): the consultant appears when bound, never when not.
+    // sessions[] enumerates persisted slots: an unbound run never writes a
+    // consultant slot, so none surfaces; a bound run's settled checkpoint does.
     run.orchestratorSessionId = 'orch-1';
-    run.workerSessions = { reviewer: { provider: 'codex', id: 'rev-1' }, consultant: { provider: 'claude', id: 'stray' } }; // unbound: 'stray' must not surface
+    run.sessions = { 'planning.analyst': { provider: 'codex', id: 'rev-1' } };
     expect
-      .soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions.map((s) => s.role))
-      .toEqual(['orchestrator', 'reviewer']);
+      .soft(buildStatusModel(run, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions.map((s) => s.key))
+      .toEqual(['orchestrator', 'planning.analyst']);
 
     consultantRun.orchestratorSessionId = 'orch-1';
-    consultantRun.workerSessions = { consultant: { provider: 'claude', id: 'c-1' } };
+    consultantRun.sessions = { consultant: { provider: 'claude', id: 'c-1' } };
     expect
       .soft(buildStatusModel(consultantRun, { kind: 'running', pid: 1, phase: 'frame' }, []).sessions)
-      .toContainEqual({ role: 'consultant', provider: 'claude', sessionId: 'c-1' });
+      .toContainEqual({ key: 'consultant', provider: 'claude', sessionId: 'c-1' });
 
     // context (voice surface): keeps the orchestrator AND gains the consultant —
     // a blunt workerRolesFor here would have silently dropped the orchestrator.
@@ -389,7 +390,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
       orchestrator: { usedTokens: 83_000, windowTokens: 200_000, at: 't1' },
       consultant: { usedTokens: 50_000, windowTokens: 200_000, at: 't2' },
     };
-    const ctxRoles = buildStatusModel(consultantRun, { kind: 'running', pid: 1, phase: 'spec' }, []).context.map((c) => c.role);
+    const ctxRoles = buildStatusModel(consultantRun, { kind: 'running', pid: 1, phase: 'spec' }, []).context.map((c) => c.voice);
     expect.soft(ctxRoles).toContain('orchestrator');
     expect.soft(ctxRoles).toContain('consultant');
 
@@ -397,7 +398,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     consultantRun.pendingTurns = { consultant: { tag: 'consultant-spec', startedAt: 't3', status: 'ready' } };
     expect
       .soft(buildStatusModel(consultantRun, { kind: 'interactive', phase: 'spec' }, []).pendingTurns)
-      .toContainEqual({ role: 'consultant', tag: 'consultant-spec', status: 'ready', startedAt: 't3' });
+      .toContainEqual({ duty: 'consultant', tag: 'consultant-spec', status: 'ready', startedAt: 't3' });
   });
 
   test('rounds run against their caps; auto-approvals carry packet headlines', ({ run }) => {
@@ -416,11 +417,11 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
 describe('renderStatus', () => {
   test('a gate stop shows the packet, the heading, and the decide-with commands', ({ run }) => {
     run.machineState = 'commitSpecGate';
-    run.phaseSummaries.spec = { summary: 'reviewer flagged the data model; fixed', artifacts: ['docs/spec.md'] };
+    run.phaseSummaries.spec = { summary: 'analyst flagged the data model; fixed', artifacts: ['docs/spec.md'] };
     const out = render(run, { kind: 'gate', phase: 'spec' });
 
     expect.soft(out).toContain('SPEC gate'); // the load-bearing tokens, not the box-drawing decoration
-    expect.soft(out).toContain('reviewer flagged the data model; fixed');
+    expect.soft(out).toContain('analyst flagged the data model; fixed');
     expect.soft(out).toContain('artifacts: docs/spec.md');
     expect.soft(out).toContain(`duet continue ${run.runId} --approve`);
     expect.soft(out).toContain(`duet continue ${run.runId} --reject "<feedback>"`);
@@ -490,12 +491,12 @@ describe('renderStatus', () => {
   test('the while-you-were-away section lists context interventions with a per-kind tally, and the brief projects them', ({ run }) => {
     run.machineState = 'shipGate';
     run.contextEvents = [
-      { kind: 'cutoff', role: 'implementer', at: '2026-07-02T03:50:00.000Z', preTokens: 870_000, windowTokens: 1_000_000 },
-      { kind: 'salvage-compact', role: 'implementer', at: '2026-07-02T03:55:00.000Z', preTokens: 900_000, windowTokens: 1_000_000 },
+      { kind: 'cutoff', voice: 'builder', at: '2026-07-02T03:50:00.000Z', preTokens: 870_000, windowTokens: 1_000_000 },
+      { kind: 'salvage-compact', voice: 'builder', at: '2026-07-02T03:55:00.000Z', preTokens: 900_000, windowTokens: 1_000_000 },
     ];
     const out = render(run, { kind: 'gate', phase: 'implement' });
     expect.soft(out).toContain('while you were away — context interventions: 2 (cutoff ×1, salvage-compact ×1):');
-    expect.soft(out).toContain(`◔ implementer cutoff at 87%  ${localStamp('2026-07-02T03:50:00.000Z')}`);
+    expect.soft(out).toContain(`◔ builder cutoff at 87%  ${localStamp('2026-07-02T03:50:00.000Z')}`);
 
     const brief = renderBrief(buildBrief(buildStatusModel(run, { kind: 'gate', phase: 'implement' }, [])));
     expect.soft(brief).toContain('context: cutoff ×1, salvage-compact ×1');
@@ -550,10 +551,10 @@ describe('renderStatus', () => {
     run.machineState = 'implementFlagWait';
     run.contextUsage = {
       orchestrator: { usedTokens: 83_000, windowTokens: 200_000, at: 't1' },
-      implementer: { usedTokens: 134_000, windowTokens: 200_000, at: 't2' },
+      builder: { usedTokens: 134_000, windowTokens: 200_000, at: 't2' },
     };
     const out = render(run, { kind: 'running', pid: 1, phase: 'implement' });
-    expect.soft(out).toContain('context:  orchestrator 42% (83k/200k) · implementer 67% (134k/200k)');
+    expect.soft(out).toContain('context:  orchestrator 42% (83k/200k) · builder 67% (134k/200k)');
 
     delete run.contextUsage;
     expect.soft(render(run, { kind: 'running', pid: 1, phase: 'implement' })).not.toContain('context:');
@@ -606,7 +607,7 @@ describe('displayState — the truthful state label (F5)', () => {
   });
 
   test('an interactive run with no machineState shows its phase, never "(not started)"', ({ projectDir }) => {
-    const interactive = createRun({ cwd: projectDir, bindings: DEFAULT_BINDINGS, framing: 'x' });
+    const interactive = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), framing: 'x' });
     interactive.orchestrationHost = 'interactive';
     const out = renderStatus(buildStatusModel(interactive, { kind: 'interactive', phase: 'frame' }, []));
     expect.soft(out).toContain('state:    frame');

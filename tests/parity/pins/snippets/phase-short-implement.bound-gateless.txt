@@ -1,0 +1,195 @@
+<snippet_library phase="implement">
+Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in workflow order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).
+<phase_templates phase="implement">
+<snippet key="implement-direct">
+Build the change directly from the research decisions we settled — those decisions are the spec here; there is no separate spec or plan document. This is small, well-understood work, so treat what follows as a lens scaled to the change, not ceremony — adapt it, drop what doesn't fit.
+
+## Read these first, then build
+Read each one and adapt it to this change — they're the bar, not optional background; don't go hunting them mid-build, and ask me for a path if one's missing.
+- `/Users/qiushi/dev/duet/lessons/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
+- `/Users/qiushi/dev/duet/lessons/testing/tdd-loop.md` — vertical slices, behavior-focused tests, mock only at boundaries, anti-patterns
+
+## Before you write code
+- **Re-read the research decisions and the cross-review notes** — they settled the direction and the target shape; execute it, don't re-decide it.
+- **Re-read the code you're about to touch** — trace the real data/control flow and the existing patterns, so the change fits what's already there.
+
+## How to build it
+
+### Slicing
+Build in **vertical slices** — one meaningful unit at a time (a behavior plus the wiring that belongs with it), each independently committable, one slice per commit. Lean larger; group related behavior rather than splitting mechanical steps into their own commits. **Prefer a shape that deletes a concept** — a branch, mode, or helper layer disappears — over one that just rearranges it. If the direction called for reshaping the foundation first (*make the change easy, then make the easy change*), do it as a **behavior-preserving** step kept green — pin uncovered code with a characterization test first — and keep it proportionate; a prep step that balloons into a rewrite is the failure mode.
+
+### Right-size the code
+The default failure here is too much code, not too little — defensive branches for cases that can't occur, and abstractions invented before the pattern is real. Build against it:
+- **Make a bad state impossible to construct, don't guard against it.** Reach for a type, a narrow constructor, or an enum an invalid value can't inhabit, over runtime guards repeated at every call site. Validate untrusted input once at the boundary so everything downstream can trust it (*parse, don't validate*); where a state genuinely can't be made unrepresentable, validate at that **one** boundary. Let a real invariant violation fail loudly — not a fallback that hides the bug, or a local defense wherever it happened to surface.
+- **Prefer a little duplication over the wrong abstraction.** Pull out a shared abstraction only when the pattern is real (around the third occurrence) and doing so *concentrates* complexity instead of just moving it (the deletion test).
+- **Build only what the decisions settled** — no speculative features, config knobs, or extensibility seams nobody asked for; each is maintenance forever.
+
+### Build on the right layer
+Choosing what to build *on* is part of the work. When a slice needs non-trivial, well-understood mechanical logic — retries/backoff, concurrency limits, parsing, date/time math — decide deliberately between the platform's own primitives, a small specialized library, and writing it yourself. Hand-rolling a solved problem wastes effort; a new dependency is maintenance forever — take the lightest option that genuinely fits. Training data lags real releases, so ground the choice in what the stack offers *now*, not memory.
+- **Prefer current stable platform primitives when they cover the need** — runtimes keep absorbing what libraries used to own (in TypeScript, `Intl` handles most date/time and number formatting without `date-fns`; native `fetch`, `structuredClone`, and `AbortController` replaced their old library equivalents). Confirm what's stable now rather than reaching for a dependency from habit.
+- **Reach for a small, specialized library when it owns a genuinely tricky problem the platform doesn't** — retry/backoff and concurrency queues are the clear wins (e.g. `p-retry`, `p-queue`). Keep it specialized: a general-purpose giant pulled in for one function (Lodash for a `groupBy`) is its own cost, and a larger framework earns its place only for the genuinely complex state it's built for.
+- **When you adopt one**, check the repo doesn't already depend on something that covers it, then **confirm its current API with Context7** and **web-search for best practices, pitfalls, the latest version, and breaking changes**, and match how nearby code already wires its dependencies.
+
+A dependency weighty enough to be an architecture decision in its own right is mine to weigh — flag it rather than committing the repo to it.
+
+### Tests
+Write each test against **real** behavior as you build its slice, not a batch up front against imagined shapes — behavior through the public interface, covering the critical paths and complex logic, not every edge case (skip UI tests unless asked). Apply red-green-refactor inside a slice when design is uncertain or behavior is subtle; test and code together is fine otherwise. Run them as you go and keep them green.
+
+If a decision turns out wrong or underspecified once you're in the code, **stop and flag it** rather than guessing your way past it.
+</snippet>
+<snippet key="handoff-direct">
+Implementation finished. Write a handoff that orients the reviewer fast — **report what changed and point them at what matters.** Ground it in the actual code and commits, not memory.
+
+This is a guided map, **not a self-review** — don't grade your own work ("correct", "clean", "well-tested"); that's the reviewer's call. Do surface where the bodies are buried.
+
+- **What & why:** the problem solved, tied back to the research decisions we settled — a line or two.
+- **Change map:** the files/modules touched, with the **load-bearing** ones marked. Skip trivial churn — the reviewer can read the diff; tell them where to start.
+- **Key decisions & tradeoffs:** judgment calls made while building, especially structural ones (a boundary drawn here, a concept collapsed there), and any alternative you weighed and rejected.
+- **Where the build diverged from the decisions:** anywhere the code went a different way than we agreed, and why. **Be candid.**
+- **Tests:** what's covered and at what altitude (behavior vs. internals), plus what you deliberately left untested and why.
+- **Where to look hardest:** the riskiest, most complex, or least-certain changes — anything you're unsure about or that fought you. This is the part that earns its keep.
+</snippet>
+<snippet key="review-direct">
+Code-review this implementation. **Read the actual code, not just commit messages.**
+
+There's no spec or plan here — the bar is the **research decisions we settled and the actual goal behind them.** Review against those, not a document.
+
+**Lens:**
+- Everything is fair game — correctness, structure, test quality, performance, readability, edge cases, pattern consistency.
+- Decisions ↔ code mismatches → flag where the build drifted from what we agreed. If a decision turns out wrong now that it's real code, say so explicitly; don't smuggle it in as a "small fix."
+
+**Evaluate:**
+- **Correctness** — bugs, edge cases, failure modes.
+- **Solves the problem** — does this achieve the goal behind the decisions, not just run?
+- **Test quality** — right altitude (behavior, not internals), covers the real cases, survives plausible refactors, uses project patterns. Flag the anti-patterns: tests of *shape* (signatures, data structures) that pass when behavior breaks, and over-testing — every edge case or internals instead of the critical paths.
+- **UX & performance** — user-facing impact, performance characteristics.
+- **Structural quality — be ambitious, not just local:** look for a reframing that deletes whole branches/helpers/modes, not just rearranges them; apply the **deletion test** to new modules (does it concentrate complexity, or just move it?) and flag **shallow** ones — a thin pass-through wrapper, an interface nearly as complex as its implementation; push ad-hoc conditionals and special cases behind their own abstraction; flag casts/`any`/`unknown` papering over unclear invariants; keep logic in its canonical module rather than leaking across boundaries. If the build did preparatory refactoring, check it stayed **behavior-preserving and proportionate** — not a rewrite smuggled in alongside the change.
+- **Right-sizing — flag over-building, the likelier failure than under-building:** defensive branches for states that can't occur, fallbacks the invariants already rule out, speculative features or config beyond the decisions, or an abstraction pulled out too early. Prefer pushing a bad state to where it's *unrepresentable* (a type, constructor, or enum) or validation to a single boundary over more error handling — and don't reflexively ask for more handling; that reflex is the slop we're avoiding.
+
+**Per issue:** severity — **critical** (blocks ship) / **moderate** (fix before ship) / **minor** (nice-to-have); a concrete fix with file/function references; no "this could be cleaner" without a concrete alternative.
+
+**Approval bar:** don't pass because it works — structural regressions and missed reframings are presumptive blockers, flag them **critical**.
+
+Implementation handoff below — a starting map, not the boundary of your review. Review the whole change against its actual goal, and actively look for what the handoff leaves out; if you only check what was surfaced, it isn't an independent review.
+
+---
+
+$0
+</snippet>
+<snippet key="apply-review">
+Reviewer feedback below. This is the one review round — there's no second pass — so resolve it here: apply the fixes directly, don't just analyze.
+
+**For each point:**
+1. **Assess validity** — honestly; don't agree just to agree.
+2. **If valid:** fix it directly in the code (your fix may be better than the one suggested — explain why if so). Simple structural improvements count — make them, don't defer them as "minor."
+3. **If you disagree:** explain from first principles why the current code is right, and leave it.
+
+**Structural feedback** — engage with the reframing the reviewer proposed; don't counter a deletion path with a narrower local patch.
+
+**Tests** — when a fix changes behavior, move the tests with it: add a test for the corrected behavior, strengthen a weak one, or delete a test the fix makes obsolete. Keep the suite green.
+
+When you're done, **report what you changed in response to the review** — the fixes you applied and any points you pushed back on, grounded in the actual commits. This review-and-fix summary travels onward to the ship review with your handoff, so it must reflect the final state of the code, not your plan for it.
+
+If a point needs my input to resolve — a real product or direction call — flag it and stop rather than guessing.
+
+---
+
+$0
+</snippet>
+<snippet key="reconcile-docs">
+The docs ship with this change — they ride the branch (and the PR, where there is one) into the shippable record. Reconcile them with what actually shipped, in one pass.
+
+**How to write the update — in order of precedence:**
+1. If this prompt names a doc-update skill or a document to follow, that is the method: read it and follow it — it's this project's authoritative guide for the rest of this update.
+2. Otherwise, look for the project's own doc-update skill (under `.claude/` or `.agents/`) and follow it if one exists.
+3. If there's no project method, reconcile by hand: **consolidate, don't patch** — fold the change into the existing prose so a senior engineer still gets the mental model, not a changelog; stay at the docs' own altitude (the *what* and *why*, never an implementation play-by-play); derive the impact from the code, and leave what still reads true (no manufactured churn).
+
+**Commit the doc changes directly**, on top of the implementation — no approval step.
+
+**One boundary stays mine:** a genuine product or design call — deleting a documented concept, rewriting a load-bearing design claim, pruning a doc the work superseded — flag it and leave it, don't decide it.
+
+**Report what you touched** when done — the docs changed, a one-line impact each, and anything you flagged for me.
+</snippet>
+</phase_templates>
+<anytime_helpers>
+<snippet key="reread-context">
+Reread the files this change touches and rebuild your mental model from the actual code, not memory — trace the real data/control flow, note existing constraints, and find the seams the work will build on. **No code yet.**
+</snippet>
+<snippet key="recover-context">
+Your prior session was compacted unsuccessfully and reset, so you're in a fresh session with no memory of this run. Re-anchor before any work — this is a post-compact recovery from an empty session, not a routine reread of code you still hold in context: there's no prior context to lean on, so the orientation below has to carry the whole picture.
+
+Orient from what's actually on disk and in git — fill each in concretely:
+- What we're building: the change in a sentence or two, and where the authoritative design lives (the committed spec/plan, or the research decisions).
+- What's committed and green: the work that already landed and passes tests, so you don't redo it.
+- What's left: the next unit of work, plus any uncommitted in-flight edits.
+- The load-bearing seams and files: the modules this change turns on, so you reread the right code first.
+
+Then reread those files and rebuild your mental model from the actual code, not the summary — trace the real data and control flow and the constraints in play. No code yet: re-anchor first, then pick the work up from where it actually stands.
+</snippet>
+<snippet key="compact-inflight">
+/compact This compaction lands mid-work — the same task continues in this session immediately after it, so compact for **continuing**, not for a stage transition: keep the work's live state, drop the journey.
+
+**Preserve:**
+- The work in flight and its exact state: what's in progress, files mid-edit, the next intended step.
+- Every decision already made, with its reason.
+- The concrete repo facts in use: paths, commands, test state, the working branch.
+
+**Drop or summarize:**
+- The exploration journey, superseded drafts, and old tool output — keep conclusions, not the path.
+
+The committed artifacts survive on disk — cite their paths rather than restating them.
+
+</snippet>
+<snippet key="commits-summary">
+Commits summary for high-level context — what changed and why. **Don't review commit-by-commit;** review the current state of the codebase as a whole, with these commits as context.
+</snippet>
+<snippet key="find-similar-bugs">
+Bug just fixed. Before committing, sweep the codebase for other places likely to have the same pattern — same assumption, same missing check.
+
+**Per candidate:**
+- file + brief description
+- why same class of bug
+- confidence (high / medium / low)
+
+**Don't fix yet** — just enumerate. We'll decide what to address.
+</snippet>
+<snippet key="list-assumptions">
+List every non-trivial assumption you're making — about the data, system state, my actual intent, failure modes, or what "done" looks like.
+
+**Group as:**
+- **Verified** — confirmed from code or my message
+- **Likely** — reasonable inference, unconfirmed
+- **Speculative** — guessing
+
+Flag the speculative ones as questions for me before proceeding.
+</snippet>
+<snippet key="trace-execution">
+Walk through this code step-by-step as if you were the runtime. **Per step:**
+- variable values
+- which branch is taken and why
+- what gets called, with what arguments
+
+Use a concrete example input. **Stop and flag the moment behavior diverges from intent.** Don't summarize — actually trace.
+</snippet>
+<snippet key="smart-adapt-skills">
+References are **general best practices, not prescriptions**. Evaluate each suggestion against our codebase, architecture, and constraints before applying — **discard what doesn't fit, adapt what does**.
+
+Can't find a referenced skill? Tell me immediately for the exact path. **Don't search for it yourself.**
+</snippet>
+<snippet key="technical-difficulty">
+**Don't measure technical difficulty by lines changed.** Instead, consider:
+- complexity of the problem being solved
+- number of components affected
+- potential for unintended consequences
+- level of uncertainty involved
+
+**Most importantly:** does this solve the core UX problem while maintaining a clean technical design?
+</snippet>
+</anytime_helpers>
+<coming_next note="the workflow’s nominal order — gate rejects loop back and pre-authorized gates skip the stop; orientation for forward-looking work, not a cue to reach ahead">
+<phase name="finish">pr-description, compact-for-cleanup</phase>
+</coming_next>
+<already_done>
+<phase name="research">think-holistic, compare-notes, consultant-frame</phase>
+</already_done>
+</snippet_library>

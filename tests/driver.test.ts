@@ -2,20 +2,20 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, onTestFinished, vi } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import { buildOrchestratorOptions, runPhase } from '../src/harness/driver.ts';
-import type { RunOrchestratorTurn } from '../src/harness/driver.ts';
+import { buildOrchestratorOptions, runPhase } from '../src/orchestrator/hosts/driver.ts';
+import type { RunOrchestratorTurn } from '../src/orchestrator/hosts/driver.ts';
 import { claudeApiError, claudeAssistantText, jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
 import {
   ORCHESTRATOR_SYSTEM_PROMPT,
   buildPhaseBrief,
   feedbackResumePrompt,
-} from '../src/harness/orchestrator-prompts.ts';
-import { DEFAULT_BINDINGS } from '../src/config.ts';
-import { phasesOf } from '../src/phases.ts';
-import type { WorkflowName } from '../src/phases.ts';
-import { budgetFor, createRun, loadRunState, saveRunState } from '../src/run-store.ts';
-import type { RunState } from '../src/run-store.ts';
-import { listPendingSteers, stageSteer } from '../src/steer-store.ts';
+} from '../src/orchestrator/briefs.ts';
+import { defaultBindingsFor } from '../src/voices/bindings.ts';
+import { WORKFLOWS, phasesOf } from '../src/registry/workflows.ts';
+import type { WorkflowName } from '../src/registry/workflows.ts';
+import { budgetFor, createRun, loadRunState, saveRunState } from '../src/run/store.ts';
+import type { RunState } from '../src/run/store.ts';
+import { listPendingSteers, stageSteer } from '../src/run/steers.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**
@@ -74,23 +74,27 @@ const quiesce = (cwd: string, runId: string): void => {
 // run's own workflow (phase identity is workflow-scoped), so a brief must be
 // built against a run of that phase's arc.
 const runOf = (cwd: string, workflow: WorkflowName): RunState =>
-  createRun({ cwd, bindings: DEFAULT_BINDINGS, framing: 'test framing', workflow });
+  createRun({ cwd, bindings: defaultBindingsFor(workflow), framing: 'test framing', workflow });
 
 describe('buildPhaseBrief (the shared entry-prompt renderer — headless parity)', () => {
   // The rendered briefs themselves are pinned byte-identical by the parity
   // harness (tests/parity/briefs.test.ts); here the guard is coverage — a
   // phase whose semantics reach a stub or throwing render path surfaces here.
   // Each phase is built against a run of its own arc.
-  test.for([
-    ...phasesOf('full').map((p) => ['full', p.name] as const),
-    ...phasesOf('design').map((p) => ['design', p.name] as const),
-    ...phasesOf('rir').map((p) => ['rir', p.name] as const),
-  ])('%s builds a non-empty brief', ([workflow, phase], { projectDir }) => {
+  // Derived from the registry, never a hand list: a new workflow's phases get
+  // render coverage the same commit they ship (a missing brief-data record —
+  // the Partial<Record<ExamplesKey, …>> maps throw at render — fails here in
+  // seconds instead of at a run's first get_task).
+  test.for(
+    (Object.keys(WORKFLOWS) as WorkflowName[]).flatMap((workflow) =>
+      phasesOf(workflow).map((p) => [workflow, p.name] as const),
+    ),
+  )('%s builds a non-empty brief', ([workflow, phase], { projectDir }) => {
     expect(buildPhaseBrief(runOf(projectDir, workflow), phase).trim().length).toBeGreaterThan(0);
   });
 
   test('the design-arc briefs anchor on the design doc — no plan vocabulary reaches a design-arc worker prompt', ({ projectDir }) => {
-    const design = runOf(projectDir, 'design');
+    const design = runOf(projectDir, 'blueprint');
     const designBrief = buildPhaseBrief(design, 'design');
     expect.soft(designBrief).toContain('write-design');
     expect.soft(designBrief).toContain('review-design');
@@ -102,7 +106,34 @@ describe('buildPhaseBrief (the shared entry-prompt renderer — headless parity)
     expect.soft(implBrief).toContain('implement-design');
     expect.soft(implBrief).toContain('commit the approved design doc');
     expect.soft(implBrief).not.toContain('plan file');
-    expect.soft(implBrief).not.toContain('the whole plan');
+    // "implement the whole plan" is full's build step; "the whole planning
+    // stage" (blueprint's compaction anchor) is stage vocabulary and fine.
+    expect.soft(implBrief).not.toContain('implement the whole plan');
+  });
+
+  test('a DEGRADED continuity edge adapts the build ritual — seed from the committed artifacts, never /compact a session the builder does not have', ({
+    projectDir,
+  }) => {
+    // full plans on claude (architect) and builds on codex (builder): the
+    // builder←architect edge degraded at manifest freeze, so the brief must
+    // speak to a FRESH builder — a cold commit prompt and an artifact seed —
+    // instead of claiming it "still holds" the planning session.
+    const base = defaultBindingsFor('full');
+    const crossed = createRun({
+      cwd: projectDir,
+      workflow: 'full',
+      framing: 'test framing',
+      bindings: { ...base, duties: { ...base.duties, builder: { provider: 'codex' } } },
+    });
+    const brief = buildPhaseBrief(crossed, 'implement');
+    expect.soft(brief).toContain('fresh session');
+    expect.soft(brief).toContain('this first prompt reads cold');
+    expect.soft(brief).not.toContain('still holds');
+    expect.soft(brief).not.toContain('compact-for-impl'); // no boundary compact on a session that never existed
+    // The LIVE edge (default all-claude bindings) keeps the compaction ritual.
+    const live = buildPhaseBrief(runOf(projectDir, 'full'), 'implement');
+    expect.soft(live).toContain('compact-for-impl');
+    expect.soft(live).toContain('still holds');
   });
 
   // The two load-bearing contracts of the shared openPr brief (full's finish,
@@ -112,7 +143,7 @@ describe('buildPhaseBrief (the shared entry-prompt renderer — headless parity)
   // — and the `Verification (pending)` checklist that carries the env-verify
   // reminder onto a PR opened after an auto-crossed Ship gate. (The old literal
   // tests pinned the surrounding prose and were brittle; these pin the contract.)
-  test.for([['full', 'finish'], ['design', 'finish'], ['rir', 'finish']] as const)(
+  test.for([['full', 'finish'], ['blueprint', 'finish'], ['short', 'finish']] as const)(
     '%s opens the PR idempotently and leads with the verification checklist',
     ([workflow, phase], { projectDir }) => {
       const brief = buildPhaseBrief(runOf(projectDir, workflow), phase);
@@ -133,7 +164,7 @@ describe('feedbackResumePrompt — the human feedback reaches the worker', () =>
   // that re-pinning was the brittleness the old literal tests carried.
   test.for([
     ['full', 'spec'], ['full', 'plan'], ['full', 'implement'], ['full', 'finish'],
-    ['rir', 'research'], ['rir', 'implement'], ['rir', 'finish'],
+    ['short', 'research'], ['short', 'implement'], ['short', 'finish'],
   ] as const)(
     '%s carries the human feedback verbatim',
     ([workflow, phase]) => {
@@ -155,8 +186,10 @@ describe('the orchestrator system prompt is arc-neutral', () => {
     // The loop discipline is not weakened — review-*/update-*/respond-*/-again still taught.
     expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('update-*');
     expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).toContain('-again');
-    // No arc names in the always-on prompt — arcs live in the registry and briefs.
-    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT.toLowerCase()).not.toContain('rir');
+    // No workflow names in the always-on prompt — workflows live in the
+    // registry and briefs. ("short" and "relay" are unpinnable as words —
+    // plain English — so the distinctive name stands in for the check.)
+    expect.soft(ORCHESTRATOR_SYSTEM_PROMPT.toLowerCase()).not.toContain('blueprint');
     expect.soft(ORCHESTRATOR_SYSTEM_PROMPT).not.toContain('spec and plan loops');
   });
 });
@@ -839,7 +872,7 @@ describe('provider-agnostic onboarding — workers get document paths, not slash
     // research is a rir phase — build it against a rir run (the brief resolves its
     // consultant snippet against the run's own arc).
     const frame = buildPhaseBrief(run, 'frame');
-    const research = buildPhaseBrief(runOf(projectDir, 'rir'), 'research');
+    const research = buildPhaseBrief(runOf(projectDir, 'short'), 'research');
     const finish = buildPhaseBrief(run, 'finish');
 
     for (const p of [frame, research, finish]) {
@@ -856,7 +889,7 @@ describe('provider-agnostic onboarding — workers get document paths, not slash
     // what the framing named, and a doc-scope product call still surfaces via
     // ask_human. finish is now PR-only and no longer carries this text.
     const fullImplement = buildPhaseBrief(run, 'implement');
-    const rirImplement = buildPhaseBrief(runOf(projectDir, 'rir'), 'implement');
+    const rirImplement = buildPhaseBrief(runOf(projectDir, 'short'), 'implement');
     for (const impl of [fullImplement, rirImplement]) {
       expect.soft(impl).toContain('path or skill faithfully');
       expect.soft(impl).toMatch(/doc-scope product call[\s\S]*ask_human/);

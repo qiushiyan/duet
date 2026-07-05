@@ -11,7 +11,7 @@
  * lands HERE plus the matching predicate in src/providers/interactive-claude.ts.
  */
 
-import { turnMarker } from '../../src/providers/interactive-claude.ts';
+import { turnMarker } from '../../src/voices/providers/interactive-claude.ts';
 
 export interface TranscriptRecord {
   type: string;

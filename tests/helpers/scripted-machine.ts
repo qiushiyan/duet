@@ -1,9 +1,9 @@
 import { fromCallback } from 'xstate';
 import type { EventObject } from 'xstate';
-import type { PhaseInput } from '../../src/harness/host-runner.ts';
-import type { PhaseEvent } from '../../src/harness/phase-events.ts';
-import { duetMachine, machineFor } from '../../src/harness/machine.ts';
-import type { WorkflowName } from '../../src/phases.ts';
+import type { PhaseInput } from '../../src/orchestrator/hosts/host-runner.ts';
+import type { PhaseEvent } from '../../src/run/phase-events.ts';
+import { duetMachine, machineFor } from '../../src/run/machine.ts';
+import type { WorkflowName } from '../../src/registry/workflows.ts';
 
 /**
  * A workflow's machine with its phase driver scripted instead of running an LLM

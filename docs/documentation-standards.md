@@ -13,7 +13,7 @@ CLAUDE.md                       always-loaded mental model + conventions; the do
 README.md                       orientation + the verified-vs-not status line
 snippets/                       the orchestrator's snippet library, block-named files
 docs/
-  automation-design.md          THE design — roles, layers, phases/gates, triage, policy
+  automation-design.md          THE design — voices, layers, stages/phases/gates, triage, policy
   engineering.md                the codebase mental model — module map, seams, patterns
   prompting-and-tool-design.md  the binding prompt/tool conventions
   workflow-model.md             the abstracted snippet protocol
@@ -81,7 +81,7 @@ These already govern the repo (`CLAUDE.md` §Conventions); they bind doc work to
 - The decisions and their *why* — what was chosen over what, and the cost.
 - Module relationships and boundaries; behavioral flows in prose or pseudo-code.
 - The load-bearing invariants a new contributor would otherwise violate.
-- One-line file pointers ("the statechart: `src/harness/machine.ts`") — never the contents.
+- One-line file pointers ("the statechart: `src/run/machine.ts`") — never the contents.
 - Directory structures as an indented tree — indentation under a directory name, not a repeated full path per file:
 
   ```
@@ -100,7 +100,7 @@ The reader is a senior engineer who *will* read the code. A doc that re-lists wh
 - **A table row is earned, not automatic.** A new interface is not a reason for a new row. Add one only when the reader needs that item to navigate the system; fold a secondary change into an existing entry instead of growing the table. The reflex "new thing → new row" is what bloats a module map.
 - **No live counts.** Don't write "there are seven seams" or "the five rules." A cardinal number is a maintenance tax that silently rots — one already had ("seven seams" in one doc, "five" in another) — and a senior engineer never navigates by it. Name the few that matter; the count is the code's to know.
 
-When cutting leaves a flow or relationship that prose traces clumsily, **draw it** instead — an indented tree, an arrow chain (`marker → markerToEvent → phase.*`), a short sequence sketch. A diagram scanned in two seconds beats a 60-word sentence threading the same path (`engineering.md`'s trust-gradient sketch and the `phases.ts` header arc are the models in-repo).
+When cutting leaves a flow or relationship that prose traces clumsily, **draw it** instead — an indented tree, an arrow chain (`marker → markerToEvent → phase.*`), a short sequence sketch. A diagram scanned in two seconds beats a 60-word sentence threading the same path (`engineering.md`'s trust-gradient sketch and the `registry/workflows.ts` header diagram are the models in-repo).
 
 ## Consolidation principles
 
@@ -141,7 +141,7 @@ The repo ships user-facing skills under `skills/` (distinct from the dev-time `.
 
 **The trigger is a user-facing capability, not a prose change.** When a change adds or alters one — a `duet new` flag, a setup or gate-posture choice, a run-management verb — ask whether duet-frame should *surface* it (a new setup choice the user makes before launch) or duet-concierge should *relay or read* it (a new verb, or a changed run shape its supervision reports). A feature can add a flag without touching a single `.md`, so a diff-of-docs mindset misses these; make the capability the trigger, caught while reading the diff, not an afterthought.
 
-**`tests/skill.test.ts` guards coherence, not completeness.** It pins every verb and flag a skill *names* to the live CLI, so a rename fails in five seconds — but it cannot tell you a skill *should* name a capability it currently omits. A green skill test is not evidence the skills are current; the completeness call is the maintainer's. (Worked example: the consultant's `--consultant` flag shipped while duet-frame silently stopped covering a setup choice users now have, and the skill test stayed green throughout.)
+**`tests/skill.test.ts` guards coherence, not completeness.** It pins every verb and flag a skill *names* to the live CLI, so a rename fails in five seconds — but it cannot tell you a skill *should* name a capability it currently omits. A green skill test is not evidence the skills are current; the completeness call is the maintainer's. (Worked example: the consultant's `--consultant` flag shipped while duet-frame silently stopped covering a setup choice users now have, and the skill test stayed green throughout.) One surface gets a stronger guarantee: duet-frame's worked manifest examples (`references/manifest-examples.md`) are *executed* against the real framing grammar and freeze — so an example edit lands with its executable pins, and a grammar change surfaces there mechanically rather than by review.
 
 ## Maintenance cadence
 

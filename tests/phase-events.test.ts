@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { markerToEvent } from '../src/harness/phase-events.ts';
+import { markerToEvent } from '../src/run/phase-events.ts';
 
 /**
  * The pure read-side of the cross-process terminal channel. The phase guard is

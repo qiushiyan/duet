@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
-import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, UNLISTED_SNIPPETS, WORKFLOWS, consultantSnippetFor, phasesOf } from '../src/phases.ts';
-import { ACTION_CATALOG } from '../src/roles.ts';
-import type { WorkflowName } from '../src/phases.ts';
+import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, UNLISTED_SNIPPETS, WORKFLOWS, consultantSnippetFor, phasesOf } from '../src/registry/workflows.ts';
+import { ACTION_CATALOG } from '../src/voices/policy.ts';
+import type { WorkflowName } from '../src/registry/workflows.ts';
 import {
   LESSONS_DIR,
   getEffectiveSnippet,
@@ -14,8 +14,8 @@ import {
   mergeSnippetLayers,
   renderSnippetLibrary,
   runtimeLibraryContext,
-} from '../src/snippets.ts';
-import type { Snippet, SnippetOverrideLayer, SnippetRenderOpts } from '../src/snippets.ts';
+} from '../src/orchestrator/library.ts';
+import type { Snippet, SnippetOverrideLayer, SnippetRenderOpts } from '../src/orchestrator/library.ts';
 
 const WORKFLOW_NAMES = Object.keys(WORKFLOWS) as WorkflowName[];
 
@@ -104,7 +104,7 @@ describe('the snippet library', () => {
   });
 
   test('carries the templates the orchestrator prompts name', () => {
-    // Entry prompts reference these by name (src/harness/orchestrator-prompts.ts);
+    // Entry prompts reference these by name (src/orchestrator/briefs.ts);
     // a library missing them would strand the orchestrator mid-phase.
     for (const key of [
       'think-holistic',
@@ -275,8 +275,8 @@ describe('the snippet library', () => {
       if (!key.startsWith('review')) continue;
       expect.soft(ACTION_CATALOG[key], `review-family snippet "${key}" is not in the action catalog`).toBeDefined();
     }
-    expect.soft(consultantSnippetFor('rir', 'research')).toBe('consultant-frame');
-    expect.soft(consultantSnippetFor('rir', 'implement')).toBe('consultant-impl');
+    expect.soft(consultantSnippetFor('short', 'research')).toBe('consultant-frame');
+    expect.soft(consultantSnippetFor('short', 'implement')).toBe('consultant-impl');
     expect.soft(consultantSnippetFor('full', 'finish'), 'finish carries no consultant checkpoint').toBeUndefined();
   });
 
@@ -342,12 +342,12 @@ describe('the snippet library', () => {
     // Phase identity is workflow-scoped now (both arcs share `implement`/`finish`),
     // so a phase alone can't resolve its arc. The render throws at the one boundary
     // rather than guessing an arc (the real caller, list_snippets, always supplies
-    // workflowOf(state)); rendering a phase against its actual arc is covered below.
+    // state.workflow); rendering a phase against its actual arc is covered below.
     expect(() => renderSnippetLibrary({ phase: 'research' })).toThrow(/needs the run workflow/);
   });
 
   test('the phase-grouped view renders a RIR phase against the RIR arc', () => {
-    const rendered = renderSnippetLibrary({ phase: 'research', workflow: 'rir' });
+    const rendered = renderSnippetLibrary({ phase: 'research', workflow: 'short' });
     expect.soft(rendered.startsWith('<snippet_library phase="research">')).toBe(true);
     // anytime helper, in full
     expect.soft(rendered).toContain('<snippet key="reread-context">');
@@ -437,7 +437,7 @@ describe('the snippet library', () => {
     });
 
     test('bound: a RIR phase shows only its arc’s checkpoints (no spec checkpoint — RIR has no spec)', () => {
-      const atResearch = renderSnippetLibrary({ phase: 'research', workflow: 'rir', consultantBound: true });
+      const atResearch = renderSnippetLibrary({ phase: 'research', workflow: 'short', consultantBound: true });
       expect.soft(atResearch).toContain('<snippet key="consultant-frame">'); // research owns frame mode
       expect.soft(atResearch).toContain('consultant-impl'); // implement owns implGate → indexed
       expect.soft(atResearch).not.toContain('consultant-spec'); // RIR has no spec checkpoint
@@ -659,7 +659,7 @@ describe('byte-for-byte identity — no override files ⇒ today’s served libr
     ['all=true', { all: true }],
     ['phase: spec', { phase: 'spec', workflow: 'full' }],
     ['phase: plan / full', { phase: 'plan', workflow: 'full' }],
-    ['phase: research / rir', { phase: 'research', workflow: 'rir' }],
+    ['phase: research / rir', { phase: 'research', workflow: 'short' }],
     ['phase: impl / full + all', { phase: 'implement', workflow: 'full', all: true }],
     ['consultant-bound, frame, all', { phase: 'frame', workflow: 'full', consultantBound: true, all: true }],
   ])('%s renders identically with an empty libraryContext', ([, opts]) => {

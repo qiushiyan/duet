@@ -3,10 +3,11 @@ import { dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Command } from 'commander';
 import { describe, expect, test } from 'vitest';
-import { program } from '../src/cli.ts';
-import { FRAMING_TEMPLATE } from '../src/framing.ts';
-import { IDENTITY_PATH } from '../src/orchestrate.ts';
-import { WORKFLOWS } from '../src/phases.ts';
+import { program } from '../src/surfaces/cli.ts';
+import { FRAMING_TEMPLATE, parseFramingFile } from '../src/surfaces/framing.ts';
+import { DEFAULT_CLAUDE_MODEL, resolveRunConfig } from '../src/voices/bindings.ts';
+import { IDENTITY_PATH } from '../src/orchestrator/hosts/orchestrate.ts';
+import { WORKFLOWS } from '../src/registry/workflows.ts';
 
 /**
  * Coherence guard for the shipped concierge skill (skills/duet-concierge/):
@@ -41,14 +42,14 @@ function frontmatterOf(markdown: string): Record<string, string> {
   return fields;
 }
 
-describe('the consultant flags exist on the command table', () => {
-  // The optional consultant is enabled per-run via `duet new --consultant` /
-  // disabled via `--no-consultant`. Pin both onto the real command table so a
-  // rename fails here, not at run time (the generic doc-scan guards below only
-  // cover flags the shipped skill docs name).
-  test('duet new advertises --consultant and --no-consultant', () => {
+describe('the binding flags exist on the command table', () => {
+  // Voices bind per-run via the repeatable `duet new --bind <duty>=<spec>`;
+  // `--no-consultant` disables a config-bound consultant. Pin both onto the
+  // real command table so a rename fails here, not at run time (the generic
+  // doc-scan guards below only cover flags the shipped skill docs name).
+  test('duet new advertises --bind and --no-consultant', () => {
     const longs = new Set((publicCommands.get('new')?.options ?? []).map((o) => o.long));
-    expect.soft(longs.has('--consultant')).toBe(true);
+    expect.soft(longs.has('--bind')).toBe(true);
     expect.soft(longs.has('--no-consultant')).toBe(true);
   });
 });
@@ -110,8 +111,8 @@ describe('the duet-concierge skill coheres with the CLI', () => {
     // also pinned to exist on `duet new` by the per-file verb/flag guard above.
     expect.soft(markdown).toContain('--workflow');
     expect.soft(markdown).toContain('workflow:'); // the framing frontmatter key
-    expect.soft(markdown.toLowerCase()).toContain('rir');
-    expect.soft(markdown.toLowerCase()).toContain('design'); // the middle arc
+    expect.soft(markdown.toLowerCase()).toContain('short');
+    expect.soft(markdown.toLowerCase()).toContain('blueprint'); // the middle workflow
     expect.soft(markdown).toContain('afk'); // the walk-away preset
   });
 });
@@ -183,6 +184,7 @@ describe('the duet orchestrator identity coheres with the CLI', () => {
 
 const duetFrameDir = new URL('../skills/duet-frame/', import.meta.url);
 const duetFrameMd = readFileSync(new URL('SKILL.md', duetFrameDir), 'utf8');
+const frameExamplesMd = readFileSync(new URL('references/manifest-examples.md', duetFrameDir), 'utf8');
 
 describe('the duet-frame skill coheres with the CLI', () => {
   test('SKILL.md frontmatter names the skill and is explicit-invocation only', () => {
@@ -194,9 +196,9 @@ describe('the duet-frame skill coheres with the CLI', () => {
     expect.soft(fm['disable-model-invocation']).toBe('true');
   });
 
-  test('every duet verb and flag named in SKILL.md exists on the CLI', () => {
+  test('every duet verb and flag named in SKILL.md and the manifest examples exists on the CLI', () => {
     expect.hasAssertions();
-    for (const line of codeLines(duetFrameMd)) {
+    for (const line of [duetFrameMd, frameExamplesMd].flatMap(codeLines)) {
       const verbs = [...line.matchAll(/\bduet\s+([a-z_]+)/g)].map((m) => m[1]!);
       if (verbs.length === 0) continue;
 
@@ -215,14 +217,74 @@ describe('the duet-frame skill coheres with the CLI', () => {
   });
 
   test('the framing author picks the workflow and emits the --workflow selector', () => {
-    // Slice 7: duet-frame settles the arc and emits it; --workflow must be a
-    // real flag of `duet new`, and the skill must name every arc so the author
+    // duet-frame settles the workflow and emits it; --workflow must be a real
+    // flag of `duet new`, and the skill must name every workflow so the author
     // can choose between them.
     expect.soft(duetFrameMd).toContain('--workflow');
     expect.soft(publicCommands.get('new')?.options.some((o) => o.long === '--workflow')).toBe(true);
-    expect.soft(duetFrameMd.toLowerCase()).toContain('rir');
-    expect.soft(duetFrameMd).toContain('`design`'); // the middle arc, named as a choosable workflow
+    expect.soft(duetFrameMd.toLowerCase()).toContain('short');
+    expect.soft(duetFrameMd).toContain('`blueprint`'); // the middle workflow, named as choosable
+    expect.soft(duetFrameMd).toContain('`relay`'); // the criss-crossed delivery, with its bind.* economy
+    expect.soft(duetFrameMd).toContain('bind.'); // the frontmatter binding grammar the author records
     expect.soft(duetFrameMd).toContain('afk'); // the walk-away preset
+    // The worked intent→manifest translations live in the reference; the skill
+    // must route the author there before any frontmatter is written.
+    expect.soft(duetFrameMd).toContain('references/manifest-examples.md');
+  });
+});
+
+describe('the duet-frame manifest examples are EXECUTABLE — parsed by the real grammar', () => {
+  // Each ```framing fence in the reference is a complete file the skill might
+  // emit. Static examples rot when the grammar moves, so every one runs through
+  // the REAL parser (and the binds through the real freeze) — a grammar change
+  // breaks the examples here in five seconds, not in a user's first
+  // post-change framing. The per-example assertions pin the CLAIMS each
+  // example's prose makes about its manifest, especially the omissions
+  // ("omission is part of the grammar" is only teachable if the omitted keys
+  // really do stay absent).
+  const framings = [...frameExamplesMd.matchAll(/```framing\n([\s\S]*?)```/g)].map((m) => m[1]!);
+  // A path that exists on no machine: the freeze must resolve from the example
+  // alone, never from the developer's own ~/.config/duet/config.toml.
+  const noConfig = '/nonexistent/duet-skill-test-config.toml';
+
+  test('the reference carries the four worked examples', () => {
+    expect(framings).toHaveLength(4);
+  });
+
+  test('1 · the floor: `short`, every other key omitted', () => {
+    const { meta, body } = parseFramingFile(framings[0]!);
+    expect.soft(meta).toEqual({ workflow: 'short' }); // the omissions ARE the example
+    expect.soft(body).toContain('# Problem'); // prose is the substance; the manifest rides along
+  });
+
+  test('2 · the one-interruption blueprint: the default posture speaks by omission', () => {
+    const { meta } = parseFramingFile(framings[1]!);
+    expect.soft(meta).toEqual({ workflow: 'blueprint' }); // no gates_at — attend-design-only is the default
+  });
+
+  test('3 · the standard relay: the criss-cross binds freeze exactly as the prose claims', () => {
+    const { meta } = parseFramingFile(framings[2]!);
+    expect.soft(meta.workflow).toBe('relay');
+    expect.soft(meta.binds).toEqual({ builder: 'codex', judge: 'claude:claude-fable-5' });
+    const { bindings, degradedEdges } = resolveRunConfig({ workflow: 'relay', framingBinds: meta.binds }, noConfig);
+    expect.soft(bindings.duties['builder']).toEqual({ provider: 'codex' });
+    expect.soft(bindings.duties['judge']).toEqual({ provider: 'claude', model: 'claude-fable-5', transport: 'headless' });
+    // The omission claim: planning stays on the shipped defaults.
+    expect.soft(bindings.duties['architect']).toEqual({ provider: 'claude', model: DEFAULT_CLAUDE_MODEL, transport: 'headless' });
+    expect.soft(bindings.duties['analyst']).toEqual({ provider: 'codex' });
+    // "costs nothing in session continuity": relay declares no edges, so the
+    // cross-provider pair degrades nothing.
+    expect.soft(degradedEdges).toEqual([]);
+  });
+
+  test('4 · the gateless full-send: bind.consultant alone implies on, and the posture key stands alone', () => {
+    const { meta } = parseFramingFile(framings[3]!);
+    expect.soft(meta.workflow).toBe('blueprint');
+    expect.soft(meta.gateless).toBe(true);
+    expect.soft(meta.gatesAt).toBeUndefined(); // gateless answers the posture question by itself
+    expect.soft(meta.binds).toEqual({ consultant: 'claude' });
+    const { bindings } = resolveRunConfig({ workflow: 'blueprint', framingBinds: meta.binds }, noConfig);
+    expect.soft(bindings.consultant).toEqual({ provider: 'claude', model: DEFAULT_CLAUDE_MODEL, transport: 'headless' });
   });
 });
 
@@ -263,7 +325,7 @@ describe('no CLI help / template copy carries a Full-only-arc claim', () => {
       const lower = text.toLowerCase();
       for (const marker of FULL_ONLY_MARKERS) {
         if (lower.includes(marker.toLowerCase())) {
-          expect.soft(lower, `"${label}" carries Full-only copy "${marker}" without naming rir`).toContain('rir');
+          expect.soft(lower, `"${label}" carries Full-only copy "${marker}" without naming rir`).toContain('short');
         }
       }
     }
@@ -279,6 +341,7 @@ describe('no CLI help / template copy carries a Full-only-arc claim', () => {
       ...cliCopyStrings(),
       { label: 'framing seed template', text: FRAMING_TEMPLATE },
       { label: 'duet-frame SKILL.md', text: duetFrameMd },
+      { label: 'duet-frame manifest-examples.md', text: frameExamplesMd },
       { label: 'concierge SKILL.md', text: skillMd },
       { label: 'concierge cli-reference.md', text: referenceMd },
     ];
@@ -295,25 +358,25 @@ describe('no CLI help / template copy carries a Full-only-arc claim', () => {
     const opt = (cmd: string, long: string) =>
       (publicCommands.get(cmd)?.options.find((o) => o.long === long)?.description ?? '').toLowerCase();
     // --gates-at: every arc's presets, including the walk-away afk.
-    expect.soft(opt('new', '--gates-at')).toContain('rir');
+    expect.soft(opt('new', '--gates-at')).toContain('short');
     expect.soft(opt('new', '--gates-at')).toContain('design');
     expect.soft(opt('new', '--gates-at')).toContain('afk');
     // --interactive and orchestrate: the handoff gate per arc.
-    expect.soft(opt('new', '--interactive')).toContain('rir');
+    expect.soft(opt('new', '--interactive')).toContain('short');
     expect.soft(opt('new', '--interactive')).toContain('design');
-    expect.soft(publicCommands.get('orchestrate')?.description().toLowerCase()).toContain('rir');
+    expect.soft(publicCommands.get('orchestrate')?.description().toLowerCase()).toContain('short');
     expect.soft(publicCommands.get('orchestrate')?.description().toLowerCase()).toContain('design');
   });
 
-  test('the framing template seed names every arc (workflow:, design, rir, afk)', () => {
+  test('the framing template seed names every workflow (workflow:, blueprint, short, afk)', () => {
     expect.soft(FRAMING_TEMPLATE).toContain('workflow:');
-    expect.soft(FRAMING_TEMPLATE.toLowerCase()).toContain('rir');
-    expect.soft(FRAMING_TEMPLATE.toLowerCase()).toContain('design:');
+    expect.soft(FRAMING_TEMPLATE.toLowerCase()).toContain('short:');
+    expect.soft(FRAMING_TEMPLATE.toLowerCase()).toContain('blueprint:');
     expect.soft(FRAMING_TEMPLATE).toContain('afk');
     // No Full-only-arc claim survives in the seed.
     for (const marker of FULL_ONLY_MARKERS) {
       if (FRAMING_TEMPLATE.toLowerCase().includes(marker.toLowerCase())) {
-        expect.soft(FRAMING_TEMPLATE.toLowerCase(), `template carries "${marker}" without rir`).toContain('rir');
+        expect.soft(FRAMING_TEMPLATE.toLowerCase(), `template carries "${marker}" without rir`).toContain('short');
       }
     }
   });

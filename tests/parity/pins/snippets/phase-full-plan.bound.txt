@@ -1,5 +1,5 @@
 <snippet_library phase="plan">
-Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in arc order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).
+Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in workflow order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).
 <phase_templates phase="plan">
 <snippet key="start-plan">
 Plan the implementation as vertical slices against the latest spec — reread the spec first.
@@ -219,7 +219,7 @@ Can't find a referenced skill? Tell me immediately for the exact path. **Don't s
 **Most importantly:** does this solve the core UX problem while maintaining a clean technical design?
 </snippet>
 </anytime_helpers>
-<coming_next note="the nominal arc — gate rejects loop back and pre-authorized gates skip the stop; orientation for forward-looking work, not a cue to reach ahead">
+<coming_next note="the workflow’s nominal order — gate rejects loop back and pre-authorized gates skip the stop; orientation for forward-looking work, not a cue to reach ahead">
 <phase name="implement">compact-for-impl, midpoint-status, review-midpoint, respond-midpoint, compact-for-review, implementation-handoff, review-implementation, respond-review, review-implementation-again, respond-review-again, reconcile-docs, ceo-summary, consultant-verify</phase>
 <phase name="finish">pr-description, compact-for-cleanup</phase>
 </coming_next>

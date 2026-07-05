@@ -1,8 +1,8 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect } from 'vitest';
-import { program, stageContinueText } from '../src/cli.ts';
-import { loadRunState, saveRunState } from '../src/run-store.ts';
+import { program, stageContinueText } from '../src/surfaces/cli.ts';
+import { loadRunState, saveRunState } from '../src/run/store.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**
@@ -89,7 +89,7 @@ describe('stageContinueText — file and stdin forms relay verbatim', () => {
   });
 
   test('--answer-file relays the answer verbatim', async ({ projectDir, run }) => {
-    const verbatim = 'use the codex reviewer — it already has the rollout context';
+    const verbatim = 'use the codex analyst — it already has the rollout context';
     const path = join(projectDir, 'answer.md');
     writeFileSync(path, verbatim);
     await stageContinueText(run, { answerFile: path }, { isTTY: false });
@@ -149,11 +149,11 @@ describe('takeover — resolving an interrupted (orphaned) turn', () => {
     process.chdir(projectDir);
     try {
       // An orphan with no captured session id (its turn died before settle).
-      run.pendingTurns = { reviewer: { tag: 'review-spec', startedAt: 't', status: 'running' } };
+      run.pendingTurns = { analyst: { tag: 'review-spec', startedAt: 't', status: 'running' } };
       saveRunState(run);
-      await program.parseAsync(['node', 'duet', 'takeover', 'reviewer', run.runId]);
+      await program.parseAsync(['node', 'duet', 'takeover', 'analyst', run.runId]);
       // The orphan is cleared (role re-opened); no provider was spawned, no fail.
-      expect(loadRunState(projectDir, run.runId).pendingTurns?.reviewer).toBeUndefined();
+      expect(loadRunState(projectDir, run.runId).pendingTurns?.analyst).toBeUndefined();
     } finally {
       process.chdir(cwd);
     }
@@ -163,7 +163,7 @@ describe('takeover — resolving an interrupted (orphaned) turn', () => {
     const cwd = process.cwd();
     process.chdir(projectDir);
     try {
-      await expect(program.parseAsync(['node', 'duet', 'takeover', 'reviewer', run.runId])).rejects.toThrow(
+      await expect(program.parseAsync(['node', 'duet', 'takeover', 'analyst', run.runId])).rejects.toThrow(
         /no session yet/,
       );
     } finally {

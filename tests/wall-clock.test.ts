@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import { ContextDeadlineExceededError, WALL_CLOCK_TICK_MS, WallClockExceededError, runWithContextDeadline, runWithWallClockDeadline } from '../src/providers/wall-clock.ts';
+import { ContextDeadlineExceededError, WALL_CLOCK_TICK_MS, WallClockExceededError, runWithContextDeadline, runWithWallClockDeadline } from '../src/voices/providers/wall-clock.ts';
 import { FakeWorker } from './helpers/fixtures.ts';
 
 /**

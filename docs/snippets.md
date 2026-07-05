@@ -2,30 +2,30 @@
 
 Snippets are the prompt templates the orchestrator sends the workers — they *are* the workflow. This doc catalogs the ones you're most likely to override, **with their full bodies**, so you can see exactly what you're changing before you change it. For *how* overriding works — the two override files, precedence, fail-closed, the `duet snippets` inspector — see the README's [Customizing the snippets](../README.md#customizing-the-snippets).
 
-The `snippets/` directory at the repo root is the source of truth — block-named TOML files mirroring the workflow vocabulary (`frame.toml`, one per document kind, `build.toml`, `finish.toml`, `anytime.toml`, `consultant.toml`), merged into one library at load; the bodies below are reproduced for reading. For the **live** body on your install — with any user/project overrides already applied — run `duet snippets show <key>`. A `{{lessons_dir}}` token in a body is resolved to duet's vendored methodology lessons at serve time (the worker sees a real path, not the token). The trailing `---` / `$0` in the review snippets is the paste-point convention from the source schema: `$0` is where the human's reviewer feedback lands.
+The `snippets/` directory at the repo root is the source of truth — block-named TOML files mirroring the workflow vocabulary (`frame.toml`, one per document kind, `build.toml`, `finish.toml`, `anytime.toml`, `consultant.toml`), merged into one library at load; the bodies below are reproduced for reading. For the **live** body on your install — with any user/project overrides already applied — run `duet snippets show <key>`. A `{{lessons_dir}}` token in a body is resolved to duet's vendored methodology lessons at serve time (the worker sees a real path, not the token). The trailing `---` / `$0` in the review snippets is the paste-point convention from the source schema: `$0` is where the accompanying material (a handoff report, review feedback) lands.
 
-## How snippets map to the arc
+## How snippets map to a workflow
 
-Each phase pulls a few snippets in the order the orchestrator reaches for them; the full protocol table (every snippet and the direction of each hand-off) is in [`workflow-model.md`](workflow-model.md). The ones that matter most when customizing are the **generative drafts** — they write the *first* artifact of a phase, so an override reshapes everything downstream — and the **review** snippets that set each critique's altitude:
+Each phase pulls a few snippets in the order the orchestrator reaches for them; the full protocol table (every snippet and the direction of each hand-off) is in [`workflow-model.md`](workflow-model.md). The ones that matter most when customizing are the **generative drafts** — they write the *first* artifact of a phase, so an override reshapes everything downstream — and the **review** snippets that set each critique's altitude. Each goes to a duty: the planning pair is the **architect** (makes) and the **analyst** (checks); the delivery pair is the **builder** (makes) and the **critic** (checks — on relay, the **judge**, which also fixes):
 
-| Snippet | Arc · phase | Role it goes to | What it produces |
+| Snippet | Workflow · phase | Duty it goes to | What it produces |
 |---|---|---|---|
-| [`write-spec`](#write-spec) | full · spec | implementer | the first spec draft |
-| [`start-plan`](#start-plan) | full · plan | implementer | the implementation plan (vertical slices) |
-| [`write-design`](#the-design-arc-snippets) | design/relay · design | implementer | the design doc (product tier + technical tier) |
-| [`implement-design`](#the-design-arc-snippets) | design/relay · implement | implementer | code built from the committed design doc |
-| [`implement-direct`](#implement-direct) | rir · implement | implementer | code built straight from the research decisions |
-| [`reconcile-docs`](#reconcile-docs) | every arc · implement | implementer (relay: reviewer) | docs reconciled with what shipped, then committed |
-| [`review-spec`](#review-spec) | full · spec | reviewer | spec critique (at spec altitude) |
-| [`review-plan`](#review-plan) | full · plan | reviewer | plan critique |
-| [`review-design`](#the-design-arc-snippets) | design/relay · design | reviewer | design-doc critique (section-scoped altitude) |
-| [`review-implementation`](#review-implementation) | full · implement, design · implement | reviewer | code review |
-| [`review-direct`](#review-direct) | rir · implement | reviewer | code review (no spec/plan to measure against) |
-| [`review-and-fix`](#review-and-fix) | relay · implement | reviewer | code review with the findings fixed in place |
+| [`write-spec`](#write-spec) | full · spec | architect | the first spec draft |
+| [`start-plan`](#start-plan) | full · plan | architect | the implementation plan (vertical slices) |
+| [`write-design`](#the-blueprint-snippets) | blueprint/relay · design | architect | the design doc (product tier + technical tier) |
+| [`implement-design`](#the-blueprint-snippets) | blueprint/relay · implement | builder | code built from the committed design doc |
+| [`implement-direct`](#implement-direct) | short · implement | builder | code built straight from the research decisions |
+| [`reconcile-docs`](#reconcile-docs) | every workflow · implement | builder (relay: judge) | docs reconciled with what shipped, then committed |
+| [`review-spec`](#review-spec) | full · spec | analyst | spec critique (at spec altitude) |
+| [`review-plan`](#review-plan) | full · plan | analyst | plan critique |
+| [`review-design`](#the-blueprint-snippets) | blueprint/relay · design | analyst | design-doc critique (section-scoped altitude) |
+| [`review-implementation`](#review-implementation) | full · implement, blueprint · implement | critic | code review |
+| [`review-direct`](#review-direct) | short · implement | critic | code review (no spec/plan to measure against) |
+| [`review-and-fix`](#review-and-fix) | relay · implement | judge | code review with the findings fixed in place |
 
-The full arc alone has no draft snippet for its implementation phase — the plan is the script, so the orchestrator composes the build prompt from it. The other arcs seed the build from a template because no plan exists there: `implement-design` on design and relay (relay's builder reads it in a fresh post-handoff session — the body assumes only the committed doc), `implement-direct` on rir.
+full alone has no draft snippet for its implementation phase — the plan is the script, so the orchestrator composes the build prompt from it. The other workflows seed the build from a template because no plan exists there: `implement-design` on blueprint and relay (relay's builder reads it in a fresh delivery-stage session — the body assumes only the committed doc), `implement-direct` on short.
 
-Beyond the phase-bound snippets above, a handful of **cross-cutting anytime helpers** are reachable in any phase (classified `ANYTIME_SNIPPETS`, listed in full by `list_snippets`) — e.g. `reread-context` (reread the touched code before continuing), `recover-context` (the post-compact fresh-session re-anchor: an orchestrator-authored status overview + reread, prescribed when a `/compact` is killed and the implementer session is reset — see `docs/automation-design.md` §"Resilience for the AFK window"), and `compact-inflight` (the mid-work compaction: where the boundary compacts keep what the *next* stage consumes, this one keeps the in-flight state — for a caution-band pause that isn't a stage boundary, and the compact-then-resume recovery after a context cut). They are not customization targets, so they live in the shipped library (`snippets/anytime.toml`) rather than the curated table here.
+Beyond the phase-bound snippets above, a handful of **cross-cutting anytime helpers** are reachable in any phase (classified `ANYTIME_SNIPPETS`, listed in full by `list_snippets`) — e.g. `reread-context` (reread the touched code before continuing), `recover-context` (the post-compact fresh-session re-anchor: an orchestrator-authored status overview + reread, prescribed when a `/compact` is killed and the worker's session is reset — see `docs/automation-design.md` §"Resilience for the AFK window"), and `compact-inflight` (the mid-work compaction: where the boundary compacts keep what the *next* stage consumes, this one keeps the in-flight state — for a caution-band pause that isn't a stage boundary, and the compact-then-resume recovery after a context cut). They are not customization targets, so they live in the shipped library (`snippets/anytime.toml`) rather than the curated table here.
 
 ---
 
@@ -130,7 +130,7 @@ A dependency weighty enough to be an architecture decision in its own right is m
 
 ### `implement-direct`
 
-The rir arc's only draft — it builds straight from the settled research decisions, since rir has no spec or plan. Because there's no plan stage to apply it, this snippet carries the plan stage's high-value engineering signal inline — vertical slices, deep modules and the deletion test, preparatory refactoring, what-to-test calibration, and the build-on-the-right-layer (library-vs-platform) call — and cites the same two `{{lessons_dir}}` methodology roots as `start-plan` for depth. It leaves behind the plan-*document* mechanics (naming slices, listing test cases, line citations) that have no artifact here.
+short's only draft — it builds straight from the settled research decisions, since short has no spec or plan. Because there's no plan phase to apply it, this snippet carries the plan phase's high-value engineering signal inline — vertical slices, deep modules and the deletion test, preparatory refactoring, what-to-test calibration, and the build-on-the-right-layer (library-vs-platform) call — and cites the same two `{{lessons_dir}}` methodology roots as `start-plan` for depth. It leaves behind the plan-*document* mechanics (naming slices, listing test cases, line citations) that have no artifact here.
 
 ```text
 Build the change directly from the research decisions we settled — those decisions are the spec here; there is no separate spec or plan document. This is small, well-understood work, so treat what follows as a lens scaled to the change, not ceremony — adapt it, drop what doesn't fit.
@@ -171,7 +171,7 @@ If a decision turns out wrong or underspecified once you're in the code, **stop 
 
 ### `reconcile-docs`
 
-Runs at the tail of `implement` in every arc — the docs step, the last thing before the Ship gate, so docs are reviewed with the code and then ride the branch into the PR that `finish` opens. The body is an invariant contract (commit directly — no docs gate; hold the one product boundary back to the human — deleting a documented concept, rewriting a load-bearing design claim, pruning a superseded doc) wrapped around a **method chosen by precedence**: a doc-update skill or document the framing names (the orchestrator relays it, authoritative — it outranks discovery, so a run's explicit choice is never overridden by a generic find), else the project's own doc-update skill (under `.claude/`/`.agents/`) when one exists, else a consolidate-don't-patch default pitched for a senior engineer. The orchestrator can't reach the filesystem, so it only relays a named method; the implementer (which can) locates and follows it. Self-contained — it names no vendored skill of its own. Override it to change how a project reconciles docs.
+Runs at the tail of `implement` in every workflow — the docs step, the last thing before the Ship gate, so docs are reviewed with the code and then ride the branch into the PR that `finish` opens. The body is an invariant contract (commit directly — no docs gate; hold the one product boundary back to the human — deleting a documented concept, rewriting a load-bearing design claim, pruning a superseded doc) wrapped around a **method chosen by precedence**: a doc-update skill or document the framing names (the orchestrator relays it, authoritative — it outranks discovery, so a run's explicit choice is never overridden by a generic find), else the project's own doc-update skill (under `.claude/`/`.agents/`) when one exists, else a consolidate-don't-patch default pitched for a senior engineer. The orchestrator can't reach the filesystem, so it only relays a named method; the duty it goes to — the builder, or relay's judge — locates and follows it. Self-contained — it names no vendored skill of its own. Override it to change how a project reconciles docs.
 
 ```text
 The docs ship with this change — they ride the branch (and the PR, where there is one) into the shippable record. Reconcile them with what actually shipped, in one pass.
@@ -190,13 +190,13 @@ The docs ship with this change — they ride the branch (and the PR, where there
 
 ---
 
-## The design-arc snippets
+## The blueprint snippets
 
-The design arc's phase runs on one document, so its snippets merge what full splits. Three keys matter (the `update-design` / `-again` variants mirror their spec/plan siblings):
+Blueprint's design phase runs on one document (relay shares its shape), so its snippets merge what full splits. Three keys matter (the `update-design` / `-again` variants mirror their spec/plan siblings):
 
-- **`write-design`** — the arc's generative draft, reproduced below. It merges `write-spec`'s product tier (leader-facing summary, goals, behaviors, non-goals) with `start-plan`'s technical discipline (module boundaries, seams, an architecture sketch, test standards; the same `{{lessons_dir}}` citations) — and defers what the build owns: code bodies, per-case test enumeration, fixtures, commit order. Override it to reshape the whole arc, the way overriding `write-spec` or `start-plan` reshapes full.
-- **`review-design`** — the section-scoped lens: product sections review at spec altitude (a missing behavior is a gap; module design pressed there is below altitude), technical sections at design altitude (boundaries, seams, and test strategy are fair game; demanding case enumeration or code re-grows the rounds the arc deletes). Carries the same "Optional polish" output contract as the other review snippets.
-- **`implement-design`** — the build seed, `implement-direct`'s sibling: it anchors on the committed design doc as the authority for *what and why* and carries the same build discipline for *how* (vertical slices of the implementer's own choosing, right-sizing, layer choices, tests per the doc's standards).
+- **`write-design`** — the workflow's generative draft, reproduced below. It merges `write-spec`'s product tier (leader-facing summary, goals, behaviors, non-goals) with `start-plan`'s technical discipline (module boundaries, seams, an architecture sketch, test standards; the same `{{lessons_dir}}` citations) — and defers what the build owns: code bodies, per-case test enumeration, fixtures, commit order. Override it to reshape the whole workflow, the way overriding `write-spec` or `start-plan` reshapes full.
+- **`review-design`** — the section-scoped lens: product sections review at spec altitude (a missing behavior is a gap; module design pressed there is below altitude), technical sections at design altitude (boundaries, seams, and test strategy are fair game; demanding case enumeration or code re-grows the rounds the workflow deletes). Carries the same "Optional polish" output contract as the other review snippets.
+- **`implement-design`** — the build seed, `implement-direct`'s sibling: it anchors on the committed design doc as the authority for *what and why* and carries the same build discipline for *how* (vertical slices of the builder's own choosing, right-sizing, layer choices, tests per the doc's standards).
 
 ### `write-design`
 
@@ -239,7 +239,7 @@ If you have remaining product questions or major technical uncertainty, intervie
 
 ## The review snippets
 
-Each review snippet gives the reviewer a deliberate **altitude lens** — what to critique and what to leave alone for that artifact's stage. Overriding one changes how hard, and at what level of detail, your reviewer pushes. Each also ends with an **"Optional polish"** output contract: wording-level fixes are batched as exact before → after replacements (or skipped when none qualify), so the implementer applies them without re-analyzing the document — substantive findings stay findings.
+Each review snippet gives the checking duty a deliberate **altitude lens** — what to critique and what to leave alone at that artifact's altitude. Overriding one changes how hard, and at what level of detail, your checker pushes. Each also ends with an **"Optional polish"** output contract: wording-level fixes are batched as exact before → after replacements (or skipped when none qualify), so the author applies them without re-analyzing the document — substantive findings stay findings.
 
 ### `review-spec`
 
@@ -346,7 +346,7 @@ $0
 
 ### `review-direct`
 
-The rir counterpart to `review-implementation` — the bar is the settled research decisions, not a spec or plan document.
+short's counterpart to `review-implementation` — the bar is the settled research decisions, not a spec or plan document.
 
 ```text
 Code-review this implementation. **Read the actual code, not just commit messages.**
@@ -377,7 +377,7 @@ $0
 
 ### `review-and-fix`
 
-The relay arc's one review round, sent to the reviewer — the only shipped snippet whose reader has **write access**. It carries `review-direct`'s full lens plus the resolve-it-yourself discipline (assess validity → fix ordinary issues directly, tests moving with the fix → leave what was right), and the **escalation valve**: a product or design disagreement, unreconstructable intent, or broad drift escalates to the human instead of being patched over — a direct fix must never hide a pivot. Override it to change how hard relay's judge-fixer pushes, or where its fix-vs-escalate line sits.
+Relay's one review round, sent to the judge — the only shipped snippet whose reader has **write access**. It carries `review-direct`'s full lens plus the resolve-it-yourself discipline (assess validity → fix ordinary issues directly, tests moving with the fix → leave what was right), and the **escalation valve**: a product or design disagreement, unreconstructable intent, or broad drift escalates to the human instead of being patched over — a direct fix must never hide a pivot. Override it to change how hard relay's judge pushes, or where its fix-vs-escalate line sits.
 
 ```text
 Code-review this implementation — and resolve what you find. You review with write access: you didn't write this code, but you own getting it ship-ready. The bar is the committed design doc — its product sections carry the goal and the boundaries, its technical sections the module shapes, seams, and test standards the build was to honor. Review against the doc's intent, not a redesign of your own.

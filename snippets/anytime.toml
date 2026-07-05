@@ -1,5 +1,5 @@
 # Anytime helpers — cross-cutting templates usable in any phase
-# (ANYTIME_SNIPPETS in src/phases.ts, same order); list_snippets shows these
+# (ANYTIME_SNIPPETS in src/registry/workflows.ts, same order); list_snippets shows these
 # in full alongside the current phase's templates.
 
 [[snippets]]

@@ -1,8 +1,8 @@
 import { describe, expect, test as plain } from 'vitest';
-import { buildStats, buildStatsModel, renderStats } from '../src/stats.ts';
-import { phasesOf } from '../src/phases.ts';
-import { formatDuration } from '../src/timefmt.ts';
-import { appendVoiceLog } from '../src/run-store.ts';
+import { buildStats, buildStatsModel, renderStats } from '../src/surfaces/stats.ts';
+import { phasesOf } from '../src/registry/workflows.ts';
+import { formatDuration } from '../src/view/timefmt.ts';
+import { appendVoiceLog } from '../src/run/store.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**
@@ -43,10 +43,10 @@ describe('buildStats — the pure parse core', () => {
       'a summary',
       '',
     ].join('\n');
-    const implementer = [line(at(1), '◀ prompt (tag=write-spec, from orchestrator)'), 'body', '', line(at(4), '▶ response (session s1)'), 'reply', ''].join('\n');
-    const reviewer = [line(at(5), '◀ prompt (tag=review-spec, from orchestrator)'), 'body', '', line(at(7), '▶ response (session s2)'), 'reply', ''].join('\n');
+    const architect = [line(at(1), '◀ prompt (tag=write-spec, from orchestrator)'), 'body', '', line(at(4), '▶ response (session s1)'), 'reply', ''].join('\n');
+    const analyst = [line(at(5), '◀ prompt (tag=review-spec, from orchestrator)'), 'body', '', line(at(7), '▶ response (session s2)'), 'reply', ''].join('\n');
 
-    const model = buildStats('run-1', orchestrator, [{ role: 'implementer', log: implementer }, { role: 'reviewer', log: reviewer }], FULL_ORDER);
+    const model = buildStats('run-1', orchestrator, [{ voice: 'architect', log: architect }, { voice: 'analyst', log: analyst }], FULL_ORDER);
 
     expect.soft(model.phases).toEqual([{ phase: 'spec', windowMs: 10 * 60_000, workerMs: 5 * 60_000, turns: 2 }]);
     expect.soft(model.totalWindowMs).toBe(10 * 60_000);
@@ -87,12 +87,12 @@ describe('buildStats — the pure parse core', () => {
 
   plain('a budget-stop or turn-failure terminal line ends a worker turn', () => {
     const orchestrator = [line(at(0), '◀ harness prompt (phase=implement)'), line(at(50), 'advance_phase (implement)')].join('\n');
-    const implementer = [
+    const builder = [
       line(at(1), '◀ prompt (tag=implement-direct, from orchestrator)'),
       line(at(40), '◼ budget-control stop: per-turn cap reached'), // a capped turn still counts (39m)
     ].join('\n');
 
-    const model = buildStats('run-4', orchestrator, [{ role: 'implementer', log: implementer }], FULL_ORDER);
+    const model = buildStats('run-4', orchestrator, [{ voice: 'builder', log: builder }], FULL_ORDER);
     expect.soft(model.tags).toEqual([{ tag: 'implement-direct', totalMs: 39 * 60_000, turns: 1 }]);
     expect.soft(model.phases[0]).toMatchObject({ phase: 'implement', workerMs: 39 * 60_000, turns: 1 });
   });
@@ -105,9 +105,9 @@ describe('buildStats — the pure parse core', () => {
 
   plain('an interactive run (worker turns, no harness prompts) notes the gap and counts turns under tags only', () => {
     const orchestrator = [line(at(0), '▶ orchestrator'), 'some narration', ''].join('\n'); // no harness-prompt lines
-    const implementer = [line(at(1), '◀ prompt (tag=implement-direct, from orchestrator)'), line(at(6), '▶ response (session s1)')].join('\n');
+    const architect = [line(at(1), '◀ prompt (tag=implement-direct, from orchestrator)'), line(at(6), '▶ response (session s1)')].join('\n');
 
-    const model = buildStats('run-6', orchestrator, [{ role: 'implementer', log: implementer }], FULL_ORDER);
+    const model = buildStats('run-6', orchestrator, [{ voice: 'architect', log: architect }], FULL_ORDER);
     expect.soft(model.phases).toEqual([]); // no windows → no phase rows
     expect.soft(model.tags).toEqual([{ tag: 'implement-direct', totalMs: 5 * 60_000, turns: 1 }]); // still tallied by tag
     expect.soft(model.notes.join('\n')).toContain('interactively');
@@ -117,18 +117,18 @@ describe('buildStats — the pure parse core', () => {
   plain('an EXPECTED-but-missing worker log degrades to a note (not a silent undercount)', () => {
     const orchestrator = [line(at(0), '◀ harness prompt (phase=spec)'), line(at(10), 'advance_phase (spec)')].join('\n');
     // The composer passes a session-bearing worker with no log as { role } (no log).
-    const model = buildStats('run-7', orchestrator, [{ role: 'reviewer' }], FULL_ORDER);
-    expect.soft(model.notes.join('\n')).toContain('reviewer log missing');
+    const model = buildStats('run-7', orchestrator, [{ voice: 'analyst' }], FULL_ORDER);
+    expect.soft(model.notes.join('\n')).toContain('analyst log missing');
   });
 
   plain('a worker prompt with no terminal line is noted as still-open, not dropped', () => {
     const orchestrator = [line(at(0), '◀ harness prompt (phase=implement)'), line(at(50), 'advance_phase (implement)')].join('\n');
     // A prompt with no ▶ response / stop / failure after it — an in-flight turn.
-    const implementer = [line(at(1), '◀ prompt (tag=implement-direct, from orchestrator)'), 'body, then the log ends mid-turn'].join('\n');
+    const architect = [line(at(1), '◀ prompt (tag=implement-direct, from orchestrator)'), 'body, then the log ends mid-turn'].join('\n');
 
-    const model = buildStats('run-8', orchestrator, [{ role: 'implementer', log: implementer }], FULL_ORDER);
+    const model = buildStats('run-8', orchestrator, [{ voice: 'architect', log: architect }], FULL_ORDER);
     expect.soft(model.tags).toEqual([]); // the open turn contributes no duration
-    expect.soft(model.notes.join('\n')).toContain('implementer: 1 turn(s) still open');
+    expect.soft(model.notes.join('\n')).toContain('architect: 1 turn(s) still open');
   });
 
   plain('a gate crossing with no logged entry infers its window from the previous crossing (interactive phases attribute)', () => {
@@ -144,14 +144,14 @@ describe('buildStats — the pure parse core', () => {
       line(at(31), '◀ harness prompt (phase=plan)'), // headless from here — a real window
       line(at(40), 'advance_phase (plan)'),
     ].join('\n');
-    const implementer = [
+    const architect = [
       line(at(2), '◀ prompt (tag=think-holistic, from orchestrator)'),
       line(at(6), '▶ response (session s1)'),
       line(at(12), '◀ prompt (tag=write-spec, from orchestrator)'),
       line(at(20), '▶ response (session s1)'),
     ].join('\n');
 
-    const model = buildStats('run-9', orchestrator, [{ role: 'implementer', log: implementer }], FULL_ORDER, undefined, runStart);
+    const model = buildStats('run-9', orchestrator, [{ voice: 'architect', log: architect }], FULL_ORDER, undefined, runStart);
     expect.soft(model.phases.map((p) => ({ phase: p.phase, turns: p.turns }))).toEqual([
       { phase: 'frame', turns: 1 },
       { phase: 'spec', turns: 1 },
@@ -164,25 +164,25 @@ describe('buildStats — the pure parse core', () => {
   });
 });
 
-describe('buildStats — the implementer-model label', () => {
-  plain('attaches the resolved implementer model per phase when a labeler is supplied', () => {
+describe('buildStats — the architect-model label', () => {
+  plain('attaches the resolved builder model per phase when a labeler is supplied', () => {
     const orchestrator = [line(at(0), '◀ harness prompt (phase=implement)'), line(at(5), 'advance_phase (implement)')].join('\n');
     const model = buildStats('run-lbl', orchestrator, [], FULL_ORDER, (phase) => (phase === 'implement' ? 'claude-sonnet-5' : undefined));
-    expect.soft(model.phases[0]).toMatchObject({ phase: 'implement', implementerModel: 'claude-sonnet-5' });
+    expect.soft(model.phases[0]).toMatchObject({ phase: 'implement', makerModel: 'claude-sonnet-5' });
   });
 
-  plain('no labeler ⇒ no implementerModel field (byte-for-byte the aggregate rows)', () => {
+  plain('no labeler ⇒ no makerModel field (byte-for-byte the aggregate rows)', () => {
     const orchestrator = [line(at(0), '◀ harness prompt (phase=implement)'), line(at(5), 'advance_phase (implement)')].join('\n');
     const model = buildStats('run-nolbl', orchestrator, [], FULL_ORDER);
-    expect.soft(model.phases[0]).not.toHaveProperty('implementerModel');
+    expect.soft(model.phases[0]).not.toHaveProperty('makerModel');
   });
 });
 
 describe('buildStatsModel — the fs composer over real appendVoiceLog output', () => {
   test('reads the planted voice logs and produces a phase row and a tag', ({ run }) => {
     appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=spec)', 'brief');
-    appendVoiceLog(run, 'implementer', '◀ prompt (tag=write-spec, from orchestrator)', 'go');
-    appendVoiceLog(run, 'implementer', '▶ response (session s1)', 'done');
+    appendVoiceLog(run, 'architect', '◀ prompt (tag=write-spec, from orchestrator)', 'go');
+    appendVoiceLog(run, 'architect', '▶ response (session s1)', 'done');
     appendVoiceLog(run, 'orchestrator', 'advance_phase (spec)', 'converged');
 
     const model = buildStatsModel(run);
@@ -194,29 +194,27 @@ describe('buildStatsModel — the fs composer over real appendVoiceLog output', 
     expect.soft(renderStats(model)).toContain('━━━ duet stats');
   });
 
-  test('labels each phase with the model that ran it — base through planning, impl model after handoff', ({ run }) => {
-    run.bindings.implementer = {
-      provider: 'claude',
-      model: 'claude-opus-4-8',
-      transport: 'headless',
-      build: { provider: 'claude', model: 'claude-sonnet-5' },
+  test('labels each phase with the model that ran it — the architect through planning, the builder in delivery', ({ run }) => {
+    run.bindings.duties = {
+      ...run.bindings.duties,
+      builder: { provider: 'claude', model: 'claude-sonnet-5', transport: 'headless' },
     };
     appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=plan)', 'brief');
     appendVoiceLog(run, 'orchestrator', 'advance_phase (plan)', 'ok');
     appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=implement)', 'brief');
     appendVoiceLog(run, 'orchestrator', 'advance_phase (implement)', 'ok');
 
-    const byPhase = Object.fromEntries(buildStatsModel(run).phases.map((p) => [p.phase, p.implementerModel]));
+    const byPhase = Object.fromEntries(buildStatsModel(run).phases.map((p) => [p.phase, p.makerModel]));
     expect.soft(byPhase['plan']).toBe('claude-opus-4-8'); // planning ran on the base model
     expect.soft(byPhase['implement']).toBe('claude-sonnet-5'); // the build ran on the impl model
   });
 
-  test('a codex implementer labels its phases "codex" — it has no model to resolve', ({ run }) => {
-    run.bindings.implementer = { provider: 'codex' };
+  test('a codex maker labels its phases "codex" — it has no model to resolve', ({ run }) => {
+    run.bindings.duties = { ...run.bindings.duties, architect: { provider: 'codex' }, builder: { provider: 'codex' } };
     appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=implement)', 'brief');
     appendVoiceLog(run, 'orchestrator', 'advance_phase (implement)', 'ok');
 
-    const byPhase = Object.fromEntries(buildStatsModel(run).phases.map((p) => [p.phase, p.implementerModel]));
+    const byPhase = Object.fromEntries(buildStatsModel(run).phases.map((p) => [p.phase, p.makerModel]));
     expect.soft(byPhase['implement']).toBe('codex');
   });
 });

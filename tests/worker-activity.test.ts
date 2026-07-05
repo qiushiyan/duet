@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { activityLine, latestActivity, repoRelative } from '../src/worker-activity.ts';
-import type { WorkerActivity } from '../src/worker-activity.ts';
+import { activityLine, latestActivity, repoRelative } from '../src/voices/activity.ts';
+import type { WorkerActivity } from '../src/voices/activity.ts';
 import { claudeAssistantText, claudeToolUse, codexApplyPatch, codexExecCommand, jsonl, patchBody } from './helpers/transcripts.ts';
 
 /**
