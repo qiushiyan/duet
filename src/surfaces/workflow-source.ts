@@ -237,13 +237,8 @@ export async function resolveWorkflowSource(
 ): Promise<ResolvedWorkflowSource> {
   const projectDir = projectWorkflowDir(cwd);
   const userDir = userWorkflowDir(opts.home);
-  if (!isShippedWorkflowName(name)) {
-    provisionWorkflowDir(projectDir);
-    provisionWorkflowDir(userDir);
-  } else {
-    if (existsSync(projectDir)) provisionWorkflowDir(projectDir);
-    if (existsSync(userDir)) provisionWorkflowDir(userDir);
-  }
+  if (existsSync(projectDir)) provisionWorkflowDir(projectDir);
+  if (existsSync(userDir)) provisionWorkflowDir(userDir);
   const candidates: Array<{ source: WorkflowSource; load: () => Promise<CompiledWorkflow> }> = [];
   if (isShippedWorkflowName(name)) {
     candidates.push({
