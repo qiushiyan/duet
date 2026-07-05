@@ -51,7 +51,17 @@ duet runs one of four workflows; settle which before gate posture, because the g
 
 If the user hasn't said: suggest `short` when the problem is small and clearly understood, `blueprint` when the work is substantial but they trust the builder's model with the technical depth, `relay` when they want that one-doc shape with a cheap builder and a strong fixing judge, and `full` otherwise — then confirm.
 
-**Before writing any frontmatter, read `references/manifest-examples.md`** — four worked intent → manifest translations, one per common shape (a watched short fix, the one-interruption blueprint, the standard relay criss-cross, the gateless full-send). They demonstrate the grammar better than rules can, and — just as important — what to *omit*: every key has a workflow default, and a manifest that says less is usually the better one.
+**Before writing any frontmatter, read `references/manifest-examples.md`** — five worked intent → manifest translations: the common shipped shapes plus the custom-workflow case. They demonstrate the grammar better than rules can, and — just as important — what to *omit*: every key has a workflow default, and a manifest that says less is usually the better one.
+
+## Custom workflow definitions
+
+If the shipped four workflows don't fit the user's stated shape, define a project workflow rather than stretching the framing prose. Put it under `.duet/workflows/<name>.ts`, import the SDK from `duet/workflows`, and export `defineWorkflow({ ... })`. The user still launches with `workflow: <name>` in frontmatter or `duet new --workflow <name>`. Keep this narrow:
+
+- Use the shipped blocks only: `frame`, `doc('spec'|'plan'|'design')`, `build({ review: 'critique'|'writable'|'fixer' })`, and `finish`.
+- Do not invent prose, duties, gate names, or new knobs. If the SDK rejects the composition, report the missing world or invalid combination to the user instead of working around it in the framing.
+- Prefer a project workflow (`.duet/workflows`) for a project-specific run shape; use the user layer (`~/.config/duet/workflows`) only when the user explicitly wants that composition across repos.
+
+duet compiles the file once at run creation and freezes the result into the run. Editing or deleting the workflow source after `duet new` does not affect that live run.
 
 ## Gate posture
 
@@ -95,7 +105,7 @@ Frontmatter is optional and machine-parsed; everything else is prose sent to the
 
 ```
 ---
-workflow: short            # optional: full (default), blueprint, relay, or short
+workflow: short            # optional: full (default), blueprint, relay, short, or a .duet/workflows/<name>.ts definition
 gates_at: afk              # optional: omit for the workflow's default posture; a workflow-specific preset or a phase list (see Gate posture above)
 gateless: true             # optional: walk away from the START — pre-authorize every gate (conflicts with gates_at and interactive)
 interactive: true          # optional: drive the planning gates from your own session (the --interactive flag by another door; for a template's launch hint)
@@ -172,7 +182,7 @@ User: "requests sometimes time out on a slow network." AVOID writing "add a boun
 Before handing off, check the framing against the user's original words: is every piece of their intent and scope present, with nothing you invented and no solution smuggled in? Then get their sign-off on the drafted file, fold in their edits, and emit:
 
 ```
-duet new --interactive --workflow <full|blueprint|relay|short> --framing .duet/<slug>.md
+duet new --interactive --workflow <workflow-name> --framing .duet/<slug>.md
 ```
 
 Use the workflow you settled on (omit `--workflow` when the frontmatter carries it, or to take the default `full`). Bindings the user chose — a consultant, relay's builder/judge pair — ride the frontmatter `bind.*` keys you already wrote, so the command needs no extra flags for them. Tell them to run it in their own terminal — `--interactive` hands the terminal to a live orchestrator session, so it can't be launched for them from a non-interactive session.
@@ -180,11 +190,11 @@ Use the workflow you settled on (omit `--workflow` when the frontmatter carries 
 If the user chose to warm-start from this session (see "Attach to this discussion"), add the captured id and remind them to quit this session before running it:
 
 ```
-duet new --interactive --resume-session <session-id> --workflow <full|blueprint|relay|short> --framing .duet/<slug>.md
+duet new --interactive --resume-session <session-id> --workflow <workflow-name> --framing .duet/<slug>.md
 ```
 
 If the user chose to walk away from the start (gateless), drop `--interactive` and use `--gateless` instead — the two are mutually exclusive, and a gateless run is headless from the first prompt:
 
 ```
-duet new --gateless --workflow <full|blueprint|relay|short> --framing .duet/<slug>.md
+duet new --gateless --workflow <workflow-name> --framing .duet/<slug>.md
 ```

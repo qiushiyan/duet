@@ -70,3 +70,36 @@ bind.consultant: claude
 ```
 
 `gateless: true` pre-authorizes **every** gate — the run flows to an open PR with no attended stop — and narrows a bound consultant to its non-holding work: the bet audits that could pause the run mid-flight drop, while the framing third-opinion and the **acceptance contract** survive (authored at the design gate, verified against the built system before Ship — a contract that stays broken still stops the run, which is the net this sentence keeps). `bind.consultant: claude` binds the outside voice and by itself implies it is on. **Omitted / rejected:** `gates_at` — gateless already answers the posture question, and duet rejects the two side by side; `interactive` — gateless is its opposite (nothing to attend), so they don't combine.
+
+## 5 · "This is a hotfix lane: triage once, patch once, open the PR."
+
+When the shipped names do not describe the process shape cleanly, create a project workflow file first:
+
+```workflow-ts
+import { build, defineWorkflow, finish, frame } from 'duet/workflows';
+
+export default defineWorkflow({
+  name: 'hotfix',
+  title: 'Hotfix (triage → patch → PR)',
+  attend: ['triage'],
+  presets: { afk: [] },
+  phases: [
+    frame({ name: 'triage' }),
+    build({ name: 'patch', review: 'writable', audit: true }),
+    finish(),
+  ],
+});
+```
+
+Then select it from the framing:
+
+```framing
+---
+workflow: hotfix
+---
+
+# Problem
+<a small urgent fix where the user wants one attended triage gate, then a single writable patch pass>
+```
+
+`workflow: hotfix` is an open identity, resolved from `.duet/workflows/hotfix.ts` at run creation. The workflow file is compiled and frozen into the run; editing it later does not change the live run. **Omitted:** `gates_at` — the custom workflow's `attend: ['triage']` already says the only attended gate; bindings — the shipped duty defaults stand unless the user asks for a different model.

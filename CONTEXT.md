@@ -8,6 +8,14 @@ duet is a semi-AFK orchestrator: a run executes one workflow (full · blueprint 
 A named process shape a run executes, expressed as an ordered list of stages in the registry. The shipped standard library: **full** (spec + plan), **blueprint** (one design doc), **relay** (blueprint with a criss-crossed build), **short** (no document). Named on the ceremony/artifact axes, never after a stage, phase, or artifact.
 _Avoid_: arc, pipeline; "design" and "rir" (the retired arc names)
 
+**Workflow definition**:
+An authored SDK expression (`defineWorkflow({ phases: [...] })`) that composes the closed block vocabulary into a named workflow. It may be shipped by duet or live in a user/project workflow file; it is input, not what a run executes directly.
+_Avoid_: workflow config, workflow script, pipeline file
+
+**Compiled workflow**:
+The validated, fully derived workflow artifact a run carries. `createRun` freezes it as `workflow.json`; after that, the source definition is never read for the live run.
+_Avoid_: registry pointer, live workflow, workflow config
+
 **Stage**:
 A workflow's grouping of phases into one holistic thinking flow — one primary model carries it end to end, and duty bindings are scoped to it. Every workflow has two: planning and delivery. Approval-boundary semantics live at stage edges, as in CI stages.
 _Avoid_: block (that's the phase-kind), band, top-level phase, sub-arc

@@ -1,11 +1,14 @@
-import { readFileSync } from 'node:fs';
-import { dirname, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, relative } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { Command } from 'commander';
 import { describe, expect, test } from 'vitest';
 import { program } from '../src/surfaces/cli.ts';
-import { FRAMING_TEMPLATE, parseFramingFile } from '../src/surfaces/framing.ts';
-import { DEFAULT_CLAUDE_MODEL, resolveRunConfig } from '../src/voices/bindings.ts';
+import { createRun } from '../src/run/store.ts';
+import { FRAMING_TEMPLATE, parseFramingFile, resolveRunInputs } from '../src/surfaces/framing.ts';
+import { projectWorkflowDir } from '../src/surfaces/workflow-source.ts';
+import { DEFAULT_CLAUDE_MODEL, defaultBindingsFor, resolveRunConfig } from '../src/voices/bindings.ts';
 import { IDENTITY_PATH } from '../src/orchestrator/hosts/orchestrate.ts';
 import { WORKFLOWS } from '../src/registry/workflows.ts';
 
@@ -243,12 +246,14 @@ describe('the duet-frame manifest examples are EXECUTABLE — parsed by the real
   // ("omission is part of the grammar" is only teachable if the omitted keys
   // really do stay absent).
   const framings = [...frameExamplesMd.matchAll(/```framing\n([\s\S]*?)```/g)].map((m) => m[1]!);
+  const workflowDefinitions = [...frameExamplesMd.matchAll(/```workflow-ts\n([\s\S]*?)```/g)].map((m) => m[1]!);
   // A path that exists on no machine: the freeze must resolve from the example
   // alone, never from the developer's own ~/.config/duet/config.toml.
   const noConfig = '/nonexistent/duet-skill-test-config.toml';
 
-  test('the reference carries the four worked examples', () => {
-    expect(framings).toHaveLength(4);
+  test('the reference carries the five worked examples and one project workflow definition', () => {
+    expect.soft(framings).toHaveLength(5);
+    expect.soft(workflowDefinitions).toHaveLength(1);
   });
 
   test('1 · the floor: `short`, every other key omitted', () => {
@@ -285,6 +290,25 @@ describe('the duet-frame manifest examples are EXECUTABLE — parsed by the real
     expect.soft(meta.binds).toEqual({ consultant: 'claude' });
     const { bindings } = resolveRunConfig({ workflow: 'blueprint', framingBinds: meta.binds }, noConfig);
     expect.soft(bindings.consultant).toEqual({ provider: 'claude', model: DEFAULT_CLAUDE_MODEL, transport: 'headless' });
+  });
+
+  test('5 · a custom project workflow is selected by frontmatter and frozen at createRun', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'duet-frame-skill-'));
+    try {
+      const workflowDir = projectWorkflowDir(projectDir);
+      mkdirSync(workflowDir, { recursive: true });
+      const sdk = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'workflows.ts')).href;
+      const workflowDefinition = workflowDefinitions[0]!.replace("'duet/workflows'", JSON.stringify(sdk));
+      writeFileSync(join(workflowDir, 'hotfix.ts'), workflowDefinition);
+      writeFileSync(join(projectDir, 'brief.md'), framings[4]!);
+      const inputs = await resolveRunInputs(projectDir, { framing: 'brief.md' });
+      const state = createRun({ cwd: projectDir, ...inputs, bindings: defaultBindingsFor(inputs.workflowSpec) });
+      expect.soft(inputs.workflow).toBe('hotfix');
+      expect.soft(state.gatesAt).toEqual(['triage']);
+      expect.soft(inputs.workflowSpec.phases.map((p) => p.name)).toEqual(['triage', 'patch', 'finish']);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
   });
 });
 
