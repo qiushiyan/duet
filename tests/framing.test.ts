@@ -124,8 +124,10 @@ describe('parseFramingFile (the machine/prose boundary)', () => {
     expect.soft(meta.gatesAt).toEqual([]); // afk against short → attend nothing
   });
 
-  plain('an unknown workflow value fails with the valid set', () => {
-    expect(() => parseFramingFile('---\nworkflow: turbo\n---\nbody')).toThrow(/"turbo" is not a duet workflow/);
+  plain('an unknown workflow value is carried for the loader', () => {
+    const { meta } = parseFramingFile('---\nworkflow: turbo\ngates_at: launch\n---\nbody');
+    expect.soft(meta.workflow).toBe('turbo');
+    expect.soft(meta.gatesAtRaw).toBe('launch');
   });
 
   plain('a literal empty gates_at is rejected (key-present, not silently ignored)', () => {
@@ -350,9 +352,7 @@ describe('resolveRunInputs', () => {
 
   test('an unknown --workflow fails with the valid set', async ({ projectDir }) => {
     writeFileSync(join(projectDir, 'b.md'), 'body');
-    await expect(resolveRunInputs(projectDir, { framing: 'b.md', workflow: 'turbo' })).rejects.toThrow(
-      /"turbo" is not a duet workflow/,
-    );
+    await expect(resolveRunInputs(projectDir, { framing: 'b.md', workflow: 'turbo' })).rejects.toThrow(/workflow "turbo" was not found/);
   });
 
   test('--workflow short rejects --spec with an actionable message', async ({ projectDir }) => {

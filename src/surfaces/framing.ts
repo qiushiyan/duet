@@ -5,9 +5,11 @@ import { execa } from "execa";
 import { z } from "zod";
 import { parseBindAddress, parseBindingSpec } from "../voices/bindings.ts";
 import type { BindAddress } from "../voices/bindings.ts";
-import { WORKFLOWS, entryOf, gatePhasesOf, workflowDefinition } from "../registry/workflows.ts";
-import type { GatePhase, WorkflowName, WorkflowRef } from "../registry/workflows.ts";
+import { WORKFLOWS, entryOf, gatePhasesOf, isShippedWorkflowName, workflowDefinition } from "../registry/workflows.ts";
+import type { CompiledWorkflow, GatePhase, WorkflowName, WorkflowRef } from "../registry/workflows.ts";
 import { ensureDuetDir } from "../run/store.ts";
+import type { WorkflowSource } from "../run/store.ts";
+import { resolveWorkflowSource } from "./workflow-source.ts";
 
 /**
  * The framing — the one file the human writes per run, and the only place
@@ -294,6 +296,7 @@ export async function resolveHumanText(
 
 export interface FramingFrontmatter {
   gatesAt?: GatePhase[];
+  gatesAtRaw?: string;
   spec?: string;
   retryInfra?: number;
   workflow?: WorkflowName;
@@ -489,12 +492,18 @@ export function parseFramingFile(content: string): { meta: FramingFrontmatter; b
 
   const meta: FramingFrontmatter = {};
   if (Object.keys(binds).length > 0) meta.binds = binds;
-  if (parsed.data.workflow !== undefined) meta.workflow = parseWorkflow(parsed.data.workflow);
-  // gates_at validates against the frontmatter's own workflow (default full);
-  // resolveRunInputs re-validates if the --workflow flag overrides it. Guard is
-  // key-present, not truthy, so a literal empty `gates_at:` reaches parseGatesAt
-  // and is rejected rather than silently ignored.
-  if (parsed.data.gates_at !== undefined) meta.gatesAt = parseGatesAt(parsed.data.gates_at, meta.workflow ?? "full");
+  if (parsed.data.workflow !== undefined) {
+    const workflow = parsed.data.workflow.trim();
+    if (!workflow) throw new Error('workflow is empty — choose a shipped workflow or a workflow file name');
+    meta.workflow = workflow;
+  }
+  // gates_at validates immediately for shipped/default workflows so the parser's
+  // existing standalone contract stays useful. For an external workflow name,
+  // keep the raw value until resolveRunInputs has loaded the compiled spec.
+  if (parsed.data.gates_at !== undefined) {
+    if (meta.workflow === undefined || isShippedWorkflowName(meta.workflow)) meta.gatesAt = parseGatesAt(parsed.data.gates_at, meta.workflow ?? "full");
+    else meta.gatesAtRaw = parsed.data.gates_at;
+  }
   if (parsed.data.spec) meta.spec = parsed.data.spec;
   if (parsed.data.retry_infra !== undefined) meta.retryInfra = parseRetryInfra(parsed.data.retry_infra);
   if (parsed.data.gateless !== undefined) meta.gateless = parseBoolKey("gateless", parsed.data.gateless);
@@ -512,6 +521,10 @@ export interface RunInputs {
   gatesAt?: GatePhase[];
   /** The resolved workflow arc (flag > frontmatter > 'full'). */
   workflow: WorkflowName;
+  /** The compiled workflow selected by flag/frontmatter/default. */
+  workflowSpec: CompiledWorkflow;
+  /** Where the compiled workflow came from. */
+  workflowSource: WorkflowSource;
   /** Validated spec path, relative to cwd. */
   specPath?: string;
   /** Infra auto-retry budget; absent ⇒ createRun materializes DEFAULT_RETRY_INFRA, an explicit 0 ⇒ off. */
@@ -567,7 +580,9 @@ export async function resolveRunInputs(
     }
   }
 
-  const workflow = opts.workflow !== undefined ? parseWorkflow(opts.workflow) : (meta.workflow ?? "full"); // flag wins
+  const workflowName = opts.workflow !== undefined ? opts.workflow.trim() : (meta.workflow ?? "full"); // flag wins
+  const workflowSource = await resolveWorkflowSource(cwd, workflowName);
+  const workflow = workflowSource.workflow;
   const retryInfra = opts.retryInfra !== undefined ? parseRetryInfra(opts.retryInfra) : meta.retryInfra; // flag wins
 
   // gates_at resolves against the final workflow: the --gates-at flag parses
@@ -579,7 +594,8 @@ export async function resolveRunInputs(
   // reaches parseGatesAt and is rejected as empty, rather than silently ignored
   // (defaulting to attend-all) the way a truthiness check would drop it.
   if (opts.gatesAt !== undefined) gatesAt = parseGatesAt(opts.gatesAt, workflow);
-  else if (meta.gatesAt) gatesAt = workflow === (meta.workflow ?? "full") ? meta.gatesAt : parseGatesAt(meta.gatesAt.join(","), workflow);
+  else if (meta.gatesAtRaw !== undefined) gatesAt = parseGatesAt(meta.gatesAtRaw, workflow);
+  else if (meta.gatesAt) gatesAt = workflow.name === (meta.workflow ?? "full") ? meta.gatesAt : parseGatesAt(meta.gatesAt.join(","), workflow);
 
   // Gateless is sugar over two axes: the posture axis (attend nothing) is
   // materialized here as gatesAt = []; the consultant axis (backstop-only) rides
@@ -604,7 +620,7 @@ export async function resolveRunInputs(
     // entry route admits one (full's spec, blueprint's design doc) can take it.
     if (entryOf(workflow).specSkipsTo === undefined) {
       throw new Error(
-        `--workflow ${workflow} takes no --spec: this arc has no primary design document — its research decisions are the design. Use full (a spec) or blueprint (a design doc) for a draft-entry run.`,
+        `--workflow ${workflow.name} takes no --spec: this arc has no primary design document — its research decisions are the design. Use full (a spec) or blueprint (a design doc) for a draft-entry run.`,
       );
     }
     specPath = relative(cwd, resolve(cwd, specInput));
@@ -617,7 +633,9 @@ export async function resolveRunInputs(
     ...(framing !== undefined ? { framing } : {}),
     ...(framingRaw !== undefined ? { framingRaw } : {}),
     ...(gatesAt ? { gatesAt } : {}),
-    workflow,
+    workflow: workflow.name,
+    workflowSpec: workflow,
+    workflowSource: workflowSource.source,
     ...(specPath ? { specPath } : {}),
     ...(retryInfra !== undefined ? { retryInfra } : {}),
     ...(gateless ? { gateless } : {}),

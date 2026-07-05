@@ -33,6 +33,7 @@ import { getEffectiveSnippet, loadEffectiveSnippets, runtimeLibraryContext } fro
 import type { EffectiveSnippet } from '../orchestrator/library.ts';
 import { buildBrief, buildStatusModel, formatGatePosture, renderBrief, renderStatus, steerRefusal } from './status.ts';
 import { openTmuxView } from './view/tmux.ts';
+import { formatWorkflowSource } from './workflow-source.ts';
 import {
   appendNote,
   clearPendingTurn,
@@ -378,7 +379,7 @@ program
         flagBinds[address] = raw.slice(eq + 1);
       }
       resolved = resolveRunConfig({
-        workflow: runInputs.workflow,
+        workflow: runInputs.workflowSpec,
         flagBinds,
         ...(framingBinds ? { framingBinds } : {}),
         ...(opts.consultant === false ? { noConsultant: true } : {}),
@@ -413,13 +414,14 @@ program
     // consultant, and any degraded continuity edges (the 717d fix: a run's
     // frozen inputs are visible at creation, not discovered from state.json).
     const wf = workflowFor(state);
-    console.log(`workflow: ${state.workflow} — ${wf.displayName}`);
+    console.log(`workflow: ${state.workflow} — ${wf.displayName} (${formatWorkflowSource(state.workflowSource ?? { layer: 'shipped' }, cwd)})`);
     console.log(`orchestrator: ${formatBinding(bindings.orchestrator)}`);
     for (const stage of stagesOf(wf)) {
       const pair = [stage.duties.maker, stage.duties.checker]
         .map((duty) => `${duty}=${formatBinding(dutyBindingFor(bindings, duty))}`)
         .join(' · ');
-      console.log(`${stage.name}: ${pair}`);
+      const edges = stage.edges ? Object.entries(stage.edges).map(([into, edge]) => `${into}←${edge.from}`).join(' · ') : '';
+      console.log(`${stage.name}: ${pair}${edges ? ` · continuity ${edges}` : ''}`);
     }
     console.log(`consultant: ${bindings.consultant ? formatBinding(bindings.consultant) : 'off'}`);
     for (const edge of degradedEdges) {

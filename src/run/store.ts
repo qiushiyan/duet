@@ -76,6 +76,11 @@ export interface ContextEvent {
   windowTokens?: number;
 }
 
+export interface WorkflowSource {
+  layer: 'shipped' | 'project' | 'user';
+  path?: string;
+}
+
 /**
  * Human input staged by the CLI for the next driver invocation to consume.
  * `answer` resolves a queued question; `feedback` rides a gate rejection
@@ -124,6 +129,8 @@ export interface RunState {
    * default those runs ran on.
    */
   workflow: WorkflowName;
+  /** Where the frozen workflow definition came from at createRun. */
+  workflowSource?: WorkflowSource;
   /** Project briefing from --framing — the only place project knowledge enters. */
   framing?: string;
   /** The run's working branch (captured at creation; updated by create_branch). */
@@ -533,6 +540,8 @@ export function createRun(opts: {
   workflow?: WorkflowName;
   /** The compiled workflow spec to freeze onto the run (absent ⇒ shipped workflow row). */
   workflowSpec?: CompiledWorkflow;
+  /** Provenance for the frozen workflow spec. */
+  workflowSource?: WorkflowSource;
   specPath?: string;
   /** The framing body the orchestrator sees (frontmatter already stripped). */
   framing?: string;
@@ -566,6 +575,7 @@ export function createRun(opts: {
     createdAt: now.toISOString(),
     cwd: opts.cwd,
     workflow: wf,
+    ...(opts.workflowSource ? { workflowSource: opts.workflowSource } : isShippedWorkflowName(wf) ? { workflowSource: { layer: 'shipped' as const } } : {}),
     ...(opts.specPath ? { specPath: opts.specPath } : {}),
     ...(opts.framing ? { framing: opts.framing } : {}),
     ...(opts.branch ? { branch: opts.branch } : {}),

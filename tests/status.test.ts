@@ -230,7 +230,9 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
       'specPath',
       'stop',
       'workflow',
+      'workflowDetail',
       'workflowDisplayName',
+      'workflowSource',
     ]);
   });
 

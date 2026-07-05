@@ -1,12 +1,12 @@
 import { completionLine, opensPr } from '../run/position.ts';
 export { describeStop } from '../run/position.ts';
 import type { RunPosition } from '../run/position.ts';
-import { entryOf, gateOf, phaseOfGateState, phasesOf } from '../registry/workflows.ts';
+import { entryOf, gateOf, phaseOfGateState, phasesOf, stagesOf } from '../registry/workflows.ts';
 import type { GatePhase, PhaseName, WorkflowRef } from '../registry/workflows.ts';
 import type { VoiceAddress } from '../voices/providers/types.ts';
 import { voicesFor } from '../voices/policy.ts';
 import { contextPercent, fmtTokens } from '../run/store.ts';
-import type { ContextEvent, HumanDecision, RunState, Voice } from '../run/store.ts';
+import type { ContextEvent, HumanDecision, RunState, Voice, WorkflowSource } from '../run/store.ts';
 import type { Steer } from '../run/steers.ts';
 import { resolveSessions } from '../voices/sessions.ts';
 import type { SessionRef } from '../voices/sessions.ts';
@@ -111,8 +111,21 @@ export interface StatusModel {
   workflow: string;
   /** The workflow's human-facing name, e.g. "Research → Implement → Review". */
   workflowDisplayName: string;
+  /** The layer/path the frozen workflow came from when the run was created. */
+  workflowSource?: WorkflowSource;
   /** Derived workflow facts the renderers need without re-looking-up `workflow` by name. */
-  workflowDetail: { hasSpecPhase: boolean; completionLine: string; opensPr: boolean };
+  workflowDetail: {
+    hasSpecPhase: boolean;
+    completionLine: string;
+    opensPr: boolean;
+    phases: PhaseName[];
+    stages: Array<{
+      name: string;
+      phases: readonly PhaseName[];
+      duties: { maker: string; checker: string };
+      edges?: Record<string, { from: string }>;
+    }>;
+  };
   branch?: string;
   specPath?: string;
   /** The last quiescent stop's machine state — a display hint, not resume truth. */
@@ -156,6 +169,19 @@ export function buildStatusModel(state: RunState, position: RunPosition, pending
     createdAt: state.createdAt,
     workflow: state.workflow,
     workflowDisplayName: workflow.displayName,
+    ...(state.workflowSource ? { workflowSource: state.workflowSource } : {}),
+    workflowDetail: {
+      hasSpecPhase: hasSpecPhase(workflow),
+      completionLine: completionLine(workflow),
+      opensPr: opensPr(workflow),
+      phases: phasesOf(workflow).map((p) => p.name),
+      stages: stagesOf(workflow).map((stage) => ({
+        name: stage.name,
+        phases: stage.phases,
+        duties: stage.duties,
+        ...(stage.edges ? { edges: stage.edges } : {}),
+      })),
+    },
     ...(state.branch ? { branch: state.branch } : {}),
     ...(state.specPath ? { specPath: state.specPath } : {}),
     ...(state.machineState ? { machineState: state.machineState } : {}),
@@ -187,15 +213,7 @@ export function buildStatusModel(state: RunState, position: RunPosition, pending
       : {}),
     snippetProposals: state.snippetProposals.map(({ snippetKey, rationale, at }) => ({ snippetKey, rationale, at })),
     ...(state.lastActivity ? { lastActivity: state.lastActivity } : {}),
-  } as StatusModel;
-  Object.defineProperty(model, 'workflowDetail', {
-    value: {
-      hasSpecPhase: hasSpecPhase(workflow),
-      completionLine: completionLine(workflow),
-      opensPr: opensPr(workflow),
-    },
-    enumerable: false,
-  });
+  };
   return model;
 }
 
