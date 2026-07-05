@@ -50,7 +50,7 @@ Each phase runs a handful of prompt templates — **snippets** — that carry th
 
 ### Compose your own workflow
 
-When no shipped shape says what you mean — say a hotfix lane that triages once, patches once, and opens the PR — define one in TypeScript under `.duet/workflows/` (or `~/.config/duet/workflows/` to share it across your repos):
+When no shipped shape says what you mean — say a hotfix lane that triages once, patches once, and opens the PR — `duet workflows init hotfix` scaffolds a typed, minimal-compiling definition under `.duet/workflows/` (or write the file by hand; `~/.config/duet/workflows/` holds one shared across your repos). A definition is a `defineWorkflow` expression — the hotfix lane in full:
 
 ```ts
 // .duet/workflows/hotfix.ts
@@ -68,9 +68,9 @@ export default defineWorkflow({
 });
 ```
 
-then start with `duet new --workflow hotfix`. You state the phase list and the gate posture; duet derives the rest — the stages, the duty pairs, session continuity, the gate copy. The vocabulary is deliberately **closed**: a composition compiles only where duet ships prompt support (the compiler rejects anything else, naming the valid combinations), so a workflow you compose gets the same quality of briefing as a shipped one. And the shipped four are themselves `defineWorkflow` expressions, pinned byte-identical to their in-repo rebuilds by the test suite — you compose in exactly the grammar the standard library is written in.
+`duet workflows check hotfix` compiles it and prints the shape duet derives — phases in order, the stage duty-pairs, the default gates, the acceptance-contract placement — so you validate a definition (and read what it became) without starting a run; `duet new --workflow hotfix` then runs it. You state the phase list and the gate posture; duet derives the rest — the stages, the duty pairs, session continuity, the gate copy. The vocabulary is deliberately **closed**: a composition compiles only where duet ships prompt support (the compiler rejects anything else, naming the valid combinations), so a workflow you compose gets the same quality of briefing as a shipped one. And the shipped four are themselves `defineWorkflow` expressions, pinned byte-identical to their in-repo rebuilds by the test suite — you compose in exactly the grammar the standard library is written in.
 
-Mechanics worth knowing: no npm install — duet provisions the workflow directory with a `tsconfig.json` and a typed stub, so your editor typechecks the file as-is; the definition is compiled once at `duet new` and frozen into the run, so editing or deleting the file never affects a live run; and to commit a project workflow, carve `!/workflows/` into the repo's `.duet/.gitignore` (`.duet/` self-ignores everything by default). Worked examples — the shipped relay and full rebuilt from the blocks, plus the hotfix lane above — ship with the duet-frame skill ([`skills/duet-frame/references/workflow-definitions.md`](skills/duet-frame/references/workflow-definitions.md)).
+Mechanics worth knowing: no npm install — the workflow directory is provisioned with a `tsconfig.json` and a typed stub (by `init`, or on first use), so your editor typechecks the file as-is; the definition is compiled once at `duet new` and frozen into the run, so editing or deleting the file never affects a live run. Running `duet workflows` bare lists every definition it sees — shipped, project, and user — and surfaces any name defined in more than one layer as a **collision** (duet refuses to shadow, so a collided name is unusable until you rename). To commit a project workflow, carve `!/workflows/` into the repo's `.duet/.gitignore` (`.duet/` self-ignores everything by default). Worked examples — the shipped relay and full rebuilt from the blocks, plus the hotfix lane above — ship with the duet-frame skill ([`skills/duet-frame/references/workflow-definitions.md`](skills/duet-frame/references/workflow-definitions.md)).
 
 ## What it is — and isn't
 
@@ -159,6 +159,7 @@ duet orchestrate               # reconnect the interactive orchestrator after a 
 duet logs                      # stream the orchestrator's narration inline
 duet view                      # tmux panes, one per voice (or pass --tmux to new/continue)
 duet runs                      # list runs in this project
+duet workflows                 # list/check/scaffold workflow definitions (before a run)
 ```
 
 Run state lives under `.duet/runs/<id>/` (self-ignored from git). `state.json` is a convenience hint; the voices' provider transcripts are the source of truth.
@@ -261,7 +262,7 @@ Built and test-verified, awaiting a first live run:
 
 - the **blueprint** workflow — the one-doc middle workflow above
 - the **relay** workflow and the **workflow vocabulary** beneath it (workflows as compositions of phase blocks with knobs; [`docs/automation-design.md`](docs/automation-design.md) §"The workflow vocabulary") — relay plans on a strong model, builds on a cheap one via per-duty `--bind` bindings, and checks with a writing **judge** that fixes findings directly and owns the docs + PR
-- **composing your own workflow** — the `duet/workflows` SDK, the project/user authoring layers, and the compile-and-freeze kernel; the shipped four are pinned byte-identical to their SDK rebuilds, but no project-authored composition has driven a live run yet
+- **composing your own workflow** — the `duet/workflows` SDK, the project/user authoring layers, the pre-run `duet workflows` inspector (list / check / init), and the compile-and-freeze kernel; the shipped four are pinned byte-identical to their SDK rebuilds, but no project-authored composition has driven a live run yet
 - the experimental **interactive-Claude worker transport** (bill a maker duty's turns to your flat subscription quota) — pending one live-auth check; see [`docs/interactive-transport.md`](docs/interactive-transport.md)
 - **warm-starting** the interactive orchestrator from an existing session (`--resume-session`)
 - the **AFK-resilience hardening** (stream watchdog, wall-clock caps, compaction recovery, context-pressure guards) — test-verified at the seams and probed against real transcripts; the induced-failure checks (a stalled stream, a real suspend) are still manual
