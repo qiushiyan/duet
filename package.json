@@ -13,6 +13,12 @@
   "bin": {
     "duet": "src/surfaces/cli.ts"
   },
+  "exports": {
+    "./workflows": {
+      "types": "./dist/workflows.d.mts",
+      "import": "./dist/workflows.mjs"
+    }
+  },
   "publishConfig": {
     "bin": {
       "duet": "dist/cli.mjs"
