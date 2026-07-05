@@ -16,7 +16,7 @@ A run executes one **workflow** in two **stages** — an attended **planning** s
 | **architect** · **builder** — the makers | The architect writes the spec, plan, or design doc; the builder writes the code and the PR | `claude` (Opus) |
 | **analyst** · **critic** / **judge** — the checkers | Critique each artifact — read-only, except relay's judge, which fixes findings directly and owns the docs + PR | `codex` |
 
-You pick the workflow at the start (`--workflow`). Under the hood the workflows aren't four hand-built pipelines — each is composed from the same few **phase blocks** (a framing analysis, a document loop, the AFK build, a finishing phase that opens the PR) with named knobs: which document the loop produces, whether the delivery checker critiques or fixes, who owns the finishing steps, which sessions carry across the stage boundary. duet ships four compositions as its standard library; the vocabulary is how the set grows. Each `→` is a phase the agents work through; each **GATE** is a stop where the run waits for you:
+You pick the workflow at the start (`--workflow`). Under the hood the workflows aren't four hand-built pipelines — each is composed from the same few **phase blocks** (a framing analysis, a document loop, the AFK build, a finishing phase that opens the PR) with named knobs: which document the loop produces, whether the delivery checker critiques or fixes, who owns the finishing steps, which sessions carry across the stage boundary. duet ships four compositions as its standard library, and the same blocks are yours to compose ([below](#compose-your-own-workflow)). Each `→` is a phase the agents work through; each **GATE** is a stop where the run waits for you:
 
 ```
 full       frame → DIRECTION → spec → COMMIT-SPEC → plan → PLAN (walk away)
@@ -38,7 +38,7 @@ short      research → DIRECTION (walk away) → implement (AFK) → SHIP
 - **relay** — blueprint's shape with the delivery **criss-crossed**: after the design doc commits, a fresh **builder** on a fast, cheaper binding implements the doc, while the checking duty goes to a **judge** on a strong model that doesn't just file critiques — it fixes ordinary findings in place, owns the docs pass, and opens the PR, escalating anything that smells like a design change instead of patching over it. Pick it when the doc is strong enough that the build is labor, not judgment. The model pairing is yours to bind (`--bind builder=… --bind judge=…` — see [Configure](#configure)); the workflow supplies the shape.
 - **short** — the fast workflow: no documents at all; the research decisions are the design. Pick it for small, well-understood changes.
 
-Every workflow shares the same AFK implementation phase and ends by opening a real pull request. You can also compose your own workflow from the same blocks in TypeScript: put `name.ts` under `.duet/workflows/` or `~/.config/duet/workflows/`, import `defineWorkflow`, `frame`, `doc`, `build`, and `finish` from `duet/workflows`, then start with `duet new --workflow name`. duet compiles that file once at run creation, writes the validated structure to `.duet/runs/<id>/workflow.json`, and every process reads the frozen artifact after that; editing or deleting the source file does not change a live run. To commit a project workflow, carve `!/workflows/` into the repo's `.duet/.gitignore`; `.duet/` self-ignores everything by default like other run artifacts.
+Every workflow shares the same AFK implementation phase and ends by opening a real pull request.
 
 The gates are enforced in code (a statechart), not by a prompt an agent could be talked out of. Between stops a detached background process drives the phase; nothing runs while a run is parked, and you get a desktop notification at every stop. Three things worth knowing about how a run ends:
 
@@ -47,6 +47,30 @@ The gates are enforced in code (a statechart), not by a prompt an agent could be
 - A pre-authorized gate auto-crosses only on a clean packet: a `high`-severity decision in it holds the run for you instead, and an `ask_human` question stops the run under any posture. The merge is always yours.
 
 Each phase runs a handful of prompt templates — **snippets** — that carry the workflow's conventions. The stage's maker drafts each artifact from one — the architect from [`write-spec`](docs/snippets.md#write-spec) in spec, [`start-plan`](docs/snippets.md#start-plan) in plan, and [`write-design`](docs/snippets.md#the-blueprint-snippets) on blueprint and relay; the builder from [`implement-direct`](docs/snippets.md#implement-direct) on short — and the checker critiques through altitude-tuned lenses like [`review-spec`](docs/snippets.md#review-spec) (the analyst) and [`review-implementation`](docs/snippets.md#review-implementation) (the critic). Relay's judge works from [`review-and-fix`](docs/snippets.md#review-and-fix) — the same lens, plus the authority to fix what it finds. The snippets are the substance of the workflow, and the part you can reshape to your own methodology — see [Customizing the snippets](#customizing-the-snippets), or the full [snippet reference](docs/snippets.md).
+
+### Compose your own workflow
+
+When no shipped shape says what you mean — say a hotfix lane that triages once, patches once, and opens the PR — define one in TypeScript under `.duet/workflows/` (or `~/.config/duet/workflows/` to share it across your repos):
+
+```ts
+// .duet/workflows/hotfix.ts
+import { build, defineWorkflow, finish, frame } from 'duet/workflows';
+
+export default defineWorkflow({
+  name: 'hotfix',
+  title: 'Hotfix (triage → patch → PR)',
+  attend: ['triage'],
+  phases: [
+    frame({ name: 'triage' }),
+    build({ name: 'patch', review: 'writable', audit: true }),
+    finish(),
+  ],
+});
+```
+
+then start with `duet new --workflow hotfix`. You state the phase list and the gate posture; duet derives the rest — the stages, the duty pairs, session continuity, the gate copy. The vocabulary is deliberately **closed**: a composition compiles only where duet ships prompt support (the compiler rejects anything else, naming the valid combinations), so a workflow you compose gets the same quality of briefing as a shipped one. And the shipped four are themselves `defineWorkflow` expressions, pinned byte-identical to their in-repo rebuilds by the test suite — you compose in exactly the grammar the standard library is written in.
+
+Mechanics worth knowing: no npm install — duet provisions the workflow directory with a `tsconfig.json` and a typed stub, so your editor typechecks the file as-is; the definition is compiled once at `duet new` and frozen into the run, so editing or deleting the file never affects a live run; and to commit a project workflow, carve `!/workflows/` into the repo's `.duet/.gitignore` (`.duet/` self-ignores everything by default). Worked examples — the shipped relay and full rebuilt from the blocks, plus the hotfix lane above — ship with the duet-frame skill ([`skills/duet-frame/references/workflow-definitions.md`](skills/duet-frame/references/workflow-definitions.md)).
 
 ## What it is — and isn't
 
@@ -57,7 +81,7 @@ Four ideas shape every design choice:
 - **Stop anytime.** A run can be paused indefinitely. The state file is a hint; the agents' transcripts are the truth. Drop out to drive `claude --resume` / `codex resume` by hand, then pick duet back up later — or never.
 - **Not a daemon, not an app.** A small CLI you invoke per gate. No GUI, no background service, no webhooks.
 
-**It is not** a general orchestration framework — the workflows compose from a small internal vocabulary, but a neutral engine would be a commodity; what duet actually ships is the opinions (the snippets, the altitude-tuned review lenses, the gate discipline), and a knob exists only when a shipped workflow exercises it. Not multi-user, and not provider-agnostic — exactly two providers exist by design. It ships with no project conventions: which skills to run, where specs go, what context to seed all come from a **framing** you write at the start of each run.
+**It is not** a general orchestration framework — the workflows compose from a small, deliberately **closed** vocabulary (you can define your own, but only from blocks and knobs duet ships prompts for), because a neutral engine would be a commodity; what duet actually ships is the opinions (the snippets, the altitude-tuned review lenses, the gate discipline), and a knob exists only when a shipped workflow exercises it. Not multi-user, and not provider-agnostic — exactly two providers exist by design. It ships with no project conventions: which skills to run, where specs go, what context to seed all come from a **framing** you write at the start of each run.
 
 ## Install
 
@@ -237,6 +261,7 @@ Built and test-verified, awaiting a first live run:
 
 - the **blueprint** workflow — the one-doc middle workflow above
 - the **relay** workflow and the **workflow vocabulary** beneath it (workflows as compositions of phase blocks with knobs; [`docs/automation-design.md`](docs/automation-design.md) §"The workflow vocabulary") — relay plans on a strong model, builds on a cheap one via per-duty `--bind` bindings, and checks with a writing **judge** that fixes findings directly and owns the docs + PR
+- **composing your own workflow** — the `duet/workflows` SDK, the project/user authoring layers, and the compile-and-freeze kernel; the shipped four are pinned byte-identical to their SDK rebuilds, but no project-authored composition has driven a live run yet
 - the experimental **interactive-Claude worker transport** (bill a maker duty's turns to your flat subscription quota) — pending one live-auth check; see [`docs/interactive-transport.md`](docs/interactive-transport.md)
 - **warm-starting** the interactive orchestrator from an existing session (`--resume-session`)
 - the **AFK-resilience hardening** (stream watchdog, wall-clock caps, compaction recovery, context-pressure guards) — test-verified at the seams and probed against real transcripts; the induced-failure checks (a stalled stream, a real suspend) are still manual

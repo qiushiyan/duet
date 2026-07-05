@@ -5,7 +5,7 @@ duet is a semi-AFK orchestrator: a run executes one workflow (full · blueprint 
 ## Workflow structure
 
 **Workflow**:
-A named process shape a run executes, expressed as an ordered list of stages in the registry. The shipped standard library: **full** (spec + plan), **blueprint** (one design doc), **relay** (blueprint with a criss-crossed build), **short** (no document). Named on the ceremony/artifact axes, never after a stage, phase, or artifact.
+A named process shape a run executes, expressed as an ordered list of stages. The shipped standard library: **full** (spec + plan), **blueprint** (one design doc), **relay** (blueprint with a criss-crossed build), **short** (no document). Named on the ceremony/artifact axes, never after a stage, phase, or artifact.
 _Avoid_: arc, pipeline; "design" and "rir" (the retired arc names)
 
 **Workflow definition**:
