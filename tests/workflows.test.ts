@@ -123,7 +123,11 @@ describe('duet workflows check', () => {
     expect.soft(out).toContain('source    project · .duet/workflows/deep-relay.ts');
     expect.soft(out).toContain('phases (4)');
     expect.soft(out).toContain('design     doc-loop (design)');
-    expect.soft(out).toContain('2 rounds');
+    // The gate line shows the compact "<X> gate" label, not the full packet heading.
+    expect.soft(out).toContain('-> DESIGN gate · 2 rounds');
+    expect.soft(out).not.toContain("the orchestrator's summary");
+    // Rounds surface for the doc-loop only; the build phase's own review cap stays hidden.
+    expect.soft(out).toMatch(/build \(fixer\)\s+-> SHIP gate$/m);
     expect.soft(out).toContain('authors the acceptance contract');
     expect.soft(out).toContain('delivery   builder + judge · structurally fresh');
     expect.soft(out).toContain('default attended gates   design');

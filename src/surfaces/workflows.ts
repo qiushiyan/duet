@@ -119,6 +119,16 @@ function blockSummary(phase: PhaseSpec): string {
   }
 }
 
+// The compact gate label — the heading's leading "<X> gate" token, not the full
+// packet heading (`heading` is the status line printed above the gate packet at
+// run time; its "— the orchestrator's summary" tail is noise in a structural
+// summary). Every gate heading is "<LABEL> — <description>" (define.ts gate
+// constructors), so the split is total; a heading without the separator falls
+// back to itself.
+function gateLabel(phase: PhaseSpec): string {
+  return phase.gate.heading.split(' — ')[0]!;
+}
+
 function contractVerifyPhase(workflow: CompiledWorkflow): string | undefined {
   return phasesOf(workflow).find((phase) => phase.consultantCheckpoint === 'verify')?.name;
 }
@@ -155,10 +165,12 @@ export function renderWorkflowCheck(workflow: CompiledWorkflow, source: Workflow
 
   for (const phase of phases) {
     const extras = [
-      phase.reviewLoop ? `${phase.roundCap} rounds` : undefined,
+      // Only doc-loop rounds surface; the build phase's own review-loop cap is an
+      // internal rail the design excludes as noise ("no round-caps beyond doc-loop rounds").
+      phase.semantics.block === 'doc-loop' ? `${phase.roundCap} rounds` : undefined,
       phase.name === contractAuthor ? 'authors the acceptance contract' : undefined,
     ].filter((extra) => extra !== undefined);
-    lines.push(`  ${phase.name.padEnd(10)} ${blockSummary(phase).padEnd(18)} -> ${phase.gate.heading}${extras.length > 0 ? ` · ${extras.join(' · ')}` : ''}`);
+    lines.push(`  ${phase.name.padEnd(10)} ${blockSummary(phase).padEnd(18)} -> ${gateLabel(phase)}${extras.length > 0 ? ` · ${extras.join(' · ')}` : ''}`);
   }
 
   lines.push('', 'stages');
