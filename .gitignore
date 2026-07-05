@@ -25,3 +25,4 @@ dist/
 
 # claude code harness noise
 .claude/*.lock
+.sidekick/

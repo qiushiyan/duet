@@ -73,25 +73,7 @@ bind.consultant: claude
 
 ## 5 · "This is a hotfix lane: triage once, patch once, open the PR."
 
-When the shipped names do not describe the process shape cleanly, create a project workflow file first:
-
-```workflow-ts
-import { build, defineWorkflow, finish, frame } from 'duet/workflows';
-
-export default defineWorkflow({
-  name: 'hotfix',
-  title: 'Hotfix (triage → patch → PR)',
-  attend: ['triage'],
-  presets: { afk: [] },
-  phases: [
-    frame({ name: 'triage' }),
-    build({ name: 'patch', review: 'writable', audit: true }),
-    finish(),
-  ],
-});
-```
-
-Then select it from the framing:
+When the shipped names do not describe the process shape cleanly, define a project workflow first — the `hotfix` definition at `.duet/workflows/hotfix.ts` is worked example 3 in [workflow-definitions.md](workflow-definitions.md). Then select it from the framing:
 
 ```framing
 ---
@@ -102,4 +84,4 @@ workflow: hotfix
 <a small urgent fix where the user wants one attended triage gate, then a single writable patch pass>
 ```
 
-`workflow: hotfix` is an open identity, resolved from `.duet/workflows/hotfix.ts` at run creation. The workflow file is compiled and frozen into the run; editing it later does not change the live run. **Omitted:** `gates_at` — the custom workflow's `attend: ['triage']` already says the only attended gate; bindings — the shipped duty defaults stand unless the user asks for a different model.
+`workflow: hotfix` is an open identity, resolved from `.duet/workflows/hotfix.ts` at run creation. The workflow file is compiled and frozen into the run; editing it later does not change the live run. **Omitted:** `gates_at` — the definition's `attend: ['triage']` already says the only attended gate; bindings — the shipped duty defaults stand unless the user asks for a different model.

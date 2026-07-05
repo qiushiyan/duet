@@ -42,7 +42,7 @@ Surface a conflict as an observation and a question, never a redesign — naming
 
 ## Pick the workflow
 
-duet runs one of four workflows; settle which before gate posture, because the gates differ between them. Every workflow is two **stages** — planning (the attended thinking stretch) and delivery (the autonomous build and PR) — and they differ in how much planning ceremony the problem warrants. Record the choice as `workflow:` in the frontmatter (default `full`):
+duet ships four workflows (a project can define more — see "Custom workflow definitions" below); settle which before gate posture, because the gates differ between them. Every workflow is two **stages** — planning (the attended thinking stretch) and delivery (the autonomous build and PR) — and they differ in how much planning ceremony the problem warrants. Record the choice as `workflow:` in the frontmatter (default `full`):
 
 - **`full`** — frame → spec → plan → implement → PR. The thorough workflow: an unfamiliar domain, heavy risk, or work where the product spec and the technical plan genuinely differ and each deserves its own review.
 - **`blueprint`** — frame → design → implement → PR. One committed **design doc** replaces the spec + plan pair — product goals and behaviors on top, module boundaries and test standards below — reviewed in a single loop and ratified at one gate. For serious work where the technical depth can be trusted to a frontier-model builder.
@@ -55,13 +55,13 @@ If the user hasn't said: suggest `short` when the problem is small and clearly u
 
 ## Custom workflow definitions
 
-If the shipped four workflows don't fit the user's stated shape, define a project workflow rather than stretching the framing prose. Put it under `.duet/workflows/<name>.ts`, import the SDK from `duet/workflows`, and export `defineWorkflow({ ... })`. The user still launches with `workflow: <name>` in frontmatter or `duet new --workflow <name>`. Keep this narrow:
+If no shipped workflow says what the user means, define a project workflow rather than stretching the framing prose. **Before writing one, read `references/workflow-definitions.md`** — the SDK grammar plus three worked definitions: the shipped `relay` and `full` rebuilt from the blocks (pinned byte-identical to the registry — the standard library is the same grammar you'd be writing) and a novel hotfix lane. Ground rules:
 
-- Use the shipped blocks only: `frame`, `doc('spec'|'plan'|'design')`, `build({ review: 'critique'|'writable'|'fixer' })`, and `finish`.
-- Do not invent prose, duties, gate names, or new knobs. If the SDK rejects the composition, report the missing world or invalid combination to the user instead of working around it in the framing.
-- Prefer a project workflow (`.duet/workflows`) for a project-specific run shape; use the user layer (`~/.config/duet/workflows`) only when the user explicitly wants that composition across repos.
+- Shipped blocks and knobs only (`frame`, `doc`, `build`, `finish`); never invent prose, duties, or gate names. If the compiler rejects a composition, report the missing world to the user instead of working around it in the framing.
+- Prefer the project layer (`.duet/workflows/<name>.ts`); use the user layer (`~/.config/duet/workflows/`) only when the user explicitly wants that shape across repos.
+- The file is compiled once at run creation and frozen into the run — editing or deleting it later never affects a live run.
 
-duet compiles the file once at run creation and freezes the result into the run. Editing or deleting the workflow source after `duet new` does not affect that live run.
+The user still launches with `workflow: <name>` in frontmatter or `duet new --workflow <name>`.
 
 ## Gate posture
 

@@ -5,6 +5,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { Command } from 'commander';
 import { describe, expect, test } from 'vitest';
 import { program } from '../src/surfaces/cli.ts';
+import { compileWorkflow } from '../src/workflows.ts';
+import type { WorkflowDefinition } from '../src/workflows.ts';
 import { createRun } from '../src/run/store.ts';
 import { FRAMING_TEMPLATE, parseFramingFile, resolveRunInputs } from '../src/surfaces/framing.ts';
 import { projectWorkflowDir } from '../src/surfaces/workflow-source.ts';
@@ -188,6 +190,7 @@ describe('the duet orchestrator identity coheres with the CLI', () => {
 const duetFrameDir = new URL('../skills/duet-frame/', import.meta.url);
 const duetFrameMd = readFileSync(new URL('SKILL.md', duetFrameDir), 'utf8');
 const frameExamplesMd = readFileSync(new URL('references/manifest-examples.md', duetFrameDir), 'utf8');
+const workflowDefsMd = readFileSync(new URL('references/workflow-definitions.md', duetFrameDir), 'utf8');
 
 describe('the duet-frame skill coheres with the CLI', () => {
   test('SKILL.md frontmatter names the skill and is explicit-invocation only', () => {
@@ -199,9 +202,9 @@ describe('the duet-frame skill coheres with the CLI', () => {
     expect.soft(fm['disable-model-invocation']).toBe('true');
   });
 
-  test('every duet verb and flag named in SKILL.md and the manifest examples exists on the CLI', () => {
+  test('every duet verb and flag named in SKILL.md and the reference files exists on the CLI', () => {
     expect.hasAssertions();
-    for (const line of [duetFrameMd, frameExamplesMd].flatMap(codeLines)) {
+    for (const line of [duetFrameMd, frameExamplesMd, workflowDefsMd].flatMap(codeLines)) {
       const verbs = [...line.matchAll(/\bduet\s+([a-z_]+)/g)].map((m) => m[1]!);
       if (verbs.length === 0) continue;
 
@@ -233,27 +236,51 @@ describe('the duet-frame skill coheres with the CLI', () => {
     // The worked intent→manifest translations live in the reference; the skill
     // must route the author there before any frontmatter is written.
     expect.soft(duetFrameMd).toContain('references/manifest-examples.md');
+    // Same for the SDK: the skill must route the author to the worked workflow
+    // definitions before any custom workflow file is written.
+    expect.soft(duetFrameMd).toContain('references/workflow-definitions.md');
   });
 });
 
 describe('the duet-frame manifest examples are EXECUTABLE — parsed by the real grammar', () => {
-  // Each ```framing fence in the reference is a complete file the skill might
-  // emit. Static examples rot when the grammar moves, so every one runs through
-  // the REAL parser (and the binds through the real freeze) — a grammar change
-  // breaks the examples here in five seconds, not in a user's first
-  // post-change framing. The per-example assertions pin the CLAIMS each
-  // example's prose makes about its manifest, especially the omissions
-  // ("omission is part of the grammar" is only teachable if the omitted keys
-  // really do stay absent).
+  // Each ```framing fence in the manifest reference is a complete file the
+  // skill might emit, and each ```workflow-ts fence in the SDK reference is a
+  // complete definition it might write. Static examples rot when the grammar
+  // moves, so every one runs through the REAL parser/compiler (and the binds
+  // through the real freeze) — a grammar change breaks the examples here in
+  // five seconds, not in a user's first post-change framing. The per-example
+  // assertions pin the CLAIMS each example's prose makes, especially the
+  // omissions ("omission is part of the grammar" is only teachable if the
+  // omitted keys really do stay absent).
   const framings = [...frameExamplesMd.matchAll(/```framing\n([\s\S]*?)```/g)].map((m) => m[1]!);
-  const workflowDefinitions = [...frameExamplesMd.matchAll(/```workflow-ts\n([\s\S]*?)```/g)].map((m) => m[1]!);
+  const workflowDefinitions = [...workflowDefsMd.matchAll(/```workflow-ts\n([\s\S]*?)```/g)].map((m) => m[1]!);
   // A path that exists on no machine: the freeze must resolve from the example
   // alone, never from the developer's own ~/.config/duet/config.toml.
   const noConfig = '/nonexistent/duet-skill-test-config.toml';
 
-  test('the reference carries the five worked examples and one project workflow definition', () => {
+  test('the references carry the five worked framings and three workflow definitions', () => {
     expect.soft(framings).toHaveLength(5);
-    expect.soft(workflowDefinitions).toHaveLength(1);
+    expect.soft(workflowDefinitions).toHaveLength(3);
+  });
+
+  // The rebuild examples claim to BE the shipped workflows — the reference's
+  // strongest teachable fact ("the standard library is the same grammar you'd
+  // be writing"). Import each fence as a real module against the real SDK and
+  // pin its compiled row byte-identical to the shipped registry row.
+  test.for([
+    ['relay', 0],
+    ['full', 1],
+  ] as const)('sdk example: the %s rebuild compiles byte-identical to the shipped registry row', async ([name, index]) => {
+    const dir = mkdtempSync(join(tmpdir(), 'duet-frame-skill-'));
+    try {
+      const sdk = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'workflows.ts')).href;
+      const file = join(dir, `${name}.ts`);
+      writeFileSync(file, workflowDefinitions[index]!.replace("'duet/workflows'", JSON.stringify(sdk)));
+      const definition = ((await import(pathToFileURL(file).href)) as { default: WorkflowDefinition }).default;
+      expect(JSON.stringify(compileWorkflow(definition), null, 2)).toBe(JSON.stringify(WORKFLOWS[name], null, 2));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test('1 · the floor: `short`, every other key omitted', () => {
@@ -298,7 +325,7 @@ describe('the duet-frame manifest examples are EXECUTABLE — parsed by the real
       const workflowDir = projectWorkflowDir(projectDir);
       mkdirSync(workflowDir, { recursive: true });
       const sdk = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'workflows.ts')).href;
-      const workflowDefinition = workflowDefinitions[0]!.replace("'duet/workflows'", JSON.stringify(sdk));
+      const workflowDefinition = workflowDefinitions[2]!.replace("'duet/workflows'", JSON.stringify(sdk));
       writeFileSync(join(workflowDir, 'hotfix.ts'), workflowDefinition);
       writeFileSync(join(projectDir, 'brief.md'), framings[4]!);
       const inputs = await resolveRunInputs(projectDir, { framing: 'brief.md' });
@@ -366,6 +393,7 @@ describe('no CLI help / template copy carries a Full-only-arc claim', () => {
       { label: 'framing seed template', text: FRAMING_TEMPLATE },
       { label: 'duet-frame SKILL.md', text: duetFrameMd },
       { label: 'duet-frame manifest-examples.md', text: frameExamplesMd },
+      { label: 'duet-frame workflow-definitions.md', text: workflowDefsMd },
       { label: 'concierge SKILL.md', text: skillMd },
       { label: 'concierge cli-reference.md', text: referenceMd },
     ];
