@@ -31,6 +31,10 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | `duet doctor [run-id] --json` | The full health model, including each voice's resolved transcript path, for automation. |
 | `duet stats [run-id] [--json]` | Effort per phase, derived from the voice logs at view time: each phase's elapsed window and the worker-turn time inside it, plus a per-tag breakdown. Read-only and fail-soft (a missing or interactive-only log degrades to a note); distinct from `status`, which never reads logs. |
 | `duet runs` | List the project's runs, newest first. |
+| `duet workflows` | List shipped, project, and user workflow definitions before starting a run; collisions are shown separately and the command does not import or compile external definition files. |
+| `duet workflows --json` | Machine-readable workflow discovery rows: each name is `available` or `collision`, with its source layers and paths. |
+| `duet workflows check <name>` | Resolve and compile one workflow definition without starting a run, then print its phases, stages, default gates, continuity declaration, and acceptance-contract placement. Loader/compiler errors surface directly. |
+| `duet workflows init <name>` | Scaffold `.duet/workflows/<name>.ts` as a typed project workflow definition, refusing to clobber an existing project/user/shipped name. |
 | `duet snippets` | List the effective snippet library and where each snippet resolves from — the shipped default, or a user (`~/.config/duet/snippets.toml`) / project (`<repo>/.duet/snippets.toml`) override. Read-only; project-independent of any run. |
 | `duet snippets show <key>` | Print the full effective body of one snippet, with the layer it resolved from. |
 | `duet logs [run-id]` | Stream the driver narration — replays from the start, then follows. Ctrl-C detaches; the run is unaffected. |
