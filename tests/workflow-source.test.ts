@@ -7,7 +7,15 @@ import { defaultBindingsFor } from '../src/voices/bindings.ts';
 import { createRun, loadRunState } from '../src/run/store.ts';
 import { workflowFor } from '../src/run/workflow.ts';
 import { resolveRunInputs } from '../src/surfaces/framing.ts';
-import { projectWorkflowDir, provisionWorkflowDir, resolveWorkflowSource, userWorkflowDir, workflowSdkRuntimeUrl } from '../src/surfaces/workflow-source.ts';
+import {
+  definedWorkflowSources,
+  discoverWorkflowSources,
+  projectWorkflowDir,
+  provisionWorkflowDir,
+  resolveWorkflowSource,
+  userWorkflowDir,
+  workflowSdkRuntimeUrl,
+} from '../src/surfaces/workflow-source.ts';
 import { test } from './helpers/fixtures.ts';
 
 const workflowSourceUrl = pathToFileURL(join(process.cwd(), 'src', 'surfaces', 'workflow-source.ts')).href;
@@ -206,6 +214,21 @@ console.log(resolved.workflow.name + ':' + resolved.source.layer);
     writeRealSdkTsconfig(realSdkDir);
     writeFileSync(join(realSdkDir, 'surface.ts'), SDK_SURFACE_FIXTURE);
     await execa('pnpm', ['exec', 'tsc', '-p', realSdkDir, '--noEmit'], { cwd: process.cwd() });
+  });
+
+  test('generated .d.ts stubs are never workflow definitions', async ({ projectDir }) => {
+    const home = join(projectDir, 'home');
+    const projectDirPath = projectWorkflowDir(projectDir);
+    const userDirPath = userWorkflowDir(home);
+    provisionWorkflowDir(projectDirPath);
+    provisionWorkflowDir(userDirPath);
+
+    expect.soft(discoverWorkflowSources(projectDir, { home }).map((entry) => entry.name)).not.toContain('duet-workflows.d');
+    expect.soft(definedWorkflowSources(projectDir, 'duet-workflows.d', { home })).toEqual([]);
+    await expect(resolveWorkflowSource(projectDir, 'duet-workflows.d', { home })).rejects.toThrow(
+      /workflow "duet-workflows\.d" was not found[\s\S]*shipped: full, blueprint, relay, short/,
+    );
+    await expect(resolveWorkflowSource(projectDir, 'duet-workflows.d', { home })).rejects.not.toThrow(/duet-workflows\.d\.ts could not be imported/);
   });
 
   test('rejects shipped-name and cross-layer collisions before importing a workflow', async ({ projectDir }) => {

@@ -25,6 +25,11 @@ export interface WorkflowDirProvisioning {
   dtsPath: string;
 }
 
+export interface DiscoveredWorkflowSources {
+  name: string;
+  layers: WorkflowSource[];
+}
+
 interface CliSelfRef {
   exec: string;
   entry?: string;
@@ -181,17 +186,49 @@ function registerWorkflowResolveHook(): void {
   workflowHookRegistered = true;
 }
 
+function isWorkflowDefinitionFileName(file: string): boolean {
+  return file.endsWith('.ts') && !file.endsWith('.d.ts');
+}
+
+function workflowNameFromDefinitionFile(file: string): string {
+  return file.slice(0, -'.ts'.length);
+}
+
 function tsNames(dir: string): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.ts'))
-    .map((entry) => entry.name.slice(0, -'.ts'.length))
+    .filter((entry) => entry.isFile() && isWorkflowDefinitionFileName(entry.name))
+    .map((entry) => workflowNameFromDefinitionFile(entry.name))
     .sort();
 }
 
 function candidateFile(dir: string, name: string): string | undefined {
+  if (!isWorkflowDefinitionFileName(`${name}.ts`)) return undefined;
   const path = join(dir, `${name}.ts`);
   return existsSync(path) ? path : undefined;
+}
+
+function candidateLayersFor(name: string, projectDir: string, userDir: string): WorkflowSource[] {
+  const candidates: WorkflowSource[] = [];
+  if (isShippedWorkflowName(name)) candidates.push({ layer: 'shipped' });
+  const projectPath = candidateFile(projectDir, name);
+  if (projectPath) candidates.push({ layer: 'project', path: projectPath });
+  const userPath = candidateFile(userDir, name);
+  if (userPath) candidates.push({ layer: 'user', path: userPath });
+  return candidates;
+}
+
+export function definedWorkflowSources(cwd: string, name: string, opts: { home?: string } = {}): WorkflowSource[] {
+  return candidateLayersFor(name, projectWorkflowDir(cwd), userWorkflowDir(opts.home));
+}
+
+export function discoverWorkflowSources(cwd: string, opts: { home?: string } = {}): DiscoveredWorkflowSources[] {
+  const projectDir = projectWorkflowDir(cwd);
+  const userDir = userWorkflowDir(opts.home);
+  const names = new Set([...Object.keys(WORKFLOWS), ...tsNames(projectDir), ...tsNames(userDir)]);
+  return [...names]
+    .sort()
+    .map((name) => ({ name, layers: candidateLayersFor(name, projectDir, userDir) }));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -239,34 +276,14 @@ export async function resolveWorkflowSource(
   const userDir = userWorkflowDir(opts.home);
   if (existsSync(projectDir)) provisionWorkflowDir(projectDir);
   if (existsSync(userDir)) provisionWorkflowDir(userDir);
-  const candidates: Array<{ source: WorkflowSource; load: () => Promise<CompiledWorkflow> }> = [];
-  if (isShippedWorkflowName(name)) {
-    candidates.push({
-      source: { layer: 'shipped' },
-      load: async () => validatedWorkflowSpec(workflowDefinition(name)),
-    });
-  }
-  const projectPath = candidateFile(projectDir, name);
-  if (projectPath) {
-    candidates.push({
-      source: { layer: 'project', path: projectPath },
-      load: () => loadWorkflowFile(projectPath, name),
-    });
-  }
-  const userPath = candidateFile(userDir, name);
-  if (userPath) {
-    candidates.push({
-      source: { layer: 'user', path: userPath },
-      load: () => loadWorkflowFile(userPath, name),
-    });
-  }
+  const candidateSources = candidateLayersFor(name, projectDir, userDir);
 
-  if (candidates.length > 1) {
+  if (candidateSources.length > 1) {
     throw new Error(
-      `workflow "${name}" is defined in multiple layers (${candidates.map((c) => formatWorkflowSource(c.source, cwd)).join(', ')}) — remove the duplicate; duet rejects workflow shadowing rather than choosing a winner.`,
+      `workflow "${name}" is defined in multiple layers (${candidateSources.map((source) => formatWorkflowSource(source, cwd)).join(', ')}) — remove the duplicate; duet rejects workflow shadowing rather than choosing a winner.`,
     );
   }
-  if (candidates.length === 0) {
+  if (candidateSources.length === 0) {
     const project = tsNames(projectDir);
     const user = tsNames(userDir);
     const available = [
@@ -279,6 +296,9 @@ export async function resolveWorkflowSource(
     );
   }
 
-  const [candidate] = candidates;
-  return { workflow: await candidate!.load(), source: candidate!.source };
+  const [source] = candidateSources;
+  if (source!.layer === 'shipped') {
+    return { workflow: validatedWorkflowSpec(workflowDefinition(name)), source: source! };
+  }
+  return { workflow: await loadWorkflowFile(source!.path!, name), source: source! };
 }
