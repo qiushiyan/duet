@@ -8,25 +8,8 @@ import type {
   ReviewPosture,
   TailOwner,
   WorkflowSpecInput,
-} from './workflows.ts';
-
-type CompilerRegistry = {
-  briefWorlds: typeof import('./workflows.ts').BRIEF_WORLDS;
-  validateWorkflowSpec: (workflow: WorkflowSpecInput) => CompiledWorkflow;
-};
-
-let compilerRegistry: CompilerRegistry | undefined;
-
-export function installWorkflowCompilerRegistry(registry: CompilerRegistry): void {
-  compilerRegistry = registry;
-}
-
-function registryForCompile(): CompilerRegistry {
-  if (!compilerRegistry) {
-    throw new Error('workflow compiler registry is not initialized — import from "duet/workflows", not from the internal registry module directly');
-  }
-  return compilerRegistry;
-}
+} from './vocabulary.ts';
+import { BRIEF_WORLDS, validatedWorkflowSpec } from './vocabulary.ts';
 
 declare const phaseExprBrand: unique symbol;
 declare const workflowDefinitionBrand: unique symbol;
@@ -74,7 +57,7 @@ export type WorkflowDefinition = WorkflowDefinitionInput & {
   readonly [workflowDefinitionBrand]: true;
 };
 
-export type { CompiledWorkflow } from './workflows.ts';
+export type { CompiledWorkflow } from './vocabulary.ts';
 
 type FrameOptions = {
   readonly name?: string;
@@ -220,7 +203,7 @@ export function compileWorkflow(definition: WorkflowDefinition): CompiledWorkflo
     defaultPreAuthorized: defaultPreAuthorizedFor(definition, phases),
   };
 
-  return registryForCompile().validateWorkflowSpec(compiled);
+  return validatedWorkflowSpec(compiled);
 }
 
 function compilePhase(
@@ -380,7 +363,7 @@ function buildExamplesKeyFor(
   if (reviewPosture === 'critique' && upstreamArtifact === 'design') return 'blueprint-impl';
   if (reviewPosture === 'writable' && upstreamArtifact === undefined) return 'short-impl';
   if (reviewPosture === 'fixer' && upstreamArtifact === 'design') return 'relay-impl';
-  const valid = registryForCompile().briefWorlds.build[reviewPosture].join(', ');
+  const valid = BRIEF_WORLDS.build[reviewPosture].join(', ');
   throw new Error(
     `workflow "${workflowName}" build "${phaseNameForError}" has review "${reviewPosture}" after upstream ${upstreamArtifact ?? 'none'}, but no ${reviewPosture} build prose world is declared for that upstream artifact — valid ${reviewPosture} worlds: ${valid}`,
   );
