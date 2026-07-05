@@ -34,7 +34,7 @@ import type { EffectiveSnippet } from '../orchestrator/library.ts';
 import { buildBrief, buildStatusModel, formatGatePosture, renderBrief, renderStatus, steerRefusal } from './status.ts';
 import { openTmuxView } from './view/tmux.ts';
 import { formatWorkflowSource, resolveWorkflowSource } from './workflow-source.ts';
-import { buildWorkflowListModel, renderWorkflowCheck, renderWorkflowList } from './workflows.ts';
+import { buildWorkflowListModel, initWorkflowDefinition, renderWorkflowCheck, renderWorkflowInit, renderWorkflowList } from './workflows.ts';
 import {
   appendNote,
   clearPendingTurn,
@@ -1186,6 +1186,17 @@ workflowsCmd
     try {
       const resolved = await resolveWorkflowSource(process.cwd(), name);
       console.log(renderWorkflowCheck(resolved.workflow, resolved.source, process.cwd()));
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+    }
+  });
+
+workflowsCmd
+  .command('init <name>')
+  .description('Scaffold a typed project workflow definition.')
+  .action((name: string) => {
+    try {
+      console.log(renderWorkflowInit(initWorkflowDefinition(process.cwd(), name), process.cwd()));
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
     }

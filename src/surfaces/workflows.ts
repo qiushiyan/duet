@@ -1,4 +1,5 @@
-import { dirname, relative } from 'node:path';
+import { existsSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
 import {
   WORKFLOWS,
   contractAuthorPhaseOf,
@@ -12,7 +13,13 @@ import {
 } from '../registry/workflows.ts';
 import type { CompiledWorkflow, Duty, GatePhase, PhaseSpec } from '../registry/workflows.ts';
 import type { WorkflowSource } from '../run/store.ts';
-import { discoverWorkflowSources, formatWorkflowSource } from './workflow-source.ts';
+import {
+  definedWorkflowSources,
+  discoverWorkflowSources,
+  formatWorkflowSource,
+  projectWorkflowDir,
+  provisionWorkflowDir,
+} from './workflow-source.ts';
 
 export interface WorkflowListModel {
   rows: WorkflowListRow[];
@@ -28,6 +35,12 @@ export interface WorkflowListRow {
 export interface WorkflowListSource {
   layer: WorkflowSource['layer'];
   path?: string;
+}
+
+export interface InitializedWorkflow {
+  name: string;
+  path: string;
+  text: string;
 }
 
 function displayPath(path: string, cwd: string): string {
@@ -162,4 +175,59 @@ export function renderWorkflowCheck(workflow: CompiledWorkflow, source: Workflow
     }`,
   );
   return lines.join('\n');
+}
+
+function validateNewWorkflowName(name: string): void {
+  if (!name.trim()) throw new Error('workflow name is required — use a kebab-case filename stem such as "deep-relay".');
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) {
+    throw new Error(
+      `workflow name "${name}" is invalid — use kebab-case letters and numbers only, with no path separators (example: deep-relay).`,
+    );
+  }
+}
+
+function workflowStarter(name: string): string {
+  return `import { build, defineWorkflow, finish, frame } from 'duet/workflows';
+
+export default defineWorkflow({
+  name: '${name}',
+  title: '${name} workflow',
+  phases: [
+    // frame() gathers direction, build({ review: 'writable' }) runs one writable delivery pass, and finish() opens the PR.
+    // For other complete shapes, use the worked examples in skills/duet-frame/references/workflow-definitions.md.
+    frame(),
+    build({ review: 'writable' }),
+    finish(),
+  ],
+  // attend lists the gates you want to stop at by default. Omit it to attend every gate; use [] only when the workflow should default to walk-away.
+});
+`;
+}
+
+export function initWorkflowDefinition(cwd: string, name: string, opts: { home?: string } = {}): InitializedWorkflow {
+  validateNewWorkflowName(name);
+  const existing = definedWorkflowSources(cwd, name, opts);
+  if (existing.length > 0) {
+    throw new Error(
+      `workflow "${name}" already resolves from ${existing.map((source) => formatWorkflowSource(source, cwd)).join(', ')} — choose a new name; duet rejects workflow shadowing.`,
+    );
+  }
+
+  const dir = projectWorkflowDir(cwd);
+  const path = join(dir, `${name}.ts`);
+  if (existsSync(path)) throw new Error(`${path} already exists — choose a new workflow name or edit that file directly.`);
+  provisionWorkflowDir(dir);
+  const text = workflowStarter(name);
+  writeFileSync(path, text);
+  return { name, path, text };
+}
+
+export function renderWorkflowInit(result: InitializedWorkflow, cwd: string): string {
+  const path = displayPath(result.path, cwd);
+  return [
+    `created ${path}`,
+    `check it: duet workflows check ${result.name}`,
+    `run it:   duet new --workflow ${result.name}`,
+    'share it by carving !/workflows/ into .duet/.gitignore when this project definition should be committed',
+  ].join('\n');
 }

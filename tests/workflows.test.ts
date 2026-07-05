@@ -1,10 +1,16 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execa } from 'execa';
 import { describe, expect } from 'vitest';
 import { resolveWorkflowSource, userWorkflowDir, projectWorkflowDir } from '../src/surfaces/workflow-source.ts';
-import { buildWorkflowListModel, renderWorkflowCheck, renderWorkflowList } from '../src/surfaces/workflows.ts';
+import {
+  buildWorkflowListModel,
+  initWorkflowDefinition,
+  renderWorkflowCheck,
+  renderWorkflowInit,
+  renderWorkflowList,
+} from '../src/surfaces/workflows.ts';
 import { test } from './helpers/fixtures.ts';
 
 const cliPath = join(process.cwd(), 'src', 'surfaces', 'cli.ts');
@@ -153,5 +159,47 @@ describe('duet workflows check', () => {
     expect.soft(result.exitCode).toBe(1);
     expect.soft(result.stderr).toContain('could not be imported (top-level boom)');
     expect.soft(result.stderr).not.toContain('workflows check failed');
+  });
+});
+
+describe('duet workflows init', () => {
+  test('refuses names that already resolve from any layer', ({ projectDir }) => {
+    const home = join(projectDir, 'home');
+    mkdirSync(userWorkflowDir(home), { recursive: true });
+    writeFileSync(join(userWorkflowDir(home), 'personal.ts'), workflowFile('personal'));
+    writeProjectWorkflow(projectDir, 'local');
+
+    expect(() => initWorkflowDefinition(projectDir, 'full', { home })).toThrow(/already resolves from shipped/);
+    expect(() => initWorkflowDefinition(projectDir, 'local', { home })).toThrow(/already resolves from project: \.duet\/workflows\/local\.ts/);
+    expect(() => initWorkflowDefinition(projectDir, 'personal', { home })).toThrow(/already resolves from user: home\/\.config\/duet\/workflows\/personal\.ts/);
+  });
+
+  test('refuses invalid or path-escaping names before writing', ({ projectDir }) => {
+    expect(() => initWorkflowDefinition(projectDir, '')).toThrow(/workflow name is required/);
+    expect(() => initWorkflowDefinition(projectDir, '../escape')).toThrow(/invalid/);
+    expect(() => initWorkflowDefinition(projectDir, 'not_ok')).toThrow(/invalid/);
+    expect.soft(existsSync(join(projectDir, 'escape.ts'))).toBe(false);
+    expect.soft(existsSync(projectWorkflowDir(projectDir))).toBe(false);
+  });
+
+  test('provisions a typed starter that compiles through check', async ({ projectDir }) => {
+    const result = initWorkflowDefinition(projectDir, 'starter-flow');
+    const rendered = renderWorkflowInit(result, projectDir);
+
+    expect.soft(rendered).toContain('created .duet/workflows/starter-flow.ts');
+    expect.soft(rendered).toContain('duet workflows check starter-flow');
+    expect.soft(rendered).toContain('duet new --workflow starter-flow');
+    expect.soft(rendered).toContain('!/workflows/');
+    expect.soft(readFileSync(join(projectWorkflowDir(projectDir), 'duet-workflows.d.ts'), 'utf8')).toContain("declare module 'duet/workflows'");
+
+    const source = readFileSync(result.path, 'utf8');
+    expect.soft(source).toContain("import { build, defineWorkflow, finish, frame } from 'duet/workflows';");
+    expect.soft(source).toContain("name: 'starter-flow'");
+    expect.soft(source).toContain("build({ review: 'writable' })");
+    expect.soft(source).toContain('skills/duet-frame/references/workflow-definitions.md');
+
+    const checked = await checkCli(projectDir, 'starter-flow');
+    expect.soft(checked.exitCode).toBe(0);
+    expect.soft(checked.stdout).toContain('workflow  starter-flow — starter-flow workflow');
   });
 });
