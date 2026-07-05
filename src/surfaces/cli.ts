@@ -33,7 +33,8 @@ import { getEffectiveSnippet, loadEffectiveSnippets, runtimeLibraryContext } fro
 import type { EffectiveSnippet } from '../orchestrator/library.ts';
 import { buildBrief, buildStatusModel, formatGatePosture, renderBrief, renderStatus, steerRefusal } from './status.ts';
 import { openTmuxView } from './view/tmux.ts';
-import { formatWorkflowSource } from './workflow-source.ts';
+import { formatWorkflowSource, resolveWorkflowSource } from './workflow-source.ts';
+import { buildWorkflowListModel, renderWorkflowCheck, renderWorkflowList } from './workflows.ts';
 import {
   appendNote,
   clearPendingTurn,
@@ -1167,6 +1168,27 @@ snippetsCmd
     console.log(`# key: ${snippet.key}`);
     console.log(`# source: ${snippet.source}`);
     console.log(snippet.expand);
+  });
+
+const workflowsCmd = program
+  .command('workflows')
+  .description('List workflow definitions available before starting a run.')
+  .option('--json', 'print the discovery model as JSON')
+  .action((opts: { json?: boolean }) => {
+    const model = buildWorkflowListModel(process.cwd());
+    console.log(opts.json ? JSON.stringify(model.rows, null, 2) : renderWorkflowList(model));
+  });
+
+workflowsCmd
+  .command('check <name>')
+  .description('Resolve and compile one workflow definition without starting a run.')
+  .action(async (name: string) => {
+    try {
+      const resolved = await resolveWorkflowSource(process.cwd(), name);
+      console.log(renderWorkflowCheck(resolved.workflow, resolved.source, process.cwd()));
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+    }
   });
 
 if (import.meta.main) {
