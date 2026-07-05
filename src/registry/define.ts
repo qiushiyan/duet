@@ -1,6 +1,7 @@
-import { BRIEF_WORLDS, validateRegistry } from './workflows.ts';
+import { BRIEF_WORLDS, validatedWorkflowSpec } from './workflows.ts';
 import type {
   ArtifactKind,
+  CompiledWorkflow,
   ConsultantCheckpoint,
   EntrySeed,
   GatePhase,
@@ -12,7 +13,6 @@ import type {
 
 declare const phaseExprBrand: unique symbol;
 declare const workflowDefinitionBrand: unique symbol;
-declare const compiledWorkflowBrand: unique symbol;
 
 export type GateName = string;
 
@@ -57,9 +57,7 @@ export type WorkflowDefinition = WorkflowDefinitionInput & {
   readonly [workflowDefinitionBrand]: true;
 };
 
-export type CompiledWorkflow = WorkflowSpecInput & {
-  readonly [compiledWorkflowBrand]: true;
-};
+export type { CompiledWorkflow } from './workflows.ts';
 
 type FrameOptions = {
   readonly name?: string;
@@ -209,8 +207,7 @@ export function compileWorkflow(definition: WorkflowDefinition): CompiledWorkflo
     defaultPreAuthorized: defaultPreAuthorizedFor(definition, phases),
   };
 
-  validateRegistry({ [compiled.name]: compiled });
-  return compiled as CompiledWorkflow;
+  return validatedWorkflowSpec(compiled);
 }
 
 function compilePhase(

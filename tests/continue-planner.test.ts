@@ -28,6 +28,7 @@ const at = (over: Partial<ContinueFacts> & { position: RunPosition }): ContinueF
   eventType: undefined,
   headless: false,
   restored: null,
+  workflow: 'full',
   ...over,
 });
 

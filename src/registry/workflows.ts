@@ -951,14 +951,14 @@ export const WORKFLOWS = {
   },
 } as const satisfies Record<string, WorkflowSpecInput>;
 
-/** The workflows duet can run. */
-export type WorkflowName = keyof typeof WORKFLOWS;
+/** The shipped workflow names — useful for tests/help copy that intentionally enumerate the standard library. */
+export type ShippedWorkflowName = keyof typeof WORKFLOWS;
 
-/** The union of every phase across all workflows (globally unique names). */
-type AnyPhase = (typeof WORKFLOWS)[WorkflowName]['phases'][number];
+/** A workflow's identity is boundary-validated, not a closed vocabulary. */
+export type WorkflowName = string;
 
-/** Every phase name, derived from the registry. */
-export type PhaseName = AnyPhase['name'];
+/** A phase name is workflow-scoped and boundary-validated against the run's workflow. */
+export type PhaseName = string;
 
 /**
  * Phases that end at a human gate. Every phase in every arc gates (the registry
@@ -966,6 +966,36 @@ export type PhaseName = AnyPhase['name'];
  * alias because it reads as intent at the call sites (`gatesAt: GatePhase[]`).
  */
 export type GatePhase = PhaseName;
+
+declare const compiledWorkflowBrand: unique symbol;
+
+export type CompiledWorkflow = WorkflowSpecInput & {
+  readonly [compiledWorkflowBrand]: true;
+};
+
+export type WorkflowSpec = CompiledWorkflow;
+export type WorkflowRef = WorkflowName | WorkflowSpec;
+
+export function isShippedWorkflowName(name: string): name is ShippedWorkflowName {
+  return Object.hasOwn(WORKFLOWS, name);
+}
+
+function workflowNameOf(workflow: WorkflowRef): string {
+  return typeof workflow === 'string' ? workflow : workflow.name;
+}
+
+export function workflowDefinition(workflow: WorkflowRef): WorkflowSpecInput {
+  if (typeof workflow !== 'string') return workflow;
+  if (isShippedWorkflowName(workflow)) return WORKFLOWS[workflow];
+  throw new Error(
+    `workflow "${workflow}" is not in the shipped registry (${Object.keys(WORKFLOWS).join(' · ')}) and no frozen workflow spec was supplied`,
+  );
+}
+
+export function validatedWorkflowSpec(workflow: WorkflowSpecInput): CompiledWorkflow {
+  validateRegistry({ [workflow.name]: workflow });
+  return workflow as CompiledWorkflow;
+}
 
 /** The consumer-facing phase view — the registry input narrowed to `PhaseName`. */
 export interface PhaseSpec {
@@ -1282,14 +1312,14 @@ validateRegistry(WORKFLOWS);
  * every consumer sees one parsed shape — the input's authoring shape (no hand
  * lists) never leaks past this boundary.
  */
-function servePhases(workflow: WorkflowName): readonly PhaseSpec[] {
+function servePhases(workflow: ShippedWorkflowName): readonly PhaseSpec[] {
   return WORKFLOWS[workflow].phases.map((p): PhaseSpec => ({ ...p, snippets: snippetsForSemantics(p.semantics) }));
 }
 
 // An explicit literal (not a fromEntries loop) so the Record type proves
 // completeness: a new workflow in WORKFLOWS fails to compile until it is
 // served here too.
-const SERVED_PHASES: Record<WorkflowName, readonly PhaseSpec[]> = {
+const SERVED_PHASES: Record<ShippedWorkflowName, readonly PhaseSpec[]> = {
   full: servePhases('full'),
   blueprint: servePhases('blueprint'),
   relay: servePhases('relay'),
@@ -1297,8 +1327,9 @@ const SERVED_PHASES: Record<WorkflowName, readonly PhaseSpec[]> = {
 };
 
 /** A workflow's ordered phases. */
-export function phasesOf(workflow: WorkflowName): readonly PhaseSpec[] {
-  return SERVED_PHASES[workflow];
+export function phasesOf(workflow: WorkflowRef): readonly PhaseSpec[] {
+  if (typeof workflow === 'string' && isShippedWorkflowName(workflow)) return SERVED_PHASES[workflow];
+  return workflowDefinition(workflow).phases.map((p): PhaseSpec => ({ ...p, snippets: snippetsForSemantics(p.semantics) }));
 }
 
 /** The consumer-facing stage view — the registry input narrowed to `PhaseName`. */
@@ -1310,8 +1341,8 @@ export interface StageSpec {
 }
 
 /** A workflow's two stages, planning then delivery (the validated partition). */
-export function stagesOf(workflow: WorkflowName): readonly StageSpec[] {
-  return WORKFLOWS[workflow].stages as readonly StageSpec[];
+export function stagesOf(workflow: WorkflowRef): readonly StageSpec[] {
+  return workflowDefinition(workflow).stages as readonly StageSpec[];
 }
 
 /**
@@ -1320,34 +1351,34 @@ export function stagesOf(workflow: WorkflowName): readonly StageSpec[] {
  * on a phase the workflow doesn't own (a caller bug, same contract as
  * phaseSpec).
  */
-export function stageOf(workflow: WorkflowName, phase: PhaseName): StageName {
+export function stageOf(workflow: WorkflowRef, phase: PhaseName): StageName {
   const stage = stagesOf(workflow).find((s) => s.phases.includes(phase));
   if (!stage) {
     throw new Error(
-      `phase "${phase}" is not part of the "${workflow}" workflow (phases: ${phasesOf(workflow).map((p) => p.name).join(', ')})`,
+      `phase "${phase}" is not part of the "${workflowNameOf(workflow)}" workflow (phases: ${phasesOf(workflow).map((p) => p.name).join(', ')})`,
     );
   }
   return stage.name;
 }
 
 /** A workflow's stage spec by name — total (validateRegistry pins both stages). */
-function stageSpecOf(workflow: WorkflowName, stage: StageName): StageSpec {
+function stageSpecOf(workflow: WorkflowRef, stage: StageName): StageSpec {
   return stagesOf(workflow).find((s) => s.name === stage)!;
 }
 
 /** A stage's two duty voices, maker first — the per-stage worker enumeration. */
-export function dutiesOf(workflow: WorkflowName, stage: StageName): readonly [Duty, Duty] {
+export function dutiesOf(workflow: WorkflowRef, stage: StageName): readonly [Duty, Duty] {
   const { maker, checker } = stageSpecOf(workflow, stage).duties;
   return [maker, checker];
 }
 
 /** The duty that MAKES in a stage (planning: architect; delivery: builder). */
-export function makerDutyOf(workflow: WorkflowName, stage: StageName): Duty {
+export function makerDutyOf(workflow: WorkflowRef, stage: StageName): Duty {
   return stageSpecOf(workflow, stage).duties.maker;
 }
 
 /** The duty that CHECKS in a stage (planning: analyst; delivery: critic or judge, per the review posture). */
-export function checkerDutyOf(workflow: WorkflowName, stage: StageName): Duty {
+export function checkerDutyOf(workflow: WorkflowRef, stage: StageName): Duty {
   return stageSpecOf(workflow, stage).duties.checker;
 }
 
@@ -1359,7 +1390,7 @@ export function checkerDutyOf(workflow: WorkflowName, stage: StageName): Duty {
  * everywhere else. A resolver, never prose: briefs, rails, and tool copy all
  * read this, so the routing cannot drift per surface.
  */
-export function fixerDutyFor(workflow: WorkflowName): Duty {
+export function fixerDutyFor(workflow: WorkflowRef): Duty {
   const build = phasesOf(workflow).find((p) => p.semantics.block === 'build');
   const fixerPosture = build?.semantics.block === 'build' && build.semantics.reviewPosture === 'fixer';
   return fixerPosture ? checkerDutyOf(workflow, 'delivery') : makerDutyOf(workflow, 'delivery');
@@ -1372,7 +1403,7 @@ export function fixerDutyFor(workflow: WorkflowName): Duty {
  * apply, and an interactively-orchestrated run hands its session to the
  * headless driver.
  */
-export function handoffGateOf(workflow: WorkflowName): GatePhase {
+export function handoffGateOf(workflow: WorkflowRef): GatePhase {
   const planningPhases = stageSpecOf(workflow, 'planning').phases;
   return planningPhases[planningPhases.length - 1]!;
 }
@@ -1384,7 +1415,7 @@ export function handoffGateOf(workflow: WorkflowName): GatePhase {
  * degrade (a provider-crossing edge falls back to fresh) happens at manifest
  * freeze, not here.
  */
-export function continuityEdgeFor(workflow: WorkflowName, duty: Duty): Duty | undefined {
+export function continuityEdgeFor(workflow: WorkflowRef, duty: Duty): Duty | undefined {
   for (const stage of stagesOf(workflow)) {
     const edge = stage.edges?.[duty];
     if (edge) return edge.from;
@@ -1393,8 +1424,8 @@ export function continuityEdgeFor(workflow: WorkflowName, duty: Duty): Duty | un
 }
 
 /** A workflow's entry route, normalized to the optional-specSkipsTo shape. */
-export function entryOf(workflow: WorkflowName): { firstPhase: PhaseName; specSkipsTo?: PhaseName } {
-  return WORKFLOWS[workflow].entry;
+export function entryOf(workflow: WorkflowRef): { firstPhase: PhaseName; specSkipsTo?: PhaseName } {
+  return workflowDefinition(workflow).entry;
 }
 
 /**
@@ -1404,7 +1435,7 @@ export function entryOf(workflow: WorkflowName): { firstPhase: PhaseName; specSk
  * — AFK impl"; short: "research approved — AFK implement" — rather than the old
  * hardcoded "plan approved" that mislabeled a short-workflow handoff (Q: no plan exists).
  */
-export function handoffWatchLabel(workflow: WorkflowName): string {
+export function handoffWatchLabel(workflow: WorkflowRef): string {
   const phases = phasesOf(workflow);
   const handoff = handoffGateOf(workflow);
   const i = phases.findIndex((p) => p.name === handoff);
@@ -1418,10 +1449,10 @@ export function handoffWatchLabel(workflow: WorkflowName): string {
  * stays correct (full: finish ← implement; short: finish ← implement). Throws if
  * `phase` is the first in its arc (it has no predecessor) — a caller bug.
  */
-export function priorPhaseOf(workflow: WorkflowName, phase: PhaseName): PhaseName {
+export function priorPhaseOf(workflow: WorkflowRef, phase: PhaseName): PhaseName {
   const phases = phasesOf(workflow);
   const prior = phases[phases.findIndex((p) => p.name === phase) - 1];
-  if (!prior) throw new Error(`phase "${phase}" is first in the "${workflow}" workflow — it has no predecessor`);
+  if (!prior) throw new Error(`phase "${phase}" is first in the "${workflowNameOf(workflow)}" workflow — it has no predecessor`);
   return prior.name;
 }
 
@@ -1432,22 +1463,22 @@ export function priorPhaseOf(workflow: WorkflowName, phase: PhaseName): PhaseNam
  * phase): a lookup that names a phase the arc doesn't own is a caller bug, and
  * failing loud beats silently resolving a foreign arc's phase.
  */
-export function phaseSpec(workflow: WorkflowName, phase: PhaseName): PhaseSpec {
+export function phaseSpec(workflow: WorkflowRef, phase: PhaseName): PhaseSpec {
   const spec = phasesOf(workflow).find((p) => p.name === phase);
   if (!spec) {
-    throw new Error(`phase "${phase}" is not part of the "${workflow}" workflow (phases: ${phasesOf(workflow).map((p) => p.name).join(', ')})`);
+    throw new Error(`phase "${phase}" is not part of the "${workflowNameOf(workflow)}" workflow (phases: ${phasesOf(workflow).map((p) => p.name).join(', ')})`);
   }
   return spec;
 }
 
 /** A workflow's gate-bearing phase names, in arc order — its `gates_at` vocabulary. */
-export function gatePhasesOf(workflow: WorkflowName): readonly GatePhase[] {
-  return WORKFLOWS[workflow].phases.map((p) => p.name);
+export function gatePhasesOf(workflow: WorkflowRef): readonly GatePhase[] {
+  return workflowDefinition(workflow).phases.map((p) => p.name);
 }
 
 /** A workflow's default-pre-authorized gates (the inverse of `forceAttend`). */
-export function defaultPreAuthorizedOf(workflow: WorkflowName): readonly GatePhase[] {
-  return WORKFLOWS[workflow].defaultPreAuthorized as readonly GatePhase[];
+export function defaultPreAuthorizedOf(workflow: WorkflowRef): readonly GatePhase[] {
+  return workflowDefinition(workflow).defaultPreAuthorized as readonly GatePhase[];
 }
 
 /**
@@ -1471,12 +1502,12 @@ export function defaultPosture(
  * a phase is arc topology, and scoping it lets two workflows reuse a gate-state
  * name without the resolver becoming ambiguous.
  */
-export function phaseOfGateState(workflow: WorkflowName, stateName: string): GatePhase | undefined {
-  return WORKFLOWS[workflow].phases.find((p) => p.gate.state === stateName)?.name as GatePhase | undefined;
+export function phaseOfGateState(workflow: WorkflowRef, stateName: string): GatePhase | undefined {
+  return workflowDefinition(workflow).phases.find((p) => p.gate.state === stateName)?.name as GatePhase | undefined;
 }
 
 /** A gate phase's gate spec — non-null by construction (every phase gates). */
-export function gateOf(workflow: WorkflowName, phase: GatePhase): PhaseSpec['gate'] {
+export function gateOf(workflow: WorkflowRef, phase: GatePhase): PhaseSpec['gate'] {
   return phaseSpec(workflow, phase).gate;
 }
 
@@ -1556,7 +1587,7 @@ const CHECKPOINT_KIND: Record<ConsultantCheckpoint, CheckpointKind> = {
 };
 
 /** Whether a phase's consultant checkpoint is a correctness backstop (contract / verify). */
-export function isBackstopCheckpoint(workflow: WorkflowName, phase: PhaseName): boolean {
+export function isBackstopCheckpoint(workflow: WorkflowRef, phase: PhaseName): boolean {
   const mode = phaseSpec(workflow, phase).consultantCheckpoint;
   return mode !== undefined && CHECKPOINT_KIND[mode] === 'backstop';
 }
@@ -1568,7 +1599,7 @@ export function isBackstopCheckpoint(workflow: WorkflowName, phase: PhaseName): 
  * backstop; only the `challenge` the owner has pre-decided away is dropped. The
  * single gateless gate `consultantCheckpointLive` reads.
  */
-function survivesGateless(workflow: WorkflowName, phase: PhaseName): boolean {
+function survivesGateless(workflow: WorkflowRef, phase: PhaseName): boolean {
   const mode = phaseSpec(workflow, phase).consultantCheckpoint;
   return mode !== undefined && CHECKPOINT_KIND[mode] !== 'challenge';
 }
@@ -1599,14 +1630,14 @@ export const GATELESS_CONSULTANT_SNIPPETS: ReadonlySet<string> = new Set(
  * scattered `bindings.consultant && !gateless` checks risked). Default-off
  * preserved: no consultant ⇒ false.
  */
-export function consultantCheckpointLive(workflow: WorkflowName, phase: PhaseName, opts: { consultant: boolean; gateless?: boolean }): boolean {
+export function consultantCheckpointLive(workflow: WorkflowRef, phase: PhaseName, opts: { consultant: boolean; gateless?: boolean }): boolean {
   if (!opts.consultant) return false;
   if (consultantSnippetFor(workflow, phase) === undefined) return false;
   return !opts.gateless || survivesGateless(workflow, phase);
 }
 
 /** Whether a workflow has any backstop checkpoint — full does (contract+verify), short does not. */
-export function workflowHasConsultantBackstop(workflow: WorkflowName): boolean {
+export function workflowHasConsultantBackstop(workflow: WorkflowRef): boolean {
   return phasesOf(workflow).some((p) => isBackstopCheckpoint(workflow, p.name));
 }
 
@@ -1621,7 +1652,7 @@ export function workflowHasConsultantBackstop(workflow: WorkflowName): boolean {
  * run narrows it further to the backstop, so its bet-level snippets never show —
  * derived, like the briefs, through consultantCheckpointLive.
  */
-export function consultantSnippetsForWorkflow(workflow: WorkflowName, opts: { gateless?: boolean } = {}): ReadonlySet<string> {
+export function consultantSnippetsForWorkflow(workflow: WorkflowRef, opts: { gateless?: boolean } = {}): ReadonlySet<string> {
   return new Set(
     phasesOf(workflow)
       .filter((p) => consultantCheckpointLive(workflow, p.name, { consultant: true, gateless: opts.gateless }))
@@ -1639,7 +1670,7 @@ export function consultantSnippetsForWorkflow(workflow: WorkflowName, opts: { ga
  * a gateless run sees only its gateless-surviving checkpoints — the generative
  * frame and the correctness backstop, never the bet-audit (consultantCheckpointLive).
  */
-export function phaseSnippetsFor(workflow: WorkflowName, phase: PhaseName, opts: { consultant: boolean; gateless?: boolean }): readonly string[] {
+export function phaseSnippetsFor(workflow: WorkflowRef, phase: PhaseName, opts: { consultant: boolean; gateless?: boolean }): readonly string[] {
   const spec = phaseSpec(workflow, phase);
   const checkpoint = consultantSnippetFor(workflow, phase);
   return consultantCheckpointLive(workflow, phase, opts) && checkpoint
@@ -1652,7 +1683,7 @@ export function phaseSnippetsFor(workflow: WorkflowName, phase: PhaseName, opts:
  * phase carries no checkpoint — the single source the orchestrator-brief
  * injection reads, so the phase→snippet mapping is never duplicated in prompts.
  */
-export function consultantSnippetFor(workflow: WorkflowName, phase: PhaseName): string | undefined {
+export function consultantSnippetFor(workflow: WorkflowRef, phase: PhaseName): string | undefined {
   const mode = phaseSpec(workflow, phase).consultantCheckpoint;
   return mode ? CONSULTANT_CHECKPOINT_SNIPPET[mode] : undefined;
 }
@@ -1665,7 +1696,7 @@ export function consultantSnippetFor(workflow: WorkflowName, phase: PhaseName): 
  * (never a hardcoded `=== 'plan'`), and an arc that authors no contract freezes
  * none. Derived, since exactly one phase carries the mode (or none).
  */
-export function contractAuthorPhaseOf(workflow: WorkflowName): PhaseName | undefined {
+export function contractAuthorPhaseOf(workflow: WorkflowRef): PhaseName | undefined {
   return phasesOf(workflow).find((p) => p.consultantCheckpoint === 'contract')?.name;
 }
 

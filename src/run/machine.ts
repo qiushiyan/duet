@@ -1,8 +1,8 @@
 import { fromCallback, setup } from 'xstate';
 import type { EventObject } from 'xstate';
 import type { PhaseEvent } from './phase-events.ts';
-import { WORKFLOWS } from '../registry/workflows.ts';
-import type { PhaseName, WorkflowName, WorkflowSpecInput } from '../registry/workflows.ts';
+import { workflowDefinition } from '../registry/workflows.ts';
+import type { PhaseName, WorkflowRef, WorkflowSpecInput } from '../registry/workflows.ts';
 
 /**
  * The harness statechart — Layer 1 of the three-layer architecture
@@ -189,8 +189,8 @@ const duetSetup = setup({
  * values are `string`, not a literal union) — the lifecycle hydrates any run
  * through `machineFor(state.workflow)` with no per-workflow typing.
  */
-export function machineFor(workflow: WorkflowName): ReturnType<typeof createDuetMachine> {
-  return createDuetMachine(WORKFLOWS[workflow]);
+export function machineFor(workflow: WorkflowRef): ReturnType<typeof createDuetMachine> {
+  return createDuetMachine(workflowDefinition(workflow));
 }
 
 function createDuetMachine(spec: WorkflowSpecInput) {
@@ -222,7 +222,7 @@ export const duetMachine = machineFor('full');
  * phase loop a legitimate RESTING state for an interactive run (for the real
  * driver the same snapshot would be mid-flight, hence never persisted).
  */
-export function interactiveMachineFor(workflow: WorkflowName): typeof duetMachine {
+export function interactiveMachineFor(workflow: WorkflowRef): typeof duetMachine {
   return machineFor(workflow).provide({
     actors: {
       phaseDriver: fromCallback<EventObject, PhaseInput>(() => {

@@ -4,10 +4,20 @@ import { randomBytes } from 'node:crypto';
 import type { Snapshot } from 'xstate';
 import type { VoiceBindings } from '../voices/bindings.ts';
 import type { Duty, StageName } from '../registry/workflows.ts';
-import { WORKFLOWS, defaultPosture, defaultPreAuthorizedOf, gatePhasesOf, phaseSpec } from '../registry/workflows.ts';
-import type { GatePhase, PhaseName, WorkflowName } from '../registry/workflows.ts';
+import {
+  WORKFLOWS,
+  defaultPosture,
+  defaultPreAuthorizedOf,
+  gatePhasesOf,
+  isShippedWorkflowName,
+  phaseSpec,
+  validatedWorkflowSpec,
+  workflowDefinition,
+} from '../registry/workflows.ts';
+import type { CompiledWorkflow, GatePhase, PhaseName, WorkflowName } from '../registry/workflows.ts';
 import type { ContextUsage, VoiceAddress } from '../voices/providers/types.ts';
 import type { ErrorClass, RetryState } from '../voices/health.ts';
+import { hasFrozenWorkflow, workflowFor, writeFrozenWorkflow } from './workflow.ts';
 
 /**
  * Per-run working data under `.duet/runs/<run_id>/` in the target project —
@@ -403,7 +413,7 @@ export type SessionKey = `${StageName}.${Duty}` | 'consultant';
  * mechanism) are attended unconditionally.
  */
 export function gateAttended(state: RunState, phase: GatePhase): boolean {
-  if ((WORKFLOWS[state.workflow].forceAttend as readonly string[]).includes(phase)) return true;
+  if ((workflowFor(state).forceAttend as readonly string[]).includes(phase)) return true;
   return state.gatesAt === undefined || state.gatesAt.includes(phase);
 }
 
@@ -433,7 +443,7 @@ export function budgetFor(
   phase: PhaseName,
 ): { worker: number | undefined; orchestrator: number | undefined } {
   if (state.budget === undefined) return { worker: undefined, orchestrator: undefined };
-  const spec = phaseSpec(state.workflow, phase);
+  const spec = phaseSpec(workflowFor(state), phase);
   return {
     worker: spec.workerBudgetUsd * state.budget,
     orchestrator: spec.orchestratorBudgetUsd * state.budget,
@@ -521,6 +531,8 @@ export function createRun(opts: {
   cwd: string;
   /** The run's workflow (absent ⇒ the `full` default, materialized onto the state). */
   workflow?: WorkflowName;
+  /** The compiled workflow spec to freeze onto the run (absent ⇒ shipped workflow row). */
+  workflowSpec?: CompiledWorkflow;
   specPath?: string;
   /** The framing body the orchestrator sees (frontmatter already stripped). */
   framing?: string;
@@ -543,8 +555,12 @@ export function createRun(opts: {
   // workflow's default-pre-authorized inverse. While defaultPreAuthorized is
   // empty this stays undefined, so a default run keeps absent gatesAt = the
   // pre-feature attend-all, written byte-for-byte as before.
-  const wf = opts.workflow ?? 'full';
-  const gatesAt = opts.gatesAt ?? defaultPosture(gatePhasesOf(wf), defaultPreAuthorizedOf(wf));
+  const workflowSpec = opts.workflowSpec ?? validatedWorkflowSpec(workflowDefinition(opts.workflow ?? 'full'));
+  const wf = opts.workflow ?? workflowSpec.name;
+  if (workflowSpec.name !== wf) {
+    throw new Error(`createRun workflow "${wf}" does not match compiled workflow "${workflowSpec.name}"`);
+  }
+  const gatesAt = opts.gatesAt ?? defaultPosture(gatePhasesOf(workflowSpec), defaultPreAuthorizedOf(workflowSpec));
   const state: RunState = {
     runId,
     createdAt: now.toISOString(),
@@ -573,6 +589,7 @@ export function createRun(opts: {
   // Pre-create the run's scratch dir so the impl brief can hand the builder
   // a path that already exists (under the run dir, removed with the run).
   mkdirSync(scratchDirOf(opts.cwd, runId), { recursive: true });
+  writeFrozenWorkflow(state, workflowSpec);
   saveRunState(state);
   // The run dir is self-contained: the framing is archived next to the logs
   // (state.json also embeds it, but the file is the human-readable artifact).
@@ -620,20 +637,28 @@ function normalizeRunState(state: RunState): RunState {
       `run ${state.runId} predates the duty-keyed remodel (its state binds implementer/reviewer seats) — duet no longer loads it. Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .duet/runs/${state.runId}.`,
     );
   }
-  // A persisted workflow the registry no longer names (the retired design/rir
-  // spellings) is the same era — reject with the same manual path out.
+  // A persisted workflow with neither a frozen spec nor a shipped registry row
+  // is unloadable — reject with the same manual path out.
   // Object.hasOwn, not `in`: `in` sees prototype-inherited keys, so a
   // hand-written `workflow: "toString"` would pass the guard and crash later.
-  if (legacy.workflow !== undefined && !Object.hasOwn(WORKFLOWS, legacy.workflow)) {
+  if (legacy.workflow !== undefined && !isShippedWorkflowName(legacy.workflow) && !hasFrozenWorkflow(state.cwd, state.runId)) {
     throw new UnloadableRunError(
       state.runId,
-      `run ${state.runId} names the retired workflow "${legacy.workflow}" (the standard library is ${Object.keys(WORKFLOWS).join(' · ')}) — duet no longer loads it. Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .duet/runs/${state.runId}.`,
+      `run ${state.runId} names workflow "${legacy.workflow}" but has no frozen workflow.json and it is not in the shipped registry (${Object.keys(WORKFLOWS).join(' · ')}) — project/user workflow files are read only at duet new, so this run cannot be reconstructed. Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .duet/runs/${state.runId}.`,
     );
   }
   // Materialized at createRun since the remodel's follow-up; a state file from
   // the remodel-era code (created before the materialization) or a hand-written
   // one lacks it — 'full' is the shipped default those runs ran on.
   legacy.workflow ??= 'full';
+  try {
+    workflowFor(state);
+  } catch (err) {
+    throw new UnloadableRunError(
+      state.runId,
+      `${err instanceof Error ? err.message : String(err)} Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .duet/runs/${state.runId}.`,
+    );
+  }
   state.sessions ??= {};
   return state;
 }
@@ -1003,7 +1028,7 @@ export function appendNote(state: RunState, author: 'human' | 'orchestrator', no
 /**
  * Every run dir in the project, split by loadability: `runs` are the loadable
  * ones (newest first), `unloadable` the dirs the boundary RECOGNIZED and
- * refused (UnloadableRunError — a pre-remodel run, a retired workflow name),
+ * refused (UnloadableRunError — a pre-remodel run, an unloadable workflow),
  * each carrying its prescriptive reason so listing surfaces can report the
  * refusal instead of silently hiding the run (a post-upgrade `duet status`
  * must never read as "you have no runs" when the truth is "your run no longer

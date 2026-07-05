@@ -43,6 +43,7 @@ import {
   feedbackResumePrompt,
   renderSteerBlock,
 } from './briefs.ts';
+import { workflowFor } from '../run/workflow.ts';
 
 /**
  * A host-neutral tool definition — the single source of truth for the
@@ -553,7 +554,7 @@ export function settleTurn(
   // consultant ran the checkpoint, which the freeze and the advance_phase rails
   // require (so guarantee 2 holds mechanically, not by prompt compliance). Keyed on
   // the registry checkpoint mode, so only full's plan/impl ever set it.
-  const checkpointMode = phaseSpec(state.workflow, phase).consultantCheckpoint;
+  const checkpointMode = phaseSpec(workflowFor(fresh), phase).consultantCheckpoint;
   if (role === 'consultant') {
     // An aborted consultant turn did NOT complete its checkpoint — set no
     // draft/verifiedAt (the freeze + verify rails must see a real completion, not
@@ -1045,7 +1046,7 @@ export const contextPressureRail: Rail<SendInput> = ({ duty: role, isCompactTurn
 
 /** A review-loop phase can't advance with zero rounds — there is nothing to gate on. */
 export const reviewLoopRail: Rail<TerminalInput> = (_input, ctx) => {
-  const workflow = ctx.state.workflow;
+  const workflow = workflowFor(ctx.state);
   if (!phaseSpec(workflow, ctx.phase).reviewLoop || (ctx.state.rounds[ctx.phase] ?? 0) > 0) return null;
   const checker = checkerDutyOf(workflow, stageOf(workflow, ctx.phase));
   return refuse(
@@ -1056,7 +1057,7 @@ export const reviewLoopRail: Rail<TerminalInput> = (_input, ctx) => {
 /** The acceptance contract can't be SILENTLY skipped (guarantee 2, mechanically).
  *  The escape hatch is a `high` human_decision, which itself holds the AFK crossing. */
 export const contractCheckpointRail: Rail<TerminalInput> = ({ humanDecisions, specPath }, ctx) => {
-  if (!ctx.state.bindings.consultant || phaseSpec(ctx.state.workflow, ctx.phase).consultantCheckpoint !== 'contract') return null;
+  if (!ctx.state.bindings.consultant || phaseSpec(workflowFor(ctx.state), ctx.phase).consultantCheckpoint !== 'contract') return null;
   const hasHigh = (humanDecisions ?? []).some((d) => d.severity === 'high');
   if (hasHigh) return null;
   const draft = ctx.state.acceptanceContractDraft;
@@ -1083,7 +1084,8 @@ export const contractCheckpointRail: Rail<TerminalInput> = ({ humanDecisions, sp
  *  document moved after the contract turn, the contract file gone by crossing
  *  time) would otherwise erase the backstop with nothing recorded anywhere. */
 export const verifyCheckpointRail: Rail<TerminalInput> = ({ humanDecisions }, ctx) => {
-  if (!ctx.state.bindings.consultant || phaseSpec(ctx.state.workflow, ctx.phase).consultantCheckpoint !== 'verify') return null;
+  const workflow = workflowFor(ctx.state);
+  if (!ctx.state.bindings.consultant || phaseSpec(workflow, ctx.phase).consultantCheckpoint !== 'verify') return null;
   const hasHigh = (humanDecisions ?? []).some((d) => d.severity === 'high');
   if (hasHigh) return null;
   if (!ctx.state.acceptanceContract) {
@@ -1095,13 +1097,14 @@ export const verifyCheckpointRail: Rail<TerminalInput> = ({ humanDecisions }, ct
     );
   }
   if (ctx.state.acceptanceContract.verifiedAt) return null;
-  const fixer = fixerDutyFor(ctx.state.workflow);
+  const fixer = fixerDutyFor(workflow);
   return refuse(
     `A frozen acceptance contract exists for this run but has not been verified: send the consultant a consultant-verify turn (a fresh session runs the built system and returns a per-assertion pass/fail), then advance. Route any failed assertion to the ${fixer} to fix and re-verify with a fresh consultant session; record a high human_decision only for an assertion that still fails after that bounded loop, or if verification could not run at all — so the gate stops for the human rather than shipping past a broken target.`,
   );
 };
 
 export function createPhaseTools({ state, phase, providers, log, stagedAnswer: initialAnswer, rails, home, async: asyncDeps }: PhaseToolsDeps): PhaseTools {
+  const workflow = workflowFor(state);
   let stagedAnswer = initialAnswer ?? null;
 
   // First-terminal-wins: advance_phase and ask_human each end the phase, so the
@@ -1141,7 +1144,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       case 'answer':
         return answerResumePrompt(msg.text);
       case 'feedback':
-        return feedbackResumePrompt(state.workflow, phase, msg.text);
+        return feedbackResumePrompt(workflow, phase, msg.text);
     }
   };
   // When this phase's terminal marker is set, get_task is the one surface the
@@ -1177,7 +1180,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   const ctx: RailCtx = {
     state,
     phase,
-    cap: phaseSpec(state.workflow, phase).roundCap,
+    cap: phaseSpec(workflow, phase).roundCap,
     asyncHost: dispatcher !== undefined,
     inFlight: (role) => (dispatcher ? dispatcher.statusOf(role) !== undefined : turnsInFlight.has(role)),
     orphanedOnDisk: (role) => dispatcher !== undefined && Boolean(state.pendingTurns?.[role]),
@@ -1332,7 +1335,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         // a silently-partial one.
         let library: string;
         try {
-          library = renderSnippetLibrary({ phase, workflow: state.workflow, sentTo: sent, all: args.all, consultantBound: Boolean(state.bindings.consultant), gateless: Boolean(state.gateless), libraryContext });
+          library = renderSnippetLibrary({ phase, workflow, sentTo: sent, all: args.all, consultantBound: Boolean(state.bindings.consultant), gateless: Boolean(state.gateless), libraryContext });
         } catch (err) {
           return error(
             block(
@@ -1383,7 +1386,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             'duty was an empty array — name at least one worker to send to (a single duty, or several to fan the same body to each).',
           );
         }
-        const cap = phaseSpec(state.workflow, phase).roundCap;
+        const cap = phaseSpec(workflow, phase).roundCap;
         const isReviewRoundFor = (role: VoiceAddress): boolean => countsReviewRound(role, tag);
 
         // Validate EVERY target before dispatching ANY — the first refusal returns

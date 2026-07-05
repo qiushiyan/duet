@@ -3,10 +3,11 @@ import { join } from 'node:path';
 import { createActor } from 'xstate';
 import type { Snapshot } from 'xstate';
 import { entryOf, gateOf, phaseOfGateState, phaseSpec, phasesOf } from '../registry/workflows.ts';
-import type { GatePhase, PhaseName, WorkflowName } from '../registry/workflows.ts';
+import type { GatePhase, PhaseName, WorkflowRef } from '../registry/workflows.ts';
 import { loadMachineSnapshot, runDirOf } from './store.ts';
 import type { RunState } from './store.ts';
 import { flagWaitStateOf, machineFor } from './machine.ts';
+import { workflowFor } from './workflow.ts';
 
 /**
  * The run-position probe — where a run actually is, derived from the signals
@@ -78,7 +79,7 @@ export function probeRunPosition(state: RunState): RunPosition {
 
 /** The position assuming no live driver — also the running phase's identity. */
 function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running' | 'abandoned' }> {
-  const wf = state.workflow;
+  const wf = workflowFor(state);
   const entry = entryOf(wf);
   // The phase a snapshot-less machine starts in (a draft-spec run skips ahead
   // to the workflow's specSkipsTo, when it has one).
@@ -167,7 +168,7 @@ function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running
  * probe (`stoppedPosition`), the interactive rest read (`interactiveRestPhase`),
  * and the interactive crossing (`crossInteractive`).
  */
-export function phaseLoopOf(wf: WorkflowName, value: string): PhaseName | undefined {
+export function phaseLoopOf(wf: WorkflowRef, value: string): PhaseName | undefined {
   return phasesOf(wf).find((p) => `${p.name}Loop` === value)?.name;
 }
 
@@ -180,7 +181,7 @@ export function phaseLoopOf(wf: WorkflowName, value: string): PhaseName | undefi
  * caller fall back to the entry phase.
  */
 function interactiveRestPhase(state: RunState, snapshot: Snapshot<unknown>): PhaseName | undefined {
-  const wf = state.workflow;
+  const wf = workflowFor(state);
   const restored = createActor(machineFor(wf), {
     input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
     snapshot,
@@ -190,24 +191,24 @@ function interactiveRestPhase(state: RunState, snapshot: Snapshot<unknown>): Pha
 
 
 /** Whether a workflow's arc ends by opening a PR — true when a phase carries the Open-PR gate (both arcs do: full's `finish`, short's `finish`). */
-export function opensPr(workflow: WorkflowName): boolean {
+export function opensPr(workflow: WorkflowRef): boolean {
   return phasesOf(workflow).some((p) => p.gate?.state === 'openPrGate');
 }
 
 /** The run-complete line, workflow-aware — only a PR-opening arc claims a PR. */
-export function completionLine(workflow: WorkflowName): string {
+export function completionLine(workflow: WorkflowRef): string {
   return opensPr(workflow) ? 'run complete — the PR is open' : 'run complete';
 }
 
 /** One line describing why the run stopped — the notification body. */
 export function describeStop(state: RunState, done: boolean): string {
-  if (done) return completionLine(state.workflow);
+  const workflow = workflowFor(state);
+  if (done) return completionLine(workflow);
   const machineState = state.machineState ?? '';
   if (state.pendingQuestion && machineState.includes('FlagWait')) {
     return `question queued: ${state.pendingQuestion.question}`;
   }
-  const gatePhase = phaseOfGateState(state.workflow, machineState);
-  if (gatePhase) return gateOf(state.workflow, gatePhase).ready;
+  const gatePhase = phaseOfGateState(workflow, machineState);
+  if (gatePhase) return gateOf(workflow, gatePhase).ready;
   return `stopped at ${machineState}`;
 }
-

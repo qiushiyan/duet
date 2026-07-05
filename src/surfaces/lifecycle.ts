@@ -14,7 +14,7 @@ import {
   phaseOfGateState,
   phasesOf,
 } from '../registry/workflows.ts';
-import type { GatePhase, PhaseName, WorkflowName } from '../registry/workflows.ts';
+import type { GatePhase, PhaseName, WorkflowRef } from '../registry/workflows.ts';
 import type { VoiceAddress } from '../voices/providers/types.ts';
 
 import {
@@ -33,6 +33,7 @@ import { aliveDriverPid, describeStop, phaseLoopOf, probeRunPosition } from '../
 import type { RunPosition } from '../run/position.ts';
 import { duetMachine, flagWaitStateOf, interactiveMachineFor } from '../run/machine.ts';
 import { markerToEvent } from '../run/phase-events.ts';
+import { workflowFor } from '../run/workflow.ts';
 
 /**
  * The run lifecycle — how phases actually execute (docs/automation-design.md
@@ -252,7 +253,8 @@ export async function driveToQuiescence(
   options?: { snapshot?: Snapshot<unknown>; event?: HumanEvent },
   deps: LifecycleDeps = {},
 ): Promise<{ snapshot: AnyMachineSnapshot; state: RunState; wedged?: true }> {
-  const machine = deps.machine ?? drivenMachineFor(state.workflow);
+  const workflow = workflowFor(state);
+  const machine = deps.machine ?? drivenMachineFor(workflow);
   const notify = deps.notify ?? desktopNotify;
   const quiescenceTimeoutMs = deps.quiescenceTimeoutMs ?? QUIESCENCE_TIMEOUT_MS;
 
@@ -283,7 +285,7 @@ export async function driveToQuiescence(
   if (
     restoredMarker &&
     typeof restoredValue === 'string' &&
-    (phaseOfGateState(state.workflow, restoredValue) === restoredMarker.phase ||
+    (phaseOfGateState(workflow, restoredValue) === restoredMarker.phase ||
       restoredValue === flagWaitStateOf(restoredMarker.phase))
   ) {
     delete state.terminalMarker;
@@ -295,7 +297,7 @@ export async function driveToQuiescence(
   // the restored snapshot is parked at that gate, so freeze before the event
   // crosses it. The pre-authorized auto-cross is handled in the loop below.
   if (options?.event?.type === 'human.approve' && typeof restoredValue === 'string') {
-    const enteringGate = phaseOfGateState(state.workflow, restoredValue);
+    const enteringGate = phaseOfGateState(workflow, restoredValue);
     if (enteringGate) await freezeContractAt(state, enteringGate);
   }
 
@@ -319,7 +321,7 @@ export async function driveToQuiescence(
       // probeRunPosition reads a `flag` only from a flag-wait snapshot BESIDE a
       // pendingQuestion; a question next to a still-phase-loop snapshot reads as
       // crashed/running, defeating the fix.
-      const wf = state.workflow;
+      const wf = workflow;
       const value = actor.getSnapshot().value;
       const phase = (typeof value === 'string' && phaseLoopOf(wf, value)) || phasesOf(wf)[0]!.name;
       actor.send({ type: 'phase.flag' });
@@ -373,7 +375,8 @@ export async function driveToQuiescence(
       saveRunState(fresh);
     }
 
-    const gatePhase = snapshot.status !== 'done' ? phaseOfGateState(fresh.workflow, fresh.machineState) : undefined;
+    const freshWorkflow = workflowFor(fresh);
+    const gatePhase = snapshot.status !== 'done' ? phaseOfGateState(freshWorkflow, fresh.machineState) : undefined;
     // The severity hold: a `high` human decision withholds the pre-authorized
     // auto-cross (a non-explicit crossing), converting the gate to an attended
     // stop so the human weighs the call before it ships. An EXPLICIT approve
@@ -431,7 +434,7 @@ export async function driveToQuiescence(
  */
 export async function freezeContractAt(state: RunState, gatePhase: PhaseName): Promise<void> {
   if (state.acceptanceContract) return; // already frozen — idempotent re-entry
-  if (gatePhase !== contractAuthorPhaseOf(state.workflow)) return; // not the contract gate
+  if (gatePhase !== contractAuthorPhaseOf(workflowFor(state))) return; // not the contract gate
   if (!state.bindings.consultant || !state.specPath) return; // default-off / nothing to derive from
   const path = acceptanceContractPathForSpec(state.specPath);
   // Require THIS run's authoring: a draft marker the consultant's contract turn
@@ -482,7 +485,7 @@ export async function freezeContractAt(state: RunState, gatePhase: PhaseName): P
  * through driveToQuiescence, which sends its event before the marker replays.)
  */
 export function crossInteractive(state: RunState, humanEvent: HumanEvent): void {
-  const wf = state.workflow;
+  const wf = workflowFor(state);
   const snapshot = loadMachineSnapshot(state);
   const actor = createActor(interactiveMachineFor(wf), {
     input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
@@ -568,7 +571,7 @@ export async function enterAfk(
   if (
     opts.gateless &&
     state.bindings.consultant &&
-    position.phase === contractAuthorPhaseOf(state.workflow) &&
+    position.phase === contractAuthorPhaseOf(workflowFor(state)) &&
     !state.acceptanceContract
   ) {
     throw new Error(
@@ -589,14 +592,14 @@ export async function enterAfk(
   // `--gateless` is the explicit full-send substitute and, like an explicit
   // --approve, is not ledgered.
   if (!opts.gateless) {
-    const gateState = gateOf(state.workflow, position.phase).state;
+    const gateState = gateOf(workflowFor(state), position.phase).state;
     if (fresh.autoApprovals?.at(-1)?.gate !== gateState) {
       (fresh.autoApprovals ??= []).push({ gate: gateState, at: new Date().toISOString() });
     }
   }
   saveRunState(fresh);
   Object.assign(state, fresh);
-  const gates = gatePhasesOf(state.workflow);
+  const gates = gatePhasesOf(workflowFor(state));
   return {
     attended: gates.filter((g) => posture.includes(g)),
     preAuthorized: gates.filter((g) => !posture.includes(g)),
@@ -611,7 +614,7 @@ export async function enterAfk(
  * short: Direction → implement) — as does any explicit `--headless` fallback.
  */
 export function interactiveContinueAction(
-  workflow: WorkflowName,
+  workflow: WorkflowRef,
   gatePhase: PhaseName,
   eventType: 'approve' | 'reject' | 'answer',
   headless: boolean,

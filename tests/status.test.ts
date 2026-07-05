@@ -4,6 +4,7 @@ import type { StopModel } from '../src/surfaces/status.ts';
 import { createRun } from '../src/run/store.ts';
 import type { RunState } from '../src/run/store.ts';
 import type { RunPosition } from '../src/run/position.ts';
+import { build, compileWorkflow, defineWorkflow, finish, frame } from '../src/workflows.ts';
 import { defaultBindingsFor } from '../src/voices/bindings.ts';
 import { localStamp } from '../src/view/timefmt.ts';
 import { test } from './helpers/fixtures.ts';
@@ -29,8 +30,9 @@ describe('workflow-neutral status surfaces (RIR)', () => {
 
   test('describeStop completion claims the PR for both arcs now (rir opens one too)', ({ projectDir }) => {
     const rir = shortRun(projectDir);
+    const full = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), workflow: 'full', framing: 'x' });
     expect.soft(describeStop(rir, true)).toBe('run complete — the PR is open');
-    expect.soft(describeStop({ ...rir, workflow: 'full' }, true)).toBe('run complete — the PR is open');
+    expect.soft(describeStop(full, true)).toBe('run complete — the PR is open');
   });
 
   test('the model carries the workflow and scopes rounds to the RIR arc', ({ projectDir }) => {
@@ -58,6 +60,25 @@ describe('workflow-neutral status surfaces (RIR)', () => {
   test('the brief headline reports the open PR on completion', ({ projectDir }) => {
     const brief = buildBrief(buildStatusModel(shortRun(projectDir), { kind: 'done' }, []));
     expect(brief.headline).toBe('run complete — the PR is open');
+  });
+
+  test('a frozen custom workflow renders from workflowDetail without a shipped name lookup', ({ projectDir }) => {
+    const custom = compileWorkflow(
+      defineWorkflow({
+        name: 'instant-status',
+        title: 'Instant Status (think → build → PR)',
+        presets: { afk: [] },
+        phases: [frame({ name: 'think' }), build({ review: 'writable', audit: true }), finish()],
+      }),
+    );
+    const run = createRun({ cwd: projectDir, workflow: custom.name, workflowSpec: custom, bindings: defaultBindingsFor(custom) });
+    run.phaseSummaries.finish = { summary: 'custom PR opened', artifacts: [] };
+
+    const model = buildStatusModel(run, { kind: 'done' }, []);
+    expect.soft(model.workflow).toBe('instant-status');
+    expect.soft(model.workflowDisplayName).toBe('Instant Status (think → build → PR)');
+    expect.soft(model.workflowDetail.completionLine).toBe('run complete — the PR is open');
+    expect.soft(renderStatus(model)).toContain('workflow: Instant Status (think → build → PR)');
   });
 
   test('an empty gatesAt (afk: attend none) renders explicit copy and survives in the JSON model', ({

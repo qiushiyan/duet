@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { DUTIES, continuityEdgeFor, stageOfDuty, stageOfDutyLane, stagesOf } from '../registry/workflows.ts';
-import type { Duty, WorkflowName } from '../registry/workflows.ts';
+import type { Duty, WorkflowRef } from '../registry/workflows.ts';
 
 /**
  * Voice bindings — the one config duet ships (docs/automation-design.md
@@ -290,7 +290,7 @@ export interface DegradedEdge {
  * run notes it). Pure: derivable from the frozen state anywhere, so the
  * decision is one source with no persisted copy.
  */
-export function degradedEdgesFor(bindings: VoiceBindings, workflow: WorkflowName): DegradedEdge[] {
+export function degradedEdgesFor(bindings: VoiceBindings, workflow: WorkflowRef): DegradedEdge[] {
   const out: DegradedEdge[] = [];
   for (const stage of stagesOf(workflow)) {
     for (const duty of [stage.duties.maker, stage.duties.checker]) {
@@ -357,7 +357,7 @@ export function allBindings(bindings: VoiceBindings): Array<{ address: BindAddre
  */
 export function resolveRunConfig(
   opts: {
-    workflow: WorkflowName;
+    workflow: WorkflowRef;
     /** `--bind <address>=<spec>` values, keyed by parsed address (the flags tier). */
     flagBinds?: Partial<Record<BindAddress, string>>;
     /** Framing `bind.<address>:` values (the framing tier). */
@@ -439,7 +439,7 @@ export function formatBinding(binding: Binding): string {
 }
 
 /** The shipped default manifest for a workflow — the no-config, no-flag freeze. */
-export function defaultBindingsFor(workflow: WorkflowName): VoiceBindings {
+export function defaultBindingsFor(workflow: WorkflowRef): VoiceBindings {
   const duties: Partial<Record<Duty, Binding>> = {};
   for (const stage of stagesOf(workflow)) {
     for (const duty of [stage.duties.maker, stage.duties.checker]) duties[duty] = defaultBindingFor(duty);

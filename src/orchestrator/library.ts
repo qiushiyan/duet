@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'smol-toml';
 import { z } from 'zod';
 import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, GATELESS_CONSULTANT_SNIPPETS, consultantSnippetsForWorkflow, phaseSnippetsFor, phasesOf } from '../registry/workflows.ts';
-import type { PhaseName, WorkflowName } from '../registry/workflows.ts';
+import type { PhaseName, WorkflowRef } from '../registry/workflows.ts';
 
 /**
  * Duet's snippet library — the `snippets/` directory at the repo root, one
@@ -281,7 +281,7 @@ export interface SnippetRenderOpts {
    * The run's workflow — scopes the coming-next / already-done phase slicing.
    * Omitted, it is inferred from `phase` (phase names are globally unique).
    */
-  workflow?: WorkflowName;
+  workflow?: WorkflowRef;
   /** snippet key → roles already sent that template this phase; annotated in the view. */
   sentTo?: Record<string, string[]>;
   /** Render every snippet's full body, ungrouped — the escape hatch for a cross-phase template. */
@@ -344,7 +344,7 @@ function snippetBlock(s: Snippet, sentTo?: Record<string, string[]>): string {
   return `<snippet key="${s.key}"${attr}>\n${withLessonsDir(s.expand)}\n</snippet>`;
 }
 
-function renderFlat(library: Snippet[], sentTo?: Record<string, string[]>, all?: boolean, consultantBound = false, workflow?: WorkflowName, gateless = false): string {
+function renderFlat(library: Snippet[], sentTo?: Record<string, string[]>, all?: boolean, consultantBound = false, workflow?: WorkflowRef, gateless = false): string {
   // The flat library is the whole file, so the checkpoint snippets must be filtered
   // here: unbound shows NONE; bound shows only the consultant snippets THIS
   // workflow's checkpoints reach (per-workflow honesty — a bound short run never sees full's contract
@@ -375,7 +375,7 @@ function fullBodies(byKey: Map<string, Snippet>, keys: readonly string[], sentTo
 function renderForPhase(
   library: Snippet[],
   phase: PhaseName,
-  workflow: WorkflowName,
+  workflow: WorkflowRef,
   sentTo: Record<string, string[]> | undefined,
   consultantBound: boolean,
   gateless = false,

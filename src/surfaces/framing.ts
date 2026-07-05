@@ -5,8 +5,8 @@ import { execa } from "execa";
 import { z } from "zod";
 import { parseBindAddress, parseBindingSpec } from "../voices/bindings.ts";
 import type { BindAddress } from "../voices/bindings.ts";
-import { WORKFLOWS, entryOf, gatePhasesOf } from "../registry/workflows.ts";
-import type { GatePhase, WorkflowName } from "../registry/workflows.ts";
+import { WORKFLOWS, entryOf, gatePhasesOf, workflowDefinition } from "../registry/workflows.ts";
+import type { GatePhase, WorkflowName, WorkflowRef } from "../registry/workflows.ts";
 import { ensureDuetDir } from "../run/store.ts";
 
 /**
@@ -386,9 +386,10 @@ export function parseRetryInfra(value: string): number {
  * the Open-PR gate is pre-authorized-by-default now, attended only when `finish`
  * is listed). Throws with the full vocabulary on bad input.
  */
-export function parseGatesAt(value: string, workflow: WorkflowName = "full"): GatePhase[] {
+export function parseGatesAt(value: string, workflow: WorkflowRef = "full"): GatePhase[] {
   const gatePhases = gatePhasesOf(workflow);
-  const presets: Record<string, readonly string[]> = WORKFLOWS[workflow].presets;
+  const definition = workflowDefinition(workflow);
+  const presets: Record<string, readonly string[]> = definition.presets;
   const presetNames = Object.keys(presets);
   const preset = presets[value.trim()];
   const matchedPreset = preset !== undefined;
@@ -398,7 +399,7 @@ export function parseGatesAt(value: string, workflow: WorkflowName = "full"): Ga
     if (!(gatePhases as readonly string[]).includes(name)) {
       const presetHint = presetNames.length > 0 ? ` or a preset: ${presetNames.join(", ")}` : "";
       throw new Error(
-        `gates_at: "${name}" is not a gate-bearing phase of the "${workflow}" workflow — use a list from {${gatePhases.join(", ")}}${presetHint}.`,
+        `gates_at: "${name}" is not a gate-bearing phase of the "${definition.name}" workflow — use a list from {${gatePhases.join(", ")}}${presetHint}.`,
       );
     }
     if (!gates.includes(name as GatePhase)) gates.push(name as GatePhase);
@@ -410,7 +411,7 @@ export function parseGatesAt(value: string, workflow: WorkflowName = "full"): Ga
       `gates_at is empty — list the phases whose gates you will attend (from {${gatePhases.join(", ")}}), or omit it to attend every gate.`,
     );
   }
-  for (const forced of WORKFLOWS[workflow].forceAttend) {
+  for (const forced of definition.forceAttend) {
     if (!gates.includes(forced as GatePhase)) gates.push(forced as GatePhase);
   }
   return gates;

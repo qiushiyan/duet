@@ -2,8 +2,8 @@ import { describe, expect, test } from 'vitest';
 import { createActor, fromCallback, waitFor } from 'xstate';
 import type { AnyMachineSnapshot } from 'xstate';
 import { duetMachine, interactiveMachine, machineFor } from '../src/run/machine.ts';
-import { phasesOf } from '../src/registry/workflows.ts';
-import type { WorkflowName } from '../src/registry/workflows.ts';
+import { WORKFLOWS, phasesOf } from '../src/registry/workflows.ts';
+import type { ShippedWorkflowName } from '../src/registry/workflows.ts';
 import { scriptedMachine } from './helpers/scripted-machine.ts';
 
 /**
@@ -25,7 +25,7 @@ function startActor(machine: ReturnType<typeof scriptedMachine>['machine'], hasS
 // The arcs under test. The coherence + spine-walk assertions derive from
 // `phasesOf(workflow)`, so every workflow's machine is checked against its own
 // registry entry, not a single hardcoded arc.
-const ARCS: WorkflowName[] = ['full', 'blueprint', 'short'];
+const ARCS = Object.keys(WORKFLOWS) as ShippedWorkflowName[];
 
 describe('phase table ⇄ machine coherence (per workflow)', () => {
   test.each(ARCS)('%s: every phase contributes its loop, flag-wait, and gate, with the right tags', (wf) => {

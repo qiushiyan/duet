@@ -7,6 +7,7 @@ import type { PhaseName } from '../../registry/workflows.ts';
 import { probeRunPosition } from '../../run/position.ts';
 import { runDirOf } from '../../run/store.ts';
 import type { RunState, Voice } from '../../run/store.ts';
+import { workflowFor } from '../../run/workflow.ts';
 
 /**
  * The --tmux viewer (docs/automation-design.md §"Visualization: tmux is a
@@ -111,7 +112,7 @@ function parseWidth(out: string): number {
  * back to the entry phase.
  */
 function currentStageVoices(state: RunState): { maker: Voice; checker: Voice; consultant: boolean } {
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   let phase: PhaseName;
   try {
     const position = probeRunPosition(state);

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { consultantIdentityClause } from '../briefs.ts';
 import { loadRunState, runDirOf, saveRunState } from '../../run/store.ts';
 import type { RunState } from '../../run/store.ts';
+import { workflowFor } from '../../run/workflow.ts';
 import { locateSessionTranscripts } from '../../voices/sessions.ts';
 
 /**
@@ -319,7 +320,7 @@ export function runOrchestrate(
   // launch, and is removed by `duet abandon --purge`.
   if (state.bindings.consultant) {
     const base = readFileSync(identityPath, 'utf8');
-    writeFileSync(composedIdentityPath(state), `${base.trimEnd()}\n\n${consultantIdentityClause(state.workflow)}\n`);
+    writeFileSync(composedIdentityPath(state), `${base.trimEnd()}\n\n${consultantIdentityClause(workflowFor(state))}\n`);
   }
 
   const spec = buildSpec(state, { warmStart });
