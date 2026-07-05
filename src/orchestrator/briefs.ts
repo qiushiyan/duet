@@ -10,7 +10,18 @@ import {
   phasesOf,
   priorPhaseOf,
 } from '../registry/workflows.ts';
-import type { ArtifactKind, ExamplesKey, GatePhase, PhaseName, PhaseSemantics, PhaseSpec, WorkflowName } from '../registry/workflows.ts';
+import type {
+  CritiqueBuildBriefWorld,
+  DocLoopBriefArtifact,
+  FixerBuildBriefWorld,
+  FrameBriefWorld,
+  GatePhase,
+  PhaseName,
+  PhaseSemantics,
+  PhaseSpec,
+  WorkflowName,
+  WritableBuildBriefWorld,
+} from '../registry/workflows.ts';
 import { voiceBindingFor } from '../voices/bindings.ts';
 import { checkerDutyOf, fixerDutyFor, makerDutyOf, stageOf } from '../registry/workflows.ts';
 import { liveContinuityEdgeFor } from '../voices/policy.ts';
@@ -521,7 +532,7 @@ interface FrameBriefData {
   examples: string;
 }
 
-const FRAME_BRIEFS: Record<'frame' | 'research', FrameBriefData> = {
+const FRAME_BRIEFS = {
   frame: {
     opening:
       'No spec exists yet — run the FRAME phase: both workers build an independent understanding of the problem, then the architect synthesizes, and the direction lands on the Direction gate.',
@@ -535,7 +546,7 @@ const FRAME_BRIEFS: Record<'frame' | 'research', FrameBriefData> = {
       'The builder builds directly from these decisions, so the summary must carry enough that the build can proceed without a spec. ',
     examples: RESEARCH_EXAMPLES,
   },
-};
+} satisfies Record<FrameBriefWorld, FrameBriefData>;
 
 function renderFrameBrief(state: RunState, spec: PhaseSpec, semantics: Extract<PhaseSemantics, { block: 'frame' }>): string {
   const data = FRAME_BRIEFS[semantics.examplesKey];
@@ -570,11 +581,11 @@ ${data.examples}
  * committed spec, one shape. Which applies is registry topology
  * (entry.specSkipsTo), not a knob.
  */
-const DOC_BRIEFS: Record<ArtifactKind, (state: RunState, spec: PhaseSpec) => string> = {
+const DOC_BRIEFS = {
   spec: specDocBrief,
   plan: planDocBrief,
   design: designDocBrief,
-};
+} satisfies Record<DocLoopBriefArtifact, (state: RunState, spec: PhaseSpec) => string>;
 
 function renderDocLoopBrief(state: RunState, spec: PhaseSpec, semantics: Extract<PhaseSemantics, { block: 'doc-loop' }>): string {
   return DOC_BRIEFS[semantics.artifactKind](state, spec);
@@ -836,7 +847,7 @@ interface CritiqueBuildData {
   examples: string;
 }
 
-const CRITIQUE_BUILD_BRIEFS: Partial<Record<ExamplesKey, CritiqueBuildData>> = {
+const CRITIQUE_BUILD_BRIEFS = {
   impl: {
     approvedAttended: 'The human approved the plan and walked away —',
     approvedPreauth: 'The plan-approval gate was pre-authorized at run start and auto-crossed; the human is away —',
@@ -873,7 +884,7 @@ const CRITIQUE_BUILD_BRIEFS: Partial<Record<ExamplesKey, CritiqueBuildData>> = {
     deviationsFrom: 'design doc',
     examples: DESIGN_IMPL_EXAMPLES,
   },
-};
+} satisfies Record<CritiqueBuildBriefWorld, CritiqueBuildData>;
 
 function critiqueBuildBrief(state: RunState, spec: PhaseSpec, data: CritiqueBuildData): string {
   const workflow = state.workflow;
@@ -975,7 +986,7 @@ interface WritableBuildData {
   examples: string;
 }
 
-const WRITABLE_BUILD_BRIEFS: Partial<Record<ExamplesKey, WritableBuildData>> = {
+const WRITABLE_BUILD_BRIEFS = {
   'short-impl': {
     approvedAttended: 'The human approved the direction and walked away —',
     approvedPreauth: 'The Direction gate was pre-authorized at run start and auto-crossed; the human is away —',
@@ -983,7 +994,7 @@ const WRITABLE_BUILD_BRIEFS: Partial<Record<ExamplesKey, WritableBuildData>> = {
       "the research decisions treated as the design, the implemented change, and the consultant's own prior research-checkpoint findings — not the raw build or review traffic.",
     examples: IMPLEMENT_EXAMPLES,
   },
-};
+} satisfies Record<WritableBuildBriefWorld, WritableBuildData>;
 
 /**
  * The fixer build's per-workflow data — relay's today. The posture's
@@ -999,7 +1010,7 @@ interface FixerBuildData {
   examples: string;
 }
 
-const FIXER_BUILD_BRIEFS: Partial<Record<ExamplesKey, FixerBuildData>> = {
+const FIXER_BUILD_BRIEFS = {
   'relay-impl': {
     approvedAttended: 'The human approved the design doc and walked away —',
     approvedPreauth: 'The design gate was pre-authorized at run start and auto-crossed; the human is away —',
@@ -1007,7 +1018,7 @@ const FIXER_BUILD_BRIEFS: Partial<Record<ExamplesKey, FixerBuildData>> = {
       "the design fixes the shape, not a slice list, so read the size from the doc's scope and structural risk, and from how the builder slices the work as the build starts.",
     examples: RELAY_IMPL_EXAMPLES,
   },
-};
+} satisfies Record<FixerBuildBriefWorld, FixerBuildData>;
 
 /**
  * The fixer build — the plan-smart / build-cheap / judge-strong workflow's
@@ -1095,29 +1106,31 @@ ${IMPLEMENT_EXAMPLES}
 </task>`;
 }
 
+function requiredBriefData<K extends string, V>(records: Record<K, V>, key: string, label: string): V {
+  if (!Object.hasOwn(records, key)) throw new Error(`no ${label} brief data for examples key "${key}"`);
+  return records[key as K];
+}
+
 /**
  * The build block's renderer — the posture picks the skeleton (critique's
  * ceremonial single-pass-with-midpoint-and-tail vs writable's direct build
- * with one writable round), the examplesKey picks the workflow data. A missing
- * data entry is a registry/fragment mismatch — a knob combination no shipped
- * workflow exercises — and fails loud (the closed-vocabulary rule at the prose
- * tier; the driver's "every phase builds a non-empty brief" test covers it).
+ * with one writable round), the examplesKey picks the workflow data. The
+ * registry validates the block/posture world before this renderer runs, and the
+ * data maps satisfy-check against BRIEF_WORLDS, so a missing prose world is a
+ * load-time error rather than a mid-run render failure.
  */
 function renderBuildBrief(state: RunState, spec: PhaseSpec, semantics: Extract<PhaseSemantics, { block: 'build' }>): string {
   switch (semantics.reviewPosture) {
     case 'critique': {
-      const data = CRITIQUE_BUILD_BRIEFS[semantics.examplesKey];
-      if (!data) throw new Error(`no critique-build brief data for examples key "${semantics.examplesKey}"`);
+      const data = requiredBriefData(CRITIQUE_BUILD_BRIEFS, semantics.examplesKey, 'critique-build');
       return critiqueBuildBrief(state, spec, data);
     }
     case 'writable': {
-      const data = WRITABLE_BUILD_BRIEFS[semantics.examplesKey];
-      if (!data) throw new Error(`no writable-build brief data for examples key "${semantics.examplesKey}"`);
+      const data = requiredBriefData(WRITABLE_BUILD_BRIEFS, semantics.examplesKey, 'writable-build');
       return writableBuildBrief(state, spec, data);
     }
     case 'fixer': {
-      const data = FIXER_BUILD_BRIEFS[semantics.examplesKey];
-      if (!data) throw new Error(`no fixer-build brief data for examples key "${semantics.examplesKey}"`);
+      const data = requiredBriefData(FIXER_BUILD_BRIEFS, semantics.examplesKey, 'fixer-build');
       return fixerBuildBrief(state, spec, data);
     }
   }

@@ -109,6 +109,38 @@ export type ReviewPosture = 'critique' | 'writable' | 'fixer';
 /** The worked-example set a phase's brief appends — per-workflow data, keyed not inlined. */
 export type ExamplesKey = 'frame' | 'research' | 'spec' | 'plan' | 'design' | 'impl' | 'blueprint-impl' | 'short-impl' | 'relay-impl';
 
+/**
+ * The model-read brief worlds the prose layer actually ships. The registry
+ * declares the closed set without importing the prose maps (trust gradient:
+ * registry imports nothing); `validateRegistry` checks every phase against this
+ * at load, and `orchestrator/briefs.ts` type-checks its data records against the
+ * same declaration. A missing world is therefore a load-time workflow error,
+ * not a mid-run render throw.
+ */
+export const BRIEF_WORLDS = {
+  frame: ['frame', 'research'],
+  docLoop: {
+    spec: ['spec'],
+    plan: ['plan'],
+    design: ['design'],
+  },
+  build: {
+    critique: ['impl', 'blueprint-impl'],
+    writable: ['short-impl'],
+    fixer: ['relay-impl'],
+  },
+} as const satisfies {
+  frame: readonly ExamplesKey[];
+  docLoop: Record<ArtifactKind, readonly ExamplesKey[]>;
+  build: Record<ReviewPosture, readonly ExamplesKey[]>;
+};
+
+export type FrameBriefWorld = (typeof BRIEF_WORLDS.frame)[number];
+export type DocLoopBriefArtifact = keyof typeof BRIEF_WORLDS.docLoop;
+export type CritiqueBuildBriefWorld = (typeof BRIEF_WORLDS.build.critique)[number];
+export type WritableBuildBriefWorld = (typeof BRIEF_WORLDS.build.writable)[number];
+export type FixerBuildBriefWorld = (typeof BRIEF_WORLDS.build.fixer)[number];
+
 /** A phase's block identity + knob values (discriminated on `block`). */
 export type PhaseSemantics =
   | { readonly block: 'frame'; readonly examplesKey: 'frame' | 'research' }
@@ -1063,6 +1095,33 @@ export function validateRegistry(workflows: Record<string, WorkflowSpecInput>): 
         if (REVIEW_POSTURE_SNIPPETS[p.semantics.reviewPosture] === undefined) {
           throw new Error(
             `registry: workflow "${wfName}" phase "${p.name}" uses reviewPosture "${p.semantics.reviewPosture}", which ships no snippet family — a knob value exists only with its prompt support (REVIEW_POSTURE_SNIPPETS)`,
+          );
+        }
+      }
+      // 4. The prose world must exist for the block/posture shape. The snippet
+      //    maps prove executable templates exist; BRIEF_WORLDS proves the
+      //    model-read phase brief can render one dedicated world for the same
+      //    composition. This closes the old render-time gap in buildPhaseBrief.
+      if (p.semantics.block === 'frame') {
+        if (!(BRIEF_WORLDS.frame as readonly string[]).includes(p.semantics.examplesKey)) {
+          throw new Error(
+            `registry: workflow "${wfName}" phase "${p.name}" selects frame examplesKey "${p.semantics.examplesKey}", but no frame brief world is declared for it — valid frame worlds: ${BRIEF_WORLDS.frame.join(', ')}. Add the prose world to BRIEF_WORLDS and src/orchestrator/briefs.ts, or choose one of the valid worlds.`,
+          );
+        }
+      }
+      if (p.semantics.block === 'doc-loop') {
+        const worlds = (BRIEF_WORLDS.docLoop as Record<string, readonly string[]>)[p.semantics.artifactKind];
+        if (!worlds?.includes(p.semantics.examplesKey)) {
+          throw new Error(
+            `registry: workflow "${wfName}" phase "${p.name}" is a "${p.semantics.artifactKind}" doc-loop with examplesKey "${p.semantics.examplesKey}", but no doc-loop brief world is declared for that pair — valid ${p.semantics.artifactKind} worlds: ${worlds?.join(', ') ?? 'none'}. Add the prose world to BRIEF_WORLDS and src/orchestrator/briefs.ts, or choose a declared artifact/world pair.`,
+          );
+        }
+      }
+      if (p.semantics.block === 'build') {
+        const worlds = (BRIEF_WORLDS.build as Record<string, readonly string[]>)[p.semantics.reviewPosture];
+        if (!worlds?.includes(p.semantics.examplesKey)) {
+          throw new Error(
+            `registry: workflow "${wfName}" phase "${p.name}" is a "${p.semantics.reviewPosture}" build with examplesKey "${p.semantics.examplesKey}", but no ${p.semantics.reviewPosture} build brief world is declared for it — valid ${p.semantics.reviewPosture} build worlds: ${worlds?.join(', ') ?? 'none'}. Add the prose world to BRIEF_WORLDS and src/orchestrator/briefs.ts, or choose a declared build world.`,
           );
         }
       }
