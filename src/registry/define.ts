@@ -1,4 +1,3 @@
-import { BRIEF_WORLDS, validatedWorkflowSpec } from './workflows.ts';
 import type {
   ArtifactKind,
   CompiledWorkflow,
@@ -10,6 +9,24 @@ import type {
   TailOwner,
   WorkflowSpecInput,
 } from './workflows.ts';
+
+type CompilerRegistry = {
+  briefWorlds: typeof import('./workflows.ts').BRIEF_WORLDS;
+  validateWorkflowSpec: (workflow: WorkflowSpecInput) => CompiledWorkflow;
+};
+
+let compilerRegistry: CompilerRegistry | undefined;
+
+export function installWorkflowCompilerRegistry(registry: CompilerRegistry): void {
+  compilerRegistry = registry;
+}
+
+function registryForCompile(): CompilerRegistry {
+  if (!compilerRegistry) {
+    throw new Error('workflow compiler registry is not initialized — import from "duet/workflows", not from the internal registry module directly');
+  }
+  return compilerRegistry;
+}
 
 declare const phaseExprBrand: unique symbol;
 declare const workflowDefinitionBrand: unique symbol;
@@ -86,20 +103,15 @@ type NormalizedPhase = {
   readonly index: number;
 };
 
-const ARTIFACTS = ['spec', 'plan', 'design'] as const satisfies readonly ArtifactKind[];
-const REVIEWS = ['critique', 'writable', 'fixer'] as const satisfies readonly ReviewPosture[];
-
-const THIRTY_MINUTES = 30 * 60_000;
-const NINETY_MINUTES = 90 * 60_000;
-
 export function frame(options: FrameOptions = {}): PhaseExpr {
   assertKnownKeys(options, ['name'], 'frame');
   return { block: 'frame', ...presentName(options.name) } as FrameExpr;
 }
 
 export function doc(artifact: ArtifactKind, options: DocOptions = {}): PhaseExpr {
-  if (!(ARTIFACTS as readonly string[]).includes(artifact)) {
-    throw new Error(`doc() artifact "${artifact}" is not in the workflow SDK vocabulary — valid artifacts: ${ARTIFACTS.join(', ')}`);
+  const artifacts = workflowArtifacts();
+  if (!(artifacts as readonly string[]).includes(artifact)) {
+    throw new Error(`doc() artifact "${artifact}" is not in the workflow SDK vocabulary — valid artifacts: ${artifacts.join(', ')}`);
   }
   assertKnownKeys(options, ['rounds', 'contract', 'audit', 'name'], `doc("${artifact}")`);
   if (options.rounds !== undefined) assertPositiveInteger(options.rounds, `doc("${artifact}").rounds`);
@@ -124,8 +136,9 @@ export function doc(artifact: ArtifactKind, options: DocOptions = {}): PhaseExpr
 
 export function build(options: BuildOptions): PhaseExpr {
   assertKnownKeys(options, ['review', 'audit', 'name'], 'build');
-  if (!(REVIEWS as readonly string[]).includes(options.review)) {
-    throw new Error(`build() review "${options.review}" is not in the workflow SDK vocabulary — valid reviews: ${REVIEWS.join(', ')}`);
+  const reviews = workflowReviews();
+  if (!(reviews as readonly string[]).includes(options.review)) {
+    throw new Error(`build() review "${options.review}" is not in the workflow SDK vocabulary — valid reviews: ${reviews.join(', ')}`);
   }
   return {
     block: 'build',
@@ -207,7 +220,7 @@ export function compileWorkflow(definition: WorkflowDefinition): CompiledWorkflo
     defaultPreAuthorized: defaultPreAuthorizedFor(definition, phases),
   };
 
-  return validatedWorkflowSpec(compiled);
+  return registryForCompile().validateWorkflowSpec(compiled);
 }
 
 function compilePhase(
@@ -233,7 +246,7 @@ function compilePhase(
         roundCap: 2,
         orchestratorBudgetUsd: 15,
         workerBudgetUsd: 10,
-        workerTurnTimeoutMs: THIRTY_MINUTES,
+        workerTurnTimeoutMs: thirtyMinutes(),
         ...(context.isFirstPlanningFrame ? { consultantCheckpoint: 'frame' as const } : {}),
       };
     case 'doc': {
@@ -247,7 +260,7 @@ function compilePhase(
         roundCap: phase.expr.rounds ?? defaultDocRounds(phase.expr.artifact),
         orchestratorBudgetUsd: 15,
         workerBudgetUsd: 10,
-        workerTurnTimeoutMs: THIRTY_MINUTES,
+        workerTurnTimeoutMs: thirtyMinutes(),
         ...(checkpoint ? { consultantCheckpoint: checkpoint } : {}),
       };
     }
@@ -262,7 +275,7 @@ function compilePhase(
         roundCap: buildRoundCap(context.buildSemantics.reviewPosture),
         orchestratorBudgetUsd: 30,
         workerBudgetUsd: 25,
-        workerTurnTimeoutMs: NINETY_MINUTES,
+        workerTurnTimeoutMs: ninetyMinutes(),
         ...(checkpoint ? { consultantCheckpoint: checkpoint } : {}),
       };
     }
@@ -276,7 +289,7 @@ function compilePhase(
         roundCap: 2,
         orchestratorBudgetUsd: 15,
         workerBudgetUsd: 15,
-        workerTurnTimeoutMs: THIRTY_MINUTES,
+        workerTurnTimeoutMs: thirtyMinutes(),
       };
   }
 }
@@ -367,7 +380,7 @@ function buildExamplesKeyFor(
   if (reviewPosture === 'critique' && upstreamArtifact === 'design') return 'blueprint-impl';
   if (reviewPosture === 'writable' && upstreamArtifact === undefined) return 'short-impl';
   if (reviewPosture === 'fixer' && upstreamArtifact === 'design') return 'relay-impl';
-  const valid = BRIEF_WORLDS.build[reviewPosture].join(', ');
+  const valid = registryForCompile().briefWorlds.build[reviewPosture].join(', ');
   throw new Error(
     `workflow "${workflowName}" build "${phaseNameForError}" has review "${reviewPosture}" after upstream ${upstreamArtifact ?? 'none'}, but no ${reviewPosture} build prose world is declared for that upstream artifact — valid ${reviewPosture} worlds: ${valid}`,
   );
@@ -531,4 +544,20 @@ function presentBoolean<K extends string>(key: K, value: boolean | undefined): {
 
 function presentNumber<K extends string>(key: K, value: number | undefined): { readonly [P in K]?: number } {
   return value === undefined ? {} : { [key]: value } as { readonly [P in K]?: number };
+}
+
+function workflowArtifacts(): readonly ArtifactKind[] {
+  return ['spec', 'plan', 'design'] as const satisfies readonly ArtifactKind[];
+}
+
+function workflowReviews(): readonly ReviewPosture[] {
+  return ['critique', 'writable', 'fixer'] as const satisfies readonly ReviewPosture[];
+}
+
+function thirtyMinutes(): number {
+  return 30 * 60_000;
+}
+
+function ninetyMinutes(): number {
+  return 90 * 60_000;
 }

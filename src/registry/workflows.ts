@@ -40,6 +40,7 @@
  */
 
 import { basename, dirname, extname } from 'node:path';
+import { build, compileWorkflow, defineWorkflow, doc, finish, frame, installWorkflowCompilerRegistry } from './define.ts';
 
 /**
  * A consultant checkpoint mode — the posture the optional consultant takes at a
@@ -419,536 +420,49 @@ export interface WorkflowSpecInput {
   readonly defaultPreAuthorized: readonly string[];
 }
 
-export const WORKFLOWS = {
-  full: {
+installWorkflowCompilerRegistry({ briefWorlds: BRIEF_WORLDS, validateWorkflowSpec: validatedWorkflowSpec });
+
+const SHIPPED_WORKFLOW_DEFINITIONS = {
+  full: defineWorkflow({
     name: 'full',
-    displayName: 'Full (spec → plan → implement → ship → PR)',
+    title: 'Full (spec → plan → implement → ship → PR)',
+    attend: ['frame', 'spec'],
+    presets: { overnight: ['frame', 'spec'], 'skip-plan': ['frame', 'spec', 'implement'], afk: [] },
     phases: [
-      {
-        name: 'frame',
-        semantics: { block: 'frame', examplesKey: 'frame' },
-        gate: {
-          state: 'directionGate',
-          heading: 'DIRECTION gate — the synthesized direction',
-          ready: 'Direction gate — synthesized direction ready',
-          hint: null,
-        },
-        artifactLabel: 'direction analysis',
-        reviewLoop: false,
-        roundCap: 2,
-        orchestratorBudgetUsd: 15,
-        workerBudgetUsd: 10,
-        workerTurnTimeoutMs: 30 * 60_000,
-        consultantCheckpoint: 'frame',
-      },
-      {
-        name: 'spec',
-        semantics: { block: 'doc-loop', artifactKind: 'spec', examplesKey: 'spec' },
-        gate: {
-          state: 'commitSpecGate',
-          heading: "SPEC gate — the orchestrator's summary",
-          ready: 'Commit-spec gate — spec ready for review',
-          hint: null,
-        },
-        artifactLabel: 'spec',
-        reviewLoop: true,
-        roundCap: 3,
-        orchestratorBudgetUsd: 15,
-        workerBudgetUsd: 10,
-        workerTurnTimeoutMs: 30 * 60_000,
-        consultantCheckpoint: 'specGate',
-      },
-      {
-        name: 'plan',
-        semantics: { block: 'doc-loop', artifactKind: 'plan', examplesKey: 'plan' },
-        gate: {
-          state: 'planApprovalGate',
-          heading: "PLAN gate — the orchestrator's summary",
-          ready: 'Plan-approval gate — plan ready for review',
-          hint: null,
-        },
-        artifactLabel: 'plan',
-        reviewLoop: true,
-        roundCap: 3,
-        orchestratorBudgetUsd: 15,
-        workerBudgetUsd: 10,
-        workerTurnTimeoutMs: 30 * 60_000,
-        // The acceptance-contract AUTHOR checkpoint: the consultant authors the
-        // contract here, blind to the plan loop running alongside it, and the
-        // human ratifies it when approving this gate (it is the freeze gate).
-        consultantCheckpoint: 'contract',
-      },
-      {
-        name: 'implement',
-        semantics: {
-          block: 'build',
-          entrySeed: 'compact-for-impl',
-          reviewPosture: 'critique',
-          midpoint: 'judgment',
-          shipPacket: 'ceo-summary',
-          buildTailOwner: 'maker',
-          examplesKey: 'impl',
-        },
-        gate: {
-          state: 'shipGate',
-          heading: 'SHIP gate — the orchestrator’s packet (CEO summary first)',
-          ready: 'Ship gate — implementation packet ready',
-          hint: '(verify in your environment before deciding — migrations, smoke tests; docs are reconciled here too, so approving enters FINISH = open the PR)',
-        },
-        artifactLabel: 'implementation',
-        reviewLoop: true,
-        roundCap: 3,
-        orchestratorBudgetUsd: 30,
-        workerBudgetUsd: 25,
-        // The AFK build cap — a wall-clock bound (S3). 90 min = 3× the longest
-        // healthy build turn measured across the corpus (29.5 min), the
-        // disciplined high end of the 2–3× band; a hit is a resumable checkpoint
-        // (post-C), so erring high costs only resume-churn.
-        workerTurnTimeoutMs: 90 * 60_000,
-        // The acceptance-contract VERIFY checkpoint: a fresh session verifies the
-        // frozen contract by running the built system, supplanting the
-        // open-ended implGate bet-audit (short keeps implGate — it has no contract).
-        consultantCheckpoint: 'verify',
-      },
-      {
-        // The finishing tail — now PR-ONLY: write the PR description → open the PR.
-        // Docs no longer reconcile here; they moved to the tail of `implement`, so
-        // the Ship gate reviews code + docs together and `finish` is left the
-        // mechanical open. Open-then-review in one continuous session: the gate
-        // interposes only after the PR is open. Pre-authorized (the default), the
-        // PR opens and the gate auto-crosses to done with the URL leading the
-        // packet; attended (`finish` in gates_at), the run stops at the opened PR —
-        // approve marks it done, reject re-enters this loop to AMEND the open PR (gh
-        // pr edit / more commits), never to re-open. The open is idempotent by a
-        // worker-side gh-pr-view check, not run-state. The PR is mergeable on open
-        // (the bug-review bots fire on it), so the env-verification reminder rides
-        // the body as a "Verification (pending)" checklist rather than a draft
-        // state. No consultant checkpoint (the verify checkpoint already ran at
-        // implement); compact-for-cleanup stays reachable for the rare
-        // bloated-context case (it inherits an already-focused context from
-        // implement, so it is not a default step). Mirror of short's `finish` — same
-        // shape, same entry brief (openPrPhaseEntryPrompt).
-        name: 'finish',
-        semantics: { block: 'finish', finishOwner: 'maker' },
-        gate: {
-          state: 'openPrGate',
-          heading: 'OPEN-PR gate — docs reconciled, PR open',
-          ready: 'Open-PR gate — PR open, ready for your review',
-          hint: '(the PR is already open and auto-crosses to done by default; list `finish` in gates_at for a post-open review stop — approve marks it done, reject amends the open PR. The merge is always yours.)',
-        },
-        artifactLabel: 'PR',
-        reviewLoop: false,
-        roundCap: 2,
-        orchestratorBudgetUsd: 15,
-        workerBudgetUsd: 15,
-        workerTurnTimeoutMs: 30 * 60_000,
-      },
+      frame(),
+      doc('spec', { audit: true }),
+      doc('plan', { contract: true }),
+      build({ review: 'critique' }),
+      finish(),
     ],
-    // Planning runs the whole attended thinking stretch (frame → spec → plan);
-    // approving the plan gate — planning's last phase, the derived handoff —
-    // enters the AFK delivery. Both delivery duties continue their planning
-    // sessions: the builder rides the boundary compact (entrySeed
-    // compact-for-impl), the critic continues the analyst's session directly.
-    stages: [
-      { name: 'planning', phases: ['frame', 'spec', 'plan'], duties: { maker: 'architect', checker: 'analyst' } },
-      {
-        name: 'delivery',
-        phases: ['implement', 'finish'],
-        duties: { maker: 'builder', checker: 'critic' },
-        edges: { builder: { from: 'architect' }, critic: { from: 'analyst' } },
-      },
-    ],
-    entry: { firstPhase: 'frame', specSkipsTo: 'spec' },
-    presets: {
-      /** Attend nothing after the spec — the full sleep posture. */
-      overnight: ['frame', 'spec'],
-      /**
-       * Walk away at spec approval, return at the Ship gate — the plan loop runs
-       * unattended. Born from run evidence (the human reports rubber-stamping
-       * plan gates); whether this earns default status is Q20's evidence stream.
-       */
-      'skip-plan': ['frame', 'spec', 'implement'],
-      /**
-       * Walk away from the START, keeping every safety net — the missing rung that
-       * completes overnight → skip-plan → afk → gateless. Attends NO gate (mirrors
-       * short's afk), but with `gateless` OFF, so the consultant's holding bet-audit
-       * AND the correctness backstop both still fire (that is the ONLY difference
-       * from --gateless; for a no-consultant run the two collapse to attend-none).
-       */
-      afk: [],
-    },
-    // The full sleep posture is the default (2026-06-26, Q20 resolved to it):
-    // plan, impl (Ship), and finish (Open-PR) are all pre-authorized, so a new
-    // run materializes gatesAt = ['frame','spec'] — the `overnight` preset. The
-    // Ship auto-cross shifts environment verification (migrations, smoke tests)
-    // from before-the-PR to PR-review time; the opened PR carries a Verification
-    // (pending) checklist as the standing reminder. forceAttend stays empty:
-    // opening a PR is non-destructive (the human still owns the merge) and a
-    // gate-reject amends it in place, so the Open-PR gate is never force-attended,
-    // only attended when `finish` is listed in gates_at. forceAttend and
-    // defaultPreAuthorized must stay disjoint (validateRegistry guards it at load).
-    forceAttend: [],
-    defaultPreAuthorized: ['plan', 'implement', 'finish'],
-  },
-  blueprint: {
-    // The middle workflow (docs/specs/2026-07-02-design-arc.md): for serious
-    // work on a trusted frontier-model builder, ONE committed design document —
-    // product sections on top (spec altitude), technical sections below (plan
-    // altitude minus enumeration) — replaces full's spec + plan pair. One review
-    // loop, one attended gate by default, then full's AFK build and finishing
-    // tail reused as registry data.
+  }),
+  blueprint: defineWorkflow({
     name: 'blueprint',
-    displayName: 'Blueprint (frame → design doc → implement → ship → PR)',
-    phases: [
-      {
-        // Identical in substance to full's frame — only the arc that follows
-        // differs (the synthesized direction lands on one design doc, not a spec).
-        name: 'frame',
-        semantics: { block: 'frame', examplesKey: 'frame' },
-        gate: {
-          state: 'directionGate',
-          heading: 'DIRECTION gate — the synthesized direction',
-          ready: 'Direction gate — synthesized direction ready',
-          hint: null,
-        },
-        artifactLabel: 'direction analysis',
-        reviewLoop: false,
-        roundCap: 2,
-        orchestratorBudgetUsd: 15,
-        workerBudgetUsd: 10,
-        workerTurnTimeoutMs: 30 * 60_000,
-        consultantCheckpoint: 'frame',
-      },
-      {
-        // The arc's one artifact phase. roundCap 2, not full's 3: the arc's
-        // premise is fast convergence (the observed spec/plan loops never
-        // needed 3), and the section-scoped review lens keeps the loop from
-        // re-growing plan-depth rounds. Its gate is the handoff AND the
-        // ratification — the arc's one attended stop by default.
-        name: 'design',
-        semantics: { block: 'doc-loop', artifactKind: 'design', examplesKey: 'design' },
-        gate: {
-          state: 'designGate',
-          heading: "DESIGN gate — the orchestrator's summary",
-          ready: 'Design gate — design doc ready for review',
-          hint: '(approving hands off to AFK implementation — the design doc is the single design artifact; there is no separate spec or plan)',
-        },
-        artifactLabel: 'design doc',
-        reviewLoop: true,
-        roundCap: 2,
-        orchestratorBudgetUsd: 15,
-        workerBudgetUsd: 10,
-        workerTurnTimeoutMs: 30 * 60_000,
-        // The acceptance-contract AUTHOR checkpoint — LATE-authored on this arc:
-        // dispatched after the design loop converges, as the final step before
-        // advance (the runs-last pattern verify already uses), seeded with the
-        // near-final design doc. Given up: blindness to the technical approach
-        // (the merged artifact contains it). Kept: blindness to the code, the
-        // fresh session, author-never-commits, and the whole verify chain at
-        // implement. The design gate is the freeze gate (contractAuthorPhaseOf
-        // resolves here), and as the arc's one attended stop by default the
-        // contract is human-ratified by default — stronger than full's overnight
-        // posture, whose freeze happens at an auto-crossed plan gate.
-        consultantCheckpoint: 'contract',
-      },
-      {
-        // Full's implement spec reused — same review loop (cap 3), midpoint
-        // judgment, compactions, docs-reconcile-last, CEO summary, verify
-        // checkpoint, 90-min wall-clock cap. One substitution: the build seed is
-        // the implement-design snippet (the committed design doc is the build's
-        // authority for what and why) rather than full's plan-driven custom
-        // prompt. NOT short's implement-direct — that body assumes no design
-        // artifact exists.
-        name: 'implement',
-        semantics: {
-          block: 'build',
-          entrySeed: 'implement-design',
-          reviewPosture: 'critique',
-          midpoint: 'judgment',
-          shipPacket: 'ceo-summary',
-          buildTailOwner: 'maker',
-          examplesKey: 'blueprint-impl',
-        },
-        gate: {
-          state: 'shipGate',
-          heading: 'SHIP gate — the orchestrator’s packet (CEO summary first)',
-          ready: 'Ship gate — implementation packet ready',
-          hint: '(verify in your environment before deciding — migrations, smoke tests; docs are reconciled here too, so approving enters FINISH = open the PR)',
-        },
-        artifactLabel: 'implementation',
-        reviewLoop: true,
-        roundCap: 3,
-        orchestratorBudgetUsd: 30,
-        workerBudgetUsd: 25,
-        workerTurnTimeoutMs: 90 * 60_000,
-        consultantCheckpoint: 'verify',
-      },
-      {
-        // Byte-for-byte full's finish — the shared PR-only finishing tail.
-        name: 'finish',
-        semantics: { block: 'finish', finishOwner: 'maker' },
-        gate: {
-          state: 'openPrGate',
-          heading: 'OPEN-PR gate — docs reconciled, PR open',
-          ready: 'Open-PR gate — PR open, ready for your review',
-          hint: '(the PR is already open and auto-crosses to done by default; list `finish` in gates_at for a post-open review stop — approve marks it done, reject amends the open PR. The merge is always yours.)',
-        },
-        artifactLabel: 'PR',
-        reviewLoop: false,
-        roundCap: 2,
-        orchestratorBudgetUsd: 15,
-        workerBudgetUsd: 15,
-        workerTurnTimeoutMs: 30 * 60_000,
-      },
-    ],
-    // Planning is frame → design; the design gate — planning's last phase, the
-    // derived handoff — carries plan-approval's role (freeze + walk-away).
-    // Both delivery duties continue their planning sessions, the builder
-    // re-anchoring on the one committed doc (entrySeed implement-design).
-    stages: [
-      { name: 'planning', phases: ['frame', 'design'], duties: { maker: 'architect', checker: 'analyst' } },
-      {
-        name: 'delivery',
-        phases: ['implement', 'finish'],
-        duties: { maker: 'builder', checker: 'critic' },
-        edges: { builder: { from: 'architect' }, critic: { from: 'analyst' } },
-      },
-    ],
-    // --spec enters the design loop with the draft as the starting document —
-    // the flag's meaning generalizes to "a draft of the primary artifact".
-    entry: { firstPhase: 'frame', specSkipsTo: 'design' },
+    title: 'Blueprint (frame → design doc → implement → ship → PR)',
+    attend: ['design'],
     presets: { afk: [] },
-    // The one-interruption posture is the arc's product promise: a new run
-    // materializes gatesAt = ['design'] — the Direction gate auto-crosses, the
-    // human reads one document, taps once, and walks away. The severity hold
-    // still converts a `high` at the auto-crossed Direction gate into an
-    // attended stop, so contentious directions still stop the run.
-    forceAttend: [],
-    defaultPreAuthorized: ['frame', 'implement', 'finish'],
-  },
-  relay: {
-    // The plan-smart / build-cheap / judge-strong workflow
-    // (docs/specs/2026-07-03-workflow-vocabulary.md §"The relay arc"):
-    // blueprint's shape with two substitutions — the build's review posture is
-    // `fixer` (the judge applies fixes directly and owns the tails) and both
-    // tail owners move to the checker. The provider criss-cross (planning on
-    // claude; a codex builder under a claude judge) is MANIFEST-tier — per-duty
-    // bindings (--bind builder=… --bind judge=…) — never registry data; this
-    // workflow works on any binding, and it declares no continuity edges (its
-    // whole delivery is born fresh).
+    phases: [frame(), doc('design', { contract: true }), build({ review: 'critique' }), finish()],
+  }),
+  relay: defineWorkflow({
     name: 'relay',
-    displayName: 'Relay (frame → design doc → fresh build → judge review-and-fix → PR)',
-    phases: [
-      {
-        name: 'frame',
-        semantics: { block: 'frame', examplesKey: 'frame' },
-        gate: {
-          state: 'directionGate',
-          heading: 'DIRECTION gate — the synthesized direction',
-          ready: 'Direction gate — synthesized direction ready',
-          hint: null,
-        },
-        artifactLabel: 'direction analysis',
-        reviewLoop: false,
-        roundCap: 2,
-        orchestratorBudgetUsd: 15,
-        workerBudgetUsd: 10,
-        workerTurnTimeoutMs: 30 * 60_000,
-        consultantCheckpoint: 'frame',
-      },
-      {
-        // Byte-for-byte the blueprint arc's one artifact phase — same loop, same
-        // late-authored contract, same handoff-and-ratification gate.
-        name: 'design',
-        semantics: { block: 'doc-loop', artifactKind: 'design', examplesKey: 'design' },
-        gate: {
-          state: 'designGate',
-          heading: "DESIGN gate — the orchestrator's summary",
-          ready: 'Design gate — design doc ready for review',
-          hint: '(approving hands off to AFK implementation — the design doc is the single design artifact; there is no separate spec or plan)',
-        },
-        artifactLabel: 'design doc',
-        reviewLoop: true,
-        roundCap: 2,
-        orchestratorBudgetUsd: 15,
-        workerBudgetUsd: 10,
-        workerTurnTimeoutMs: 30 * 60_000,
-        consultantCheckpoint: 'contract',
-      },
-      {
-        // The fixer build: a fresh builder seeds from the committed design doc
-        // (fresh-seed — no continuity edge, so the builder holds no planning
-        // context), the judge reviews WITH write access (one review-and-fix
-        // round, cap 1 like short's writable round — the verify self-heal's fix
-        // follow-ups ride the established frame, not new rounds) and owns the
-        // build tail. Verify matters MORE here: the maker-vs-checker
-        // adversariality collapses into build-then-judge, so the consultant's
-        // fresh-session contract verify is the one fully independent pass.
-        name: 'implement',
-        semantics: {
-          block: 'build',
-          entrySeed: 'fresh-seed',
-          reviewPosture: 'fixer',
-          midpoint: 'judgment',
-          shipPacket: 'ceo-summary',
-          buildTailOwner: 'checker',
-          examplesKey: 'relay-impl',
-        },
-        gate: {
-          state: 'shipGate',
-          heading: 'SHIP gate — the orchestrator’s packet (CEO summary first)',
-          ready: 'Ship gate — implementation packet ready',
-          hint: '(verify in your environment before deciding — migrations, smoke tests; docs are reconciled here too, so approving enters FINISH = open the PR)',
-        },
-        artifactLabel: 'implementation',
-        reviewLoop: true,
-        roundCap: 1,
-        orchestratorBudgetUsd: 30,
-        workerBudgetUsd: 25,
-        workerTurnTimeoutMs: 90 * 60_000,
-        consultantCheckpoint: 'verify',
-      },
-      {
-        // The shared PR-only finishing tail, owned by the CHECKER — the judge
-        // that already owns the docs and the summary writes the description
-        // and opens the PR; pure data (renderFinishBrief reads finishOwner).
-        name: 'finish',
-        semantics: { block: 'finish', finishOwner: 'checker' },
-        gate: {
-          state: 'openPrGate',
-          heading: 'OPEN-PR gate — docs reconciled, PR open',
-          ready: 'Open-PR gate — PR open, ready for your review',
-          hint: '(the PR is already open and auto-crosses to done by default; list `finish` in gates_at for a post-open review stop — approve marks it done, reject amends the open PR. The merge is always yours.)',
-        },
-        artifactLabel: 'PR',
-        reviewLoop: false,
-        roundCap: 2,
-        orchestratorBudgetUsd: 15,
-        workerBudgetUsd: 15,
-        workerTurnTimeoutMs: 30 * 60_000,
-      },
-    ],
-    // The criss-cross stage split: delivery declares NO continuity edges —
-    // both its duty voices are born fresh at the boundary (the builder seeds
-    // from the committed doc, entrySeed fresh-seed; the judge starts clean),
-    // which is what lets each stage bind its own providers with nothing to
-    // resume across the switch. The delivery checker is the JUDGE — the fixer
-    // posture's addressable name.
-    stages: [
-      { name: 'planning', phases: ['frame', 'design'], duties: { maker: 'architect', checker: 'analyst' } },
-      { name: 'delivery', phases: ['implement', 'finish'], duties: { maker: 'builder', checker: 'judge' } },
-    ],
-    entry: { firstPhase: 'frame', specSkipsTo: 'design' },
+    title: 'Relay (frame → design doc → fresh build → judge review-and-fix → PR)',
+    attend: ['design'],
     presets: { afk: [] },
-    // design's one-interruption posture: the human reads one document, taps
-    // once, and walks away.
-    forceAttend: [],
-    defaultPreAuthorized: ['frame', 'implement', 'finish'],
-  },
-  short: {
+    phases: [frame(), doc('design', { contract: true }), build({ review: 'fixer' }), finish()],
+  }),
+  short: defineWorkflow({
     name: 'short',
-    displayName: 'Short (research → implement → ship → PR)',
-    phases: [
-      {
-        name: 'research',
-        semantics: { block: 'frame', examplesKey: 'research' },
-        gate: {
-          // Gate-state name reused from Full — legal because resolution is
-          // workflow-scoped (phaseOfGateState(workflow, …)).
-          state: 'directionGate',
-          heading: 'DIRECTION gate — the synthesized direction',
-          ready: 'Direction gate — synthesized direction ready',
-          hint: '(approving hands off to AFK implementation — these decisions are the spec; there is no separate spec or plan)',
-        },
-        artifactLabel: 'direction analysis',
-        reviewLoop: false,
-        roundCap: 2,
-        orchestratorBudgetUsd: 15,
-        workerBudgetUsd: 10,
-        workerTurnTimeoutMs: 30 * 60_000,
-        consultantCheckpoint: 'frame',
-      },
-      {
-        name: 'implement',
-        semantics: {
-          block: 'build',
-          entrySeed: 'implement-direct',
-          reviewPosture: 'writable',
-          midpoint: 'none',
-          shipPacket: 'lean',
-          buildTailOwner: 'maker',
-          examplesKey: 'short-impl',
-        },
-        gate: {
-          state: 'shipGate',
-          heading: 'SHIP gate — the implementation packet',
-          ready: 'Ship gate — implementation packet ready',
-          hint: '(verify in your environment before deciding — migrations, smoke tests; docs are reconciled here too, so approving enters FINISH = open the PR)',
-        },
-        artifactLabel: 'implementation',
-        reviewLoop: true,
-        // One writable review round — the runaway backstop, not an exit gate.
-        roundCap: 1,
-        orchestratorBudgetUsd: 30,
-        workerBudgetUsd: 25,
-        // The AFK build cap — the same wall-clock 90-min bound as full's `implement`
-        // (S3). The measurement spans both arcs (short's implement-direct turns run
-        // up to 25 min), so leaving the two build phases split would be unmotivated.
-        workerTurnTimeoutMs: 90 * 60_000,
-        consultantCheckpoint: 'implGate',
-      },
-      {
-        // The finishing tail for short — now SHARES full's `finish` name (phase
-        // identity is workflow-scoped, so both arcs may name it `finish`). Same
-        // shape, same entry brief (openPrPhaseEntryPrompt): write the PR
-        // description → gh pr create. Docs no longer reconcile here — they moved
-        // to the tail of `implement`, so `finish` is PR-only in both arcs.
-        // Pre-authorized (the `afk` posture), the PR opens and the Open-PR gate
-        // auto-crosses to done; attended (`finish` in gates_at), the run stops at
-        // the opened PR — approve marks it done, reject re-enters to AMEND it (gh pr
-        // edit / more commits), never to re-open. No consultant checkpoint (the
-        // implGate bet-audit already ran at implement).
-        name: 'finish',
-        semantics: { block: 'finish', finishOwner: 'maker' },
-        gate: {
-          // Gate-state name reused from Full — legal because resolution is
-          // workflow-scoped (phaseOfGateState(workflow, …)); reusing it lights up
-          // status's opensPr and the shared reject-amend clause for short too.
-          state: 'openPrGate',
-          heading: 'OPEN-PR gate — docs reconciled, PR open',
-          ready: 'Open-PR gate — PR open, ready for your review',
-          hint: '(the PR is already open and auto-crosses to done by default; list `finish` in gates_at for a post-open review stop — approve marks it done, reject amends the open PR. The merge is always yours.)',
-        },
-        artifactLabel: 'PR',
-        reviewLoop: false,
-        roundCap: 2,
-        orchestratorBudgetUsd: 15,
-        workerBudgetUsd: 15,
-        workerTurnTimeoutMs: 30 * 60_000,
-      },
-    ],
-    // Research alone is this workflow's planning — a workflow with no document
-    // still has an attended thinking stretch, and its one gate is the derived
-    // handoff. Delivery continues both planning sessions (the builder enters
-    // directly from the research decisions, entrySeed implement-direct).
-    stages: [
-      { name: 'planning', phases: ['research'], duties: { maker: 'architect', checker: 'analyst' } },
-      {
-        name: 'delivery',
-        phases: ['implement', 'finish'],
-        duties: { maker: 'builder', checker: 'critic' },
-        edges: { builder: { from: 'architect' }, critic: { from: 'analyst' } },
-      },
-    ],
-    entry: { firstPhase: 'research' },
-    // afk attends no gates — a headless short run auto-crosses Direction, Ship, and
-    // the new Open-PR gate straight to done (the user's walk-away-after-research
-    // flow). forceAttend pins nothing for short; defaultPreAuthorized stays empty,
-    // so a bare run attends all three gates (legacy attend-all default).
+    title: 'Short (research → implement → ship → PR)',
     presets: { afk: [] },
-    forceAttend: [],
-    defaultPreAuthorized: [],
-  },
+    phases: [frame({ name: 'research' }), build({ review: 'writable', audit: true }), finish()],
+  }),
+} as const;
+
+export const WORKFLOWS = {
+  full: compileWorkflow(SHIPPED_WORKFLOW_DEFINITIONS.full),
+  blueprint: compileWorkflow(SHIPPED_WORKFLOW_DEFINITIONS.blueprint),
+  relay: compileWorkflow(SHIPPED_WORKFLOW_DEFINITIONS.relay),
+  short: compileWorkflow(SHIPPED_WORKFLOW_DEFINITIONS.short),
 } as const satisfies Record<string, WorkflowSpecInput>;
 
 /** The shipped workflow names — useful for tests/help copy that intentionally enumerate the standard library. */

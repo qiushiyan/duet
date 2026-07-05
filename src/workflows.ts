@@ -1,3 +1,5 @@
+import './registry/workflows.ts';
+
 export {
   build,
   compileWorkflow,
