@@ -111,7 +111,7 @@ gateless: true             # optional: walk away from the START — pre-authoriz
 interactive: true          # optional: drive the planning gates from your own session (the --interactive flag by another door; for a template's launch hint)
 consultant: on             # optional: on | off toggle for a config-bound consultant
 bind.consultant: claude    # optional: bind the consultant for this run (implies on)
-bind.builder: codex        # optional: bind any duty — architect / analyst (planning), builder / critic or judge (delivery); a duty alone names its stage
+bind.builder: codex        # optional: bind any duty as provider[:model][@effort] — e.g. codex:gpt-5-codex@high (codex takes an inline model; effort low|medium|high|xhigh, +claude max / codex minimal). architect / analyst (planning), builder / critic or judge (delivery); a duty names its stage. Native args (claude_args / codex_config) are config-only, not a bind.* key
 ---
 
 # Problem

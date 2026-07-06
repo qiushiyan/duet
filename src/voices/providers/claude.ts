@@ -7,6 +7,7 @@ import { classifyError, transcriptShowsPromptAccepted } from '../health.ts';
 import { BudgetCutoffError } from './types.ts';
 import { ContextDeadlineExceededError, WallClockExceededError, runWithContextDeadline, runWithWallClockDeadline } from './wall-clock.ts';
 import type { RunTurnOptions, WorkerProvider, WorkerTurn } from './types.ts';
+import type { Effort } from '../bindings.ts';
 
 /**
  * What a successful `/compact` turn returns in place of an empty result: the
@@ -394,9 +395,10 @@ export function claudeExecaOptions(
  */
 export function claudeArgs(
   opts: { sessionId: string; resume: boolean },
-  config: { model: string; maxBudgetUsd?: number },
+  config: { model: string; effort?: Exclude<Effort, 'minimal'>; maxBudgetUsd?: number; nativeArgs?: string[] },
 ): string[] {
   const args = ['-p', '--output-format', 'json', '--model', config.model];
+  if (config.effort !== undefined) args.push('--effort', config.effort);
   args.push(opts.resume ? '--resume' : '--session-id', opts.sessionId);
   if (config.maxBudgetUsd !== undefined) {
     args.push('--max-budget-usd', String(config.maxBudgetUsd));
@@ -411,6 +413,7 @@ export function claudeArgs(
   // readOnly at all. bypassPermissions still honors explicit deny rules and the
   // CLI refuses to run as root.
   args.push('--permission-mode', 'bypassPermissions');
+  if (config.nativeArgs !== undefined) args.push(...config.nativeArgs);
   return args;
 }
 
@@ -419,12 +422,14 @@ export class ClaudeWorker implements WorkerProvider {
 
   private readonly config: {
     model: string;
+    effort?: Exclude<Effort, 'minimal'>;
+    nativeArgs?: string[];
     /** Per-invocation cost ceiling — day-one rail; headless usage draws from a metered subscription credit pool. */
     maxBudgetUsd?: number;
     timeoutMs?: number;
   };
 
-  constructor(config: { model: string; maxBudgetUsd?: number; timeoutMs?: number }) {
+  constructor(config: { model: string; effort?: Exclude<Effort, 'minimal'>; nativeArgs?: string[]; maxBudgetUsd?: number; timeoutMs?: number }) {
     this.config = config;
   }
 
@@ -453,7 +458,7 @@ export class ClaudeWorker implements WorkerProvider {
       // mechanics and the no-suspend fast path; the wall-clock backstop bounds the
       // SAME cap in REAL time, so an overnight-suspended turn is killed promptly on
       // wake (the monotonic timer, frozen through the sleep, would not).
-      let bounded: Promise<{ stdout: string }> = runWithWallClockDeadline({
+      let bounded: Promise<{ stdout: string; stderr?: string }> = runWithWallClockDeadline({
         run: child,
         abort: () => {
           child.kill();
@@ -482,8 +487,10 @@ export class ClaudeWorker implements WorkerProvider {
           limitTokens,
         });
       }
-      const { stdout } = await bounded;
-      return parseClaudeTurn(stdout, opts.prompt);
+      const { stdout, stderr } = await bounded;
+      const turn = parseClaudeTurn(stdout, opts.prompt);
+      const warnings = warningLines(stderr);
+      return warnings.length > 0 ? { ...turn, warnings } : turn;
     } catch (err) {
       // A budget cutoff exits non-zero, so execa throws BEFORE parseClaudeTurn
       // sees stdout. recoverClaudeFailure re-parses the captured stdout: a
@@ -495,4 +502,11 @@ export class ClaudeWorker implements WorkerProvider {
       return recoverClaudeFailure(err, opts.prompt, { sessionId, turnStartedAt });
     }
   }
+}
+
+function warningLines(stderr: string | undefined): string[] {
+  return (stderr ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^warning:/i.test(line));
 }

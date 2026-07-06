@@ -1,5 +1,5 @@
 import { DEFAULT_CLAUDE_MODEL, voiceBindingFor } from '../bindings.ts';
-import type { VoiceBindings } from '../bindings.ts';
+import type { Binding, Effort, VoiceBindings } from '../bindings.ts';
 import { dutiesOf, stageOf } from '../../registry/workflows.ts';
 import type { PhaseName, WorkflowRef } from '../../registry/workflows.ts';
 import { ClaudeWorker } from './claude.ts';
@@ -25,6 +25,38 @@ import type { VoiceAddress, WorkerProvider, WorkerProviders } from './types.ts';
  * provider branch, which is what makes the codex-vs-claude construction fall
  * out per phase.
  */
+export function createWorkerForBinding(
+  binding: Binding,
+  rails: { workerBudgetUsd: number | undefined; timeoutMs: number },
+  opts: { forceHeadless?: boolean } = {},
+): WorkerProvider {
+  if (binding.provider !== 'claude') {
+    return new CodexWorker({
+      timeoutMs: rails.timeoutMs,
+      ...(binding.model !== undefined ? { model: binding.model } : {}),
+      ...(binding.effort !== undefined ? { effort: binding.effort as Exclude<Effort, 'max'> } : {}),
+      ...(binding.native?.codexConfig !== undefined ? { nativeConfig: binding.native.codexConfig } : {}),
+    });
+  }
+  const model = binding.model ?? DEFAULT_CLAUDE_MODEL;
+  const claudeConfig = {
+    model,
+    timeoutMs: rails.timeoutMs,
+    ...(binding.effort !== undefined ? { effort: binding.effort as Exclude<Effort, 'minimal'> } : {}),
+    ...(binding.native?.claudeArgs !== undefined ? { nativeArgs: binding.native.claudeArgs } : {}),
+  };
+  // forceHeadless: the create-time preflight validates an interactive binding's
+  // model/args through headless `claude -p` (same CLI, same arg parsing) instead
+  // of spawning a real tmux TUI session just to make it answer "OK".
+  if (binding.transport === 'interactive' && !opts.forceHeadless) {
+    return new InteractiveClaudeWorker(claudeConfig);
+  }
+  return new ClaudeWorker({
+    ...claudeConfig,
+    ...(rails.workerBudgetUsd !== undefined ? { maxBudgetUsd: rails.workerBudgetUsd } : {}),
+  });
+}
+
 export function createWorkers(
   bindings: VoiceBindings,
   workflow: WorkflowRef,
@@ -33,12 +65,7 @@ export function createWorkers(
 ): WorkerProviders {
   const forAddress = (address: VoiceAddress): WorkerProvider => {
     const binding = voiceBindingFor(bindings, address);
-    if (binding.provider !== 'claude') return new CodexWorker({ timeoutMs: rails.timeoutMs });
-    const model = binding.model ?? DEFAULT_CLAUDE_MODEL;
-    if (binding.transport === 'interactive') {
-      return new InteractiveClaudeWorker({ model, timeoutMs: rails.timeoutMs });
-    }
-    return new ClaudeWorker({ model, maxBudgetUsd: rails.workerBudgetUsd, timeoutMs: rails.timeoutMs });
+    return createWorkerForBinding(binding, rails);
   };
   const [maker, checker] = dutiesOf(workflow, stageOf(workflow, phase));
   return {

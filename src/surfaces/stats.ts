@@ -252,14 +252,15 @@ export function buildStats(
 
 /**
  * The maker model label for a phase — the stage's maker duty looked up in the
- * frozen manifest: its claude model, or the provider name ("codex") when the
- * binding is codex, which has no model. The single view-time reuse of
+ * frozen manifest: its model when set, or the provider name ("codex") when the
+ * binding defers to provider config. The single view-time reuse of
  * `voiceBindingFor` for the stats column, so the label can never drift from
  * what actually ran.
  */
 function makerModelLabel(bindings: VoiceBindings, workflow: WorkflowRef, phase: PhaseName): string {
   const binding = voiceBindingFor(bindings, makerDutyOf(workflow, stageOf(workflow, phase)));
-  return binding.provider === 'claude' ? binding.model ?? DEFAULT_CLAUDE_MODEL : binding.provider;
+  const model = binding.provider === 'claude' ? binding.model ?? DEFAULT_CLAUDE_MODEL : binding.model ?? binding.provider;
+  return binding.effort ? `${model}@${binding.effort}` : model;
 }
 
 /** The fs composer: read the voice logs for a run and build the model. */

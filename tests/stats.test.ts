@@ -209,12 +209,19 @@ describe('buildStatsModel — the fs composer over real appendVoiceLog output', 
     expect.soft(byPhase['implement']).toBe('claude-sonnet-5'); // the build ran on the impl model
   });
 
-  test('a codex maker labels its phases "codex" — it has no model to resolve', ({ run }) => {
-    run.bindings.duties = { ...run.bindings.duties, architect: { provider: 'codex' }, builder: { provider: 'codex' } };
+  test('a codex maker labels deferred model as "codex", and shows explicit model/effort when set', ({ run }) => {
+    run.bindings.duties = {
+      ...run.bindings.duties,
+      architect: { provider: 'codex' },
+      builder: { provider: 'codex', model: 'gpt-5.5', effort: 'high' },
+    };
+    appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=plan)', 'brief');
+    appendVoiceLog(run, 'orchestrator', 'advance_phase (plan)', 'ok');
     appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=implement)', 'brief');
     appendVoiceLog(run, 'orchestrator', 'advance_phase (implement)', 'ok');
 
     const byPhase = Object.fromEntries(buildStatsModel(run).phases.map((p) => [p.phase, p.makerModel]));
-    expect.soft(byPhase['implement']).toBe('codex');
+    expect.soft(byPhase['plan']).toBe('codex');
+    expect.soft(byPhase['implement']).toBe('gpt-5.5@high');
   });
 });

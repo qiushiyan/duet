@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { execa } from 'execa';
+import type { Effort } from '../bindings.ts';
 
 /**
  * PaneController — the injection / process-driving SUB-SEAM, and the ergonomic
@@ -27,6 +28,8 @@ export interface PaneController {
 
 export interface PaneConfig {
   model: string;
+  effort?: Exclude<Effort, 'minimal'>;
+  nativeArgs?: string[];
   /** Resume this session id when set (turn 2+); omit for a fresh session (turn 1). */
   sessionId?: string;
   cwd?: string;
@@ -54,8 +57,15 @@ export function claudePaneLaunchCommand(config: PaneConfig): string[] {
     '--permission-mode',
     'bypassPermissions',
   ];
+  if (config.effort !== undefined) launch.push('--effort', config.effort);
   if (config.sessionId) launch.push('--resume', config.sessionId);
+  if (config.nativeArgs !== undefined) launch.push(...config.nativeArgs);
   return launch;
+}
+
+/** POSIX single-quote a token so sh treats it as one literal argv element. */
+function shQuote(token: string): string {
+  return `'${token.replace(/'/g, `'\\''`)}'`;
 }
 
 /**
@@ -85,10 +95,21 @@ export class TmuxPane implements PaneController {
   async open(): Promise<void> {
     // The launch command (incl. the forced watchdog env prefix) comes from the
     // pinned claudePaneLaunchCommand builder; tmux runs the joined string via sh.
+    // Shell-quote each command token so a claude_args value with a space or
+    // metachar reaches claude as one argv token (matching the headless execa
+    // path), while the LEADING env assignments stay raw so sh still applies them.
     const launch = claudePaneLaunchCommand(this.config);
+    let sawCommand = false;
+    const command = launch
+      .map((token) => {
+        if (!sawCommand && /^[A-Za-z_]\w*=/.test(token)) return token;
+        sawCommand = true;
+        return shQuote(token);
+      })
+      .join(' ');
     const args = ['new-session', '-d', '-s', this.session];
     if (this.config.cwd) args.push('-c', this.config.cwd);
-    args.push(launch.join(' '));
+    args.push(command);
     await this.tmux(...args);
   }
 

@@ -10,6 +10,8 @@ import { continuePlanner } from './continue-planner.ts';
 import type { ContinueEventType, RestoredFacts } from './continue-planner.ts';
 import { dutyBindingFor, formatBinding, parseBindAddress, resolveRunConfig } from '../voices/bindings.ts';
 import type { BindAddress } from '../voices/bindings.ts';
+import { preflightMarker, preflightRunBindings } from '../voices/preflight.ts';
+import type { PreflightReport } from '../voices/preflight.ts';
 import { sessionPolicyFor, sessionRecordFor, voicesFor } from '../voices/policy.ts';
 import { DEFAULT_FRAMING_FILE, composeInEditor, parseGatesAt, resolveHumanText, resolveRunInputs } from './framing.ts';
 import {
@@ -312,8 +314,8 @@ program
     'opt-in per-turn cost caps: off (default — unbounded, the flat-quota posture), default (the built-in per-phase profile), or a positive multiplier N scaling it (e.g. 0.5, 2). Overrides the config budget key; one knob covers both the worker and orchestrator caps',
   )
   .option(
-    '--bind <duty=provider[:model]>',
-    'bind a duty (or run-long voice) for this run, repeatable — e.g. --bind builder=codex --bind judge=claude:claude-fable-5. Duties: architect/analyst (planning), builder/critic-or-judge (delivery); a duty alone names its stage. orchestrator (claude-only) and consultant (binding one implies it is on) ride the same grammar. Precedence per key: flags > framing bind.* > config > defaults',
+    '--bind <duty=provider[:model][@effort]>',
+    'bind a duty (or run-long voice) for this run, repeatable — e.g. --bind builder=codex:gpt-5-codex@high --bind judge=claude:claude-fable-5. Codex takes an inline model too (else ~/.codex/config.toml governs); effort is low|medium|high|xhigh (+ claude max, codex minimal); native-arg passthrough (claude_args/codex_config) is config-only. Duties: architect/analyst (planning), builder/critic-or-judge (delivery); a duty alone names its stage. orchestrator (claude-only) and consultant (binding one implies it is on) ride the same grammar. Precedence per key: flags > framing bind.* > config > defaults',
     (value: string, prev: string[]) => [...prev, value],
     [] as string[],
   )
@@ -392,6 +394,13 @@ program
     }
     const { bindings, degradedEdges, budget } = resolved;
 
+    let preflightReport: PreflightReport = { byAddress: {} };
+    try {
+      preflightReport = await preflightRunBindings(bindings, runInputs.workflowSpec, cwd);
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+    }
+
     let branch: string | undefined;
     try {
       branch = (await execa('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd })).stdout.trim();
@@ -419,12 +428,14 @@ program
     console.log(`orchestrator: ${formatBinding(bindings.orchestrator)}`);
     for (const stage of stagesOf(wf)) {
       const pair = [stage.duties.maker, stage.duties.checker]
-        .map((duty) => `${duty}=${formatBinding(dutyBindingFor(bindings, duty))}`)
+        .map((duty) => `${duty}=${formatBinding(dutyBindingFor(bindings, duty))}${preflightMarker(preflightReport.byAddress[duty])}`)
         .join(' · ');
       const edges = stage.edges ? Object.entries(stage.edges).map(([into, edge]) => `${into}←${edge.from}`).join(' · ') : '';
       console.log(`${stage.name}: ${pair}${edges ? ` · continuity ${edges}` : ''}`);
     }
-    console.log(`consultant: ${bindings.consultant ? formatBinding(bindings.consultant) : 'off'}`);
+    console.log(
+      `consultant: ${bindings.consultant ? `${formatBinding(bindings.consultant)}${preflightMarker(preflightReport.byAddress.consultant)}` : 'off'}`,
+    );
     for (const edge of degradedEdges) {
       const line = `continuity: ${edge.into}←${edge.from} degraded to fresh (${edge.reason}) — ${edge.into} starts a fresh session at the stage boundary`;
       console.log(line);

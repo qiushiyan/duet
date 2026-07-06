@@ -495,7 +495,7 @@ describe('parseFramingFile — the bind.* manifest tier', () => {
 
   test('a bind value is validated at parse time — a typo fails at duet new, not at the freeze', () => {
     expect.soft(() => parseFramingFile(framed('bind.builder: codux'))).toThrow(/provider must be "claude" or "codex"/);
-    expect.soft(() => parseFramingFile(framed('bind.builder: codex:gpt-6'))).toThrow(/codex has no model key/);
+    expect.soft(() => parseFramingFile(framed('bind.builder: codex:gpt-6@max'))).toThrow(/codex effort must be one of/);
   });
 
   test('an unknown bind address rejects naming the vocabulary; the stage.duty form points at the bare spelling', () => {
