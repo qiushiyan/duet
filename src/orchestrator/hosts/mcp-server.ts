@@ -14,6 +14,7 @@ import { createPhaseTools } from '../tools.ts';
 import type { KernelTool } from '../tools.ts';
 import { createTurnDispatcher } from './turn-dispatcher.ts';
 import type { TurnDispatcher } from './turn-dispatcher.ts';
+import { workflowFor } from '../../run/workflow.ts';
 
 /**
  * The standard-MCP adapter over the host-neutral kernel registry — the sibling
@@ -40,11 +41,11 @@ import type { TurnDispatcher } from './turn-dispatcher.ts';
 export function buildKernelTools(cwd: string, runId: string, phaseRaw: string): { tools: Array<KernelTool<any>>; phase: PhaseName } {
   // Throws a clear "no run state at … — is <id> a run of this project?" when unknown.
   const state = loadRunState(cwd, runId);
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const legal = phasesOf(workflow).map((p) => p.name);
   if (!(legal as string[]).includes(phaseRaw)) {
     throw new Error(
-      `cannot host phase "${phaseRaw}" for run ${runId}: it is not a phase of the "${workflow}" workflow. Pass an explicit phase — one of ${legal.join(', ')} — because a quiescent run has no live phase context for _mcp to infer.`,
+      `cannot host phase "${phaseRaw}" for run ${runId}: it is not a phase of the "${state.workflow}" workflow. Pass an explicit phase — one of ${legal.join(', ')} — because a quiescent run has no live phase context for _mcp to infer.`,
     );
   }
   const phase = phaseRaw as PhaseName;
@@ -134,11 +135,13 @@ function hostablePhase(position: RunPosition): PhaseName | undefined {
 /** Build the run's worker providers for a run + phase — the seam tests fake. */
 export type WorkerFactory = (state: RunState, phase: PhaseName) => WorkerProviders;
 
-const defaultWorkerFactory: WorkerFactory = (state, phase) =>
-  createWorkers(state.bindings, state.workflow, phase, {
+const defaultWorkerFactory: WorkerFactory = (state, phase) => {
+  const workflow = workflowFor(state);
+  return createWorkers(state.bindings, workflow, phase, {
     workerBudgetUsd: budgetFor(state, phase).worker,
-    timeoutMs: phaseSpec(state.workflow, phase).workerTurnTimeoutMs,
+    timeoutMs: phaseSpec(workflow, phase).workerTurnTimeoutMs,
   });
+};
 
 export interface RunScopedKernel {
   /** The phase-independent tool surface (names/descriptions/schemas) for registration. */
@@ -188,6 +191,7 @@ export function createRunScopedKernel(
     const phase = hostablePhase(probeRunPosition(state));
     if (!phase) throw new Error(NOT_HOSTABLE_MESSAGE);
     if (!ctx || ctx.phase !== phase) {
+      const workflow = workflowFor(state);
       // Rebuild the per-phase context — providers, rails, AND the dispatcher —
       // at a phase boundary. Safe because the phase-exit gate forbids advancing
       // with a pending turn, so the old dispatcher is always drained here.
@@ -199,7 +203,7 @@ export function createRunScopedKernel(
         dispatcher: createTurnDispatcher({
           state,
           phase,
-          cap: phaseSpec(state.workflow, phase).roundCap,
+          cap: phaseSpec(workflow, phase).roundCap,
           providers,
           log: (line) => console.error(line),
           holdsLease: leaseHeld,

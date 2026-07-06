@@ -164,16 +164,15 @@ describe('voice policy helpers', () => {
     expect.soft(sessionIdFor(run, 'builder')).toBe('build-era');
   });
 
-  test('sessionIdFor: relay declares no edges — the whole delivery is born fresh', ({ run }) => {
-    run.workflow = 'relay';
-    run.bindings = defaultBindingsFor('relay');
-    run.sessions = {
+  test('sessionIdFor: relay declares no edges — the whole delivery is born fresh', ({ projectDir }) => {
+    const relay = createRun({ cwd: projectDir, workflow: 'relay', bindings: defaultBindingsFor('relay'), framing: 'x' });
+    relay.sessions = {
       'planning.architect': { provider: 'claude', id: 'arch-1' },
       'planning.analyst': { provider: 'codex', id: 'ana-1' },
     };
-    expect.soft(sessionIdFor(run, 'builder')).toBeUndefined(); // fresh by design
-    expect.soft(sessionIdFor(run, 'judge')).toBeUndefined(); // fresh by design
-    expect.soft(sessionIdFor(run, 'architect')).toBe('arch-1'); // planning untouched
+    expect.soft(sessionIdFor(relay, 'builder')).toBeUndefined(); // fresh by design
+    expect.soft(sessionIdFor(relay, 'judge')).toBeUndefined(); // fresh by design
+    expect.soft(sessionIdFor(relay, 'architect')).toBe('arch-1'); // planning untouched
   });
 
   test('sessionSlotsToReset: a duty riding a live edge clears the planning slot too, or the walk resurrects the session', ({ run }) => {

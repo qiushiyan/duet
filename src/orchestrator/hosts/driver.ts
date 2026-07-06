@@ -3,7 +3,7 @@ import type { Options, SDKMessage, SdkMcpToolDefinition } from '@anthropic-ai/cl
 import { colorizeDriverLine } from '../../view/colorize.ts';
 import { DEFAULT_CLAUDE_MODEL } from '../../voices/bindings.ts';
 import { phaseSpec } from '../../registry/workflows.ts';
-import type { PhaseName, WorkflowName } from '../../registry/workflows.ts';
+import type { PhaseName, WorkflowRef } from '../../registry/workflows.ts';
 import { createWorkers } from '../../voices/providers/index.ts';
 import {
   appendVoiceLog,
@@ -38,6 +38,7 @@ import {
   nudgeContinuePrompt,
   renderSteerBlock,
 } from '../briefs.ts';
+import { workflowFor } from '../../run/workflow.ts';
 
 /**
  * The phase driver — Layer 2's runtime. One invocation drives the
@@ -134,13 +135,14 @@ function makeInProcessHost(runTurn: RunOrchestratorTurn): PhaseHost {
       // finds it already consumed (consumeHumanInput persists), so the resumed
       // turn falls to the nudge prompt and never replays.
       const pendingMessage = consumeHumanInput(state);
+      const workflow = workflowFor(state);
       const budget = budgetFor(state, phase);
       const { tools } = createPhaseTools({
         state,
         phase,
-        providers: createWorkers(state.bindings, state.workflow, phase, {
+        providers: createWorkers(state.bindings, workflow, phase, {
           workerBudgetUsd: budget.worker,
-          timeoutMs: phaseSpec(state.workflow, phase).workerTurnTimeoutMs,
+          timeoutMs: phaseSpec(workflow, phase).workerTurnTimeoutMs,
         }),
         log: driverLog,
         ...(pendingMessage?.kind === 'answer' ? { stagedAnswer: pendingMessage.text } : {}),
@@ -358,7 +360,7 @@ function basePrompt(
     return buildPhaseBrief(state, phase);
   }
   if (pendingMessage?.kind === 'answer') return answerResumePrompt(pendingMessage.text);
-  if (pendingMessage?.kind === 'feedback') return feedbackResumePrompt(state.workflow, phase, pendingMessage.text);
+  if (pendingMessage?.kind === 'feedback') return feedbackResumePrompt(workflowFor(state), phase, pendingMessage.text);
   // Re-entered the phase with no staged input (e.g. recovery after a crash):
   // ask the orchestrator to take stock and continue.
   return nudgeContinuePrompt();
@@ -375,7 +377,7 @@ function basePrompt(
  * an exception reaching here is an unexpected escape, still surfaced as a
  * flag. The headless lifecycle (driveToQuiescence) drives with this machine.
  */
-export function drivenMachineFor(workflow: WorkflowName): typeof duetMachine {
+export function drivenMachineFor(workflow: WorkflowRef): typeof duetMachine {
   return machineFor(workflow).provide({
     actors: {
       phaseDriver: fromCallback<EventObject, PhaseInput>(({ input, sendBack }) => {

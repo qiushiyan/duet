@@ -8,6 +8,7 @@ import { sessionKeyFor } from './policy.ts';
 // downward: runDirOf as a value, the state shapes type-only (erased at build).
 import { runDirOf } from '../run/store.ts';
 import type { RunState, SessionKey } from '../run/store.ts';
+import { workflowFor } from '../run/workflow.ts';
 
 /**
  * Locating the providers' standard-location session transcripts for a run.
@@ -88,7 +89,7 @@ export function resolveSessions(state: RunState): SessionRef[] {
     out.push({ key: 'orchestrator', provider: state.bindings.orchestrator.provider, sessionId: state.orchestratorSessionId });
   }
   const keys: SessionKey[] = [
-    ...stagesOf(state.workflow).flatMap((s) => [sessionKeyFor(s.duties.maker), sessionKeyFor(s.duties.checker)]),
+    ...stagesOf(workflowFor(state)).flatMap((s) => [sessionKeyFor(s.duties.maker), sessionKeyFor(s.duties.checker)]),
     'consultant',
   ];
   for (const key of keys) {

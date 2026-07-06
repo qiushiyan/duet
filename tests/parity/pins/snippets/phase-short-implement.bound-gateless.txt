@@ -6,8 +6,8 @@ Build the change directly from the research decisions we settled — those decis
 
 ## Read these first, then build
 Read each one and adapt it to this change — they're the bar, not optional background; don't go hunting them mid-build, and ask me for a path if one's missing.
-- `/Users/qiushi/dev/duet/lessons/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
-- `/Users/qiushi/dev/duet/lessons/testing/tdd-loop.md` — vertical slices, behavior-focused tests, mock only at boundaries, anti-patterns
+- `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
+- `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, mock only at boundaries, anti-patterns
 
 ## Before you write code
 - **Re-read the research decisions and the cross-review notes** — they settled the direction and the target shape; execute it, don't re-decide it.

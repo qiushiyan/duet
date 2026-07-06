@@ -28,11 +28,13 @@ import { serveKernelStdio, serveRunScopedKernelStdio } from '../orchestrator/hos
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
 import { buildStatsModel, renderStats } from './stats.ts';
 import { runOrchestrate } from '../orchestrator/hosts/orchestrate.ts';
-import { DUTIES, WORKFLOWS, entryOf, handoffWatchLabel, stagesOf, workflowHasConsultantBackstop } from '../registry/workflows.ts';
+import { DUTIES, entryOf, handoffWatchLabel, stagesOf, workflowHasConsultantBackstop } from '../registry/workflows.ts';
 import { getEffectiveSnippet, loadEffectiveSnippets, runtimeLibraryContext } from '../orchestrator/library.ts';
 import type { EffectiveSnippet } from '../orchestrator/library.ts';
 import { buildBrief, buildStatusModel, formatGatePosture, renderBrief, renderStatus, steerRefusal } from './status.ts';
 import { openTmuxView } from './view/tmux.ts';
+import { formatWorkflowSource, resolveWorkflowSource } from './workflow-source.ts';
+import { buildWorkflowListModel, initWorkflowDefinition, renderWorkflowCheck, renderWorkflowInit, renderWorkflowList } from './workflows.ts';
 import {
   appendNote,
   clearPendingTurn,
@@ -47,6 +49,7 @@ import {
   stageHumanInput,
 } from '../run/store.ts';
 import type { RunState, Voice } from '../run/store.ts';
+import { workflowFor } from '../run/workflow.ts';
 import { purgeRun } from '../voices/sessions.ts';
 import { listPendingSteers, stageSteer } from '../run/steers.ts';
 
@@ -143,7 +146,7 @@ function resolveRun(cwd: string, runId: string | undefined, notFoundMsg: string)
 function gatelessNote(state: RunState, where: 'start' | 'rest'): string {
   const walk = where === 'start' ? 'walk away from the start' : 'full-send the rest';
   if (!state.bindings.consultant) return `gateless: ${walk} — ask_human and the merge stay yours`;
-  if (!workflowHasConsultantBackstop(state.workflow))
+  if (!workflowHasConsultantBackstop(workflowFor(state)))
     return `gateless: ${walk}; the consultant runs only its framing third-opinion on this arc — its bet audit is off and there is no acceptance-contract backstop here. ask_human and the merge stay yours`;
   return `gateless: ${walk}; the consultant runs its framing third-opinion and the acceptance-contract backstop — bet audits off, but the verify still self-heals and holds a contract that stays broken. ask_human and the merge stay yours`;
 }
@@ -157,7 +160,7 @@ function gatelessNote(state: RunState, where: 'start' | 'rest'): string {
 function restoreFacts(state: RunState): RestoredFacts | null {
   const snapshot = loadMachineSnapshot(state);
   if (!snapshot) return null;
-  const restored = createActor(machineFor(state.workflow), {
+  const restored = createActor(machineFor(workflowFor(state)), {
     input: { runId: state.runId, cwd: state.cwd, hasSpec: Boolean(state.specPath) },
     snapshot,
   }).getSnapshot();
@@ -377,7 +380,7 @@ program
         flagBinds[address] = raw.slice(eq + 1);
       }
       resolved = resolveRunConfig({
-        workflow: runInputs.workflow,
+        workflow: runInputs.workflowSpec,
         flagBinds,
         ...(framingBinds ? { framingBinds } : {}),
         ...(opts.consultant === false ? { noConsultant: true } : {}),
@@ -411,14 +414,15 @@ program
     // Echo the resolved manifest — workflow, each stage's duty bindings, the
     // consultant, and any degraded continuity edges (the 717d fix: a run's
     // frozen inputs are visible at creation, not discovered from state.json).
-    const wf = state.workflow;
-    console.log(`workflow: ${wf} — ${WORKFLOWS[wf].displayName}`);
+    const wf = workflowFor(state);
+    console.log(`workflow: ${state.workflow} — ${wf.displayName} (${formatWorkflowSource(state.workflowSource ?? { layer: 'shipped' }, cwd)})`);
     console.log(`orchestrator: ${formatBinding(bindings.orchestrator)}`);
     for (const stage of stagesOf(wf)) {
       const pair = [stage.duties.maker, stage.duties.checker]
         .map((duty) => `${duty}=${formatBinding(dutyBindingFor(bindings, duty))}`)
         .join(' · ');
-      console.log(`${stage.name}: ${pair}`);
+      const edges = stage.edges ? Object.entries(stage.edges).map(([into, edge]) => `${into}←${edge.from}`).join(' · ') : '';
+      console.log(`${stage.name}: ${pair}${edges ? ` · continuity ${edges}` : ''}`);
     }
     console.log(`consultant: ${bindings.consultant ? formatBinding(bindings.consultant) : 'off'}`);
     for (const edge of degradedEdges) {
@@ -449,7 +453,7 @@ program
       return;
     }
     const pid = spawnDrive(state);
-    const entry = entryOf(state.workflow);
+    const entry = entryOf(workflowFor(state));
     const startLabel = state.specPath && entry.specSkipsTo
       ? `${entry.specSkipsTo.toUpperCase()} review loop`
       : `${entry.firstPhase.toUpperCase()} phase`;
@@ -653,7 +657,7 @@ program
       }
       // Bare afk → the empty "attend none" posture; a named arg → an existing
       // preset/list (no new presets). parseGatesAt validates against the workflow.
-      const posture = presetArg ? parseGatesAt(presetArg, state.workflow) : [];
+      const posture = presetArg ? parseGatesAt(presetArg, workflowFor(state)) : [];
       split = await enterAfk(state, posture, { gateless: Boolean(options.gateless) });
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
@@ -758,7 +762,7 @@ program
     // executor that does every side effect it names.
     const position = probeRunPosition(state);
     const restored = state.orchestrationHost === 'interactive' ? null : restoreFacts(state);
-    const action = continuePlanner(state, { position, eventType, headless: Boolean(opts.headless), restored });
+    const action = continuePlanner(state, { position, eventType, headless: Boolean(opts.headless), restored, workflow: workflowFor(state) });
 
     switch (action.kind) {
       case 'fail':
@@ -798,7 +802,7 @@ program
           delete handed.orchestrationHost;
           saveRunState(handed);
           const pid = spawnDrive(handed);
-          printWatchHints(handed, pid, opts.headless ? 'handed off to headless' : handoffWatchLabel(handed.workflow));
+          printWatchHints(handed, pid, opts.headless ? 'handed off to headless' : handoffWatchLabel(workflowFor(handed)));
           return;
         }
         const rest = probeRunPosition(loadRunState(cwd, state.runId));
@@ -883,7 +887,7 @@ program
     const state = resolveRun(cwd, runId, 'no runs found in this project');
     const position = probeRunPosition(state);
     if (position.kind !== 'running' && position.kind !== 'crashed') {
-      fail(steerRefusal(state.workflow, position, state.runId) ?? `nothing to steer at ${position.kind}`);
+      fail(steerRefusal(workflowFor(state), position, state.runId) ?? `nothing to steer at ${position.kind}`);
     }
     const note = await resolveHumanText(
       text,
@@ -1164,6 +1168,38 @@ snippetsCmd
     console.log(`# key: ${snippet.key}`);
     console.log(`# source: ${snippet.source}`);
     console.log(snippet.expand);
+  });
+
+const workflowsCmd = program
+  .command('workflows')
+  .description('List workflow definitions available before starting a run.')
+  .option('--json', 'print the discovery model as JSON')
+  .action((opts: { json?: boolean }) => {
+    const model = buildWorkflowListModel(process.cwd());
+    console.log(opts.json ? JSON.stringify(model.rows, null, 2) : renderWorkflowList(model));
+  });
+
+workflowsCmd
+  .command('check <name>')
+  .description('Resolve and compile one workflow definition without starting a run.')
+  .action(async (name: string) => {
+    try {
+      const resolved = await resolveWorkflowSource(process.cwd(), name);
+      console.log(renderWorkflowCheck(resolved.workflow, resolved.source, process.cwd()));
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+    }
+  });
+
+workflowsCmd
+  .command('init <name>')
+  .description('Scaffold a typed project workflow definition.')
+  .action((name: string) => {
+    try {
+      console.log(renderWorkflowInit(initWorkflowDefinition(process.cwd(), name), process.cwd()));
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+    }
   });
 
 if (import.meta.main) {

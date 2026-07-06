@@ -2,9 +2,10 @@ import { dutyBindingFor, sessionCompatible } from './bindings.ts';
 import { continuityEdgeFor, dutiesOf, phaseSpec, stageOf, stageOfDuty, stageOfDutyLane, stagesOf } from '../registry/workflows.ts';
 import type { Duty, PhaseName, ReviewPosture } from '../registry/workflows.ts';
 import type { VoiceAddress } from './providers/types.ts';
-// run/ sits below voices/ in the import gradient; only the state SHAPES are
-// needed here, so the imports stay type-only and erase at build.
+// run/ sits below voices/ in the import gradient; workflowFor is the run-carried
+// spec resolver, and the state imports stay type-only.
 import type { RunState, SessionKey, Voice, WorkerSessionRecord } from '../run/store.ts';
+import { workflowFor } from '../run/workflow.ts';
 
 /**
  * Voice POLICY — the behavior keyed off an address, expressed once as data and
@@ -95,7 +96,7 @@ export function sessionKeyFor(duty: Duty): SessionKey {
  * decision has exactly one derivation and no persisted copy.
  */
 export function liveContinuityEdgeFor(state: RunState, duty: Duty): Duty | undefined {
-  const from = continuityEdgeFor(state.workflow, duty);
+  const from = continuityEdgeFor(workflowFor(state), duty);
   if (!from) return undefined;
   return sessionCompatible(dutyBindingFor(state.bindings, from), dutyBindingFor(state.bindings, duty)) ? from : undefined;
 }
@@ -243,7 +244,7 @@ const CHECKER_WRITE_GRANTS: Partial<Record<ReviewPosture, ReadonlySet<string>>> 
 export function writeAuthorityFor(state: RunState, phase: PhaseName, address: VoiceAddress, action: string): boolean {
   if (!policyFor(address).readOnly) return true;
   if (address === 'consultant') return false;
-  const semantics = phaseSpec(state.workflow, phase).semantics;
+  const semantics = phaseSpec(workflowFor(state), phase).semantics;
   switch (semantics.block) {
     case 'build':
       return (
@@ -264,7 +265,7 @@ export function writeAuthorityFor(state: RunState, phase: PhaseName, address: Vo
  * a foreign stage's duty nor drop the bound consultant.
  */
 export function phaseAddressesFor(state: RunState, phase: PhaseName): VoiceAddress[] {
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const [maker, checker] = dutiesOf(workflow, stageOf(workflow, phase));
   return state.bindings.consultant ? [maker, checker, 'consultant'] : [maker, checker];
 }
@@ -277,7 +278,7 @@ export function phaseAddressesFor(state: RunState, phase: PhaseName): VoiceAddre
  * surface routed through phaseAddressesFor would silently drop it.
  */
 export function voicesFor(state: RunState): Voice[] {
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const duties = stagesOf(workflow).flatMap((stage) => dutiesOf(workflow, stage.name));
   return state.bindings.consultant ? ['orchestrator', ...duties, 'consultant'] : ['orchestrator', ...duties];
 }

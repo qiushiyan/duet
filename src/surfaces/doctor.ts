@@ -3,9 +3,9 @@ import { entryOf } from '../registry/workflows.ts';
 import { aliveDriverPid, probeRunPosition } from '../run/position.ts';
 import { sessionRecordFor, voicesFor } from '../voices/policy.ts';
 import { readTranscriptTailForSession } from '../voices/sessions.ts';
-import { } from '../run/store.ts';
 import type { RunState, Voice } from '../run/store.ts';
 import type { PhaseName } from '../registry/workflows.ts';
+import { workflowFor } from '../run/workflow.ts';
 import { localStamp } from '../view/timefmt.ts';
 import {
   RETRY_WINDOW_MS,
@@ -169,7 +169,7 @@ export async function buildDoctorModel(
   const phaseMidFlight = position.kind === 'running' || position.kind === 'interactive';
 
   const voices = voicesFor(state);
-  const phase = 'phase' in position ? position.phase : entryOf(state.workflow).firstPhase;
+  const phase = 'phase' in position ? position.phase : entryOf(workflowFor(state)).firstPhase;
   const rows = voices.map((voice) => voiceRow(voice, state, { now: opts.now, ...(opts.home !== undefined ? { home: opts.home } : {}), driverAlive, phaseMidFlight, phase }));
 
   const hasClaude = allBindings(state.bindings).some((b) => b.binding.provider === 'claude');

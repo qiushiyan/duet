@@ -6,12 +6,12 @@ Now, write the design doc to the location the framing's conventions name (where 
 
 ## Read these first, then design
 Read each one and adapt it to this change — they're the bar for a good design, not optional background. If a path is missing, ask me rather than guessing.
-- `/Users/qiushi/dev/duet/lessons/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
-- `/Users/qiushi/dev/duet/lessons/testing/tdd-loop.md` — vertical slices, behavior-focused tests, the anti-patterns
-- `/Users/qiushi/dev/duet/lessons/testing/mocking-and-fixtures.md` — mock only at boundaries; `test.extend` fixtures
-- `/Users/qiushi/dev/duet/lessons/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
+- `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
+- `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, the anti-patterns
+- `{{lessons_dir}}/testing/mocking-and-fixtures.md` — mock only at boundaries; `test.extend` fixtures
+- `{{lessons_dir}}/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
 
-When the design restructures an existing cluster or the interface is uncertain, also read `/Users/qiushi/dev/duet/lessons/codebase-design/deepening.md` and `/Users/qiushi/dev/duet/lessons/codebase-design/design-it-twice.md`.
+When the design restructures an existing cluster or the interface is uncertain, also read `{{lessons_dir}}/codebase-design/deepening.md` and `{{lessons_dir}}/codebase-design/design-it-twice.md`.
 
 Ground problem and approach in actual code — read the relevant modules first if you haven't.
 
@@ -39,8 +39,8 @@ If you have remaining product questions or major technical uncertainty, intervie
 I've drafted a design doc — the one design document for this change (it replaces a separate spec and plan). Review critically — verify problem statements and intended solutions against the actual code.
 
 Background (skim as a lens, don't recite):
-- `/Users/qiushi/dev/duet/lessons/codebase-design/deep-modules.md` — deep modules, seams, the deletion test
-- `/Users/qiushi/dev/duet/lessons/testing/tdd-loop.md` — vertical slices, behavior-focused tests, when to mock
+- `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test
+- `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, when to mock
 
 The doc runs top-down — product sections (goals, behaviors, non-goals) above technical sections (module boundaries, seams, architecture sketch, test standards) — and each tier reviews at its own altitude:
 

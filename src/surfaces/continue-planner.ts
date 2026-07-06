@@ -2,7 +2,7 @@ import { interactiveContinueAction, validateInteractiveCrossing } from './lifecy
 import type { HumanEvent } from './lifecycle.ts';
 import type { RunPosition } from '../run/position.ts';
 import { contractAuthorPhaseOf, phaseOfGateState } from '../registry/workflows.ts';
-import type { PhaseName } from '../registry/workflows.ts';
+import type { PhaseName, WorkflowRef } from '../registry/workflows.ts';
 import { gateAttended } from '../run/store.ts';
 import type { RunState } from '../run/store.ts';
 
@@ -45,6 +45,8 @@ export interface ContinueFacts {
   headless: boolean;
   /** The restored-machine facts (headless host only); `null` when no snapshot exists. */
   restored: RestoredFacts | null;
+  /** The run-carried workflow spec, resolved by the command action before this pure planner runs. */
+  workflow: WorkflowRef;
 }
 
 /**
@@ -64,7 +66,7 @@ export type ContinueAction =
   | { kind: 'fail'; message: string };
 
 export function continuePlanner(state: RunState, facts: ContinueFacts): ContinueAction {
-  const { position, eventType, headless, restored } = facts;
+  const { position, eventType, headless, restored, workflow } = facts;
 
   // Stage 1: the interactive host — the connected session is the orchestrator.
   // Runs before the snapshot validation below, because the run's first gate has
@@ -92,11 +94,11 @@ export function continuePlanner(state: RunState, facts: ContinueFacts): Continue
       return { kind: 'interactive-show-status' };
     }
     const phase = position.phase;
-    const after = interactiveContinueAction(state.workflow, phase, eventType, headless);
+    const after = interactiveContinueAction(workflow, phase, eventType, headless);
     // Freeze the acceptance contract before an approve crosses its freeze gate —
     // the contract author phase, the only phase where freezeContractAt does work
     // (it no-ops elsewhere), so the executor freezes only when this is set.
-    const freezeContract = eventType === 'approve' && phase === contractAuthorPhaseOf(state.workflow);
+    const freezeContract = eventType === 'approve' && phase === contractAuthorPhaseOf(workflow);
     return {
       kind: 'interactive-cross',
       event: { type: `human.${eventType}` },
@@ -121,7 +123,7 @@ export function continuePlanner(state: RunState, facts: ContinueFacts): Continue
   }
   // A snapshot parked at a pre-authorized gate means the driver died after
   // reaching it but before the next attended stop — re-enter; it auto-crosses.
-  const restoredGatePhase = typeof restored.value === 'string' ? phaseOfGateState(state.workflow, restored.value) : undefined;
+  const restoredGatePhase = typeof restored.value === 'string' ? phaseOfGateState(workflow, restored.value) : undefined;
   if (!eventType && restoredGatePhase && !gateAttended(state, restoredGatePhase) && restored.status !== 'done') {
     return { kind: 'preauth-recover' };
   }

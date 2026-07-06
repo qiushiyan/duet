@@ -10,13 +10,25 @@ import {
   phasesOf,
   priorPhaseOf,
 } from '../registry/workflows.ts';
-import type { ArtifactKind, ExamplesKey, GatePhase, PhaseName, PhaseSemantics, PhaseSpec, WorkflowName } from '../registry/workflows.ts';
+import type {
+  CritiqueBuildBriefWorld,
+  DocLoopBriefArtifact,
+  FixerBuildBriefWorld,
+  FrameBriefWorld,
+  GatePhase,
+  PhaseName,
+  PhaseSemantics,
+  PhaseSpec,
+  WorkflowRef,
+  WritableBuildBriefWorld,
+} from '../registry/workflows.ts';
 import { voiceBindingFor } from '../voices/bindings.ts';
 import { checkerDutyOf, fixerDutyFor, makerDutyOf, stageOf } from '../registry/workflows.ts';
 import { liveContinuityEdgeFor } from '../voices/policy.ts';
 import { gateAttended } from '../run/store.ts';
 import type { RunState } from '../run/store.ts';
 import type { Steer } from '../run/steers.ts';
+import { workflowFor } from '../run/workflow.ts';
 
 /**
  * Orchestrator prompts, written to the conventions in
@@ -150,7 +162,7 @@ const CONSULTANT_CONTRACT_CLAUSE = `On this workflow, two of those checkpoints r
  * (`orchestratorSystemPrompt`), and the interactive identity the launcher composes
  * into the run-dir file (`orchestrate.ts`). Workflow-scoped so short stays byte-for-byte.
  */
-export function consultantIdentityClause(workflow: WorkflowName): string {
+export function consultantIdentityClause(workflow: WorkflowRef): string {
   return contractAuthorPhaseOf(workflow)
     ? `${CONSULTANT_IDENTITY_CLAUSE}\n\n${CONSULTANT_CONTRACT_CLAUSE}`
     : CONSULTANT_IDENTITY_CLAUSE;
@@ -170,7 +182,7 @@ export const FIXER_IDENTITY_CLAUSE = `## The judge writes on this workflow's bui
 This run's delivery checker is the judge, and it WRITES: at the build's review-and-fix round and the finishing tail (docs, summary, PR), the judge edits the repository directly — fix commits for ordinary valid findings — rather than filing critiques back to the builder. Everywhere before that round it reviews read-only as usual, and mid-build the builder stays the sole writer. The escalation path still runs through you: a product or design disagreement the judge surfaces is an ask_human, never something to route back for patching over.`;
 
 /** Whether a workflow's build phase runs the fixer review posture. */
-function hasFixerBuild(workflow: WorkflowName): boolean {
+function hasFixerBuild(workflow: WorkflowRef): boolean {
   return phasesOf(workflow).some((p) => p.semantics.block === 'build' && p.semantics.reviewPosture === 'fixer');
 }
 
@@ -186,7 +198,7 @@ function hasFixerBuild(workflow: WorkflowName): boolean {
  * fixer workflow's judge is still read-only.
  */
 export function orchestratorSystemPrompt(state: RunState): string {
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const clauses = [
     ORCHESTRATOR_SYSTEM_PROMPT,
     ...(state.bindings.consultant ? [consultantIdentityClause(workflow)] : []),
@@ -331,7 +343,7 @@ This phase's exit gate is pre-authorized: the human granted approval at run star
  */
 function approvalClause(state: RunState, gatePhase: GatePhase, attended: string, preAuthorized: string): string {
   if (gateAttended(state, gatePhase)) return attended;
-  const gateState = phaseSpec(state.workflow, gatePhase).gate.state;
+  const gateState = phaseSpec(workflowFor(state), gatePhase).gate.state;
   const autoCrossed = (state.autoApprovals ?? []).some((a) => a.gate === gateState);
   return autoCrossed ? preAuthorized : attended;
 }
@@ -374,11 +386,11 @@ Branch: the run works on exactly one branch, fixed before your first worker prom
  * false, the exact pre-feature routing.
  */
 function checkpointLive(state: RunState, phase: PhaseName): boolean {
-  return consultantCheckpointLive(state.workflow, phase, { consultant: Boolean(state.bindings.consultant), gateless: state.gateless });
+  return consultantCheckpointLive(workflowFor(state), phase, { consultant: Boolean(state.bindings.consultant), gateless: state.gateless });
 }
 
 function analysisSendStep(state: RunState, phase: PhaseName): string {
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const stage = stageOf(workflow, phase);
   const maker = makerDutyOf(workflow, stage);
   const checker = checkerDutyOf(workflow, stage);
@@ -390,7 +402,7 @@ function analysisSendStep(state: RunState, phase: PhaseName): string {
 }
 
 function synthesisStep(state: RunState, phase: PhaseName): string {
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const stage = stageOf(workflow, phase);
   const maker = makerDutyOf(workflow, stage);
   const checker = checkerDutyOf(workflow, stage);
@@ -405,7 +417,7 @@ function synthesisStep(state: RunState, phase: PhaseName): string {
  * `seedNote` names exactly what to curate into the ephemeral session.
  */
 function consultantAuditStep(state: RunState, phase: PhaseName, seedNote: string): string {
-  const snippet = consultantSnippetFor(state.workflow, phase);
+  const snippet = consultantSnippetFor(workflowFor(state), phase);
   if (!checkpointLive(state, phase) || !snippet) return '';
   return `
 
@@ -431,7 +443,7 @@ Consultant checkpoint (the consultant is bound for this run): before you advance
  * spec_path lands only at advance_phase, after the contract is authored).
  */
 function consultantContractStep(state: RunState, placement: { when: string; seed: string }): string {
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const authorPhase = contractAuthorPhaseOf(workflow);
   if (!authorPhase) return '';
   const snippet = consultantSnippetFor(workflow, authorPhase);
@@ -459,7 +471,7 @@ Consultant checkpoint — author the acceptance contract (the consultant is boun
  * blueprint/relay at design), never a hardcoded phase.
  */
 function consultantVerifyStep(state: RunState): string {
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const snippet = consultantSnippetFor(workflow, 'implement');
   if (!checkpointLive(state, 'implement') || !snippet) return '';
   // Verify pairs with a contract author (validateRegistry holds the two as one
@@ -491,7 +503,7 @@ function documentsBlock(state: RunState): string {
   // draft-spec; blueprint/relay: draft-design-doc), derived from the entry
   // phase's label so the tag and the brief's prose can't disagree about what
   // the document is.
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const entryPhase = entryOf(workflow).specSkipsTo;
   const draftName = entryPhase ? `draft-${phaseSpec(workflow, entryPhase).artifactLabel.replace(/\s+/g, '-')}` : 'draft-spec';
   const docs = [
@@ -521,7 +533,7 @@ interface FrameBriefData {
   examples: string;
 }
 
-const FRAME_BRIEFS: Record<'frame' | 'research', FrameBriefData> = {
+const FRAME_BRIEFS = {
   frame: {
     opening:
       'No spec exists yet — run the FRAME phase: both workers build an independent understanding of the problem, then the architect synthesizes, and the direction lands on the Direction gate.',
@@ -535,7 +547,7 @@ const FRAME_BRIEFS: Record<'frame' | 'research', FrameBriefData> = {
       'The builder builds directly from these decisions, so the summary must carry enough that the build can proceed without a spec. ',
     examples: RESEARCH_EXAMPLES,
   },
-};
+} satisfies Record<FrameBriefWorld, FrameBriefData>;
 
 function renderFrameBrief(state: RunState, spec: PhaseSpec, semantics: Extract<PhaseSemantics, { block: 'frame' }>): string {
   const data = FRAME_BRIEFS[semantics.examplesKey];
@@ -570,11 +582,11 @@ ${data.examples}
  * committed spec, one shape. Which applies is registry topology
  * (entry.specSkipsTo), not a knob.
  */
-const DOC_BRIEFS: Record<ArtifactKind, (state: RunState, spec: PhaseSpec) => string> = {
+const DOC_BRIEFS = {
   spec: specDocBrief,
   plan: planDocBrief,
   design: designDocBrief,
-};
+} satisfies Record<DocLoopBriefArtifact, (state: RunState, spec: PhaseSpec) => string>;
 
 function renderDocLoopBrief(state: RunState, spec: PhaseSpec, semantics: Extract<PhaseSemantics, { block: 'doc-loop' }>): string {
   return DOC_BRIEFS[semantics.artifactKind](state, spec);
@@ -583,7 +595,7 @@ function renderDocLoopBrief(state: RunState, spec: PhaseSpec, semantics: Extract
 function specDocBrief(state: RunState, spec: PhaseSpec): string {
   const roundCap = spec.roundCap;
   if (!state.specPath) return specDraftBrief(state, roundCap);
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const maker = makerDutyOf(workflow, 'planning');
   const checker = checkerDutyOf(workflow, 'planning');
   return `${documentsBlock(state)}
@@ -605,7 +617,7 @@ ${SPEC_EXAMPLES}
 }
 
 function specDraftBrief(state: RunState, roundCap: number): string {
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const maker = makerDutyOf(workflow, 'planning');
   const checker = checkerDutyOf(workflow, 'planning');
   return `<task>
@@ -630,7 +642,7 @@ ${SPEC_EXAMPLES}
 
 function planDocBrief(state: RunState, spec: PhaseSpec): string {
   const roundCap = spec.roundCap;
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const maker = makerDutyOf(workflow, 'planning');
   const checker = checkerDutyOf(workflow, 'planning');
   const specRef = state.specPath ?? 'the approved spec file (you know its path from the spec phase)';
@@ -693,7 +705,7 @@ const DESIGN_CONTRACT_PLACEMENT = {
 function designDocBrief(state: RunState, spec: PhaseSpec): string {
   const roundCap = spec.roundCap;
   if (!state.specPath) return designDraftBrief(state, roundCap);
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const maker = makerDutyOf(workflow, 'planning');
   const checker = checkerDutyOf(workflow, 'planning');
   return `${documentsBlock(state)}
@@ -715,7 +727,7 @@ ${DESIGN_EXAMPLES}
 }
 
 function designDraftBrief(state: RunState, roundCap: number): string {
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const maker = makerDutyOf(workflow, 'planning');
   const checker = checkerDutyOf(workflow, 'planning');
   return `<task>
@@ -797,7 +809,7 @@ function midpointStep(sizeSignal: string, checker: string): string {
 // reconcile as the last build step, then the CEO summary leading the packet.
 // `deviationsFrom` names the settled document the packet reports drift against.
 function implReviewTail(state: RunState, roundCap: number, deviationsFrom: string): string {
-  const checker = checkerDutyOf(state.workflow, 'delivery');
+  const checker = checkerDutyOf(workflowFor(state), 'delivery');
   return `6. When all slices are in: implementation-handoff from the builder, then the review loop — review-implementation to the ${checker}, respond-review to the builder, -again variants for later rounds, fix commits as they're accepted. The backstop cap for this phase is ${roundCap} review rounds; converge well before it.
 7. When the review loop has converged, reconcile the docs with what shipped — docs are part of the work the Ship gate reviews now, not a later step, so they run here on the finished, reviewed code. Send the builder the reconcile-docs prompt. Your one decision is the doc method, by precedence: if the framing names a doc-update skill or document, name it in the prompt — relay the framing's path or skill faithfully and treat it as authoritative; the builder locates and follows it, so you needn't (and can't) verify it exists. If the framing names none, send the snippet's default unchanged — it has the builder find the project's own doc skill, then reconcile by hand if there is none. Never substitute your own survey for a method the framing named — that drops the human's explicit instruction. The builder commits the docs; they ride the branch into the PR that FINISH opens (there is no docs gate — the human reviews them in the Ship packet and again in the PR). A doc-scope product call it surfaces — deleting a documented concept, rewriting a design claim, pruning a superseded doc — is yours to ask_human (it pauses the run).
 8. Last, after the docs are committed: send the builder ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review history (rounds run, points raised, resolved, disputed), the docs reconciled, deviations from the ${deviationsFrom}, and the test state. The human returns from hours away and decides to ship — code and docs together — from this packet alone, so it must carry everything.${consultantVerifyStep(state)}`;
@@ -836,7 +848,7 @@ interface CritiqueBuildData {
   examples: string;
 }
 
-const CRITIQUE_BUILD_BRIEFS: Partial<Record<ExamplesKey, CritiqueBuildData>> = {
+const CRITIQUE_BUILD_BRIEFS = {
   impl: {
     approvedAttended: 'The human approved the plan and walked away —',
     approvedPreauth: 'The plan-approval gate was pre-authorized at run start and auto-crossed; the human is away —',
@@ -873,10 +885,10 @@ const CRITIQUE_BUILD_BRIEFS: Partial<Record<ExamplesKey, CritiqueBuildData>> = {
     deviationsFrom: 'design doc',
     examples: DESIGN_IMPL_EXAMPLES,
   },
-};
+} satisfies Record<CritiqueBuildBriefWorld, CritiqueBuildData>;
 
 function critiqueBuildBrief(state: RunState, spec: PhaseSpec, data: CritiqueBuildData): string {
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const builder = makerDutyOf(workflow, 'delivery');
   const claudeBuilder = voiceBindingFor(state.bindings, builder).provider === 'claude';
   const edgeLive = liveContinuityEdgeFor(state, builder) !== undefined;
@@ -936,7 +948,7 @@ ${data.examples}
 function renderFinishBrief(state: RunState, spec: PhaseSpec, semantics: Extract<PhaseSemantics, { block: 'finish' }>): string {
   const phase = spec.name;
   const roundCap = spec.roundCap;
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const owner = semantics.finishOwner === 'checker' ? checkerDutyOf(workflow, 'delivery') : makerDutyOf(workflow, 'delivery');
   const openPrAttended = gateAttended(state, phase);
   const priorPhase = priorPhaseOf(workflow, phase);
@@ -975,7 +987,7 @@ interface WritableBuildData {
   examples: string;
 }
 
-const WRITABLE_BUILD_BRIEFS: Partial<Record<ExamplesKey, WritableBuildData>> = {
+const WRITABLE_BUILD_BRIEFS = {
   'short-impl': {
     approvedAttended: 'The human approved the direction and walked away —',
     approvedPreauth: 'The Direction gate was pre-authorized at run start and auto-crossed; the human is away —',
@@ -983,7 +995,7 @@ const WRITABLE_BUILD_BRIEFS: Partial<Record<ExamplesKey, WritableBuildData>> = {
       "the research decisions treated as the design, the implemented change, and the consultant's own prior research-checkpoint findings — not the raw build or review traffic.",
     examples: IMPLEMENT_EXAMPLES,
   },
-};
+} satisfies Record<WritableBuildBriefWorld, WritableBuildData>;
 
 /**
  * The fixer build's per-workflow data — relay's today. The posture's
@@ -999,7 +1011,7 @@ interface FixerBuildData {
   examples: string;
 }
 
-const FIXER_BUILD_BRIEFS: Partial<Record<ExamplesKey, FixerBuildData>> = {
+const FIXER_BUILD_BRIEFS = {
   'relay-impl': {
     approvedAttended: 'The human approved the design doc and walked away —',
     approvedPreauth: 'The design gate was pre-authorized at run start and auto-crossed; the human is away —',
@@ -1007,7 +1019,7 @@ const FIXER_BUILD_BRIEFS: Partial<Record<ExamplesKey, FixerBuildData>> = {
       "the design fixes the shape, not a slice list, so read the size from the doc's scope and structural risk, and from how the builder slices the work as the build starts.",
     examples: RELAY_IMPL_EXAMPLES,
   },
-};
+} satisfies Record<FixerBuildBriefWorld, FixerBuildData>;
 
 /**
  * The fixer build — the plan-smart / build-cheap / judge-strong workflow's
@@ -1020,7 +1032,7 @@ const FIXER_BUILD_BRIEFS: Partial<Record<ExamplesKey, FixerBuildData>> = {
  * is why it runs last and why its self-heal routes fixes to the judge.
  */
 function fixerBuildBrief(state: RunState, spec: PhaseSpec, data: FixerBuildData): string {
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const builder = makerDutyOf(workflow, 'delivery');
   const judge = checkerDutyOf(workflow, 'delivery');
   // Single-world: the round-cap follow-up clause may only point at "the verify
@@ -1070,7 +1082,7 @@ ${data.examples}
  */
 function writableBuildBrief(state: RunState, spec: PhaseSpec, data: WritableBuildData): string {
   const roundCap = spec.roundCap;
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const builder = makerDutyOf(workflow, 'delivery');
   const checker = checkerDutyOf(workflow, 'delivery');
   return `<task>
@@ -1095,29 +1107,31 @@ ${IMPLEMENT_EXAMPLES}
 </task>`;
 }
 
+function requiredBriefData<K extends string, V>(records: Record<K, V>, key: string, label: string): V {
+  if (!Object.hasOwn(records, key)) throw new Error(`no ${label} brief data for examples key "${key}"`);
+  return records[key as K];
+}
+
 /**
  * The build block's renderer — the posture picks the skeleton (critique's
  * ceremonial single-pass-with-midpoint-and-tail vs writable's direct build
- * with one writable round), the examplesKey picks the workflow data. A missing
- * data entry is a registry/fragment mismatch — a knob combination no shipped
- * workflow exercises — and fails loud (the closed-vocabulary rule at the prose
- * tier; the driver's "every phase builds a non-empty brief" test covers it).
+ * with one writable round), the examplesKey picks the workflow data. The
+ * registry validates the block/posture world before this renderer runs, and the
+ * data maps satisfy-check against BRIEF_WORLDS, so a missing prose world is a
+ * load-time error rather than a mid-run render failure.
  */
 function renderBuildBrief(state: RunState, spec: PhaseSpec, semantics: Extract<PhaseSemantics, { block: 'build' }>): string {
   switch (semantics.reviewPosture) {
     case 'critique': {
-      const data = CRITIQUE_BUILD_BRIEFS[semantics.examplesKey];
-      if (!data) throw new Error(`no critique-build brief data for examples key "${semantics.examplesKey}"`);
+      const data = requiredBriefData(CRITIQUE_BUILD_BRIEFS, semantics.examplesKey, 'critique-build');
       return critiqueBuildBrief(state, spec, data);
     }
     case 'writable': {
-      const data = WRITABLE_BUILD_BRIEFS[semantics.examplesKey];
-      if (!data) throw new Error(`no writable-build brief data for examples key "${semantics.examplesKey}"`);
+      const data = requiredBriefData(WRITABLE_BUILD_BRIEFS, semantics.examplesKey, 'writable-build');
       return writableBuildBrief(state, spec, data);
     }
     case 'fixer': {
-      const data = FIXER_BUILD_BRIEFS[semantics.examplesKey];
-      if (!data) throw new Error(`no fixer-build brief data for examples key "${semantics.examplesKey}"`);
+      const data = requiredBriefData(FIXER_BUILD_BRIEFS, semantics.examplesKey, 'fixer-build');
       return fixerBuildBrief(state, spec, data);
     }
   }
@@ -1136,7 +1150,7 @@ function renderBuildBrief(state: RunState, spec: PhaseSpec, semantics: Extract<P
  * so each caller owns its own phaseStarted/consume bookkeeping.
  */
 export function buildPhaseBrief(state: RunState, phase: PhaseName): string {
-  const workflow = state.workflow;
+  const workflow = workflowFor(state);
   const spec = phaseSpec(workflow, phase);
   const semantics = spec.semantics;
   switch (semantics.block) {
@@ -1188,7 +1202,7 @@ export function answerResumePrompt(answer: string): string {
   return `The human answered your queued question: ${JSON.stringify(answer)}. Continue the phase from where you paused, taking their answer into account.`;
 }
 
-export function feedbackResumePrompt(workflow: WorkflowName, phase: PhaseName, feedback: string): string {
+export function feedbackResumePrompt(workflow: WorkflowRef, phase: PhaseName, feedback: string): string {
   const spec = phaseSpec(workflow, phase);
   const artifact = spec.artifactLabel;
   const stage = stageOf(workflow, phase);

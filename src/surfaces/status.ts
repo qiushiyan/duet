@@ -1,17 +1,18 @@
 import { completionLine, opensPr } from '../run/position.ts';
 export { describeStop } from '../run/position.ts';
 import type { RunPosition } from '../run/position.ts';
-import { WORKFLOWS, entryOf, gateOf, phaseOfGateState, phasesOf } from '../registry/workflows.ts';
-import type { GatePhase, PhaseName, WorkflowName } from '../registry/workflows.ts';
+import { entryOf, gateOf, phaseOfGateState, phasesOf, stagesOf } from '../registry/workflows.ts';
+import type { GatePhase, PhaseName, WorkflowRef } from '../registry/workflows.ts';
 import type { VoiceAddress } from '../voices/providers/types.ts';
 import { voicesFor } from '../voices/policy.ts';
 import { contextPercent, fmtTokens } from '../run/store.ts';
-import type { ContextEvent, HumanDecision, RunState, Voice } from '../run/store.ts';
+import type { ContextEvent, HumanDecision, RunState, Voice, WorkflowSource } from '../run/store.ts';
 import type { Steer } from '../run/steers.ts';
 import { resolveSessions } from '../voices/sessions.ts';
 import type { SessionRef } from '../voices/sessions.ts';
 import { localStamp } from '../view/timefmt.ts';
 import type { ErrorClass } from '../voices/health.ts';
+import { workflowFor } from '../run/workflow.ts';
 
 /**
  * Whether a workflow's arc fills the spec slot (so a missing spec is worth
@@ -19,7 +20,7 @@ import type { ErrorClass } from '../voices/health.ts';
  * any arc that admits a `--spec` draft entry (full's spec, design's design doc)
  * produces a primary artifact at specPath; short has no such slot.
  */
-function hasSpecPhase(workflow: WorkflowName): boolean {
+function hasSpecPhase(workflow: WorkflowRef): boolean {
   return entryOf(workflow).specSkipsTo !== undefined;
 }
 
@@ -53,7 +54,7 @@ const continueCommand = {
  * is legal (a live or crashed phase). Quiescent stops have their own
  * channel, and the copy names it — gates stay explicit.
  */
-export function steerRefusal(workflow: WorkflowName, position: RunPosition, runId: string): string | undefined {
+export function steerRefusal(workflow: WorkflowRef, position: RunPosition, runId: string): string | undefined {
   switch (position.kind) {
     case 'running':
     case 'crashed':
@@ -107,9 +108,24 @@ export interface StatusModel {
   runId: string;
   createdAt: string;
   /** The run's workflow arc (additive; absent state resolves to 'full'). */
-  workflow: WorkflowName;
+  workflow: string;
   /** The workflow's human-facing name, e.g. "Research → Implement → Review". */
   workflowDisplayName: string;
+  /** The layer/path the frozen workflow came from when the run was created. */
+  workflowSource?: WorkflowSource;
+  /** Derived workflow facts the renderers need without re-looking-up `workflow` by name. */
+  workflowDetail: {
+    hasSpecPhase: boolean;
+    completionLine: string;
+    opensPr: boolean;
+    phases: PhaseName[];
+    stages: Array<{
+      name: string;
+      phases: readonly PhaseName[];
+      duties: { maker: string; checker: string };
+      edges?: Record<string, { from: string }>;
+    }>;
+  };
   branch?: string;
   specPath?: string;
   /** The last quiescent stop's machine state — a display hint, not resume truth. */
@@ -147,12 +163,25 @@ export interface StatusModel {
 }
 
 export function buildStatusModel(state: RunState, position: RunPosition, pendingSteers: Steer[]): StatusModel {
-  const workflow = state.workflow;
-  return {
+  const workflow = workflowFor(state);
+  const model = {
     runId: state.runId,
     createdAt: state.createdAt,
-    workflow,
-    workflowDisplayName: WORKFLOWS[workflow].displayName,
+    workflow: state.workflow,
+    workflowDisplayName: workflow.displayName,
+    ...(state.workflowSource ? { workflowSource: state.workflowSource } : {}),
+    workflowDetail: {
+      hasSpecPhase: hasSpecPhase(workflow),
+      completionLine: completionLine(workflow),
+      opensPr: opensPr(workflow),
+      phases: phasesOf(workflow).map((p) => p.name),
+      stages: stagesOf(workflow).map((stage) => ({
+        name: stage.name,
+        phases: stage.phases,
+        duties: stage.duties,
+        ...(stage.edges ? { edges: stage.edges } : {}),
+      })),
+    },
     ...(state.branch ? { branch: state.branch } : {}),
     ...(state.specPath ? { specPath: state.specPath } : {}),
     ...(state.machineState ? { machineState: state.machineState } : {}),
@@ -185,15 +214,17 @@ export function buildStatusModel(state: RunState, position: RunPosition, pending
     snippetProposals: state.snippetProposals.map(({ snippetKey, rationale, at }) => ({ snippetKey, rationale, at })),
     ...(state.lastActivity ? { lastActivity: state.lastActivity } : {}),
   };
+  return model;
 }
 
 function stopModel(state: RunState, position: RunPosition): StopModel {
+  const workflow = workflowFor(state);
   switch (position.kind) {
     case 'running':
     case 'interactive':
       return position;
     case 'gate': {
-      const gate = gateOf(state.workflow, position.phase);
+      const gate = gateOf(workflow, position.phase);
       const packet = state.phaseSummaries[position.phase];
       return {
         kind: 'gate',
@@ -229,7 +260,7 @@ function stopModel(state: RunState, position: RunPosition): StopModel {
     case 'done': {
       // The run's last phase carries the completion summary — Full's `finish`,
       // short's `implement` — not a hardcoded phase.
-      const lastPhase = phasesOf(state.workflow).at(-1)?.name;
+      const lastPhase = phasesOf(workflow).at(-1)?.name;
       const summary = lastPhase ? state.phaseSummaries[lastPhase]?.summary : undefined;
       return { kind: 'done', ...(summary ? { summary } : {}) };
     }
@@ -237,7 +268,7 @@ function stopModel(state: RunState, position: RunPosition): StopModel {
 }
 
 function packetHeadline(state: RunState, gateState: string): string {
-  const phase = phaseOfGateState(state.workflow, gateState);
+  const phase = phaseOfGateState(workflowFor(state), gateState);
   if (!phase) return '';
   return (state.phaseSummaries[phase]?.summary.split('\n').find((l) => l.trim()) ?? '').slice(0, 96);
 }
@@ -330,7 +361,7 @@ export function renderStatus(model: StatusModel): string {
   }
   // Only a workflow with a spec phase reports a (missing) spec — short has none.
   if (model.specPath) lines.push(`spec:     ${model.specPath}`);
-  else if (hasSpecPhase(model.workflow)) lines.push(`spec:     (not yet drafted — framing-only entry)`);
+  else if (model.workflowDetail.hasSpecPhase) lines.push(`spec:     (not yet drafted — framing-only entry)`);
   if (model.branch) lines.push(`branch:   ${model.branch}`);
   // gatesAt: [] is the afk "attend none" signal (kept in the JSON model) — it
   // renders as explicit copy rather than an empty `attending  — …` join.
@@ -472,7 +503,7 @@ export function renderStatus(model: StatusModel): string {
       lines.push(`  wipe with:    ${stop.purge}   (deletes the run dir and the session transcripts)`);
       break;
     case 'done':
-      lines.push(`\n${completionLine(model.workflow)}.`);
+      lines.push(`\n${model.workflowDetail.completionLine}.`);
       if (stop.summary) lines.push(stop.summary);
       if (model.snippetProposals.length > 0) {
         lines.push(`\n━━━ queued snippet proposals (your end-of-run editorial review) ━━━`);
@@ -482,7 +513,7 @@ export function renderStatus(model: StatusModel): string {
         lines.push(`\nfull bodies in .duet/runs/${model.runId}/state.json; apply the ones you accept to the owning snippets/ file.`);
       }
       lines.push(`\ntranscripts: .duet/runs/${model.runId}/*.log (and the providers' standard session locations)`);
-      lines.push(`nothing is running${opensPr(model.workflow) ? ' — merge the PR on GitHub' : ''}. To remove this run's local artifacts and session transcripts: duet abandon ${model.runId} --purge`);
+      lines.push(`nothing is running${model.workflowDetail.opensPr ? ' — merge the PR on GitHub' : ''}. To remove this run's local artifacts and session transcripts: duet abandon ${model.runId} --purge`);
       break;
     default: {
       const _exhaustive: never = stop;
@@ -526,7 +557,7 @@ export interface BriefModel {
   pendingTurns?: Array<{ duty: VoiceAddress; tag: string; status: 'running' | 'ready' | 'failed' }>;
 }
 
-function briefHeadline(stop: StopModel, workflow: WorkflowName): string {
+function briefHeadline(stop: StopModel, doneLine: string): string {
   switch (stop.kind) {
     case 'gate':
       return (stop.packet ? (stop.packet.summary.split('\n').find((l) => l.trim()) ?? stop.heading) : stop.heading).slice(0, 96);
@@ -541,7 +572,7 @@ function briefHeadline(stop: StopModel, workflow: WorkflowName): string {
     case 'abandoned':
       return 'run abandoned';
     case 'done':
-      return completionLine(workflow);
+      return doneLine;
   }
 }
 
@@ -567,7 +598,7 @@ export function buildBrief(model: StatusModel): BriefModel {
     ...(model.machineState ? { machineState: model.machineState } : {}),
     displayState: displayState(stop, model.machineState),
     stopKind: stop.kind,
-    headline: briefHeadline(stop, model.workflow),
+    headline: briefHeadline(stop, model.workflowDetail.completionLine),
     ...(nextCommand ? { nextCommand } : {}),
     pendingSteers: model.pendingSteers.length,
     autoApprovals: model.autoApprovals,

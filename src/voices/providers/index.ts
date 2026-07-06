@@ -1,7 +1,7 @@
 import { DEFAULT_CLAUDE_MODEL, voiceBindingFor } from '../bindings.ts';
 import type { VoiceBindings } from '../bindings.ts';
 import { dutiesOf, stageOf } from '../../registry/workflows.ts';
-import type { PhaseName, WorkflowName } from '../../registry/workflows.ts';
+import type { PhaseName, WorkflowRef } from '../../registry/workflows.ts';
 import { ClaudeWorker } from './claude.ts';
 import { CodexWorker } from './codex.ts';
 import { InteractiveClaudeWorker } from './interactive-claude.ts';
@@ -27,7 +27,7 @@ import type { VoiceAddress, WorkerProvider, WorkerProviders } from './types.ts';
  */
 export function createWorkers(
   bindings: VoiceBindings,
-  workflow: WorkflowName,
+  workflow: WorkflowRef,
   phase: PhaseName,
   rails: { workerBudgetUsd: number | undefined; timeoutMs: number },
 ): WorkerProviders {

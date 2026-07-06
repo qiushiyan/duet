@@ -3,10 +3,11 @@ import { join } from 'node:path';
 import { DEFAULT_CLAUDE_MODEL, voiceBindingFor } from '../voices/bindings.ts';
 import type { VoiceBindings } from '../voices/bindings.ts';
 import { makerDutyOf, phasesOf, stageOf } from '../registry/workflows.ts';
-import type { PhaseName, WorkflowName } from '../registry/workflows.ts';
+import type { PhaseName, WorkflowRef } from '../registry/workflows.ts';
 import { sessionKeyFor, voicesFor } from '../voices/policy.ts';
 import { runDirOf } from '../run/store.ts';
 import type { RunState, Voice } from '../run/store.ts';
+import { workflowFor } from '../run/workflow.ts';
 import type { VoiceAddress } from '../voices/providers/types.ts';
 import { formatDuration } from '../view/timefmt.ts';
 
@@ -256,7 +257,7 @@ export function buildStats(
  * `voiceBindingFor` for the stats column, so the label can never drift from
  * what actually ran.
  */
-function makerModelLabel(bindings: VoiceBindings, workflow: WorkflowName, phase: PhaseName): string {
+function makerModelLabel(bindings: VoiceBindings, workflow: WorkflowRef, phase: PhaseName): string {
   const binding = voiceBindingFor(bindings, makerDutyOf(workflow, stageOf(workflow, phase)));
   return binding.provider === 'claude' ? binding.model ?? DEFAULT_CLAUDE_MODEL : binding.provider;
 }
@@ -278,6 +279,7 @@ export function buildStatsModel(state: RunState): StatsModel {
   // simply absent and omitted, so the note fires only when it means something.
   const hasSession = (voice: VoiceAddress): boolean =>
     Boolean(voice === 'consultant' ? state.sessions['consultant'] : state.sessions[sessionKeyFor(voice)]);
+  const workflow = workflowFor(state);
   const workers = voicesFor(state)
     .filter((v): v is VoiceAddress => v !== 'orchestrator')
     .flatMap((voice) => {
@@ -285,7 +287,7 @@ export function buildStatsModel(state: RunState): StatsModel {
       if (log !== undefined) return [{ voice, log }];
       return hasSession(voice) ? [{ voice }] : [];
     });
-  const phaseOrder = phasesOf(state.workflow).map((p) => p.name);
+  const phaseOrder = phasesOf(workflow).map((p) => p.name);
   // Label only phases of THIS run's workflow — a foreign phase (a run predating
   // a workflow change) has no confident resolution, so it stays unlabeled rather
   // than force the labeler to resolve a phase its workflow doesn't own.
@@ -296,7 +298,7 @@ export function buildStatsModel(state: RunState): StatsModel {
     read('orchestrator'),
     workers,
     phaseOrder,
-    (phase) => (ownPhases.has(phase) ? makerModelLabel(state.bindings, state.workflow, phase as PhaseName) : undefined),
+    (phase) => (ownPhases.has(phase) ? makerModelLabel(state.bindings, workflow, phase as PhaseName) : undefined),
     Number.isNaN(runStartMs) ? 0 : runStartMs,
   );
 }

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
+  BRIEF_WORLDS,
   GATELESS_CONSULTANT_SNIPPETS,
   WORKFLOWS,
   acceptanceContractPathForSpec,
@@ -762,7 +763,7 @@ describe('validateRegistry — posture/seed coherence on a delivery build phase'
 
   test('a fresh-seed build with a maker continuity edge throws', () => {
     const w = workflow({
-      phases: [phase('a', 'aGate'), buildPhase({ reviewPosture: 'writable' })],
+      phases: [phase('a', 'aGate'), buildPhase({ reviewPosture: 'writable', examplesKey: 'short-impl' })],
       stages: stages({ delivery: { edges: { builder: { from: 'architect' } } } }),
     });
     expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).toThrow(
@@ -772,11 +773,72 @@ describe('validateRegistry — posture/seed coherence on a delivery build phase'
 
   test('a session-carrying entrySeed without a maker edge throws (the edge and the seed are one fact)', () => {
     const w = workflow({
-      phases: [phase('a', 'aGate'), buildPhase({ reviewPosture: 'writable', entrySeed: 'compact-for-impl' })],
+      phases: [phase('a', 'aGate'), buildPhase({ reviewPosture: 'writable', examplesKey: 'short-impl', entrySeed: 'compact-for-impl' })],
     });
     expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).toThrow(
       /declare the edge or seed fresh/,
     );
+  });
+});
+
+describe('validateRegistry — brief worlds are load-time vocabulary', () => {
+  test('a frame phase with an undeclared prose world throws before brief render', () => {
+    const w = workflow({
+      phases: [
+        phase('a', 'aGate', { semantics: { block: 'frame', examplesKey: 'impl' } as unknown as PhaseSemantics }),
+        phase('b', 'bGate'),
+      ],
+    });
+    expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).toThrow(
+      /no frame brief world is declared.*valid frame worlds: frame, research/,
+    );
+  });
+
+  test('a doc-loop artifact must select that artifact prose world', () => {
+    const w = workflow({
+      phases: [
+        phase('a', 'aGate', {
+          reviewLoop: true,
+          semantics: { block: 'doc-loop', artifactKind: 'plan', examplesKey: 'spec' } as PhaseSemantics,
+        }),
+        phase('b', 'bGate'),
+      ],
+    });
+    expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).toThrow(
+      /no doc-loop brief world is declared.*valid plan worlds: plan/,
+    );
+  });
+
+  test('a fixer build from a plan prose world is rejected with the missing-world fix', () => {
+    const w = workflow({
+      phases: [
+        phase('a', 'aGate'),
+        phase('b', 'bGate', {
+          reviewLoop: true,
+          semantics: {
+            block: 'build',
+            entrySeed: 'fresh-seed',
+            reviewPosture: 'fixer',
+            midpoint: 'judgment',
+            shipPacket: 'ceo-summary',
+            buildTailOwner: 'checker',
+            examplesKey: 'impl',
+          } as PhaseSemantics,
+        }),
+      ],
+      stages: stages({ delivery: { duties: { maker: 'builder', checker: 'judge' } } }),
+    });
+    expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).toThrow(
+      /no fixer build brief world is declared.*valid fixer build worlds: relay-impl/,
+    );
+  });
+
+  test('the registry declaration names the shipped build prose worlds', () => {
+    expect(BRIEF_WORLDS.build).toEqual({
+      critique: ['impl', 'blueprint-impl'],
+      writable: ['short-impl'],
+      fixer: ['relay-impl'],
+    });
   });
 });
 

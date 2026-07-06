@@ -2,8 +2,11 @@ import { existsSync, readFileSync, readdirSync, mkdirSync, rmSync, writeFileSync
 import { join } from 'node:path';
 import { describe, expect } from 'vitest';
 import type { Snapshot } from 'xstate';
+import { build, compileWorkflow, defineWorkflow, finish, frame } from '../src/workflows.ts';
 import { defaultBindingsFor } from '../src/voices/bindings.ts';
 import { claudeArgs } from '../src/voices/providers/claude.ts';
+import { machineFor } from '../src/run/machine.ts';
+import { workflowFor, workflowPath } from '../src/run/workflow.ts';
 import {
   acquireMcpOwner,
   appendVoiceLog,
@@ -212,18 +215,20 @@ describe('run creation', () => {
     expect(() => loadRunState(projectDir, run.runId)).toThrow(/predates the duty-keyed remodel[\s\S]*claude --resume/);
   });
 
-  test('loadRunState REJECTS a persisted retired workflow name with the standard library and the manual path', ({
+  test('loadRunState REJECTS a persisted unshipped workflow name with no frozen workflow and names the layers', ({
     projectDir,
     run,
   }) => {
-    // A hand-crafted state with the NEW bindings shape but a retired workflow
-    // spelling must still die at the boundary, not fall through to a lookup crash.
+    // A hand-crafted state with the NEW bindings shape but an unshipped
+    // workflow and no frozen workflow must still die at the boundary, not fall
+    // through to a lookup crash.
     const legacy = JSON.parse(readFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), 'utf8'));
     legacy.workflow = 'design';
     writeFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), JSON.stringify(legacy, null, 2));
+    rmSync(workflowPath(projectDir, run.runId), { force: true });
 
     expect(() => loadRunState(projectDir, run.runId)).toThrow(
-      /retired workflow "design"[\s\S]*full · blueprint · relay · short[\s\S]*claude --resume/,
+      /workflow "design"[\s\S]*no frozen workflow\.json[\s\S]*project\/user workflow files[\s\S]*claude --resume/,
     );
   });
 
@@ -289,6 +294,56 @@ describe('run creation', () => {
     expect.soft(created.budget).toBeUndefined();
     expect.soft('budget' in loadRunState(projectDir, created.runId)).toBe(false);
     expect.soft(budgetFor(created, 'implement')).toEqual({ worker: undefined, orchestrator: undefined });
+  });
+
+  test('createRun freezes shipped workflows into workflow.json', ({ projectDir }) => {
+    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('blueprint'), workflow: 'blueprint' });
+    const frozen = JSON.parse(readFileSync(workflowPath(projectDir, created.runId), 'utf8'));
+
+    expect.soft(frozen.name).toBe('blueprint');
+    expect.soft(frozen.displayName).toBe('Blueprint (frame → design doc → implement → ship → PR)');
+    expect.soft(workflowFor(created).phases.map((p) => p.name)).toEqual(['frame', 'design', 'implement', 'finish']);
+  });
+
+  test('a pre-feature shipped run with no workflow.json falls back to the shipped registry row', ({ projectDir }) => {
+    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full') });
+    rmSync(workflowPath(projectDir, created.runId), { force: true });
+
+    expect.soft(workflowFor(loadRunState(projectDir, created.runId)).displayName).toBe('Full (spec → plan → implement → ship → PR)');
+  });
+
+  test('a frozen custom workflow legitimizes a non-shipped workflow name', ({ projectDir }) => {
+    const custom = compileWorkflow(
+      defineWorkflow({
+        name: 'instant',
+        title: 'Instant (think → build → PR)',
+        presets: { afk: [] },
+        phases: [frame({ name: 'think' }), build({ review: 'writable', audit: true }), finish()],
+      }),
+    );
+    const created = createRun({
+      cwd: projectDir,
+      workflow: custom.name,
+      workflowSpec: custom,
+      bindings: defaultBindingsFor(custom),
+    });
+
+    const reloaded = loadRunState(projectDir, created.runId);
+    expect.soft(reloaded.workflow).toBe('instant');
+    expect.soft(workflowFor(reloaded).displayName).toBe('Instant (think → build → PR)');
+    expect.soft(workflowFor(reloaded).phases.map((p) => p.name)).toEqual(['think', 'implement', 'finish']);
+  });
+
+  test('budgetFor reads per-phase caps from the frozen workflow, not the live registry row', ({ projectDir }) => {
+    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), budget: 1 });
+    const path = workflowPath(projectDir, created.runId);
+    const frozen = JSON.parse(readFileSync(path, 'utf8'));
+    const implement = frozen.phases.find((p: { name: string }) => p.name === 'implement');
+    implement.workerBudgetUsd = 99;
+    implement.orchestratorBudgetUsd = 77;
+    writeFileSync(path, JSON.stringify(frozen, null, 2) + '\n');
+
+    expect(budgetFor(loadRunState(projectDir, created.runId), 'implement')).toEqual({ worker: 99, orchestrator: 77 });
   });
 });
 
@@ -445,6 +500,31 @@ describe('budgetFor — the opt-in knob', () => {
     expect.soft(budgetFor(run, 'frame')).toEqual({ worker: 5, orchestrator: 7.5 });
   });
 
+  test('reads phase budgets from the run-carried workflow spec', ({ projectDir }) => {
+    const base = compileWorkflow(
+      defineWorkflow({
+        name: 'budget-short',
+        title: 'Budget Short',
+        presets: { afk: [] },
+        phases: [frame({ name: 'research' }), build({ review: 'writable', audit: true }), finish()],
+      }),
+    );
+    const workflow = {
+      ...base,
+      phases: base.phases.map((phase) =>
+        phase.name === 'implement' ? { ...phase, workerBudgetUsd: 7, orchestratorBudgetUsd: 11 } : phase,
+      ),
+    };
+    const run = createRun({
+      cwd: projectDir,
+      workflow: workflow.name,
+      workflowSpec: workflow,
+      bindings: defaultBindingsFor(workflow),
+      budget: 2,
+    });
+    expect(budgetFor(loadRunState(projectDir, run.runId), 'implement')).toEqual({ worker: 14, orchestrator: 22 });
+  });
+
   test('off ⇒ a worker built from the resolved cap omits --max-budget-usd', ({ run }) => {
     const cap = budgetFor(run, 'implement').worker; // off → undefined
     expect.soft(cap).toBeUndefined();
@@ -469,6 +549,37 @@ describe('workflow identity', () => {
     const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), workflow: 'full', framing: 'f' });
     expect(created.workflow).toBe('full');
     expect(loadRunState(projectDir, created.runId).workflow).toBe('full');
+  });
+
+  test('createRun freezes the resolved shipped workflow beside state.json', ({ projectDir }) => {
+    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('short'), workflow: 'short', framing: 'f' });
+    const frozen = JSON.parse(readFileSync(workflowPath(projectDir, created.runId), 'utf8'));
+    expect.soft(frozen.name).toBe('short');
+    expect.soft(frozen.displayName).toMatch(/Short/);
+    expect(workflowFor(loadRunState(projectDir, created.runId)).name).toBe('short');
+  });
+
+  test('loadRunState accepts an external workflow identity when workflow.json carries the spec', ({ projectDir }) => {
+    const workflow = compileWorkflow(
+      defineWorkflow({
+        name: 'custom-short',
+        title: 'Custom Short',
+        presets: { afk: [] },
+        phases: [frame({ name: 'research' }), build({ review: 'writable', audit: true }), finish()],
+      }),
+    );
+    const created = createRun({ cwd: projectDir, workflow: workflow.name, workflowSpec: workflow, bindings: defaultBindingsFor(workflow), framing: 'f' });
+    const loaded = loadRunState(projectDir, created.runId);
+    expect.soft(loaded.workflow).toBe('custom-short');
+    expect.soft(workflowFor(loaded).displayName).toBe('Custom Short');
+    expect(() => machineFor(workflowFor(loaded))).not.toThrow();
+  });
+
+  test('workflow-file mismatch is rejected at the load boundary', ({ projectDir, run }) => {
+    const state = JSON.parse(readFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), 'utf8'));
+    state.workflow = 'custom-short';
+    writeFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), JSON.stringify(state, null, 2));
+    expect(() => loadRunState(projectDir, run.runId)).toThrow(/state names workflow "custom-short" but workflow\.json names "full"/);
   });
 });
 
