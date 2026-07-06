@@ -228,6 +228,24 @@ describe('per-key precedence — flags > framing > config > defaults', () => {
     expect.soft(dutyBindingFor(switched.bindings, 'builder')).toEqual({ provider: 'codex' });
   });
 
+  test('a configured effort carries a same-provider override; an @effort wins; a provider switch drops it', ({ projectDir }) => {
+    const path = configIn(projectDir, '[duties.builder]\nprovider = "claude"\neffort = "high"');
+    // Model-only override, same provider: the configured effort carries (per key).
+    const carried = resolveRunConfig({ workflow: 'full', flagBinds: { builder: 'claude:claude-sonnet-5' } }, path);
+    expect.soft(dutyBindingFor(carried.bindings, 'builder')).toEqual({
+      provider: 'claude',
+      model: 'claude-sonnet-5',
+      effort: 'high',
+      transport: 'headless',
+    });
+    // An explicit @effort in the spec wins over the configured one.
+    const overridden = resolveRunConfig({ workflow: 'full', flagBinds: { builder: 'claude:claude-sonnet-5@max' } }, path);
+    expect.soft(dutyBindingFor(overridden.bindings, 'builder').effort).toBe('max');
+    // Provider switch resets effort (a claude effort may be illegal for codex).
+    const switched = resolveRunConfig({ workflow: 'full', flagBinds: { builder: 'codex' } }, path);
+    expect.soft(dutyBindingFor(switched.bindings, 'builder')).toEqual({ provider: 'codex' });
+  });
+
   test('a binding for a duty the workflow lacks rejects rather than silently ignoring', ({ projectDir }) => {
     expect.soft(() => resolveRunConfig({ workflow: 'full', flagBinds: { judge: 'claude' } }, missing(projectDir))).toThrow(
       /the "full" workflow has no judge duty/,

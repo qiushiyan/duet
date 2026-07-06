@@ -461,9 +461,12 @@ export function resolveRunConfig(
     throw new Error('--no-consultant and --bind consultant=… contradict each other — drop one');
   }
 
-  // One address through the tiers. A flag/framing spec can't express
-  // transport, so when it keeps the provider claude, the configured claude
-  // transport carries forward; the shipped default is headless.
+  // One address through the tiers, per KEY. A flag/framing spec can't express
+  // transport or native (config-only), and may omit @effort, so when it keeps
+  // the same provider those configured knobs carry forward — a model-only
+  // override never silently drops a configured transport, native passthrough,
+  // or effort. A provider switch resets them (a configured effort may be
+  // illegal for the new provider; native/transport are provider-shaped).
   const resolveAddress = (address: BindAddress): Binding => {
     const spec = opts.flagBinds?.[address] ?? opts.framingBinds?.[address];
     const configured = configBinds[address];
@@ -472,9 +475,13 @@ export function resolveRunConfig(
     if (parsed.provider !== configured?.provider) {
       return parsed.provider === 'claude' ? { ...parsed, transport: 'headless' } : parsed;
     }
-    const native = configured.native;
-    if (parsed.provider !== 'claude') return { ...parsed, ...(native ? { native } : {}) };
-    return { ...parsed, transport: configured.transport ?? 'headless', ...(native ? { native } : {}) };
+    const carried: Partial<Binding> = {
+      ...(configured.native ? { native: configured.native } : {}),
+      // @effort in the spec wins; otherwise the configured effort carries.
+      ...(parsed.effort ?? configured.effort ? { effort: parsed.effort ?? configured.effort } : {}),
+    };
+    if (parsed.provider !== 'claude') return { ...parsed, ...carried };
+    return { ...parsed, transport: configured.transport ?? 'headless', ...carried };
   };
 
   const duties: Partial<Record<Duty, Binding>> = {};
