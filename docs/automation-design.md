@@ -151,14 +151,15 @@ The tool surface is **host-neutral**: the base tools live in one registry indepe
 
 #### Prompting and tool-surface conventions
 
-Adopted 2026-06-11 from Anthropic's published guidance, first applied in the substrate spike. The full reference — the distilled guidance, the duet house patterns, and the source links — is **`docs/prompting-and-tool-design.md`**; consult it whenever writing or revising a prompt, tool definition, or tool result. The binding rules:
+Adopted 2026-06-11 from Anthropic's published guidance, first applied in the substrate spike. The full reference — duet's house patterns and observed evidence over the general rulebook, plus the source links — is **`docs/prompting-and-tool-design.md`**; consult it whenever writing or revising a prompt, tool definition, or tool result. The binding rules:
 
 1. **Artifacts first, task last, XML-tagged** — longform content at the top in `<documents>` tags, instructions in a `<task>` block at the end.
 2. **Thinking framework over prohibition** — positive instructions carrying the *why*; no aggressive emphasis (current models overtrigger on it).
 3. **Tool descriptions surface the implicit, load-bearing facts** (e.g. `send_prompt`: a duty's session persists across turns; worker turns are slow).
-4. **Errors prescribe the recovery path** — name the failure layer, say what to do next; never bare tracebacks.
+4. **Errors prescribe the recovery path** — name the failure layer, say what to do next, and prescribe only what the system can prove; never bare tracebacks.
 5. **Results that change the agent's next step say so explicitly, with the reason** (the `ask_human` queued-response nudge that makes the cooperative pause work).
 6. **One world per rendered prompt** — no knob-conditionals in prose; the renderer branches and selects dedicated fragments per knob value (§"The workflow vocabulary").
+7. **No duet vocabulary in model-facing text** — run the familiar-term test on every workflow, duty, gate, and checkpoint name before it ships; the process's shape in plain words helps a worker, its internal names do not.
 
 ### Layer 3 — Workers
 
