@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, vi } from 'vitest';
@@ -224,6 +224,26 @@ describe('attended stops', () => {
     const stop = await driveToQuiescence(run, undefined, { machine, notify });
     expect(stop.snapshot.value).toBe('frameFlagWait');
     expect(loadRunState(projectDir, run.runId).machineState).toBe('frameFlagWait');
+  });
+
+  test('a quiescent stop reconciles non-funneled run files into the corpus record', async ({ projectDir }) => {
+    const run = createRun({
+      cwd: projectDir,
+      bindings: defaultBindingsFor('full'),
+      framing: 'test framing',
+      corpusRoot: join(projectDir, 'corpus'),
+    });
+    writeFileSync(join(runDirOf(projectDir, run.runId), 'driver.log'), 'driver line\n');
+    mkdirSync(join(runDirOf(projectDir, run.runId), 'steers'), { recursive: true });
+    writeFileSync(join(runDirOf(projectDir, run.runId), 'steers', 'pending.md'), 'steer\n');
+
+    await driveToQuiescence(run, undefined, { machine: scriptedMachine([advanced]).machine, notify: async () => {} });
+
+    expect.soft(readFileSync(join(run.corpusDir!, 'driver.log'), 'utf8')).toBe('driver line\n');
+    expect.soft(readFileSync(join(run.corpusDir!, 'steers', 'pending.md'), 'utf8')).toBe('steer\n');
+    expect.soft(existsSync(join(run.corpusDir!, 'driver.pid'))).toBe(false);
+    expect.soft(existsSync(join(run.corpusDir!, 'mcp-owner.json'))).toBe(false);
+    expect.soft(existsSync(join(run.corpusDir!, 'scratch'))).toBe(false);
   });
 });
 

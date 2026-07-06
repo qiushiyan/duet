@@ -1,13 +1,14 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import { afterEach, describe, expect } from 'vitest';
 import { driveToQuiescence, killDriver } from '../src/surfaces/lifecycle.ts';
 import { aliveDriverPid, probeRunPosition } from '../src/run/position.ts';
 import type { PhaseEvent } from '../src/run/phase-events.ts';
 import { loadRunState, markAbandoned, runDirOf, saveRunState } from '../src/run/store.ts';
-import { purgeRun } from '../src/voices/sessions.ts';
+import { captureRunTranscripts, purgeRun } from '../src/voices/sessions.ts';
 import { locateSessionTranscripts } from '../src/voices/sessions.ts';
 import { buildStatusModel, renderStatus, steerRefusal } from '../src/surfaces/status.ts';
 import { test } from './helpers/fixtures.ts';
@@ -141,6 +142,39 @@ describe('purgeRun', () => {
     expect.soft(existsSync(runDirOf(projectDir, run.runId))).toBe(false);
     for (const gone of [orch, impl, rev]) expect.soft(existsSync(gone)).toBe(false);
     for (const kept of [bystanderClaude, bystanderCodex]) expect.soft(existsSync(kept)).toBe(true);
+  });
+
+  test('captures tracked transcripts into the corpus before deleting them, gzip-only', ({ projectDir, run }) => {
+    const h = home();
+    const corpusDir = join(projectDir, 'corpus', run.runId);
+    const orch = writeClaudeTranscript(h, '-proj', 'orch-1');
+    const impl = writeClaudeTranscript(h, '-proj', 'impl-2');
+    run.corpusDir = corpusDir;
+    run.orchestratorSessionId = 'orch-1';
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-2' } };
+    saveRunState(run);
+
+    const result = purgeRun(loadRunState(projectDir, run.runId), h);
+    const transcriptDir = join(corpusDir, 'transcripts');
+    const files = readdirSync(transcriptDir).sort();
+
+    expect.soft(new Set(result.transcripts)).toEqual(new Set([orch, impl]));
+    expect.soft(files).toEqual(['orchestrator.orch-1.jsonl.gz', 'planning.architect.impl-2.jsonl.gz']);
+    expect.soft(files.every((f) => f.endsWith('.jsonl.gz'))).toBe(true);
+    expect.soft(gunzipSync(readFileSync(join(transcriptDir, 'orchestrator.orch-1.jsonl.gz'))).toString('utf8')).toContain('summary');
+    expect.soft(existsSync(orch)).toBe(false);
+    expect.soft(existsSync(impl)).toBe(false);
+    expect.soft(readdirSync(transcriptDir).some((f) => f.endsWith('.jsonl'))).toBe(false);
+  });
+
+  test('transcript capture is silent and skipped when the corpus is off', ({ projectDir, run }) => {
+    const h = home();
+    writeClaudeTranscript(h, '-proj', 'orch-1');
+    run.orchestratorSessionId = 'orch-1';
+    saveRunState(run);
+
+    expect(captureRunTranscripts(loadRunState(projectDir, run.runId), h)).toEqual([]);
+    expect(existsSync(join(runDirOf(projectDir, run.runId), 'transcripts'))).toBe(false);
   });
 
   test('a run with no sessions yet still removes its dir, reporting no transcripts', ({ projectDir, run }) => {

@@ -28,12 +28,14 @@ import {
   setGatesAt,
   } from '../run/store.ts';
 import type { RunState } from '../run/store.ts';
+import { reconcileRecord } from '../run/corpus.ts';
 import { drivenMachineFor } from '../orchestrator/hosts/driver.ts';
 import { aliveDriverPid, describeStop, phaseLoopOf, probeRunPosition } from '../run/position.ts';
 import type { RunPosition } from '../run/position.ts';
 import { duetMachine, flagWaitStateOf, interactiveMachineFor } from '../run/machine.ts';
 import { markerToEvent } from '../run/phase-events.ts';
 import { workflowFor } from '../run/workflow.ts';
+import { captureRunTranscripts } from '../voices/sessions.ts';
 
 /**
  * The run lifecycle — how phases actually execute (docs/automation-design.md
@@ -349,6 +351,7 @@ export async function driveToQuiescence(
         };
       }
       saveRunState(fresh);
+      reconcileRecord(fresh);
       await notify(
         `duet ${fresh.runId}`,
         `${phase} phase parked — it ran past its ~${hours}h outer bound; resume with duet continue`,
@@ -392,6 +395,7 @@ export async function driveToQuiescence(
         (fresh.autoApprovals ??= []).push({ gate: fresh.machineState, at: new Date().toISOString() });
       }
       saveRunState(fresh);
+      reconcileRecord(fresh);
       console.log(`[gate] ${fresh.machineState} auto-approved — pre-authorized at run start (packet recorded)`);
       await notify(`duet ${fresh.runId}`, `${fresh.machineState} auto-approved (pre-authorized) — run continues`);
       actor.send({ type: 'human.approve' });
@@ -399,6 +403,8 @@ export async function driveToQuiescence(
     }
 
     saveRunState(fresh);
+    reconcileRecord(fresh);
+    if (snapshot.status === 'done') captureRunTranscripts(fresh);
     actor.stop();
     if (gatePhase && !gateAttended(fresh, gatePhase) && held.length > 0) {
       // A pre-authorized gate that did NOT auto-cross because of a `high` — name
@@ -509,6 +515,7 @@ export function crossInteractive(state: RunState, humanEvent: HumanEvent): void 
   const fresh = loadRunState(state.cwd, state.runId);
   delete fresh.terminalMarker;
   saveRunState(fresh);
+  reconcileRecord(fresh);
 }
 
 /**
@@ -598,6 +605,7 @@ export async function enterAfk(
     }
   }
   saveRunState(fresh);
+  reconcileRecord(fresh);
   Object.assign(state, fresh);
   const gates = gatePhasesOf(workflowFor(state));
   return {

@@ -1,6 +1,7 @@
-import { closeSync, existsSync, openSync, readSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { gzipSync } from 'node:zlib';
 import type { Provider } from './bindings.ts';
 import { stagesOf } from '../registry/workflows.ts';
 import { sessionKeyFor } from './policy.ts';
@@ -8,6 +9,7 @@ import { sessionKeyFor } from './policy.ts';
 // downward: runDirOf as a value, the state shapes type-only (erased at build).
 import { runDirOf } from '../run/store.ts';
 import type { RunState, SessionKey } from '../run/store.ts';
+import { transcriptArchiveDir } from '../run/corpus.ts';
 import { workflowFor } from '../run/workflow.ts';
 
 /**
@@ -99,6 +101,37 @@ export function resolveSessions(state: RunState): SessionRef[] {
   return out;
 }
 
+function transcriptNamePart(raw: string): string {
+  return raw.replace(/[^A-Za-z0-9._-]/g, '_') || 'session';
+}
+
+export function captureRunTranscripts(state: RunState, home: string = homedir()): string[] {
+  const captured: string[] = [];
+  try {
+    const archiveDir = transcriptArchiveDir(state);
+    if (!archiveDir) return captured;
+    for (const ref of resolveSessions(state)) {
+      const paths = locateSessionTranscripts(ref.provider, ref.sessionId, home);
+      paths.forEach((path, index) => {
+        try {
+          const numbered = paths.length > 1 ? `.${index + 1}` : '';
+          const target = join(
+            archiveDir,
+            `${transcriptNamePart(ref.key)}.${transcriptNamePart(ref.sessionId)}${numbered}.jsonl.gz`,
+          );
+          writeFileSync(target, gzipSync(readFileSync(path)));
+          captured.push(target);
+        } catch {
+          // Transcript capture is corpus telemetry; never affect the run.
+        }
+      });
+    }
+  } catch {
+    // Transcript capture is corpus telemetry; never affect the run.
+  }
+  return captured;
+}
+
 /**
  * Read the tail of a transcript for an EXPLICIT (provider, session id) — the
  * locate-by-exact-id reader every tail consumer routes through (doctor via
@@ -185,6 +218,7 @@ export interface PurgeResult {
  * tests resolve transcripts under a tmp dir.
  */
 export function purgeRun(state: RunState, home: string = homedir()): PurgeResult {
+  captureRunTranscripts(state, home);
   const sessions: Array<{ provider: 'claude' | 'codex'; sessionId: string }> = [];
   if (state.orchestratorSessionId) {
     sessions.push({ provider: state.bindings.orchestrator.provider, sessionId: state.orchestratorSessionId });
