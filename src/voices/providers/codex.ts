@@ -1,9 +1,10 @@
 import { closeSync, openSync, readSync, readdirSync, fstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { Codex, type ThreadEvent, type ThreadOptions, type Usage } from '@openai/codex-sdk';
+import { Codex, type CodexOptions, type ThreadEvent, type ThreadOptions, type Usage } from '@openai/codex-sdk';
 import type { ContextUsage, RunTurnOptions, WorkerProvider, WorkerTurn } from './types.ts';
 import { WallClockExceededError, runWithWallClockDeadline } from './wall-clock.ts';
+import type { Effort } from '../bindings.ts';
 
 /**
  * Codex worker provider, via `@openai/codex-sdk` (a thin spawn-the-CLI
@@ -70,8 +71,12 @@ const TAIL_BYTES = 64 * 1024;
  * prompt-level convention now (the review-* snippets ask for critique, not
  * edits), not an OS sandbox — `opts.readOnly` no longer shapes the launch.
  */
-export function codexThreadOptions(opts: { cwd?: string }): ThreadOptions {
-  return { ...(opts.cwd !== undefined ? { workingDirectory: opts.cwd } : {}) };
+export function codexThreadOptions(opts: { cwd?: string }, config: { model?: string; effort?: Exclude<Effort, 'max'> } = {}): ThreadOptions {
+  return {
+    ...(opts.cwd !== undefined ? { workingDirectory: opts.cwd } : {}),
+    ...(config.model !== undefined ? { model: config.model } : {}),
+    ...(config.effort !== undefined ? { modelReasoningEffort: config.effort } : {}),
+  };
 }
 
 /**
@@ -127,17 +132,23 @@ export function recoverCodexAbort(err: unknown, startedThreadId: string | undefi
 
 export class CodexWorker implements WorkerProvider {
   readonly name = 'codex' as const;
-  private readonly codex = new Codex();
+  private readonly codex: Codex;
+  private readonly config: { model?: string; effort?: Exclude<Effort, 'max'> };
   private readonly timeoutMs: number;
   /** Rollout path per session — the recursive name scan runs once per session, not per turn. */
   private readonly rolloutPaths = new Map<string, string>();
 
-  constructor(config?: { timeoutMs?: number }) {
+  constructor(config: { timeoutMs?: number; model?: string; effort?: Exclude<Effort, 'max'>; nativeConfig?: Record<string, unknown> } = {}) {
+    this.codex = new Codex(config.nativeConfig !== undefined ? { config: config.nativeConfig as CodexOptions['config'] } : undefined);
+    this.config = {
+      ...(config.model !== undefined ? { model: config.model } : {}),
+      ...(config.effort !== undefined ? { effort: config.effort } : {}),
+    };
     this.timeoutMs = config?.timeoutMs ?? 15 * 60_000;
   }
 
   async runTurn(opts: RunTurnOptions): Promise<WorkerTurn> {
-    const threadOptions = codexThreadOptions(opts);
+    const threadOptions = codexThreadOptions(opts, this.config);
     const thread = opts.sessionId
       ? this.codex.resumeThread(opts.sessionId, threadOptions)
       : this.codex.startThread(threadOptions);

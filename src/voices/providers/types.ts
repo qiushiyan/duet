@@ -34,6 +34,8 @@ export interface ContextUsage {
 export interface WorkerTurn {
   /** The worker's final message text. */
   text: string;
+  /** Provider-native non-fatal warnings emitted while launching/running the turn. */
+  warnings?: string[];
   /** Provider-native session id — resumable manually (augmentation principle). */
   sessionId: string;
   /** USD cost of the turn, when the provider reports it (claude does; codex reports tokens only). */

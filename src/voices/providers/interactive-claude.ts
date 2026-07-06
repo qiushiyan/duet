@@ -6,6 +6,7 @@ import { COMPACT_CONFIRMATION, claudeContextUsage } from './claude.ts';
 import { TmuxPane } from './pane.ts';
 import type { PaneController, PaneFactory } from './pane.ts';
 import type { RunTurnOptions, WorkerProvider, WorkerTurn } from './types.ts';
+import type { Effort } from '../bindings.ts';
 
 /**
  * Interactive claude transport — the pure transcript parser.
@@ -353,12 +354,16 @@ async function watchForTurn(store: TranscriptStore, nonce: string, deadline: num
 export class InteractiveClaudeWorker implements WorkerProvider {
   readonly name = 'claude' as const;
   private readonly model: string;
+  private readonly effort: Exclude<Effort, 'minimal'> | undefined;
+  private readonly nativeArgs: string[] | undefined;
   private readonly timeoutMs: number;
   private readonly transcriptRoot: string;
   private readonly newPane: PaneFactory;
 
-  constructor(config: { model: string; timeoutMs: number; transcriptRoot?: string; newPane?: PaneFactory }) {
+  constructor(config: { model: string; effort?: Exclude<Effort, 'minimal'>; nativeArgs?: string[]; timeoutMs: number; transcriptRoot?: string; newPane?: PaneFactory }) {
     this.model = config.model;
+    this.effort = config.effort;
+    this.nativeArgs = config.nativeArgs;
     this.timeoutMs = config.timeoutMs;
     this.transcriptRoot = config.transcriptRoot ?? join(homedir(), '.claude', 'projects');
     this.newPane = config.newPane ?? ((c) => new TmuxPane(c));
@@ -385,6 +390,8 @@ export class InteractiveClaudeWorker implements WorkerProvider {
     const store = new TranscriptStore(searchDirs(this.transcriptRoot, opts.cwd));
     const pane = this.newPane({
       model: this.model,
+      ...(this.effort ? { effort: this.effort } : {}),
+      ...(this.nativeArgs ? { nativeArgs: this.nativeArgs } : {}),
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
     });

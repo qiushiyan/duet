@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { execa } from 'execa';
+import type { Effort } from '../bindings.ts';
 
 /**
  * PaneController — the injection / process-driving SUB-SEAM, and the ergonomic
@@ -27,6 +28,8 @@ export interface PaneController {
 
 export interface PaneConfig {
   model: string;
+  effort?: Exclude<Effort, 'minimal'>;
+  nativeArgs?: string[];
   /** Resume this session id when set (turn 2+); omit for a fresh session (turn 1). */
   sessionId?: string;
   cwd?: string;
@@ -54,7 +57,9 @@ export function claudePaneLaunchCommand(config: PaneConfig): string[] {
     '--permission-mode',
     'bypassPermissions',
   ];
+  if (config.effort !== undefined) launch.push('--effort', config.effort);
   if (config.sessionId) launch.push('--resume', config.sessionId);
+  if (config.nativeArgs !== undefined) launch.push(...config.nativeArgs);
   return launch;
 }
 

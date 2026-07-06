@@ -37,12 +37,20 @@ vi.mock('execa', () => ({ execa: mockExeca }));
 // wrap with fake timers (there is no other CodexWorker test, so the whole-file
 // mock is inert elsewhere; the pure codex helpers don't touch the client).
 const codexRunStreamed = vi.hoisted(() => vi.fn());
+const codexConstructedOptions = vi.hoisted((): unknown[] => []);
+const codexStartThreadOptions = vi.hoisted(() => vi.fn());
+const codexResumeThreadOptions = vi.hoisted(() => vi.fn());
 vi.mock('@openai/codex-sdk', () => ({
   Codex: class {
-    startThread() {
+    constructor(options?: unknown) {
+      codexConstructedOptions.push(options);
+    }
+    startThread(options?: unknown) {
+      codexStartThreadOptions(options);
       return { id: 'codex-thread', runStreamed: codexRunStreamed };
     }
-    resumeThread() {
+    resumeThread(id: string, options?: unknown) {
+      codexResumeThreadOptions(id, options);
       return { id: 'codex-thread', runStreamed: codexRunStreamed };
     }
   },
@@ -200,6 +208,12 @@ describe('claudePaneLaunchCommand (S2 — the forced watchdog on the interactive
     expect.soft(cmd[0]).toBe('API_FORCE_IDLE_TIMEOUT=1');
     expect.soft(cmd).toContain('--resume');
     expect.soft(cmd).toContain('sess-9');
+  });
+
+  test('carries effort and appends native argv after duet-owned launch flags', () => {
+    const cmd = claudePaneLaunchCommand({ model: 'm', effort: 'xhigh', nativeArgs: ['--append-system-prompt', 'extra'] });
+    expect.soft(cmd[cmd.indexOf('--effort') + 1]).toBe('xhigh');
+    expect.soft(cmd.slice(-2)).toEqual(['--append-system-prompt', 'extra']);
   });
 });
 
@@ -1012,6 +1026,16 @@ describe('claudeArgs (the session-flag + budget-cap seams)', () => {
       expect.soft(args).not.toContain('--disallowed-tools');
     }
   });
+
+  test('passes normalized effort and appends native argv after duet-owned flags', () => {
+    const args = claudeArgs(
+      { sessionId: 's', resume: false },
+      { model: 'claude-opus-4-8', effort: 'xhigh', nativeArgs: ['--fallback-model', 'claude-opus-4-6'] },
+    );
+    expect.soft(args[args.indexOf('--effort') + 1]).toBe('xhigh');
+    expect.soft(args.slice(-2)).toEqual(['--fallback-model', 'claude-opus-4-6']);
+    expect.soft(args.indexOf('--permission-mode')).toBeLessThan(args.indexOf('--fallback-model'));
+  });
 });
 
 describe('codexThreadOptions (the sandbox-deferral seam)', () => {
@@ -1026,6 +1050,45 @@ describe('codexThreadOptions (the sandbox-deferral seam)', () => {
 
   test('passes the working directory through', () => {
     expect(codexThreadOptions({ cwd: '/repo' }).workingDirectory).toBe('/repo');
+  });
+
+  test('passes explicit model and normalized effort as thread options', () => {
+    expect(codexThreadOptions({ cwd: '/repo' }, { model: 'gpt-5.5', effort: 'xhigh' })).toEqual({
+      workingDirectory: '/repo',
+      model: 'gpt-5.5',
+      modelReasoningEffort: 'xhigh',
+    });
+  });
+
+  test('CodexWorker builds the SDK client with native config and starts a thread with model/effort', async () => {
+    codexConstructedOptions.length = 0;
+    codexStartThreadOptions.mockClear();
+    codexRunStreamed.mockResolvedValueOnce({
+      events: (async function* (): AsyncGenerator<ThreadEvent> {
+        yield { type: 'thread.started', thread_id: 'th-1' };
+        yield { type: 'item.completed', item: { id: 'i0', type: 'agent_message', text: 'OK' } };
+        yield {
+          type: 'turn.completed',
+          usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 },
+        };
+      })(),
+    });
+
+    const worker = new CodexWorker({
+      model: 'gpt-5.5',
+      effort: 'high',
+      nativeConfig: { model_reasoning_summary: 'detailed' },
+      timeoutMs: 60_000,
+    });
+    const turn = await worker.runTurn({ prompt: 'go', cwd: '/repo' });
+
+    expect.soft(turn.text).toBe('OK');
+    expect.soft(codexConstructedOptions.at(-1)).toEqual({ config: { model_reasoning_summary: 'detailed' } });
+    expect.soft(codexStartThreadOptions).toHaveBeenLastCalledWith({
+      workingDirectory: '/repo',
+      model: 'gpt-5.5',
+      modelReasoningEffort: 'high',
+    });
   });
 });
 
@@ -1106,7 +1169,7 @@ describe('createWorkers', () => {
     expect.soft(interactive.architect?.name).toBe('claude'); // the same WorkerProvider contract name
   });
 
-  test('the maker builds with the builder duty\u2019s model in delivery, the architect\u2019s in planning', async () => {
+  test('the maker builds with the builder duty\u2019s model/effort/native argv in delivery, the architect\u2019s in planning', async () => {
     // The true wiring, exercised through the public interface (createWorkers →
     // runTurn → the execa argv): the builder duty's model shows up on the
     // --model flag only for a delivery phase; a planning phase keeps the
@@ -1114,9 +1177,18 @@ describe('createWorkers', () => {
     const base = defaultBindingsFor('full');
     const bindings: VoiceBindings = {
       ...base,
-      duties: { ...base.duties, builder: { provider: 'claude', model: 'claude-sonnet-5', transport: 'headless' } },
+      duties: {
+        ...base.duties,
+        builder: {
+          provider: 'claude',
+          model: 'claude-sonnet-5',
+          effort: 'max',
+          transport: 'headless',
+          native: { claudeArgs: ['--fallback-model', 'claude-opus-4-6'] },
+        },
+      },
     };
-    const modelOnArgv = async (phase: PhaseName): Promise<string> => {
+    const argvForPhase = async (phase: PhaseName): Promise<string[]> => {
       let argv: string[] = [];
       mockExeca.mockImplementationOnce((_cmd: string, args: string[]) => {
         argv = args;
@@ -1126,10 +1198,16 @@ describe('createWorkers', () => {
       });
       const maker = makerDutyOf('full', stageOf('full', phase));
       await providerFor(createWorkers(bindings, 'full', phase, { workerBudgetUsd: 10, timeoutMs: 60_000 }), maker).runTurn({ prompt: 'go', cwd: '/x' });
-      return argv[argv.indexOf('--model') + 1]!;
+      return argv;
     };
-    expect.soft(await modelOnArgv('plan')).toBe('claude-opus-4-8'); // planning: the architect's smart base
-    expect.soft(await modelOnArgv('implement')).toBe('claude-sonnet-5'); // delivery: the builder duty's own binding
+    const planArgv = await argvForPhase('plan');
+    expect.soft(planArgv[planArgv.indexOf('--model') + 1]).toBe('claude-opus-4-8'); // planning: the architect's smart base
+    expect.soft(planArgv).not.toContain('--effort');
+
+    const implArgv = await argvForPhase('implement');
+    expect.soft(implArgv[implArgv.indexOf('--model') + 1]).toBe('claude-sonnet-5'); // delivery: the builder duty's own binding
+    expect.soft(implArgv[implArgv.indexOf('--effort') + 1]).toBe('max');
+    expect.soft(implArgv.slice(-2)).toEqual(['--fallback-model', 'claude-opus-4-6']);
   });
 
   test('per-stage duty bindings SWITCH THE PROVIDER at the stage boundary — the criss-cross falls out per phase', () => {
