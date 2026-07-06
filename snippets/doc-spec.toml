@@ -35,7 +35,17 @@ A tree-style before/after often makes the change crisp — adapt the format (tre
           └─ Webhook fired
           └─ Confirmation shown
 
-**Be concrete, not vague.** Vague verbs — "improve", "enhance", "polish", "better", "optimize", "streamline" and friends — name a *direction*, not a *decision*; they quietly defer the real choice to implementation, which defeats the point of writing a spec. Say **what** changes: the specific behavior, state, or outcome that differs, and the rule or shape that produces it. Concrete ≠ exhaustive, though — pin the decision, not the mechanics (no line-level edits or code). E.g. "improve error handling" → "on a failed webhook, retry with backoff, then surface a dismissible banner instead of failing silently."
+**When the change reshapes structure or grows a surface, give the target shape a dedicated section** — the envisioned end-state, in the same before → after register as the flow above:
+
+- **File/module structure** — where the pieces live once this lands, as a directory tree with one-line roles. The structure is how the spec carries its domain model — each directory or file a domain concept (a state, a kind of data, a responsibility), not a layer of plumbing; without it, the builder invents one mid-build.
+- **Public API or syntax** — what a caller writes once this exists: the exported functions, the config shape, the command line. Sketch the surface a user touches, never the bodies behind it.
+- **Integration wiring** — how the new piece connects to what's already there: who calls it, what it replaces, which existing seams it plugs into.
+
+Shape all three with a **deep-module mindset**: small surfaces concentrating complexity behind them, the domain's states and data carved so wrong ones are hard to express, seams few and narrow rather than many and chatty. The full methodology is planning-stage reading — the mindset costs nothing now, and the shape you propose here is what the plan deepens rather than redraws.
+
+Include only the views where the change actually lives — a contained bug fix may need none; an SDK or a structural refactor may earn all three. This section is the highest-value signal the spec can hand the builder: they start out holding your mental model of the ideal shape instead of reverse-engineering one. It is the *envisioned* shape, not a contract — the build may drift from it for stated reasons when the code teaches better, never silently.
+
+**Be concrete, not vague.** Vague verbs — "improve", "enhance", "polish", "better", "optimize", "streamline" and friends — name a *direction*, not a *decision*; they quietly defer the real choice to implementation, which defeats the point of writing a spec. Say **what** changes: the specific behavior, state, or outcome that differs, and the rule or shape that produces it. Concrete ≠ exhaustive, though — pin the decision, not the mechanics (no line-level edits; code only as surface sketches — the API a caller writes — never implementation bodies). E.g. "improve error handling" → "on a failed webhook, retry with backoff, then surface a dismissible banner instead of failing silently."
 
 The spec is a high-level implementation plan — technical content is fine, but stay at that level. **Don't smuggle in later-stage details:**
 - **Skip** line-by-line edits, function renames, exact call-site changes — designed later.
@@ -59,7 +69,7 @@ The spec is intentionally high-level: problem, UX goal, conceptual approach, non
 **Altitude lens:**
 - Vagueness on implementation details (signatures, helper internals, specific test cases) → **intentional, don't ask for more**.
 - Vagueness on concepts the spec should answer (data flow, ordering, failure modes, scope, edge cases, current vs. desired distinction, coupling to existing concepts) → **bug, flag it**.
-- Technical content the spec DOES propose (names, placement, composition, boundaries) → **fair game; propose better if awkward**.
+- Technical content the spec DOES propose (names, placement, composition, boundaries — including a target-shape section's envisioned file structure, public API, or wiring) → **fair game**; hold it to surface altitude (interfaces and placement, not bodies) and propose a better shape where this one is awkward or shallow.
 
 **Push hard on:**
 - Are we solving the right problem? Is the UX goal right?
