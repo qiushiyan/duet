@@ -54,7 +54,7 @@ bind.judge: claude:claude-fable-5
 <work where the design doc will be strong enough that the build is labor, not judgment>
 ```
 
-The two binds are relay's whole economy — a cheap builder under a strong judge — and a duty alone names its stage, so there is no `delivery.` prefix to spell. The judge *fixing* findings directly and owning docs + PR is the workflow's shape, not the binding's: binding it to a stronger model is what makes that shape safe. **Omitted:** the planning duties — `architect` (claude) and `analyst` (codex) stay on defaults; `gates_at` — the same attend-`design`-only default as blueprint. Relay's delivery is born fresh by design (the builder implements the committed doc cold), so a cross-provider pair like this costs nothing in session continuity.
+The two binds are relay's whole economy — a cheap builder under a strong judge — and a duty alone names its stage, so there is no `delivery.` prefix to spell. A bind can pin more than a provider: a model (codex included, `bind.builder: codex:gpt-5-codex`), a reasoning effort (`@high`), or both (`codex:gpt-5-codex@high`); raw provider flags live in config as `claude_args` / `codex_config`, never a `bind.*` key. The judge *fixing* findings directly and owning docs + PR is the workflow's shape, not the binding's: binding it to a stronger model is what makes that shape safe. **Omitted:** the planning duties — `architect` (claude) and `analyst` (codex) stay on defaults; `gates_at` — the same attend-`design`-only default as blueprint. Relay's delivery is born fresh by design (the builder implements the committed doc cold), so a cross-provider pair like this costs nothing in session continuity.
 
 ## 4 · "The direction is settled — run straight to a PR, and keep the correctness net."
 

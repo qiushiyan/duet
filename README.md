@@ -170,7 +170,7 @@ A framing (and a template) may open with a small machine-readable **frontmatter*
 
 ## Configure
 
-duet's one config file holds account-level defaults — which provider (and model) each voice runs on, plus your billing posture — and nothing else. It's optional: the defaults work out of the box (the orchestrator and the maker duties on claude/Opus, the checker duties on codex — the cross-family review is the shipped posture). Reach for it when you want a different provider or model behind a duty, or a different billing setup — create `~/.config/duet/config.toml`:
+duet's one config file holds account-level defaults — which provider (and model, effort, or native args) each voice runs on, plus your billing posture — and nothing else. It's optional: the defaults work out of the box (the orchestrator and the maker duties on claude/Opus, the checker duties on codex — the cross-family review is the shipped posture). Reach for it when you want a different provider or model behind a duty, or a different billing setup — create `~/.config/duet/config.toml`:
 
 ```toml
 budget = "off"              # opt-in per-turn cost caps: "off" (default), "default", or a multiplier like 0.5/2
@@ -182,16 +182,20 @@ model = "claude-opus-4-8"   # any Anthropic model id
 [duties.architect]          # planning's maker — drafts the spec / plan / design doc
 provider = "claude"
 model = "claude-opus-4-8"
+effort = "high"             # normalized: low|medium|high|xhigh (+ claude's max)
 
 [duties.analyst]            # planning's checker — critiques the documents
-provider = "codex"          # no model key — your ~/.codex/config.toml governs
+provider = "codex"          # model/effort/native optional; absent ⇒ your ~/.codex/config.toml governs
 
 [duties.builder]            # delivery's maker — writes the code and the PR
 provider = "claude"
 model = "claude-opus-4-8"
+# claude_args = ["--fallback-model", "claude-opus-4-6"]     # native passthrough (claude only)
 
 [duties.critic]             # delivery's checker on full/blueprint/short — read-only review
 provider = "codex"
+# model = "gpt-5-codex"     # optional inline codex model (else your ~/.codex/config.toml)
+# codex_config = { model_reasoning_summary = "detailed" }   # native passthrough (codex only)
 
 [duties.judge]              # delivery's checker on relay — reviews with write access
 provider = "claude"
@@ -200,7 +204,8 @@ model = "claude-opus-4-8"
 
 That's the only config duet has — per-duty (and orchestrator/consultant) provider bindings plus billing posture (`transport`, `budget`), nothing else. Project knowledge never lives here; it goes in the framing.
 
-- **Bindings are per duty; a run overrides them per key.** Config is the account-level default tier; a single run rebinds any duty with the repeatable `--bind <duty>=<provider[:model]>` flag or a framing `bind.<duty>:` key — a duty alone names its stage, so relay's criss-cross is just two flags (`--bind builder=codex --bind judge=claude:claude-opus-4-8`: plan strong, build cheap, judge strong). On full, blueprint, and short the delivery duties _continue_ the planning sessions (builder ← architect, critic ← analyst — declared continuity edges); relay's delivery starts fresh by design. An edge whose two duties' frozen bindings cross providers degrades to a fresh session at run creation — echoed by `duet new` and ledgered, never an error — with the committed document as the build's context.
+- **Bindings are per duty; a run overrides them per key.** Config is the account-level default tier; a single run rebinds any duty with the repeatable `--bind <duty>=<provider[:model][@effort]>` flag or a framing `bind.<duty>:` key — a duty alone names its stage, so relay's criss-cross is just two flags (`--bind builder=codex --bind judge=claude:claude-opus-4-8`: plan strong, build cheap, judge strong). On full, blueprint, and short the delivery duties _continue_ the planning sessions (builder ← architect, critic ← analyst — declared continuity edges); relay's delivery starts fresh by design. An edge whose two duties' frozen bindings cross providers degrades to a fresh session at run creation — echoed by `duet new` and ledgered, never an error — with the committed document as the build's context.
+- **Tune a binding: model, effort, native args.** Any binding also takes an inline **model** (`--bind analyst=codex:gpt-5-codex`, or `model =` in config — codex included now, not just claude; absent, codex still defers to your `~/.codex/config.toml`), a normalized **effort** (`--bind builder=claude:claude-opus-4-8@high`, or `effort =` — `low`/`medium`/`high`/`xhigh`, plus claude's `max` and codex's `minimal`), and a config-only **native passthrough** for anything duet doesn't model (`claude_args = [...]` appended to the `claude` argv; `codex_config = {...}` fed to codex's `-c` overrides). duet validates its _own_ knobs — an effort illegal for the provider is rejected up front — but never second-guesses your native args. Instead, a binding carrying an explicit model or native override is **preflighted at `duet new`**: duet runs one throwaway turn through it, so a bad argument fails at creation with the provider's own error, not hours later mid-build.
 - **Consultant (optional, off by default).** Add a `[consultant]` table (or `--bind consultant=<provider[:model]>` per run — a binding alone implies it's on) for a second, read-only advisor voice that questions the _bet_ (assumptions, product fit) rather than the build — ideally on a different model family from your checkers, which is the point. `--no-consultant` disables a configured one for a single run. On the document-bearing workflows (full, blueprint, relay) it also authors an **acceptance contract** — a short, frozen list of falsifiable assertions of what success means, written before any code — which you ratify at the last gate before the build and a fresh session verifies against the built system before the Ship gate. A failed assertion routes back to the workflow's fixer — the builder; relay's judge — to fix and re-verify first, holding the gate for you only if it stays broken after a bounded loop — you see a summary of what self-healed, not every fix. On relay the verify earns extra weight: the judge both grades and edits the build there, so the consultant's fresh session is the one fully independent pass.
 - **Interactive worker transport (advanced, experimental).** Add `transport = "interactive"` under a claude maker duty (`[duties.builder]` or `[duties.architect]`) to drive the interactive `claude` TUI instead of headless `claude -p`, so those turns bill your flat subscription quota rather than the metered credit pool. tmux-driven, maker-duties only, pending one live-auth check — see [`docs/interactive-transport.md`](docs/interactive-transport.md).
 
@@ -264,6 +269,7 @@ Built and test-verified, awaiting a first live run:
 - the **blueprint** workflow — the one-doc middle workflow above; its design doc-loop already carries live evidence via the composed `deep-relay` run, but the shipped shape itself hasn't run
 - the **relay** workflow — plans on a strong model, builds on a cheap one via per-duty `--bind` bindings, and checks with a writing **judge** that fixes findings directly and owns the docs + PR; its fixer delivery and escalation valve already carry live evidence via `deep-relay`, but the shipped shape itself hasn't run
 - the experimental **interactive-Claude worker transport** (bill a maker duty's turns to your flat subscription quota) — pending one live-auth check; see [`docs/interactive-transport.md`](docs/interactive-transport.md)
+- **inline provider tuning** — a per-binding model (codex included), a normalized `effort`, and a config-only native-arg passthrough (`claude_args` / `codex_config`), guarded by a `duet new` preflight that fails a bad binding at creation rather than mid-build; parsing, provider threading, and the preflight are test-verified, but no live run has exercised them end to end yet
 
 Codex-as-orchestrator is deliberately unbuilt. Expect rough edges — the open _design_ questions and their evidence live in [`docs/open-questions.md`](docs/open-questions.md).
 
