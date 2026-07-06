@@ -12,12 +12,12 @@ Now, write the spec to the location the framing's conventions name (where specs 
 - The approach we're taking, and the scope of the change.
 - The boundary once it lands: what's fixed, what isn't, and what's explicitly deferred (one-line why each).
 
-Technical detail belongs in this section only when it makes the solution easier to digest or the problem easier to understand — context, not elaboration. Someone who reads nothing else should still know what they're getting and not getting.
+Technical detail earns a place here only as context that makes the problem or solution easier to grasp; someone who reads nothing else should still know what they're getting and not getting.
 
 **Structure the body around the flow of the change:**
 - **Distinguish current vs. desired** — what's preserved vs. what's changing.
 - **Name the coupling decision** — extension of an existing concept, or intentionally independent?
-- **Name the foundation decision (preparatory refactoring).** Decide whether the existing code is a base the feature extends cleanly, or a structure that blocks the design you actually want. If it blocks, scope a *bounded* preparatory refactoring — reshape the foundation first so the feature becomes an easy add — as the opening move, sized to this feature, not a rewrite of the module, and name what you're deliberately leaving alone.
+- **Name the foundation decision (preparatory refactoring).** Is the existing code a base this extends cleanly, or a structure that blocks the design you actually want? If it blocks, scope a *bounded* reshaping as the opening move — sized to this feature, not a module rewrite — and name what you're deliberately leaving alone.
 - **Use implementation anchors** (modules, functions, files) attached to the flow — not the main narrative.
 
 A tree-style before/after often makes the change crisp — adapt the format (tree, prose, diagram) to what fits:
@@ -35,27 +35,35 @@ A tree-style before/after often makes the change crisp — adapt the format (tre
           └─ Webhook fired
           └─ Confirmation shown
 
-**When the change reshapes structure or grows a surface, give the target shape a dedicated section** — the envisioned end-state, in the same before → after register as the flow above:
+**When the change reshapes structure or grows a surface, give the target shape a dedicated section** — the envisioned end-state, in the same before → after register:
+- **File/module structure** — where the pieces live once this lands: a directory tree with one-line roles, each entry a domain concept (a state, a kind of data, a responsibility), not a layer of plumbing. The structure is the spec's domain model made visible.
+- **Public API or syntax** — what a caller writes once this exists: the exported functions, the config shape, the command line. The surface a user touches, never the bodies behind it.
+- **Integration wiring** — how the new piece connects to what exists: who calls it, what it replaces, which seams it plugs into.
 
-- **File/module structure** — where the pieces live once this lands, as a directory tree with one-line roles. The structure is how the spec carries its domain model — each directory or file a domain concept (a state, a kind of data, a responsibility), not a layer of plumbing; without it, the builder invents one mid-build.
-- **Public API or syntax** — what a caller writes once this exists: the exported functions, the config shape, the command line. Sketch the surface a user touches, never the bodies behind it.
-- **Integration wiring** — how the new piece connects to what's already there: who calls it, what it replaces, which existing seams it plugs into.
+Sketches stay small — the shape, not the build:
 
-Shape all three with a **deep-module mindset**: small surfaces concentrating complexity behind them, the domain's states and data carved so wrong ones are hard to express, seams few and narrow rather than many and chatty. The full methodology is planning-stage reading — the mindset costs nothing now, and the shape you propose here is what the plan deepens rather than redraws.
+  Structure — after:
+    src/export/
+      index.ts    # the one entry: exportReport()
+      csv.ts      # CSV rendering — format quirks live here
+      pdf.ts      # PDF rendering
 
-Include only the views where the change actually lives — a contained bug fix may need none; an SDK or a structural refactor may earn all three. This section is the highest-value signal the spec can hand the builder: they start out holding your mental model of the ideal shape instead of reverse-engineering one. It is the *envisioned* shape, not a contract — the build may drift from it for stated reasons when the code teaches better, never silently.
+  API — what a caller writes:
+    exportReport(report, { format: "csv" })
+    (one deep entry point — not exportCsv / exportPdf / exportXlsx each exported)
 
-**Be concrete, not vague.** Vague verbs — "improve", "enhance", "polish", "better", "optimize", "streamline" and friends — name a *direction*, not a *decision*; they quietly defer the real choice to implementation, which defeats the point of writing a spec. Say **what** changes: the specific behavior, state, or outcome that differs, and the rule or shape that produces it. Concrete ≠ exhaustive, though — pin the decision, not the mechanics (no line-level edits; code only as surface sketches — the API a caller writes — never implementation bodies). E.g. "improve error handling" → "on a failed webhook, retry with backoff, then surface a dismissible banner instead of failing silently."
+Shape all three with a **deep-module mindset**: small surfaces concentrating complexity behind them, the domain's states and data carved so wrong ones are hard to express, seams few and narrow rather than many and chatty. The full methodology is planning-stage reading — the mindset costs nothing now, and the shape you propose is what the plan deepens rather than redraws. This section is the spec's highest-value handoff: the builder starts out holding your mental model of the ideal shape instead of reverse-engineering one. Include only the views where the change actually lives (a contained bug fix may need none; an SDK or structural refactor may earn all three), and mark them as the *envisioned* shape, not a contract — the build may drift for stated reasons when the code teaches better, never silently.
 
-The spec is a high-level implementation plan — technical content is fine, but stay at that level. **Don't smuggle in later-stage details:**
-- **Skip** line-by-line edits, function renames, exact call-site changes — designed later.
+**Be concrete, not vague.** Vague verbs — "improve", "enhance", "polish", "better", "optimize", "streamline" and friends — name a *direction*, not a *decision*; they quietly defer the real choice to implementation, which defeats the point of writing a spec. Say **what** changes: the specific behavior, state, or outcome that differs, and the rule or shape that produces it. E.g. "improve error handling" → "on a failed webhook, retry with backoff, then surface a dismissible banner instead of failing silently."
+
+The spec pins decisions, not mechanics. **Don't smuggle in later-stage details:**
+- **Skip** line-by-line edits, function renames, exact call-site changes — designed later. Code appears only as the target shape's surface sketches, never as implementation bodies.
 - **No** doc update plans — later.
-- **Testing:** name behaviors that matter at a high level; leave specific test cases, fixtures, and mocking boundaries for later.
+- **Testing:** name behaviors that matter at a high level; specific cases, fixtures, and mocking boundaries come later.
 - Phases are fine; **no precise commit order** — sequencing later.
+- **No time/effort estimates** ("2 days", "~3 hours") — describe the work itself.
 
-**Do not include any time/effort estimates** ("2 days", "~3 hours"), describe the work itself.
-
-**Before you finish, hunt the rabbit holes** — walk the approach end to end looking for what could quietly eat the build: a technical unknown nobody has proven, a design problem the spec gestures at but doesn't solve, an interdependency that reads simpler than it is. For each one: solve it here, cut it out of scope explicitly, or name it in the open questions. An unnamed hole doesn't disappear — it resurfaces mid-build as a stall or a silent wrong turn.
+**Before you finish, hunt the rabbit holes** — walk the approach end to end looking for what could quietly eat the build: a technical unknown nobody has proven, a design problem the spec gestures at but doesn't solve, an interdependency that reads simpler than it is. Solve each here, cut it out of scope explicitly, or name it in the open questions — an unnamed hole resurfaces mid-build as a stall or a silent wrong turn.
 
 If you have remaining product questions or major technical uncertainty, interview me before you write.'''
 
