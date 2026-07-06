@@ -6,10 +6,10 @@ Build the change from the committed design doc — it is the authority for what 
 
 ## Read these first, then build
 Read each one and adapt it to this change — they're the bar, not optional background; don't go hunting them mid-build, and ask me for a path if one's missing.
-- `/Users/qiushi/dev/duet/lessons/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
-- `/Users/qiushi/dev/duet/lessons/testing/tdd-loop.md` — vertical slices, red-green-refactor, the anti-patterns
-- `/Users/qiushi/dev/duet/lessons/testing/mocking-and-fixtures.md` — mock only at boundaries; `test.extend` fixtures
-- `/Users/qiushi/dev/duet/lessons/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
+- `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
+- `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, red-green-refactor, the anti-patterns
+- `{{lessons_dir}}/testing/mocking-and-fixtures.md` — mock only at boundaries; `test.extend` fixtures
+- `{{lessons_dir}}/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
 
 ## Before you write code
 - **Re-read the design doc** — the goals and non-goals bound the scope; the module boundaries and seams are the target shape.

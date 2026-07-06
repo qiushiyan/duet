@@ -8,7 +8,7 @@ import {
   phasesOf,
 } from '../../src/registry/workflows.ts';
 import type { PhaseName, WorkflowName } from '../../src/registry/workflows.ts';
-import { renderSnippetLibrary } from '../../src/orchestrator/library.ts';
+import { LESSONS_DIR, renderSnippetLibrary } from '../../src/orchestrator/library.ts';
 
 /**
  * The snippet-surface parity pins, at the two seams the refactor commits must
@@ -30,6 +30,14 @@ const WORKFLOW_NAMES = Object.keys(REGISTRY_WORKFLOWS) as readonly WorkflowName[
 
 const keysOf = (rendered: string): string[] =>
   [...rendered.matchAll(/<snippet key="([^"]+)"/g)].map((m) => m[1] as string);
+
+// The served library resolves `{{lessons_dir}}` to this checkout's absolute
+// path (workers need real paths at runtime). The PIN must not: an absolute
+// path bakes the authoring machine's checkout into the snapshot, so the suite
+// fails from any other path — a worktree, CI, another machine (observed: run
+// 20260705-1731-58a5's builder bisected exactly this). Fold the resolution
+// back to its token at the pin boundary only.
+const portable = (rendered: string): string => rendered.replaceAll(LESSONS_DIR, '{{lessons_dir}}');
 
 describe('effective snippet-list pins', () => {
   test('per-phase lists across consultant/gateless, plus the fixed sets', async () => {
@@ -55,11 +63,11 @@ describe('effective snippet-list pins', () => {
 
 describe('served library pins — flat', () => {
   test('unbound flat render: the shipped library minus every consultant snippet', async () => {
-    await expect(renderSnippetLibrary({ all: true })).toMatchFileSnapshot('./pins/snippets/flat-unbound.txt');
+    await expect(portable(renderSnippetLibrary({ all: true }))).toMatchFileSnapshot('./pins/snippets/flat-unbound.txt');
   });
 
   test('bound no-workflow flat render: every consultant snippet body (the full shipped library)', async () => {
-    await expect(renderSnippetLibrary({ all: true, consultantBound: true })).toMatchFileSnapshot(
+    await expect(portable(renderSnippetLibrary({ all: true, consultantBound: true }))).toMatchFileSnapshot(
       './pins/snippets/flat-bound.txt',
     );
   });
@@ -97,23 +105,27 @@ describe('served library pins — phase-scoped', () => {
   for (const c of CASES) {
     test(c.name, async () => {
       await expect(
-        renderSnippetLibrary({
-          phase: c.phase,
-          workflow: c.workflow,
-          consultantBound: c.consultant ?? false,
-          gateless: c.gateless ?? false,
-        }),
+        portable(
+          renderSnippetLibrary({
+            phase: c.phase,
+            workflow: c.workflow,
+            consultantBound: c.consultant ?? false,
+            gateless: c.gateless ?? false,
+          }),
+        ),
       ).toMatchFileSnapshot(`./pins/snippets/phase-${c.name}.txt`);
     });
   }
 
   test('full-frame with sent-to annotations', async () => {
     await expect(
-      renderSnippetLibrary({
-        phase: 'frame',
-        workflow: 'full',
-        sentTo: { 'think-holistic': ['architect', 'analyst'], 'compare-notes': ['architect'] },
-      }),
+      portable(
+        renderSnippetLibrary({
+          phase: 'frame',
+          workflow: 'full',
+          sentTo: { 'think-holistic': ['architect', 'analyst'], 'compare-notes': ['architect'] },
+        }),
+      ),
     ).toMatchFileSnapshot('./pins/snippets/phase-full-frame.sent-to.txt');
   });
 });
