@@ -183,9 +183,22 @@ function splitEffortSuffix(address: BindAddress, spec: string): { body: string; 
 }
 
 /**
- * Validate the provider + duet-owned knobs — the part shared by the spec grammar
- * and the config tables. Defaults claude's model; codex leaves it absent unless
- * the user supplied one.
+ * The model default resolved per provider: claude falls back to
+ * DEFAULT_CLAUDE_MODEL, codex leaves it absent (~/.codex/config.toml governs).
+ * Applied once, at resolution (parseBindingTable and resolveAddress) — NEVER in
+ * the spec parser — so an omitted model stays distinguishable from an explicit
+ * one and can carry forward from a same-provider config binding before this
+ * fallback fills it.
+ */
+function defaultedModel(provider: Provider, model: string | undefined): string | undefined {
+  return model ?? (PROVIDER_CAPS[provider].model === 'default' ? DEFAULT_CLAUDE_MODEL : undefined);
+}
+
+/**
+ * Validate the provider + duet-owned knobs — shared by the spec grammar and the
+ * config tables. Returns exactly what the user supplied (no model default): the
+ * claude fallback is applied later, at resolution, so an omitted model can carry
+ * forward. Rejects an empty model string (a stray trailing ":").
  */
 function parseProviderModel(address: BindAddress, table: Record<string, unknown>): Binding {
   const provider = table['provider'];
@@ -197,6 +210,9 @@ function parseProviderModel(address: BindAddress, table: Record<string, unknown>
   if (model !== undefined && typeof model !== 'string') {
     throw new Error(`config: the ${address} binding's model must be a string`);
   }
+  if (typeof model === 'string' && model.trim() === '') {
+    throw new Error(`config: the ${address} binding has an empty model — drop the trailing ":" or name a model (e.g. "${provider}:<model>")`);
+  }
   const effort = table['effort'];
   if (effort !== undefined && typeof effort !== 'string') {
     throw new Error(`config: the ${address} binding's effort must be a string`);
@@ -206,10 +222,9 @@ function parseProviderModel(address: BindAddress, table: Record<string, unknown>
       `config: the ${address} binding's ${provider} effort must be one of ${caps.effort.join(', ')} — got ${JSON.stringify(effort)}`,
     );
   }
-  const resolvedModel = model === undefined && caps.model === 'default' ? DEFAULT_CLAUDE_MODEL : model;
   return {
     provider,
-    ...(resolvedModel === undefined ? {} : { model: resolvedModel }),
+    ...(model === undefined ? {} : { model }),
     ...(effort === undefined ? {} : { effort: effort as Effort }),
   };
 }
@@ -271,11 +286,18 @@ function parseBindingTable(address: BindAddress, raw: unknown, tableName: string
     if (typeof codexConfig !== 'object' || codexConfig === null || Array.isArray(codexConfig)) {
       throw new Error(`config: [${tableName}].codex_config must be a table`);
     }
-    native = { ...(native ?? {}), codexConfig: codexConfig as Record<string, unknown> };
+    // Copy the parsed table so the frozen manifest owns its native config
+    // outright (a later in-place mutation can't leak across the run), matching
+    // the [...claudeArgs] copy above.
+    native = { ...(native ?? {}), codexConfig: structuredClone(codexConfig) as Record<string, unknown> };
   }
-  // Claude bindings always carry a transport (default headless); codex never does.
+  // Resolve fully: apply the claude model default (a config binding is complete),
+  // add the transport (claude always carries one; codex never does), attach native.
+  const model = defaultedModel(base.provider, base.model);
   return {
-    ...base,
+    provider: base.provider,
+    ...(model !== undefined ? { model } : {}),
+    ...(base.effort !== undefined ? { effort: base.effort } : {}),
     ...(base.provider === 'claude' ? { transport: (transport as 'headless' | 'interactive' | undefined) ?? 'headless' } : {}),
     ...(native ? { native } : {}),
   };
@@ -461,27 +483,28 @@ export function resolveRunConfig(
     throw new Error('--no-consultant and --bind consultant=… contradict each other — drop one');
   }
 
-  // One address through the tiers, per KEY. A flag/framing spec can't express
-  // transport or native (config-only), and may omit @effort, so when it keeps
-  // the same provider those configured knobs carry forward — a model-only
-  // override never silently drops a configured transport, native passthrough,
-  // or effort. A provider switch resets them (a configured effort may be
-  // illegal for the new provider; native/transport are provider-shaped).
+  // One address through the tiers, per KEY. A spec overrides only the keys it
+  // names: the knobs it cannot express (transport, native — config-only) and any
+  // it omits (`:model`, `@effort`) carry forward from a same-provider config
+  // binding, so a model-only or effort-only override never silently drops a
+  // sibling knob. A provider switch shares nothing (a configured model/effort/
+  // native may be illegal for the new provider). The claude model default is
+  // applied last, at resolution, so an omitted model carries before it fills.
   const resolveAddress = (address: BindAddress): Binding => {
     const spec = opts.flagBinds?.[address] ?? opts.framingBinds?.[address];
     const configured = configBinds[address];
     if (spec === undefined) return configured ?? defaultBindingFor(address);
     const parsed = parseBindingSpec(address, spec);
-    if (parsed.provider !== configured?.provider) {
-      return parsed.provider === 'claude' ? { ...parsed, transport: 'headless' } : parsed;
-    }
-    const carried: Partial<Binding> = {
-      ...(configured.native ? { native: configured.native } : {}),
-      // @effort in the spec wins; otherwise the configured effort carries.
-      ...(parsed.effort ?? configured.effort ? { effort: parsed.effort ?? configured.effort } : {}),
+    const base = parsed.provider === configured?.provider ? configured : undefined;
+    const model = defaultedModel(parsed.provider, parsed.model ?? base?.model);
+    const effort = parsed.effort ?? base?.effort;
+    return {
+      provider: parsed.provider,
+      ...(model !== undefined ? { model } : {}),
+      ...(effort !== undefined ? { effort } : {}),
+      ...(base?.native ? { native: base.native } : {}),
+      ...(parsed.provider === 'claude' ? { transport: base?.transport ?? 'headless' } : {}),
     };
-    if (parsed.provider !== 'claude') return { ...parsed, ...carried };
-    return { ...parsed, transport: configured.transport ?? 'headless', ...carried };
   };
 
   const duties: Partial<Record<Duty, Binding>> = {};

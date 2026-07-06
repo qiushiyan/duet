@@ -1,20 +1,31 @@
-import { execa } from 'execa';
 import { DEFAULT_CLAUDE_MODEL, dutyBindingFor, formatBinding } from './bindings.ts';
 import type { BindAddress, Binding, VoiceBindings } from './bindings.ts';
-import { classifyError } from './health.ts';
-import type { ErrorClass } from './health.ts';
+import { conciseExecaError } from './providers/claude.ts';
 import { createWorkerForBinding } from './providers/index.ts';
 import type { WorkerProvider } from './providers/types.ts';
 import { stagesOf } from '../registry/workflows.ts';
 import type { Duty, WorkflowRef } from '../registry/workflows.ts';
+
+/**
+ * The create-time binding preflight. For every binding carrying a knob only the
+ * provider can validate — an explicit model, or a native-arg passthrough — it
+ * runs one throwaway worker turn at `duet new` and decides: abort run creation
+ * (the provider rejected the configuration), or warn and proceed. The point is
+ * to surface a mistyped model/flag while the human is present, never mid-build.
+ *
+ * duet stays a conduit for native args: it never parses or judges their content
+ * (that was the deleted `--strict-config` re-serializer) — the provider judges
+ * them, just early, and `preflightDisposition` reads only the provider's own
+ * verdict.
+ */
 
 const PREFLIGHT_PROMPT = 'Reply with the single word OK.';
 const PREFLIGHT_TIMEOUT_MS = 120_000;
 
 export type BindingPreflightOutcome =
   | { status: 'ok'; warnings: string[] }
-  | { status: 'warning'; errorClass?: ErrorClass; warnings: string[] }
-  | { status: 'abort'; errorClass: 'unknown'; message: string };
+  | { status: 'warning'; warnings: string[] }
+  | { status: 'abort'; message: string };
 
 export interface PreflightAddressResult {
   status: 'ok' | 'warning';
@@ -40,7 +51,36 @@ export class PreflightFailedError extends Error {
 
 export interface PreflightDeps {
   createWorker?: (binding: Binding) => WorkerProvider;
-  strictConfigProbe?: (binding: Binding, cwd: string) => Promise<string[]>;
+}
+
+/**
+ * How a failed probe disposes: ABORT run creation, or WARN and proceed.
+ *
+ * ABORT requires a POSITIVE signal that the provider rejected THIS invocation's
+ * own configuration — a mistyped native flag or an unusable model — a
+ * deterministic failure the real run would hit every time. Everything else
+ * WARNS: a transient/environmental failure (network, a per-turn timeout, TLS, a
+ * missing tmux) must never block a good `duet new`, and an unrecognized failure
+ * degrades safely to "surfaces at first use" rather than a false abort. A missed
+ * bad-model phrasing is the tolerable direction (it fails cleanly at first use);
+ * a false abort of a healthy run is not.
+ *
+ * This is deliberately NOT `classifyError`: that taxonomy is tuned for scanning
+ * terminal API errors in transcripts and buckets most preflight-shaped failures
+ * (timeouts, spawn errors) as `unknown`, so keying abort on it would both block
+ * good runs on a hiccup AND warn-through a bad model whose NAME contains a
+ * taxonomy token (e.g. `429`).
+ */
+export function preflightDisposition(errorText: string): 'abort' | 'warn' {
+  // A rejected argument (the native-passthrough footgun): both CLIs' parsers say
+  // so unambiguously. Codex's own passthrough is `-c` config (a bad key is
+  // silently ignored, never a flag error), so in practice this guards claude_args.
+  const rejectedArg = /\bunknown option\b|\bunexpected argument\b|\bunrecognized (?:option|argument)\b/i;
+  // An unusable model, across both providers' phrasings. Deliberately no bare
+  // HTTP code — a model NAME containing 400/404/429 must not self-trigger.
+  const badModel =
+    /issue with the selected model|model_not_found|no such model|(?:unknown|invalid|unsupported) model|model[^.\n]{0,40}(?:not found|does(?:n't| not) exist|not (?:available|supported)|unavailable)/i;
+  return rejectedArg.test(errorText) || badModel.test(errorText) ? 'abort' : 'warn';
 }
 
 export async function preflightBinding(
@@ -50,33 +90,21 @@ export async function preflightBinding(
 ): Promise<BindingPreflightOutcome> {
   const makeWorker =
     deps.createWorker ??
-    ((b: Binding) => createWorkerForBinding(b, { workerBudgetUsd: undefined, timeoutMs: PREFLIGHT_TIMEOUT_MS }));
-  const strictConfigProbe = deps.strictConfigProbe ?? codexStrictConfigAdvisory;
+    ((b: Binding) =>
+      createWorkerForBinding(b, { workerBudgetUsd: undefined, timeoutMs: PREFLIGHT_TIMEOUT_MS }, { forceHeadless: true }));
 
-  let warnings: string[] = [];
   try {
     const turn = await makeWorker(binding).runTurn({ prompt: PREFLIGHT_PROMPT, cwd, timeoutMs: PREFLIGHT_TIMEOUT_MS });
-    warnings = [...warnings, ...(turn.warnings ?? [])];
+    const warnings = turn.warnings ?? [];
+    return warnings.length > 0 ? { status: 'warning', warnings } : { status: 'ok', warnings: [] };
   } catch (err) {
-    const message = conciseError(err);
-    const errorClass = classifyError(message);
-    if (errorClass === 'unknown') return { status: 'abort', errorClass, message };
+    const message = conciseExecaError(err);
+    if (preflightDisposition(message) === 'abort') return { status: 'abort', message };
     return {
       status: 'warning',
-      errorClass,
-      warnings: [`could not preflight ${formatBinding(binding)} (${errorClass}) — ${message}; it will validate at first use`],
+      warnings: [`could not preflight ${formatBinding(binding)} — ${message}; it will validate at first use`],
     };
   }
-
-  if (binding.provider === 'codex' && binding.native?.codexConfig !== undefined) {
-    try {
-      warnings = [...warnings, ...(await strictConfigProbe(binding, cwd))];
-    } catch (err) {
-      warnings = [...warnings, `codex --strict-config advisory for ${formatBinding(binding)}: ${conciseError(err)}`];
-    }
-  }
-
-  return warnings.length > 0 ? { status: 'warning', warnings } : { status: 'ok', warnings: [] };
 }
 
 export async function preflightRunBindings(
@@ -129,48 +157,17 @@ export function preflightMarker(result: PreflightAddressResult | undefined): str
   return ` ⚠ ${result.messages.join('; ')}`;
 }
 
-async function codexStrictConfigAdvisory(binding: Binding, cwd: string): Promise<string[]> {
-  try {
-    const args = [
-      'exec',
-      '--json',
-      '--ephemeral',
-      '--strict-config',
-      '--cd',
-      cwd,
-      ...(binding.model !== undefined ? ['--model', binding.model] : []),
-      ...(binding.effort !== undefined ? ['--config', `model_reasoning_effort="${binding.effort}"`] : []),
-    ];
-    for (const override of serializeConfigOverrides(binding.native?.codexConfig ?? {})) {
-      args.push('--config', override);
-    }
-    args.push(PREFLIGHT_PROMPT);
-    await execa('codex', args, { cwd, timeout: PREFLIGHT_TIMEOUT_MS });
-    return [];
-  } catch (err) {
-    return [`codex --strict-config advisory for ${formatBinding(binding)}: ${conciseError(err)}`];
-  }
-}
-
 function hasNative(binding: Binding): boolean {
   return binding.native?.claudeArgs !== undefined || binding.native?.codexConfig !== undefined;
 }
 
+/** An explicit, provider-validatable model: any codex model, or a non-default claude one. */
 function hasProviderExplicitModel(binding: Binding): boolean {
   if (binding.provider === 'codex') return binding.model !== undefined;
   return binding.model !== undefined && binding.model !== DEFAULT_CLAUDE_MODEL;
 }
 
-function conciseError(err: unknown): string {
-  const e = err as { shortMessage?: unknown; message?: unknown; stderr?: unknown; stdout?: unknown };
-  const base = typeof e.shortMessage === 'string' ? e.shortMessage : typeof e.message === 'string' ? e.message : String(err);
-  const stderr = typeof e.stderr === 'string' ? e.stderr.trim() : '';
-  const stdout = typeof e.stdout === 'string' ? e.stdout.trim() : '';
-  const detail = stderr || stdout;
-  const tail = detail ? ` — ${detail.length > 500 ? `…${detail.slice(-500)}` : detail}` : '';
-  return `${base}${tail}`;
-}
-
+/** A deterministic key over a binding's fields, for deduping identical candidates. */
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
   if (value && typeof value === 'object') {
@@ -180,48 +177,4 @@ function stableStringify(value: unknown): string {
       .join(',')}}`;
   }
   return JSON.stringify(value);
-}
-
-function serializeConfigOverrides(config: Record<string, unknown>): string[] {
-  const out: string[] = [];
-  flattenConfig(config, '', out);
-  return out;
-}
-
-function flattenConfig(value: unknown, prefix: string, out: string[]): void {
-  if (!isPlainObject(value)) {
-    if (prefix) out.push(`${prefix}=${toTomlValue(value, prefix)}`);
-    return;
-  }
-  for (const [key, child] of Object.entries(value)) {
-    if (child === undefined) continue;
-    const path = prefix ? `${prefix}.${key}` : key;
-    if (isPlainObject(child)) flattenConfig(child, path, out);
-    else out.push(`${path}=${toTomlValue(child, path)}`);
-  }
-}
-
-function toTomlValue(value: unknown, path: string): string {
-  if (typeof value === 'string') return JSON.stringify(value);
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new Error(`Codex config override at ${path} must be a finite number`);
-    return String(value);
-  }
-  if (typeof value === 'boolean') return value ? 'true' : 'false';
-  if (Array.isArray(value)) return `[${value.map((item, index) => toTomlValue(item, `${path}[${index}]`)).join(', ')}]`;
-  if (isPlainObject(value)) {
-    const parts = Object.entries(value)
-      .filter(([, child]) => child !== undefined)
-      .map(([key, child]) => `${formatTomlKey(key)} = ${toTomlValue(child, `${path}.${key}`)}`);
-    return `{${parts.join(', ')}}`;
-  }
-  throw new Error(`Unsupported Codex config override value at ${path}: ${value === null ? 'null' : typeof value}`);
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function formatTomlKey(key: string): string {
-  return /^[A-Za-z0-9_-]+$/.test(key) ? key : JSON.stringify(key);
 }

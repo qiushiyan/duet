@@ -28,6 +28,7 @@ import type { VoiceAddress, WorkerProvider, WorkerProviders } from './types.ts';
 export function createWorkerForBinding(
   binding: Binding,
   rails: { workerBudgetUsd: number | undefined; timeoutMs: number },
+  opts: { forceHeadless?: boolean } = {},
 ): WorkerProvider {
   if (binding.provider !== 'claude') {
     return new CodexWorker({
@@ -44,7 +45,10 @@ export function createWorkerForBinding(
     ...(binding.effort !== undefined ? { effort: binding.effort as Exclude<Effort, 'minimal'> } : {}),
     ...(binding.native?.claudeArgs !== undefined ? { nativeArgs: binding.native.claudeArgs } : {}),
   };
-  if (binding.transport === 'interactive') {
+  // forceHeadless: the create-time preflight validates an interactive binding's
+  // model/args through headless `claude -p` (same CLI, same arg parsing) instead
+  // of spawning a real tmux TUI session just to make it answer "OK".
+  if (binding.transport === 'interactive' && !opts.forceHeadless) {
     return new InteractiveClaudeWorker(claudeConfig);
   }
   return new ClaudeWorker({

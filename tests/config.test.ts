@@ -49,8 +49,10 @@ describe('parseBindAddress — the --bind / bind.* key grammar', () => {
 });
 
 describe('parseBindingSpec — the one provider[:model] grammar', () => {
-  test('a bare claude spec defaults the model; claude:model keeps it', () => {
-    expect.soft(parseBindingSpec('builder', 'claude')).toEqual({ provider: 'claude', model: 'claude-opus-4-8' });
+  test('a bare claude spec leaves the model to resolution; claude:model keeps it', () => {
+    // The spec parser no longer eagerly defaults claude's model — the fallback is
+    // applied at resolution, so an omitted model can carry forward from config first.
+    expect.soft(parseBindingSpec('builder', 'claude')).toEqual({ provider: 'claude' });
     expect.soft(parseBindingSpec('builder', 'claude:claude-fable-5')).toEqual({ provider: 'claude', model: 'claude-fable-5' });
   });
 
@@ -76,9 +78,30 @@ describe('parseBindingSpec — the one provider[:model] grammar', () => {
     expect.soft(() => parseBindingSpec('builder', 'claude@')).toThrow(/empty @effort suffix/);
   });
 
-  test('an empty or unknown-provider spec rejects', () => {
+  test('an empty, empty-model, or unknown-provider spec rejects', () => {
     expect.soft(() => parseBindingSpec('builder', '')).toThrow(/binding is empty/);
     expect.soft(() => parseBindingSpec('builder', 'gemini')).toThrow(/provider must be "claude" or "codex"/);
+    // A stray trailing ":" is a typo, not an empty-model request — reject rather
+    // than emit an invisible `--model ""` (which formatBinding would hide).
+    expect.soft(() => parseBindingSpec('builder', 'claude:')).toThrow(/empty model/);
+    expect.soft(() => parseBindingSpec('critic', 'codex:')).toThrow(/empty model/);
+    expect.soft(() => parseBindingSpec('builder', 'claude:@high')).toThrow(/empty model/);
+  });
+
+  test('a same-provider override without a model carries the configured model (both providers)', ({ projectDir }) => {
+    // The symmetric case to the transport/effort carry-forward: an effort-only or
+    // bare same-provider override must not silently drop a configured inline model.
+    const claudeCfg = configIn(join(projectDir, 'c'), '[duties.builder]\nprovider = "claude"\nmodel = "claude-fable-5"');
+    const claudeCarried = resolveRunConfig({ workflow: 'full', flagBinds: { builder: 'claude@low' } }, claudeCfg);
+    expect.soft(dutyBindingFor(claudeCarried.bindings, 'builder')).toEqual({
+      provider: 'claude',
+      model: 'claude-fable-5',
+      effort: 'low',
+      transport: 'headless',
+    });
+    const codexCfg = configIn(join(projectDir, 'x'), '[duties.critic]\nprovider = "codex"\nmodel = "gpt-5.5"');
+    const codexCarried = resolveRunConfig({ workflow: 'full', flagBinds: { critic: 'codex@high' } }, codexCfg);
+    expect.soft(dutyBindingFor(codexCarried.bindings, 'critic')).toEqual({ provider: 'codex', model: 'gpt-5.5', effort: 'high' });
   });
 });
 

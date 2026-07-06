@@ -6,6 +6,7 @@ import {
   bindingNeedsPreflight,
   preflightBinding,
   preflightCandidates,
+  preflightDisposition,
   preflightMarker,
   preflightRunBindings,
 } from '../src/voices/preflight.ts';
@@ -27,7 +28,6 @@ describe('preflightBinding', () => {
     const worker = new FakeWorker('codex', [{ warnings: ['Warning: native warning'] }]);
     const outcome = await preflightBinding({ provider: 'codex', model: 'gpt-5.5' }, projectDir, {
       createWorker: () => worker,
-      strictConfigProbe: async () => [],
     });
 
     expect.soft(outcome).toEqual({ status: 'warning', warnings: ['Warning: native warning'] });
@@ -38,15 +38,21 @@ describe('preflightBinding', () => {
     expect.soft(worker.calls[0]?.onSessionId).toBeUndefined();
   });
 
-  test('aborts on unknown-class provider failures', async ({ projectDir }) => {
-    const outcome = await preflightBinding({ provider: 'claude', model: 'bad-model', transport: 'headless' }, projectDir, {
-      createWorker: () => new FakeWorker('claude', [new Error('unknown native flag --wat')]),
-    });
+  test('aborts on a provider rejection — a bad flag or an unusable model', async ({ projectDir }) => {
+    const badFlag = await preflightBinding(
+      { provider: 'claude', model: 'claude-opus-4-8', native: { claudeArgs: ['--wat'] }, transport: 'headless' },
+      projectDir,
+      { createWorker: () => new FakeWorker('claude', [new Error("error: unknown option '--wat'")]) },
+    );
+    expect.soft(badFlag).toEqual({ status: 'abort', message: "error: unknown option '--wat'" });
 
-    expect(outcome).toEqual({ status: 'abort', errorClass: 'unknown', message: 'unknown native flag --wat' });
+    const badModel = await preflightBinding({ provider: 'claude', model: 'claude-nope-9', transport: 'headless' }, projectDir, {
+      createWorker: () => new FakeWorker('claude', [new Error("There's an issue with the selected model (claude-nope-9). It may not exist.")]),
+    });
+    expect.soft(badModel.status).toBe('abort');
   });
 
-  test('warns and proceeds on classified infra/auth failures', async ({ projectDir }) => {
+  test('warns and proceeds on a transient/environmental failure (never blocks a good run)', async ({ projectDir }) => {
     const outcome = await preflightBinding({ provider: 'codex', model: 'gpt-5.5' }, projectDir, {
       createWorker: () => new FakeWorker('codex', [new Error('ECONNRESET while connecting')]),
     });
@@ -56,18 +62,32 @@ describe('preflightBinding', () => {
     expect.soft(outcome.warnings.join('\n')).toMatch(/ECONNRESET/);
     expect.soft(outcome.warnings.join('\n')).toMatch(/will validate at first use/);
   });
+});
 
-  test('adds codex strict-config advisory warnings without aborting', async ({ projectDir }) => {
-    const binding: Binding = { provider: 'codex', native: { codexConfig: { typo_key: true } } };
-    const outcome = await preflightBinding(binding, projectDir, {
-      createWorker: () => new FakeWorker('codex'),
-      strictConfigProbe: async () => ['codex --strict-config advisory for codex: unknown configuration field `typo_key`'],
-    });
-
-    expect(outcome).toEqual({
-      status: 'warning',
-      warnings: ['codex --strict-config advisory for codex: unknown configuration field `typo_key`'],
-    });
+describe('preflightDisposition', () => {
+  test('aborts only on a provider-config rejection; warns on transient/ambiguous', () => {
+    for (const abort of [
+      "error: unknown option '--wat'",
+      "error: unexpected argument '--bogus' found",
+      "There's an issue with the selected model (claude-nope). It may not exist.",
+      'model_not_found: the model does not exist',
+      'gpt-nope: no such model',
+    ]) {
+      expect.soft(preflightDisposition(abort), abort).toBe('abort');
+    }
+    for (const warn of [
+      'Command timed out after 120000 milliseconds',
+      'socket hang up',
+      'Client network socket disconnected before secure TLS connection was established',
+      'ECONNRESET',
+      'Error 429: Too Many Requests', // a genuine rate limit, not a mistyped binding
+      'could not launch tmux session',
+    ]) {
+      expect.soft(preflightDisposition(warn), warn).toBe('warn');
+    }
+    // A bad MODEL whose name contains a taxonomy token still aborts — the old
+    // classifyError hole (a `429` in the name flipping abort→warn), closed.
+    expect.soft(preflightDisposition("There's an issue with the selected model (gpt-429-x).")).toBe('abort');
   });
 });
 
@@ -120,7 +140,7 @@ describe('preflightRunBindings', () => {
 
     await expect(
       preflightRunBindings(bindings, 'full', projectDir, {
-        createWorker: () => new FakeWorker('codex', [new Error('model may not exist')]),
+        createWorker: () => new FakeWorker('codex', [new Error("There's an issue with the selected model (bad-model). It may not exist.")]),
       }),
     ).rejects.toBeInstanceOf(PreflightFailedError);
   });
