@@ -1,7 +1,8 @@
-# Build block — the AFK implementation phase of every arc. In lifecycle order:
-# the entry seeds (compact-for-impl for full's plan-driven build,
-# implement-design for the design arc's doc-driven build, implement-direct for
-# short's plan-less build from the research decisions), the midpoint checkpoint
+# Build block — the AFK implementation phase of every workflow. In lifecycle
+# order: the entry seeds (compact-for-impl for full's plan-driven build,
+# implement-design for design-doc-driven builds — blueprint, relay's fresh
+# builder, any composed design-upstream workflow — and implement-direct for
+# docless builds from the research decisions), the midpoint checkpoint
 # trio, the build → review compaction, the critique review family
 # (implementation-handoff → review-implementation → respond-review, with
 # -again round-2 variants), the writable one-round family (handoff-direct →
@@ -346,7 +347,7 @@ key = "review-and-fix"
 expand = '''
 Code-review this implementation — and resolve what you find. You review with write access: you didn't write this code, but you own getting it ship-ready. The bar is the committed design doc — its product sections carry the goal and the boundaries, its technical sections the module shapes, seams, and test standards the build was to honor. Review against the doc's intent, not a redesign of your own.
 
-**First, understand what the builder did.** Read the actual code and commits, not just the handoff below. Where something looks wrong, work out what the builder was doing before judging it — an approach that reads oddly from outside often encodes a constraint you haven't hit yet, and where it is genuinely wrong, knowing the intent is what lets you fix it without breaking what the intent got right.
+**First, understand what the builder did.** Read the actual code and commits, not just the handoff below. Where something looks wrong, work out what the builder was doing before judging it (Chesterton's fence: don't tear down what you don't yet know the purpose of) — an approach that reads oddly from outside often encodes a constraint you haven't hit yet, and where it is genuinely wrong, knowing the intent is what lets you fix it without breaking what the intent got right.
 
 **Lens — everything is fair game:**
 - **Correctness** — bugs, edge cases, failure modes.
@@ -391,13 +392,9 @@ key = "ceo-summary"
 expand = '''
 Implementation and follow-up reviews are done. Write a CEO-facing summary of this PR — for me, and for explaining the work to a non-technical stakeholder without walking them through the code.
 
-Start non-technical, in this order:
+**Lead with the bottom line** — the one or two sentences you'd give the CEO in the elevator: what this ships, and why it matters to the product. Everything after supports that line:
 
-1. What the PR does, from a product perspective
-2. Bugs fixed
-3. Features added
-4. What problems it solves
+1. **The outcomes, concretely** — the problems now solved, the bugs now fixed, the features now available. Product terms, not mechanisms.
+2. **The technical side at CTO altitude** — the shape of the approach and the one or two decisions a CTO would care about. No file paths, no function names, no implementation play-by-play.
 
-Then the technical side at a very high level — the approach and the one or two decisions a CTO would care about. No file paths, no function names, no implementation play-by-play.
-
-This is CEO/CTO altitude: outcomes first, technology last. Drop any section that's empty. Tight prose beats exhaustive sections.'''
+Answer first, support after: a reader who stops at any point should leave with the most important thing they could have gotten by then. Drop any section that's empty. Tight prose beats exhaustive sections.'''

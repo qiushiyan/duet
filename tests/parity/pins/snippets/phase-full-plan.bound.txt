@@ -69,6 +69,8 @@ Challenge sequencing, scope, choice of vertical slices, **whether the plan delet
 
 **Watch for over-building** — the plan's likelier failure is too much code, not too little: defensive handling for states it could make unrepresentable, fallbacks for cases that can't occur, speculative features or config the spec didn't ask for, or a shared abstraction pulled out too early. Flag these the way you'd flag a missing case. And steer the other way when you catch yourself wanting *more* — prefer pushing a bad state to where it's unrepresentable, or validation to a single boundary, over adding error handling at every call site.
 
+**Run a pre-mortem before you write up findings.** It's a month from now: the build off this plan stalled, or shipped subtly wrong — no crash, no failing test. Write down the two or three most plausible causes, then check whether the plan already defends against each; any it doesn't becomes a finding. Looking back from an assumed failure surfaces risks that reading forward misses.
+
 The right plan should feel inevitable. Don't default to politeness.
 
 **End with an "Optional polish" section**, separate from the findings above: wording-level fixes where you can supply the exact replacement and the meaning doesn't change. Write each as location plus replacement (before → after), ready to apply verbatim. If an imprecision changes behavior, scope, or a testable claim, it's a finding, not polish; if you can't write the exact replacement, it isn't polish either — raise it as a finding or drop it. When nothing qualifies, say so in a line rather than manufacturing items. Delivered as concerns, wording points cost the author a reread of the whole document; delivered as ready replacements, they cost nothing.

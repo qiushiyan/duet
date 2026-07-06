@@ -350,7 +350,7 @@ When the AFK phase's review loops converge, the orchestrator reconciles the docs
 3. **Review history** — rounds run, points raised/resolved/disputed, disagreement summary.
 4. **Diff stats and round counts vs. backstop caps.**
 
-The full proposed snippet body lives in `docs/workflow-model.md` §"Proposed snippet: ceo-summary". It is documented here before being added to the tabtype library; once adopted there, the duet copy and the tabtype copy stay in sync by hand (duet owns its shipped `snippets/` library; the tabtype config is the human's to update). `ceo-summary` is distinct from `pr-description`: the former is for the human gate and colleague-facing explanation (CEO/CTO altitude), the latter for the PR body (technical colleague who won't read the diff). Both run; `pr-description` follows inside `finish`.
+The snippet's body lives in the shipped library (`snippets/build.toml`; rationale and evidence in `docs/workflow-model.md` §"The `ceo-summary` snippet"), and any tabtype twin stays in sync by hand (duet owns its shipped `snippets/` library; the tabtype config is the human's to update). `ceo-summary` is distinct from `pr-description`: the former is for the human gate and colleague-facing explanation (CEO/CTO altitude), the latter for the PR body (technical colleague who won't read the diff). Both run; `pr-description` follows inside `finish`.
 
 ## Prompt agency
 

@@ -42,6 +42,8 @@ The spec is a high-level implementation plan — technical content is fine, but 
 
 **Do not include any time/effort estimates** ("2 days", "~3 hours"), describe the work itself.
 
+**Before you finish, hunt the rabbit holes** — walk the approach end to end looking for what could quietly eat the build: a technical unknown nobody has proven, a design problem the spec gestures at but doesn't solve, an interdependency that reads simpler than it is. For each one: solve it here, cut it out of scope explicitly, or name it in the open questions. An unnamed hole doesn't disappear — it resurfaces mid-build as a stall or a silent wrong turn.
+
 If you have remaining product questions or major technical uncertainty, interview me before you write.
 </snippet>
 <snippet key="review-spec">

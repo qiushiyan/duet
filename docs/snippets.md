@@ -25,6 +25,10 @@ Each phase pulls a few snippets in the order the orchestrator reaches for them; 
 
 full alone has no draft snippet for its implementation phase — the plan is the script, so the orchestrator composes the build prompt from it. The other workflows seed the build from a template because no plan exists there: `implement-design` on blueprint and relay (relay's builder reads it in a fresh delivery-stage session — the body assumes only the committed doc), `implement-direct` on short.
 
+## The mindset gradient — a design principle to preserve
+
+The library deliberately trades efficiency for the *mindset each phase needs*, and the gradient across a run is the architecture: **frame diverges** (`think-holistic` demands 2–3 genuinely different bets so they stress-test each other; `compare-notes` synthesizes two independent, anonymized analyses — Delphi-shaped, so neither author anchors the other), **doc loops converge** (round 2 is explicitly "about converging", and the altitude lenses stop a loop from re-diverging below its artifact's tier), and **the build executes** ("execute the design; don't re-decide it"). Several snippets carry named elicitation frameworks tuned to their task: the rabbit-holes hunt in `write-spec`/`write-design` (find what could quietly eat the build before committing the document), the pre-mortem in `review-plan`/`review-design` and `consultant-contract` (prospective hindsight surfaces risks forward reading misses), red-team-the-tests and definition-of-wrong in `consultant-contract`, answer-first (BLUF) structure in `ceo-summary`, and Chesterton's fence in `review-and-fix`. When revising a snippet, match its phase's mindset — an "optimization" that collapses the frame phase's exploration into one recommended answer, or re-opens divergence inside a converging round, is a regression even when it reads tighter.
+
 Beyond the phase-bound snippets above, a handful of **cross-cutting anytime helpers** are reachable in any phase (classified `ANYTIME_SNIPPETS`, listed in full by `list_snippets`) — e.g. `reread-context` (reread the touched code before continuing), `recover-context` (the post-compact fresh-session re-anchor: an orchestrator-authored status overview + reread, prescribed when a `/compact` is killed and the worker's session is reset — see `docs/automation-design.md` §"Resilience for the AFK window"), and `compact-inflight` (the mid-work compaction: where the boundary compacts keep what the *next* stage consumes, this one keeps the in-flight state — for a caution-band pause that isn't a stage boundary, and the compact-then-resume recovery after a context cut). They are not customization targets, so they live in the shipped library (`snippets/anytime.toml`) rather than the curated table here.
 
 ---
@@ -75,6 +79,8 @@ The spec is a high-level implementation plan — technical content is fine, but 
 - Phases are fine; **no precise commit order** — sequencing later.
 
 **Do not include any time/effort estimates** ("2 days", "~3 hours"), describe the work itself.
+
+**Before you finish, hunt the rabbit holes** — walk the approach end to end looking for what could quietly eat the build: a technical unknown nobody has proven, a design problem the spec gestures at but doesn't solve, an interdependency that reads simpler than it is. For each one: solve it here, cut it out of scope explicitly, or name it in the open questions. An unnamed hole doesn't disappear — it resurfaces mid-build as a stall or a silent wrong turn.
 
 If you have remaining product questions or major technical uncertainty, interview me before you write.
 ```
@@ -195,7 +201,7 @@ The docs ship with this change — they ride the branch (and the PR, where there
 Blueprint's design phase runs on one document (relay shares its shape), so its snippets merge what full splits. Three keys matter (the `update-design` / `-again` variants mirror their spec/plan siblings):
 
 - **`write-design`** — the workflow's generative draft, reproduced below. It merges `write-spec`'s product tier (leader-facing summary, goals, behaviors, non-goals) with `start-plan`'s technical discipline (module boundaries, seams, an architecture sketch, test standards; the same `{{lessons_dir}}` citations) — and defers what the build owns: code bodies, per-case test enumeration, fixtures, commit order. Override it to reshape the whole workflow, the way overriding `write-spec` or `start-plan` reshapes full.
-- **`review-design`** — the section-scoped lens: product sections review at spec altitude (a missing behavior is a gap; module design pressed there is below altitude), technical sections at design altitude (boundaries, seams, and test strategy are fair game; demanding case enumeration or code re-grows the rounds the workflow deletes). Carries the same "Optional polish" output contract as the other review snippets.
+- **`review-design`** — the section-scoped lens: product sections review at spec altitude (a missing behavior is a gap; module design pressed there is below altitude), technical sections at design altitude (boundaries, seams, and test strategy are fair game; demanding case enumeration or code re-grows the rounds the workflow deletes). Ends with a pre-mortem pass (assume the cold build off this doc failed — write the cause, make it a finding) and carries the same "Optional polish" output contract as the other review snippets.
 - **`implement-design`** — the build seed, `implement-direct`'s sibling: it anchors on the committed design doc as the authority for *what and why* and carries the same build discipline for *how* (vertical slices of the builder's own choosing, right-sizing, layer choices, tests per the doc's standards).
 
 ### `write-design`
@@ -231,6 +237,8 @@ The doc runs top-down, product to technical, each tier at its own altitude.
 Leave these out — they're the build's to decide, and pinning them now would commit the design to details the code hasn't taught us yet: full code bodies, per-case test enumeration and fixtures, line-level edit plans, doc-update plans, and commit order. The design owes the *what* and the *shape*; the build owns the cases and the sequence.
 
 **Do not include any time/effort estimates** ("2 days", "~3 hours") — describe the work itself.
+
+**Before you finish, hunt the rabbit holes** — walk the approach end to end looking for what could quietly eat the build: a technical unknown nobody has proven, a design problem the doc gestures at but doesn't solve, an interdependency that reads simpler than it is. For each one: solve it here, cut it out of scope explicitly, or name it in the open questions. An unnamed hole doesn't disappear — it resurfaces mid-build, where the builder has only this document to resolve it with.
 
 If you have remaining product questions or major technical uncertainty, interview me before you write.
 ```
@@ -297,6 +305,8 @@ Background (skim as a lens, don't recite):
 Challenge sequencing, scope, choice of vertical slices, **whether the plan deletes complexity or just rearranges it**, **whether the resulting modules are deep or shallow**, and **whether any preparatory-refactoring slice is proportionate to the feature, not quietly a rewrite** — not just surface details.
 
 **Watch for over-building** — the plan's likelier failure is too much code, not too little: defensive handling for states it could make unrepresentable, fallbacks for cases that can't occur, speculative features or config the spec didn't ask for, or a shared abstraction pulled out too early. Flag these the way you'd flag a missing case. And steer the other way when you catch yourself wanting *more* — prefer pushing a bad state to where it's unrepresentable, or validation to a single boundary, over adding error handling at every call site.
+
+**Run a pre-mortem before you write up findings.** It's a month from now: the build off this plan stalled, or shipped subtly wrong — no crash, no failing test. Write down the two or three most plausible causes, then check whether the plan already defends against each; any it doesn't becomes a finding. Looking back from an assumed failure surfaces risks that reading forward misses.
 
 The right plan should feel inevitable. Don't default to politeness.
 
@@ -382,7 +392,7 @@ Relay's one review round, sent to the judge — the only shipped snippet whose r
 ```text
 Code-review this implementation — and resolve what you find. You review with write access: you didn't write this code, but you own getting it ship-ready. The bar is the committed design doc — its product sections carry the goal and the boundaries, its technical sections the module shapes, seams, and test standards the build was to honor. Review against the doc's intent, not a redesign of your own.
 
-**First, understand what the builder did.** Read the actual code and commits, not just the handoff below. Where something looks wrong, work out what the builder was doing before judging it — an approach that reads oddly from outside often encodes a constraint you haven't hit yet, and where it is genuinely wrong, knowing the intent is what lets you fix it without breaking what the intent got right.
+**First, understand what the builder did.** Read the actual code and commits, not just the handoff below. Where something looks wrong, work out what the builder was doing before judging it (Chesterton's fence: don't tear down what you don't yet know the purpose of) — an approach that reads oddly from outside often encodes a constraint you haven't hit yet, and where it is genuinely wrong, knowing the intent is what lets you fix it without breaking what the intent got right.
 
 **Lens — everything is fair game:**
 - **Correctness** — bugs, edge cases, failure modes.

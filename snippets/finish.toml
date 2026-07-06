@@ -1,5 +1,5 @@
-# Finish block — the PR-only finishing tail shared by every arc: write the PR
-# description, open the PR idempotently, plus the rare late compaction.
+# Finish block — the PR-only finishing tail shared by every workflow: write the
+# PR description, open the PR idempotently, plus the rare late compaction.
 
 [[snippets]]
 key = "pr-description"

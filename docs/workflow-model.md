@@ -67,31 +67,14 @@ The protocol substance is the snippets — they encode the altitude lenses, the 
 | `implementation-handoff` | → implementer | HANDOFF | Review-aligned map: change map, decisions, deviations, where to look hardest. |
 | `review-implementation` / `review-implementation-again` | implementer → reviewer | REVIEW rounds | Severity-rated code review / "was the feedback actually addressed?" |
 | `respond-review` / `respond-review-again` | reviewer → implementer | REVIEW rounds | Analyze each point first, no code changes / apply inline, converge. |
-| `ceo-summary` | → implementer | CEO-SUMMARY | Product-first summary for the Ship gate. **Proposed — body below, not yet in tabtype.** |
+| `ceo-summary` | → implementer | CEO-SUMMARY | Answer-first (bottom line, then outcomes, then CTO-altitude approach) summary for the Ship gate. |
 | `pr-description` | → implementer | PR_DESCRIPTION | PR body for a technical colleague who won't read the diff. |
 
 Plus user-invoked project skills at ONBOARD and UPDATE_DOCS (duet doesn't bundle or assume these; the framing turn names them), and `/compact` fired with the compaction snippets as its argument.
 
-## Proposed snippet: `ceo-summary`
+## The `ceo-summary` snippet
 
-Mandated 2026-06-11. Fired by the orchestrator as the last act of the IMPLEMENTATION phase, once implementation and follow-up reviews are done; its output leads the Ship-gate packet. The audience is the user first and a colleague second — semi-developer-facing, so non-technical aspects lead and technology comes last, at CEO/CTO altitude. Documented here ahead of being added to the tabtype library (duet owns its shipped snippet library, the `snippets/` files; porting to the tabtype config is a manual human step).
-
-```toml
-[[snippets]]
-key = "ceo-summary"
-expand = '''Implementation and follow-up reviews are done. Write a CEO-facing summary of this PR — for me, and for explaining the work to a colleague without walking them through the diff.
-
-Start non-technical, in this order:
-
-1. What the PR does, from a product perspective
-2. Bugs fixed
-3. Features added
-4. What problems it solves
-
-Then the technical side at a very high level — the approach and the one or two decisions a CTO would care about. No file paths, no function names, no implementation play-by-play.
-
-This is CEO/CTO altitude: outcomes first, technology last. Drop any section that's empty. Tight prose beats exhaustive sections.'''
-```
+Fired by the orchestrator as the last act of the implementation phase (after `reconcile-docs`, before the consultant's verify where one runs); its output leads the Ship-gate packet. The audience is the user first and a colleague second, so it is answer-first: the bottom line, then the concrete outcomes, then the technical approach at CTO altitude. The body lives in the shipped library (`snippets/build.toml`), read live with `duet snippets show ceo-summary`.
 
 Evidence for the move: the user repeatedly makes a free-form "CEO-reframe" request in real sessions ("Can you step back and give me a more CEO-facing description of how we plan to design this…" — planlab `b7487993` 07:22:37Z, `a463ad80` 07:12:21Z, `e9607005` 05:12:52Z **(observed)**), and the original example session ended with a "CEO-readable" PR description (`docs/observed-pattern.md`). The planning-stage reframe and this final-stage summary are the same move at two altitudes; the planning-stage variant is folded into `write-spec` as its mandatory leader-facing opening section (2026-06-12), the final-stage one is this snippet. `ceo-summary` and `pr-description` both run — the former feeds the human gate, the latter feeds the PR body.
 

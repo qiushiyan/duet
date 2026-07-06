@@ -184,16 +184,12 @@ The docs ship with this change — they ride the branch (and the PR, where there
 <snippet key="ceo-summary">
 Implementation and follow-up reviews are done. Write a CEO-facing summary of this PR — for me, and for explaining the work to a non-technical stakeholder without walking them through the code.
 
-Start non-technical, in this order:
+**Lead with the bottom line** — the one or two sentences you'd give the CEO in the elevator: what this ships, and why it matters to the product. Everything after supports that line:
 
-1. What the PR does, from a product perspective
-2. Bugs fixed
-3. Features added
-4. What problems it solves
+1. **The outcomes, concretely** — the problems now solved, the bugs now fixed, the features now available. Product terms, not mechanisms.
+2. **The technical side at CTO altitude** — the shape of the approach and the one or two decisions a CTO would care about. No file paths, no function names, no implementation play-by-play.
 
-Then the technical side at a very high level — the approach and the one or two decisions a CTO would care about. No file paths, no function names, no implementation play-by-play.
-
-This is CEO/CTO altitude: outcomes first, technology last. Drop any section that's empty. Tight prose beats exhaustive sections.
+Answer first, support after: a reader who stops at any point should leave with the most important thing they could have gotten by then. Drop any section that's empty. Tight prose beats exhaustive sections.
 </snippet>
 <snippet key="consultant-verify">
 Your job this turn is to verify the implemented change against its frozen acceptance contract — assertion by assertion, on observed behavior, never by reading the diff.

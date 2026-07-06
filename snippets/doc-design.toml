@@ -1,5 +1,6 @@
-# Doc-loop × design — the design arc's ONE committed document replacing the
-# spec + plan pair: product sections on top (spec altitude), technical
+# Doc-loop × design — the ONE committed document replacing the spec + plan
+# pair on the design-doc workflows (blueprint, relay, and any composed
+# design-upstream workflow): product sections on top (spec altitude), technical
 # sections below (plan altitude minus per-case enumeration), reviewed in one
 # section-scoped loop. review-design and its -again variant count review
 # rounds through the action catalog (ACTION_CATALOG in src/voices/policy.ts).
@@ -38,6 +39,8 @@ Leave these out — they're the build's to decide, and pinning them now would co
 
 **Do not include any time/effort estimates** ("2 days", "~3 hours") — describe the work itself.
 
+**Before you finish, hunt the rabbit holes** — walk the approach end to end looking for what could quietly eat the build: a technical unknown nobody has proven, a design problem the doc gestures at but doesn't solve, an interdependency that reads simpler than it is. For each one: solve it here, cut it out of scope explicitly, or name it in the open questions. An unnamed hole doesn't disappear — it resurfaces mid-build, where the builder has only this document to resolve it with.
+
 If you have remaining product questions or major technical uncertainty, interview me before you write.'''
 
 [[snippets]]
@@ -68,6 +71,8 @@ The doc runs top-down — product sections (goals, behaviors, non-goals) above t
 - **Over-building** — defensive handling for states that could be made unrepresentable, speculative features or config nobody asked for, an abstraction pulled out too early. Flag these the way you'd flag a missing case.
 - **Test standards:** do the named behaviors cover the critical paths, and are the strategies at the right altitude (behavior through interfaces, mocking only at boundaries)?
 - Non-goals + open questions: anything in-scope that should defer? Anything missing from the uncertainty list?
+
+**Run a pre-mortem before you write up findings.** It's a month from now: the build off this doc — executed by someone holding only this document — stalled, or shipped subtly wrong; no crash, no failing test. Write down the two or three most plausible causes, then check whether the doc already defends against each; any it doesn't becomes a finding. Looking back from an assumed failure surfaces risks that reading forward misses.
 
 **Per point:**
 - Agree → add technical suggestions, caveats, or risks worth flagging.

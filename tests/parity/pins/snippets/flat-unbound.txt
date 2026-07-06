@@ -60,6 +60,8 @@ The spec is a high-level implementation plan — technical content is fine, but 
 
 **Do not include any time/effort estimates** ("2 days", "~3 hours"), describe the work itself.
 
+**Before you finish, hunt the rabbit holes** — walk the approach end to end looking for what could quietly eat the build: a technical unknown nobody has proven, a design problem the spec gestures at but doesn't solve, an interdependency that reads simpler than it is. For each one: solve it here, cut it out of scope explicitly, or name it in the open questions. An unnamed hole doesn't disappear — it resurfaces mid-build as a stall or a silent wrong turn.
+
 If you have remaining product questions or major technical uncertainty, interview me before you write.
 </snippet>
 <snippet key="review-spec">
@@ -211,6 +213,8 @@ Challenge sequencing, scope, choice of vertical slices, **whether the plan delet
 
 **Watch for over-building** — the plan's likelier failure is too much code, not too little: defensive handling for states it could make unrepresentable, fallbacks for cases that can't occur, speculative features or config the spec didn't ask for, or a shared abstraction pulled out too early. Flag these the way you'd flag a missing case. And steer the other way when you catch yourself wanting *more* — prefer pushing a bad state to where it's unrepresentable, or validation to a single boundary, over adding error handling at every call site.
 
+**Run a pre-mortem before you write up findings.** It's a month from now: the build off this plan stalled, or shipped subtly wrong — no crash, no failing test. Write down the two or three most plausible causes, then check whether the plan already defends against each; any it doesn't becomes a finding. Looking back from an assumed failure surfaces risks that reading forward misses.
+
 The right plan should feel inevitable. Don't default to politeness.
 
 **End with an "Optional polish" section**, separate from the findings above: wording-level fixes where you can supply the exact replacement and the meaning doesn't change. Write each as location plus replacement (before → after), ready to apply verbatim. If an imprecision changes behavior, scope, or a testable claim, it's a finding, not polish; if you can't write the exact replacement, it isn't polish either — raise it as a finding or drop it. When nothing qualifies, say so in a line rather than manufacturing items. Delivered as concerns, wording points cost the author a reread of the whole document; delivered as ready replacements, they cost nothing.
@@ -286,6 +290,8 @@ Leave these out — they're the build's to decide, and pinning them now would co
 
 **Do not include any time/effort estimates** ("2 days", "~3 hours") — describe the work itself.
 
+**Before you finish, hunt the rabbit holes** — walk the approach end to end looking for what could quietly eat the build: a technical unknown nobody has proven, a design problem the doc gestures at but doesn't solve, an interdependency that reads simpler than it is. For each one: solve it here, cut it out of scope explicitly, or name it in the open questions. An unnamed hole doesn't disappear — it resurfaces mid-build, where the builder has only this document to resolve it with.
+
 If you have remaining product questions or major technical uncertainty, interview me before you write.
 </snippet>
 <snippet key="review-design">
@@ -314,6 +320,8 @@ The doc runs top-down — product sections (goals, behaviors, non-goals) above t
 - **Over-building** — defensive handling for states that could be made unrepresentable, speculative features or config nobody asked for, an abstraction pulled out too early. Flag these the way you'd flag a missing case.
 - **Test standards:** do the named behaviors cover the critical paths, and are the strategies at the right altitude (behavior through interfaces, mocking only at boundaries)?
 - Non-goals + open questions: anything in-scope that should defer? Anything missing from the uncertainty list?
+
+**Run a pre-mortem before you write up findings.** It's a month from now: the build off this doc — executed by someone holding only this document — stalled, or shipped subtly wrong; no crash, no failing test. Write down the two or three most plausible causes, then check whether the doc already defends against each; any it doesn't becomes a finding. Looking back from an assumed failure surfaces risks that reading forward misses.
 
 **Per point:**
 - Agree → add technical suggestions, caveats, or risks worth flagging.
@@ -664,7 +672,7 @@ $0
 <snippet key="review-and-fix">
 Code-review this implementation — and resolve what you find. You review with write access: you didn't write this code, but you own getting it ship-ready. The bar is the committed design doc — its product sections carry the goal and the boundaries, its technical sections the module shapes, seams, and test standards the build was to honor. Review against the doc's intent, not a redesign of your own.
 
-**First, understand what the builder did.** Read the actual code and commits, not just the handoff below. Where something looks wrong, work out what the builder was doing before judging it — an approach that reads oddly from outside often encodes a constraint you haven't hit yet, and where it is genuinely wrong, knowing the intent is what lets you fix it without breaking what the intent got right.
+**First, understand what the builder did.** Read the actual code and commits, not just the handoff below. Where something looks wrong, work out what the builder was doing before judging it (Chesterton's fence: don't tear down what you don't yet know the purpose of) — an approach that reads oddly from outside often encodes a constraint you haven't hit yet, and where it is genuinely wrong, knowing the intent is what lets you fix it without breaking what the intent got right.
 
 **Lens — everything is fair game:**
 - **Correctness** — bugs, edge cases, failure modes.
@@ -705,16 +713,12 @@ The docs ship with this change — they ride the branch (and the PR, where there
 <snippet key="ceo-summary">
 Implementation and follow-up reviews are done. Write a CEO-facing summary of this PR — for me, and for explaining the work to a non-technical stakeholder without walking them through the code.
 
-Start non-technical, in this order:
+**Lead with the bottom line** — the one or two sentences you'd give the CEO in the elevator: what this ships, and why it matters to the product. Everything after supports that line:
 
-1. What the PR does, from a product perspective
-2. Bugs fixed
-3. Features added
-4. What problems it solves
+1. **The outcomes, concretely** — the problems now solved, the bugs now fixed, the features now available. Product terms, not mechanisms.
+2. **The technical side at CTO altitude** — the shape of the approach and the one or two decisions a CTO would care about. No file paths, no function names, no implementation play-by-play.
 
-Then the technical side at a very high level — the approach and the one or two decisions a CTO would care about. No file paths, no function names, no implementation play-by-play.
-
-This is CEO/CTO altitude: outcomes first, technology last. Drop any section that's empty. Tight prose beats exhaustive sections.
+Answer first, support after: a reader who stops at any point should leave with the most important thing they could have gotten by then. Drop any section that's empty. Tight prose beats exhaustive sections.
 </snippet>
 <snippet key="pr-description">
 Write a PR description aimed at a technical colleague who **won't read the diff**.

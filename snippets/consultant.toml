@@ -1,14 +1,16 @@
 # ── the consultant — the optional independent cross-family voice ──
-# Sent by the orchestrator to the consultant role only (never a worker). The
+# Sent by the orchestrator to the consultant voice only (never a worker). The
 # consultant audits the bet (assumptions, product fit), not the build — authored
 # against review-spec as the negative boundary. Tags deliberately avoid the
 # "review" prefix so a consultant turn never trips the review-round count.
 #
-# consultant-contract / consultant-verify are the acceptance-contract pair (Full
-# arc): the consultant AUTHORS a frozen, falsifiable definition of success at the
-# plan phase (blind to the plan/code), and a fresh session VERIFIES it against the
-# built system at the implement phase. The contract's job is to catch runtime drift
-# from the ratified spec that the implementer's own tests would miss — not to
+# consultant-contract / consultant-verify are the acceptance-contract pair (the
+# document-bearing workflows): the consultant AUTHORS a frozen, falsifiable
+# definition of success at the workflow's contract-author phase (full: plan,
+# blind to the technical plan; blueprint/relay: design, after the loop converges
+# — blind to the code either way), and a fresh session VERIFIES it against the
+# built system at the implement phase. The contract's job is to catch runtime
+# drift from the settled design that the builder's own tests would miss — not to
 # re-judge "the right thing" in the abstract.
 
 [[snippets]]
