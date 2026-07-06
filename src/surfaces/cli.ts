@@ -259,7 +259,7 @@ export function takeoverPlan(state: RunState, voice: Voice): TakeoverPlan {
 program
   .name('duet')
   .description(
-    "Semi-AFK orchestrator for a two-worker AI engineering workflow: an LLM orchestrator routes each stage's duty pair (planning's architect and analyst; delivery's builder and critic or judge) through a multi-phase workflow, pausing at human gates.",
+    "Compose your AI engineering workflow from opinionated building blocks and run it semi-AFK: an LLM orchestrator routes each stage's duty pair (planning's architect and analyst; delivery's builder and critic or judge) through the workflow's phases, pausing at human gates only you can cross.",
   )
   .version('0.1.0')
   .addHelpText(

@@ -1,14 +1,14 @@
 # duet
 
-**A semi-AFK orchestrator for a two-agent AI coding workflow — one agent makes each artifact, another checks it, and an LLM routes between them while you stay the editor-in-chief.**
+**Compose the way you build software from opinionated building blocks — spec loops, design docs, adversarial review, an AFK build — and duet runs it: one AI agent makes each artifact, another checks it, an LLM orchestrator routes between them, and human gates only you can cross.**
 
-If you already run two coding agents in parallel — one writing specs/plans/code, one critiquing them — and spend your day copy-pasting between them and nudging each along, that's the workflow duet automates. A read-only **orchestrator** drives the hand-offs — it picks the right prompt, routes each agent's output to the other, and decides when a review loop has converged — and pauses at **human gates** that no agent can cross. You approve the early decisions, walk away, and come back to an opened pull request or a well-formed question waiting for you.
+duet is built around one process shape: every artifact — a spec, a design doc, the code — is drafted by one agent and critiqued by another, phase after phase, while you approve direction at a few gates and stay away from the keyboard for the rest. What that process *is* is yours to say: duet ships four ready workflows (from a thorough spec → plan → implement pipeline down to a research → implement quickie) and the vocabulary they're built from — pick one, or compose your own in a few lines of TypeScript. Either way the same runtime drives it, and you come back to an opened pull request or a well-formed question waiting for you.
 
 It's a personal tool, built for one developer's workflow across their own projects, and published in case the shape is useful to you — not a polished product. Expect rough edges.
 
 ## How it works
 
-A run executes one **workflow** in two **stages** — an attended **planning** stage and an AFK **delivery** stage — and each stage pairs two **workers**, identified by **duty**: planning's **architect** drafts the documents and its **analyst** critiques them; delivery's **builder** writes the code and its **critic** reviews it (on the relay workflow the checker is a **judge**, which also fixes what it finds). Every duty can bind to either provider (`claude` or `codex`); the **orchestrator** must be `claude` in v1 — Codex-as-orchestrator is designed but unbuilt:
+The process duet automates is one you may already run by hand: two coding agents in parallel — one writing the specs, plans, and code, the other critiquing them — with you copy-pasting between them and nudging each along. In duet, a run executes one **workflow** in two **stages** — an attended **planning** stage and an AFK **delivery** stage — and each stage pairs two **workers**, identified by **duty**: planning's **architect** drafts the documents and its **analyst** critiques them; delivery's **builder** writes the code and its **critic** reviews it (on the relay workflow the checker is a **judge**, which also fixes what it finds). Every duty can bind to either provider (`claude` or `codex`); the **orchestrator** must be `claude` in v1 — Codex-as-orchestrator is designed but unbuilt:
 
 | Voice | Does | Default |
 |---|---|---|
