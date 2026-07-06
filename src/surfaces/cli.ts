@@ -10,6 +10,8 @@ import { continuePlanner } from './continue-planner.ts';
 import type { ContinueEventType, RestoredFacts } from './continue-planner.ts';
 import { dutyBindingFor, formatBinding, parseBindAddress, resolveRunConfig } from '../voices/bindings.ts';
 import type { BindAddress } from '../voices/bindings.ts';
+import { preflightMarker, preflightRunBindings } from '../voices/preflight.ts';
+import type { PreflightReport } from '../voices/preflight.ts';
 import { sessionPolicyFor, sessionRecordFor, voicesFor } from '../voices/policy.ts';
 import { DEFAULT_FRAMING_FILE, composeInEditor, parseGatesAt, resolveHumanText, resolveRunInputs } from './framing.ts';
 import {
@@ -392,6 +394,13 @@ program
     }
     const { bindings, degradedEdges, budget } = resolved;
 
+    let preflightReport: PreflightReport = { byAddress: {} };
+    try {
+      preflightReport = await preflightRunBindings(bindings, runInputs.workflowSpec, cwd);
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+    }
+
     let branch: string | undefined;
     try {
       branch = (await execa('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd })).stdout.trim();
@@ -419,12 +428,14 @@ program
     console.log(`orchestrator: ${formatBinding(bindings.orchestrator)}`);
     for (const stage of stagesOf(wf)) {
       const pair = [stage.duties.maker, stage.duties.checker]
-        .map((duty) => `${duty}=${formatBinding(dutyBindingFor(bindings, duty))}`)
+        .map((duty) => `${duty}=${formatBinding(dutyBindingFor(bindings, duty))}${preflightMarker(preflightReport.byAddress[duty])}`)
         .join(' · ');
       const edges = stage.edges ? Object.entries(stage.edges).map(([into, edge]) => `${into}←${edge.from}`).join(' · ') : '';
       console.log(`${stage.name}: ${pair}${edges ? ` · continuity ${edges}` : ''}`);
     }
-    console.log(`consultant: ${bindings.consultant ? formatBinding(bindings.consultant) : 'off'}`);
+    console.log(
+      `consultant: ${bindings.consultant ? `${formatBinding(bindings.consultant)}${preflightMarker(preflightReport.byAddress.consultant)}` : 'off'}`,
+    );
     for (const edge of degradedEdges) {
       const line = `continuity: ${edge.into}←${edge.from} degraded to fresh (${edge.reason}) — ${edge.into} starts a fresh session at the stage boundary`;
       console.log(line);
