@@ -392,7 +392,7 @@ program
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
     }
-    const { bindings, degradedEdges, budget } = resolved;
+    const { bindings, degradedEdges, budget, corpusRoot } = resolved;
 
     let preflightReport: PreflightReport = { byAddress: {} };
     try {
@@ -414,6 +414,7 @@ program
       ...(branch ? { branch } : {}),
       bindings,
       ...(budget !== undefined ? { budget } : {}),
+      ...(corpusRoot !== undefined ? { corpusRoot } : {}),
     });
     // The editor draft is archived into the run dir by createRun; the
     // staging file is consumed so the next bare `duet new` starts fresh.

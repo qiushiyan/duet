@@ -5,10 +5,12 @@ import type { Snapshot } from 'xstate';
 import { build, compileWorkflow, defineWorkflow, finish, frame } from '../src/workflows.ts';
 import { defaultBindingsFor } from '../src/voices/bindings.ts';
 import { claudeArgs } from '../src/voices/providers/claude.ts';
+import { allocateCorpusRecordDir } from '../src/run/corpus.ts';
 import { machineFor } from '../src/run/machine.ts';
 import { workflowFor, workflowPath } from '../src/run/workflow.ts';
 import {
   acquireMcpOwner,
+  appendNote,
   appendVoiceLog,
   budgetFor,
   clearContextUsage,
@@ -296,6 +298,40 @@ describe('run creation', () => {
     expect.soft(budgetFor(created, 'implement')).toEqual({ worker: undefined, orchestrator: undefined });
   });
 
+  test('createRun omits corpusDir without config (default-off byte-for-byte)', ({ projectDir }) => {
+    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full') });
+    expect.soft(created.corpusDir).toBeUndefined();
+    expect.soft('corpusDir' in loadRunState(projectDir, created.runId)).toBe(false);
+  });
+
+  test('createRun freezes the corpus record path and mirrors creation artifacts when configured', ({ projectDir }) => {
+    const corpusRoot = join(projectDir, 'corpus');
+    const created = createRun({
+      cwd: projectDir,
+      bindings: defaultBindingsFor('full'),
+      framing: 'body only',
+      corpusRoot,
+    });
+
+    expect.soft(created.corpusDir).toBe(join(corpusRoot, created.runId));
+    expect.soft(readFileSync(join(created.corpusDir!, 'state.json'), 'utf8')).toContain(`"runId": "${created.runId}"`);
+    expect.soft(readFileSync(join(created.corpusDir!, 'workflow.json'), 'utf8')).toContain('"name": "full"');
+    expect.soft(readFileSync(join(created.corpusDir!, 'framing.md'), 'utf8')).toBe('body only');
+    expect.soft(readFileSync(join(created.corpusDir!, 'notes.md'), 'utf8')).toContain('run created');
+    expect.soft(JSON.parse(readFileSync(join(created.corpusDir!, 'corpus.json'), 'utf8'))).toMatchObject({
+      runId: created.runId,
+      sourceCwd: projectDir,
+    });
+  });
+
+  test('corpus record allocation suffixes a run-id collision once at freeze time', ({ projectDir }) => {
+    const root = join(projectDir, 'corpus');
+    mkdirSync(join(root, '20260706-1200-abcd'), { recursive: true });
+    writeFileSync(join(root, '20260706-1200-abcd', 'state.json'), JSON.stringify({ runId: 'other', cwd: '/elsewhere' }));
+
+    expect(allocateCorpusRecordDir(root, '20260706-1200-abcd', projectDir)).toBe(join(root, '20260706-1200-abcd-2'));
+  });
+
   test('createRun freezes shipped workflows into workflow.json', ({ projectDir }) => {
     const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('blueprint'), workflow: 'blueprint' });
     const frozen = JSON.parse(readFileSync(workflowPath(projectDir, created.runId), 'utf8'));
@@ -361,6 +397,27 @@ describe('persistence', () => {
     expect(loadMachineSnapshot(run)).toBeUndefined();
     saveMachineSnapshot(run, snapshot);
     expect(loadMachineSnapshot(run)).toEqual(snapshot);
+  });
+
+  test('corpus mirrors log appends, state saves, notes, and machine snapshots fail-softly', ({ projectDir }) => {
+    const corpusRoot = join(projectDir, 'corpus');
+    const run = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), corpusRoot });
+    appendVoiceLog(run, 'architect', '◀ prompt (tag=write-spec)', 'body');
+    appendNote(run, 'human', 'a note');
+    run.lastActivity = 'saved';
+    saveRunState(run);
+    const snapshot: Snapshot<unknown> = { status: 'active', output: undefined, error: undefined };
+    saveMachineSnapshot(run, snapshot);
+
+    expect.soft(readFileSync(join(run.corpusDir!, 'architect.log'), 'utf8')).toContain('write-spec');
+    expect.soft(readFileSync(join(run.corpusDir!, 'notes.md'), 'utf8')).toContain('a note');
+    expect.soft(JSON.parse(readFileSync(join(run.corpusDir!, 'state.json'), 'utf8')).lastActivity).toBe('saved');
+    expect.soft(JSON.parse(readFileSync(join(run.corpusDir!, 'machine.json'), 'utf8'))).toEqual(snapshot);
+
+    run.corpusDir = join(projectDir, 'not-a-dir', 'record');
+    writeFileSync(join(projectDir, 'not-a-dir'), 'blocks mkdir');
+    expect(() => appendVoiceLog(run, 'architect', 'still local')).not.toThrow();
+    expect(readFileSync(join(runDirOf(projectDir, run.runId), 'architect.log'), 'utf8')).toContain('still local');
   });
 });
 

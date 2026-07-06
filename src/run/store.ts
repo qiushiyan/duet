@@ -18,6 +18,7 @@ import type { CompiledWorkflow, GatePhase, PhaseName, WorkflowName } from '../re
 import type { ContextUsage, VoiceAddress } from '../voices/providers/types.ts';
 import type { ErrorClass, RetryState } from '../voices/health.ts';
 import { hasFrozenWorkflow, workflowFor, writeFrozenWorkflow } from './workflow.ts';
+import { allocateCorpusRecordDir, mirrorAppend, mirrorFile } from './corpus.ts';
 
 /**
  * Per-run working data under `.duet/runs/<run_id>/` in the target project —
@@ -131,6 +132,12 @@ export interface RunState {
   workflow: WorkflowName;
   /** Where the frozen workflow definition came from at createRun. */
   workflowSource?: WorkflowSource;
+  /**
+   * The frozen corpus record path for this run. Present only when the account
+   * config had `[corpus] dir` at creation; absent means the corpus sidecar is
+   * byte-for-byte off and no later process re-reads config to opt the run in.
+   */
+  corpusDir?: string;
   /** Project briefing from --framing — the only place project knowledge enters. */
   framing?: string;
   /** The run's working branch (captured at creation; updated by create_branch). */
@@ -555,6 +562,8 @@ export function createRun(opts: {
   /** The gateless posture (the consultant axis; the posture axis rides gatesAt). */
   gateless?: boolean;
   retryInfra?: number;
+  /** The resolved corpus root from account config; absent ⇒ corpus off. */
+  corpusRoot?: string;
 }): RunState {
   const now = new Date();
   const stamp = now.toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
@@ -570,12 +579,14 @@ export function createRun(opts: {
     throw new Error(`createRun workflow "${wf}" does not match compiled workflow "${workflowSpec.name}"`);
   }
   const gatesAt = opts.gatesAt ?? defaultPosture(gatePhasesOf(workflowSpec), defaultPreAuthorizedOf(workflowSpec));
+  const corpusDir = opts.corpusRoot ? allocateCorpusRecordDir(opts.corpusRoot, runId, opts.cwd) : undefined;
   const state: RunState = {
     runId,
     createdAt: now.toISOString(),
     cwd: opts.cwd,
     workflow: wf,
     ...(opts.workflowSource ? { workflowSource: opts.workflowSource } : isShippedWorkflowName(wf) ? { workflowSource: { layer: 'shipped' as const } } : {}),
+    ...(corpusDir ? { corpusDir } : {}),
     ...(opts.specPath ? { specPath: opts.specPath } : {}),
     ...(opts.framing ? { framing: opts.framing } : {}),
     ...(opts.branch ? { branch: opts.branch } : {}),
@@ -604,7 +615,10 @@ export function createRun(opts: {
   // The run dir is self-contained: the framing is archived next to the logs
   // (state.json also embeds it, but the file is the human-readable artifact).
   const archive = opts.framingRaw ?? opts.framing;
-  if (archive) writeFileSync(join(dir, 'framing.md'), archive);
+  if (archive) {
+    writeFileSync(join(dir, 'framing.md'), archive);
+    mirrorFile(state, 'framing.md');
+  }
   appendNote(state, 'human', `run created (${opts.specPath ? `spec: ${opts.specPath}` : 'framing-only entry'})`);
   return state;
 }
@@ -676,6 +690,7 @@ function normalizeRunState(state: RunState): RunState {
 export function saveRunState(state: RunState): void {
   const dir = ensureRunDir(state.cwd, state.runId);
   atomicWrite(join(dir, STATE_FILE), JSON.stringify(state, null, 2) + '\n');
+  mirrorFile(state, STATE_FILE);
 }
 
 /**
@@ -1009,6 +1024,7 @@ export function recordPhaseLabel(state: RunState, phase: PhaseName): void {
 export function saveMachineSnapshot(state: RunState, snapshot: Snapshot<unknown>): void {
   const dir = ensureRunDir(state.cwd, state.runId);
   atomicWrite(join(dir, SNAPSHOT_FILE), JSON.stringify(snapshot, null, 2) + '\n');
+  mirrorFile(state, SNAPSHOT_FILE);
 }
 
 export function loadMachineSnapshot(state: RunState): Snapshot<unknown> | undefined {
@@ -1027,12 +1043,15 @@ export function appendVoiceLog(state: RunState, voice: Voice, header: string, bo
   const stamp = new Date().toISOString();
   const block = body === undefined ? `[${stamp}] ${header}\n` : `[${stamp}] ${header}\n${body}\n\n`;
   appendFileSync(path, block);
+  mirrorAppend(state, `${voice}.log`, block);
 }
 
 /** The notes file — the run's dogfooding journal, written by both the human and the orchestrator. */
 export function appendNote(state: RunState, author: 'human' | 'orchestrator', note: string): void {
   const path = join(ensureRunDir(state.cwd, state.runId), 'notes.md');
-  appendFileSync(path, `- ${new Date().toISOString()} [${author}] ${note}\n`);
+  const block = `- ${new Date().toISOString()} [${author}] ${note}\n`;
+  appendFileSync(path, block);
+  mirrorAppend(state, 'notes.md', block);
 }
 
 /**
