@@ -54,9 +54,26 @@ describe('parseBindingSpec — the one provider[:model] grammar', () => {
     expect.soft(parseBindingSpec('builder', 'claude:claude-fable-5')).toEqual({ provider: 'claude', model: 'claude-fable-5' });
   });
 
-  test('codex takes no model — a model rejects with the config pointer', () => {
+  test('codex can defer to config or carry an inline model', () => {
     expect.soft(parseBindingSpec('critic', 'codex')).toEqual({ provider: 'codex' });
-    expect.soft(() => parseBindingSpec('critic', 'codex:gpt-6')).toThrow(/codex has no model key by design/);
+    expect.soft(parseBindingSpec('critic', 'codex:gpt-5.5')).toEqual({ provider: 'codex', model: 'gpt-5.5' });
+  });
+
+  test('@effort parses for bare and modeled bindings', () => {
+    expect.soft(parseBindingSpec('critic', 'codex@low')).toEqual({ provider: 'codex', effort: 'low' });
+    expect.soft(parseBindingSpec('critic', 'codex:gpt-5.5@high')).toEqual({ provider: 'codex', model: 'gpt-5.5', effort: 'high' });
+    expect.soft(parseBindingSpec('builder', 'claude:claude-opus-4-8@max')).toEqual({
+      provider: 'claude',
+      model: 'claude-opus-4-8',
+      effort: 'max',
+    });
+  });
+
+  test('effort is fail-closed per provider and @ is reserved for the suffix', () => {
+    expect.soft(() => parseBindingSpec('critic', 'codex:gpt-5.5@max')).toThrow(/codex effort must be one of minimal, low, medium, high, xhigh/);
+    expect.soft(() => parseBindingSpec('builder', 'claude:minimal-model@minimal')).toThrow(/claude effort must be one of low, medium, high, xhigh, max/);
+    expect.soft(() => parseBindingSpec('builder', 'claude:model@name@high')).toThrow(/"@" is reserved/);
+    expect.soft(() => parseBindingSpec('builder', 'claude@')).toThrow(/empty @effort suffix/);
   });
 
   test('an empty or unknown-provider spec rejects', () => {
@@ -135,6 +152,40 @@ describe('the config file — top-level [orchestrator]/[consultant] + [duties.*]
     expect.soft(dutyBindingFor(resolveRunConfig({ workflow: 'full' }, ok).bindings, 'builder').transport).toBe('interactive');
   });
 
+  test('effort fields validate per provider from config tables', ({ projectDir }) => {
+    const ok = configIn(
+      join(projectDir, 'ok'),
+      '[duties.builder]\nprovider = "claude"\neffort = "xhigh"\n\n[duties.critic]\nprovider = "codex"\neffort = "minimal"',
+    );
+    const bindings = resolveRunConfig({ workflow: 'full' }, ok).bindings;
+    expect.soft(dutyBindingFor(bindings, 'builder').effort).toBe('xhigh');
+    expect.soft(dutyBindingFor(bindings, 'critic').effort).toBe('minimal');
+
+    const codexMax = configIn(join(projectDir, 'bad-codex'), '[duties.critic]\nprovider = "codex"\neffort = "max"');
+    const claudeMinimal = configIn(join(projectDir, 'bad-claude'), '[duties.builder]\nprovider = "claude"\neffort = "minimal"');
+    expect.soft(() => resolveRunConfig({ workflow: 'full' }, codexMax)).toThrow(/codex effort must be one of minimal, low, medium, high, xhigh/);
+    expect.soft(() => resolveRunConfig({ workflow: 'full' }, claudeMinimal)).toThrow(/claude effort must be one of low, medium, high, xhigh, max/);
+  });
+
+  test('native passthrough fields route structurally to their provider only', ({ projectDir }) => {
+    const ok = configIn(
+      join(projectDir, 'ok'),
+      '[duties.builder]\nprovider = "claude"\nclaude_args = ["--fallback-model", "claude-opus-4-6"]\n\n[duties.critic]\nprovider = "codex"\ncodex_config = { model_reasoning_summary = "detailed" }',
+    );
+    const bindings = resolveRunConfig({ workflow: 'full' }, ok).bindings;
+    expect.soft(dutyBindingFor(bindings, 'builder').native).toEqual({ claudeArgs: ['--fallback-model', 'claude-opus-4-6'] });
+    expect.soft(dutyBindingFor(bindings, 'critic').native).toEqual({ codexConfig: { model_reasoning_summary: 'detailed' } });
+
+    const claudeArgsOnCodex = configIn(join(projectDir, 'bad-a'), '[duties.critic]\nprovider = "codex"\nclaude_args = ["--debug"]');
+    const codexConfigOnClaude = configIn(join(projectDir, 'bad-b'), '[duties.builder]\nprovider = "claude"\ncodex_config = { model = "gpt-5.5" }');
+    const badClaudeArgs = configIn(join(projectDir, 'bad-c'), '[duties.builder]\nprovider = "claude"\nclaude_args = ["--debug", 1]');
+    const badCodexConfig = configIn(join(projectDir, 'bad-d'), '[duties.critic]\nprovider = "codex"\ncodex_config = "model = gpt"');
+    expect.soft(() => resolveRunConfig({ workflow: 'full' }, claudeArgsOnCodex)).toThrow(/claude_args is a claude-only native passthrough/);
+    expect.soft(() => resolveRunConfig({ workflow: 'full' }, codexConfigOnClaude)).toThrow(/codex_config is a codex-only native passthrough/);
+    expect.soft(() => resolveRunConfig({ workflow: 'full' }, badClaudeArgs)).toThrow(/claude_args must be an array of strings/);
+    expect.soft(() => resolveRunConfig({ workflow: 'full' }, badCodexConfig)).toThrow(/codex_config must be a table/);
+  });
+
   test('the orchestrator requires claude in v1 — from any tier', ({ projectDir }) => {
     const viaConfig = configIn(projectDir, '[orchestrator]\nprovider = "codex"');
     expect.soft(() => resolveRunConfig({ workflow: 'full' }, viaConfig)).toThrow(/orchestrator requires the claude provider/);
@@ -163,10 +214,15 @@ describe('per-key precedence — flags > framing > config > defaults', () => {
   });
 
   test('a spec override keeps a configured claude transport (the billing footgun); a provider switch drops it', ({ projectDir }) => {
-    const path = configIn(projectDir, '[duties.builder]\nprovider = "claude"\ntransport = "interactive"');
+    const path = configIn(projectDir, '[duties.builder]\nprovider = "claude"\ntransport = "interactive"\nclaude_args = ["--fallback-model", "claude-opus-4-6"]');
     // Model-only override: the subscription-billed transport carries forward.
     const carried = resolveRunConfig({ workflow: 'full', flagBinds: { builder: 'claude:claude-sonnet-5' } }, path);
-    expect.soft(dutyBindingFor(carried.bindings, 'builder')).toEqual({ provider: 'claude', model: 'claude-sonnet-5', transport: 'interactive' });
+    expect.soft(dutyBindingFor(carried.bindings, 'builder')).toEqual({
+      provider: 'claude',
+      model: 'claude-sonnet-5',
+      transport: 'interactive',
+      native: { claudeArgs: ['--fallback-model', 'claude-opus-4-6'] },
+    });
     // Provider switch: nothing to carry — codex carries no transport at all.
     const switched = resolveRunConfig({ workflow: 'full', flagBinds: { builder: 'codex' } }, path);
     expect.soft(dutyBindingFor(switched.bindings, 'builder')).toEqual({ provider: 'codex' });
@@ -277,9 +333,12 @@ describe('budget — flag over config over the off default', () => {
 });
 
 describe('formatBinding — the echo/status rendering', () => {
-  test('provider, claude model, and the interactive marker', () => {
+  test('provider, model, effort, and the interactive marker', () => {
     expect.soft(formatBinding({ provider: 'codex' })).toBe('codex');
+    expect.soft(formatBinding({ provider: 'codex', model: 'gpt-5.5' })).toBe('codex:gpt-5.5');
+    expect.soft(formatBinding({ provider: 'codex', effort: 'high' })).toBe('codex@high');
+    expect.soft(formatBinding({ provider: 'codex', model: 'gpt-5.5', effort: 'xhigh' })).toBe('codex:gpt-5.5@xhigh');
     expect.soft(formatBinding({ provider: 'claude', model: 'claude-opus-4-8', transport: 'headless' })).toBe('claude:claude-opus-4-8');
-    expect.soft(formatBinding({ provider: 'claude', model: 'm', transport: 'interactive' })).toBe('claude:m (interactive)');
+    expect.soft(formatBinding({ provider: 'claude', model: 'm', effort: 'max', transport: 'interactive' })).toBe('claude:m@max (interactive)');
   });
 });

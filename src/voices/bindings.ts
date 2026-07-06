@@ -22,12 +22,22 @@ import type { Duty, WorkflowRef } from '../registry/workflows.ts';
 
 export type Provider = 'claude' | 'codex';
 
+export type Effort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export interface BindingNative {
+  claudeArgs?: string[];
+  codexConfig?: Record<string, unknown>;
+}
+
 /** Which provider (and model/transport, for claude) a voice runs on. */
 export interface Binding {
   provider: Provider;
-  /** Anthropic model ID. Only meaningful for the claude provider; the codex
-   * provider deliberately has no model key (~/.codex/config.toml governs). */
+  /** Provider-native model override. Absent codex model defers to ~/.codex/config.toml. */
   model?: string;
+  /** Normalized reasoning-effort intent, validated per provider at manifest freeze. */
+  effort?: Effort;
+  /** Provider-native config-only passthrough. Shape is routed, contents are provider-owned. */
+  native?: BindingNative;
   /**
    * How duet talks to a claude worker: "headless" (default) is `claude -p`,
    * which draws the metered Agent-SDK credit pool; "interactive" drives the
@@ -64,6 +74,29 @@ export interface VoiceBindings {
 export const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-8';
 
 export const CONFIG_PATH = join(homedir(), '.config', 'duet', 'config.toml');
+
+const PROVIDER_CAPS: Record<
+  Provider,
+  {
+    model: 'default' | 'defer';
+    effort: readonly Effort[];
+    transport: boolean;
+    native: 'claudeArgs' | 'codexConfig';
+  }
+> = {
+  claude: {
+    model: 'default',
+    effort: ['low', 'medium', 'high', 'xhigh', 'max'],
+    transport: true,
+    native: 'claudeArgs',
+  },
+  codex: {
+    model: 'defer',
+    effort: ['minimal', 'low', 'medium', 'high', 'xhigh'],
+    transport: false,
+    native: 'codexConfig',
+  },
+};
 
 /**
  * The shipped default binding per address, built FRESH per call (never a
@@ -115,43 +148,70 @@ export function parseBindAddress(raw: string): BindAddress {
 }
 
 /**
- * Parse a `provider[:model]` binding spec — THE one binding grammar, shared by
+ * Parse a `provider[:model][@effort]` binding spec — THE one binding grammar, shared by
  * `--bind` values, framing `bind.*` values, and the config tables' field pair.
  * Deliberately says nothing about transport (config-file only; the merge in
  * `resolveRunConfig` carries a configured claude transport forward so a
  * model-only override can never silently flip a subscription-billed voice back
  * to metered headless).
  */
-export function parseBindingSpec(address: BindAddress, spec: string): { provider: Provider; model?: string } {
+export function parseBindingSpec(address: BindAddress, spec: string): Binding {
   if (spec.trim() === '') {
-    throw new Error(`the ${address} binding is empty — set it to "provider[:model]" (e.g. "codex", "claude:claude-sonnet-5"), or omit it for the default`);
+    throw new Error(`the ${address} binding is empty — set it to "provider[:model][@effort]" (e.g. "codex", "claude:claude-sonnet-5"), or omit it for the default`);
   }
-  const [provider, ...rest] = spec.split(':');
+  const { body, effort } = splitEffortSuffix(address, spec.trim());
+  const [provider, ...rest] = body.split(':');
   const model = rest.length > 0 ? rest.join(':') : undefined;
-  return parseProviderModel(address, model === undefined ? { provider } : { provider, model });
+  return parseProviderModel(address, {
+    provider,
+    ...(model === undefined ? {} : { model }),
+    ...(effort === undefined ? {} : { effort }),
+  });
+}
+
+function splitEffortSuffix(address: BindAddress, spec: string): { body: string; effort?: string } {
+  const at = spec.lastIndexOf('@');
+  if (at === -1) return { body: spec };
+  const effort = spec.slice(at + 1);
+  if (!effort) throw new Error(`config: the ${address} binding has an empty @effort suffix`);
+  const body = spec.slice(0, at);
+  if (!body) throw new Error(`config: the ${address} binding is missing a provider before @${effort}`);
+  if (body.includes('@')) {
+    throw new Error(`config: the ${address} binding uses "@" inside the provider/model spec — "@" is reserved for the @effort suffix`);
+  }
+  return { body, effort };
 }
 
 /**
- * Validate the provider + model pair — the part shared by the spec grammar and
- * the config tables. Defaults a claude binding's model and rejects a model on
- * codex.
+ * Validate the provider + duet-owned knobs — the part shared by the spec grammar
+ * and the config tables. Defaults claude's model; codex leaves it absent unless
+ * the user supplied one.
  */
-function parseProviderModel(address: BindAddress, table: Record<string, unknown>): { provider: Provider; model?: string } {
+function parseProviderModel(address: BindAddress, table: Record<string, unknown>): Binding {
   const provider = table['provider'];
   if (provider !== 'claude' && provider !== 'codex') {
     throw new Error(`config: the ${address} binding's provider must be "claude" or "codex", got ${JSON.stringify(provider)}`);
   }
+  const caps = PROVIDER_CAPS[provider];
   const model = table['model'];
   if (model !== undefined && typeof model !== 'string') {
     throw new Error(`config: the ${address} binding's model must be a string`);
   }
-  if (provider === 'codex' && model !== undefined) {
+  const effort = table['effort'];
+  if (effort !== undefined && typeof effort !== 'string') {
+    throw new Error(`config: the ${address} binding's effort must be a string`);
+  }
+  if (effort !== undefined && !(caps.effort as readonly string[]).includes(effort)) {
     throw new Error(
-      `config: the ${address} binding sets a model for the codex provider — codex has no model key by design; configure the model in ~/.codex/config.toml instead`,
+      `config: the ${address} binding's ${provider} effort must be one of ${caps.effort.join(', ')} — got ${JSON.stringify(effort)}`,
     );
   }
-  if (provider === 'claude' && model === undefined) return { provider, model: DEFAULT_CLAUDE_MODEL };
-  return model === undefined ? { provider } : { provider, model };
+  const resolvedModel = model === undefined && caps.model === 'default' ? DEFAULT_CLAUDE_MODEL : model;
+  return {
+    provider,
+    ...(resolvedModel === undefined ? {} : { model: resolvedModel }),
+    ...(effort === undefined ? {} : { effort: effort as Effort }),
+  };
 }
 
 /** A config-table binding: provider/model plus the config-only transport knob. */
@@ -166,9 +226,10 @@ function parseBindingTable(address: BindAddress, raw: unknown, tableName: string
     }
   }
   const base = parseProviderModel(address, table);
+  const caps = PROVIDER_CAPS[base.provider];
   const transport = table['transport'];
   if (transport !== undefined) {
-    if (base.provider === 'codex') {
+    if (!caps.transport) {
       throw new Error(
         `config: [${tableName}] sets a transport for the codex provider — transport is a claude-only knob (codex already bills the subscription); remove it`,
       );
@@ -191,8 +252,33 @@ function parseBindingTable(address: BindAddress, raw: unknown, tableName: string
       );
     }
   }
+  const claudeArgs = table['claude_args'];
+  const codexConfig = table['codex_config'];
+  let native: BindingNative | undefined;
+  if (claudeArgs !== undefined) {
+    if (caps.native !== 'claudeArgs') {
+      throw new Error(`config: [${tableName}] sets claude_args for the codex provider — claude_args is a claude-only native passthrough; remove it`);
+    }
+    if (!Array.isArray(claudeArgs) || !claudeArgs.every((v) => typeof v === 'string')) {
+      throw new Error(`config: [${tableName}].claude_args must be an array of strings`);
+    }
+    native = { ...(native ?? {}), claudeArgs: [...claudeArgs] };
+  }
+  if (codexConfig !== undefined) {
+    if (caps.native !== 'codexConfig') {
+      throw new Error(`config: [${tableName}] sets codex_config for the claude provider — codex_config is a codex-only native passthrough; remove it`);
+    }
+    if (typeof codexConfig !== 'object' || codexConfig === null || Array.isArray(codexConfig)) {
+      throw new Error(`config: [${tableName}].codex_config must be a table`);
+    }
+    native = { ...(native ?? {}), codexConfig: codexConfig as Record<string, unknown> };
+  }
   // Claude bindings always carry a transport (default headless); codex never does.
-  return base.provider === 'claude' ? { ...base, transport: (transport as 'headless' | 'interactive' | undefined) ?? 'headless' } : base;
+  return {
+    ...base,
+    ...(base.provider === 'claude' ? { transport: (transport as 'headless' | 'interactive' | undefined) ?? 'headless' } : {}),
+    ...(native ? { native } : {}),
+  };
 }
 
 /**
@@ -383,9 +469,12 @@ export function resolveRunConfig(
     const configured = configBinds[address];
     if (spec === undefined) return configured ?? defaultBindingFor(address);
     const parsed = parseBindingSpec(address, spec);
-    if (parsed.provider !== 'claude') return parsed;
-    const carried = configured?.provider === 'claude' ? configured.transport : undefined;
-    return { ...parsed, transport: carried ?? 'headless' };
+    if (parsed.provider !== configured?.provider) {
+      return parsed.provider === 'claude' ? { ...parsed, transport: 'headless' } : parsed;
+    }
+    const native = configured.native;
+    if (parsed.provider !== 'claude') return { ...parsed, ...(native ? { native } : {}) };
+    return { ...parsed, transport: configured.transport ?? 'headless', ...(native ? { native } : {}) };
   };
 
   const duties: Partial<Record<Duty, Binding>> = {};
@@ -431,11 +520,12 @@ export function resolveRunConfig(
   return { bindings, degradedEdges: degradedEdgesFor(bindings, opts.workflow), ...(budget !== undefined ? { budget } : {}) };
 }
 
-/** Format a binding for echoes and status: `provider[:model][ (interactive)]`. */
+/** Format a binding for echoes and status: `provider[:model][@effort][ (interactive)]`. */
 export function formatBinding(binding: Binding): string {
-  const model = binding.provider === 'claude' && binding.model ? `:${binding.model}` : '';
+  const model = binding.model ? `:${binding.model}` : '';
+  const effort = binding.effort ? `@${binding.effort}` : '';
   const transport = binding.transport === 'interactive' ? ' (interactive)' : '';
-  return `${binding.provider}${model}${transport}`;
+  return `${binding.provider}${model}${effort}${transport}`;
 }
 
 /** The shipped default manifest for a workflow — the no-config, no-flag freeze. */
