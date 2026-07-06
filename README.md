@@ -252,17 +252,17 @@ Two Claude Code skills ship with duet (installed with `npx skills add` above): *
 
 ## Development & status
 
-**Status.** Early and personal. Live-verified end to end, on real work (pre-remodel — the 2026-07-04 duty-keyed domain remodel itself is test-verified, awaiting its first live run):
+**Status.** Early and personal. Live-verified end to end, on real work:
 
 - the **full** and **short** workflows, on both orchestrator hosts (headless and interactive)
-- the optional **consultant** and the **acceptance contract** (frozen success assertions, verified against the built system, self-healing through the workflow's fixer before they hold a gate)
+- **composing your own workflow** — the `duet/workflows` SDK end to end (an authored `deep-relay` definition → compile-and-freeze → gateless run → open PR; run `20260705-1731-58a5`), which also gave the 2026-07-04 duty-keyed remodel its first live run and live-exercised the **fixer** (judge) delivery posture, the severity holds (two mid-run holds, both genuine catches), and the pre-run `duet workflows` inspector
+- the optional **consultant** and the **acceptance contract** (frozen success assertions, verified against the built system, self-healing through the workflow's fixer before they hold a gate) — the hold path included: a mis-authored frozen assertion failed verify and held the Ship gate rather than shipping past it
 - the **gateless** walk-away posture, run supervision (`duet doctor`, default-on infra retry), the shared PR-only **`finish`** tail, and `duet stats`
 
 Built and test-verified, awaiting a first live run:
 
-- the **blueprint** workflow — the one-doc middle workflow above
-- the **relay** workflow and the **workflow vocabulary** beneath it (workflows as compositions of phase blocks with knobs; [`docs/automation-design.md`](docs/automation-design.md) §"The workflow vocabulary") — relay plans on a strong model, builds on a cheap one via per-duty `--bind` bindings, and checks with a writing **judge** that fixes findings directly and owns the docs + PR
-- **composing your own workflow** — the `duet/workflows` SDK, the project/user authoring layers, the pre-run `duet workflows` inspector (list / check / init), and the compile-and-freeze kernel; the shipped four are pinned byte-identical to their SDK rebuilds, but no project-authored composition has driven a live run yet
+- the **blueprint** workflow — the one-doc middle workflow above; its design doc-loop already carries live evidence via the composed `deep-relay` run, but the shipped shape itself hasn't run
+- the **relay** workflow — plans on a strong model, builds on a cheap one via per-duty `--bind` bindings, and checks with a writing **judge** that fixes findings directly and owns the docs + PR; its fixer delivery and escalation valve already carry live evidence via `deep-relay`, but the shipped shape itself hasn't run
 - the experimental **interactive-Claude worker transport** (bill a maker duty's turns to your flat subscription quota) — pending one live-auth check; see [`docs/interactive-transport.md`](docs/interactive-transport.md)
 - **warm-starting** the interactive orchestrator from an existing session (`--resume-session`)
 - the **AFK-resilience hardening** (stream watchdog, wall-clock caps, compaction recovery, context-pressure guards) — test-verified at the seams and probed against real transcripts; the induced-failure checks (a stalled stream, a real suspend) are still manual

@@ -61,7 +61,7 @@ If no shipped workflow says what the user means, define a project workflow rathe
 - Prefer the project layer (`.duet/workflows/<name>.ts`); use the user layer (`~/.config/duet/workflows/`) only when the user explicitly wants that shape across repos.
 - The file is compiled once at run creation and frozen into the run — editing or deleting it later never affects a live run.
 
-The user still launches with `workflow: <name>` in frontmatter or `duet new --workflow <name>`.
+Before emitting the launch command, validate the file with `duet workflows check <name>` — it compiles the definition and prints the derived shape (phases, gates, contract placement) without starting a run, so a missing-world rejection surfaces here instead of at `duet new`. The user still launches with `workflow: <name>` in frontmatter or `duet new --workflow <name>`.
 
 ## Gate posture
 
