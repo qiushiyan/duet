@@ -7,7 +7,7 @@ import { defaultBindingsFor } from '../src/voices/bindings.ts';
 import { claudeArgs } from '../src/voices/providers/claude.ts';
 import { allocateCorpusRecordDir } from '../src/run/corpus.ts';
 import { machineFor } from '../src/run/machine.ts';
-import { workflowFor, workflowPath } from '../src/run/workflow.ts';
+import { workflowFor, workflowForRunDir, workflowPath } from '../src/run/workflow.ts';
 import {
   acquireMcpOwner,
   appendNote,
@@ -27,6 +27,7 @@ import {
   scanRuns,
   loadMachineSnapshot,
   loadRunState,
+  loadRunStateFromDir,
   markTurnActive,
   recordContextUsage,
   recordPhaseLabel,
@@ -146,6 +147,13 @@ describe('run creation', () => {
   test('a created run round-trips through load', ({ projectDir, run }) => {
     const loaded = loadRunState(projectDir, run.runId);
     expect(loaded).toEqual(run);
+  });
+
+  test('a run can load directly from a record dir, with workflow resolved from that dir', ({ projectDir, run }) => {
+    const dir = runDirOf(projectDir, run.runId);
+    const loaded = loadRunStateFromDir(dir);
+    expect.soft(loaded).toEqual(run);
+    expect.soft(workflowForRunDir(loaded, dir).name).toBe('full');
   });
 
   test('the run dir is self-contained: state, framing archive, notes', ({ projectDir, run }) => {

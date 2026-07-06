@@ -626,6 +626,12 @@ export function createRun(opts: {
 export function loadRunState(cwd: string, runId: string): RunState {
   const path = join(runDirOf(cwd, runId), STATE_FILE);
   if (!existsSync(path)) throw new Error(`no run state at ${path} — is ${runId} a run of this project?`);
+  return loadRunStateFromDir(runDirOf(cwd, runId));
+}
+
+export function loadRunStateFromDir(runDir: string): RunState {
+  const path = join(runDir, STATE_FILE);
+  if (!existsSync(path)) throw new Error(`no run state at ${path}`);
   return normalizeRunState(JSON.parse(readFileSync(path, 'utf8')) as RunState);
 }
 

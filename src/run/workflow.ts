@@ -33,19 +33,27 @@ export function writeFrozenWorkflow(state: Pick<RunState, 'cwd' | 'runId' | 'wor
   mirrorFile(state, WORKFLOW_FILE);
 }
 
-export function workflowFor(state: Pick<RunState, 'cwd' | 'runId' | 'workflow'>): CompiledWorkflow {
-  const path = workflowPath(state.cwd, state.runId);
+function readWorkflowFile(state: Pick<RunState, 'runId' | 'workflow'>, path: string): CompiledWorkflow {
+  const workflow = validatedWorkflowSpec(JSON.parse(readFileSync(path, 'utf8')) as WorkflowSpecInput);
+  if (workflow.name !== state.workflow) {
+    throw new Error(
+      `run ${state.runId} state names workflow "${state.workflow}" but ${WORKFLOW_FILE} names "${workflow.name}" — restore the matching frozen workflow file or fix state.json`,
+    );
+  }
+  return workflow;
+}
+
+export function workflowForRunDir(state: Pick<RunState, 'runId' | 'workflow'>, runDir: string): CompiledWorkflow {
+  const path = join(runDir, WORKFLOW_FILE);
   if (existsSync(path)) {
-    const workflow = validatedWorkflowSpec(JSON.parse(readFileSync(path, 'utf8')) as WorkflowSpecInput);
-    if (workflow.name !== state.workflow) {
-      throw new Error(
-        `run ${state.runId} state names workflow "${state.workflow}" but ${WORKFLOW_FILE} names "${workflow.name}" — restore the matching frozen workflow file or fix state.json`,
-      );
-    }
-    return workflow;
+    return readWorkflowFile(state, path);
   }
   if (isShippedWorkflowName(state.workflow)) return validatedWorkflowSpec(workflowDefinition(state.workflow));
   throw new Error(
     `run ${state.runId} names workflow "${state.workflow}" but has no frozen ${WORKFLOW_FILE}, and it is not shipped (${Object.keys(WORKFLOWS).join(' · ')})`,
   );
+}
+
+export function workflowFor(state: Pick<RunState, 'cwd' | 'runId' | 'workflow'>): CompiledWorkflow {
+  return workflowForRunDir(state, join(state.cwd, '.duet', 'runs', state.runId));
 }
