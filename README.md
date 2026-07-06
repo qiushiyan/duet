@@ -2,7 +2,7 @@
 
 **Compose the way you build software from opinionated building blocks — spec loops, design docs, adversarial review, an AFK build — and duet runs it: one AI agent makes each artifact, another checks it, an LLM orchestrator routes between them, and human gates only you can cross.**
 
-duet is built around one process shape: every artifact — a spec, a design doc, the code — is drafted by one agent and critiqued by another, phase after phase, while you approve direction at a few gates and stay away from the keyboard for the rest. What that process *is* is yours to say: duet ships four ready workflows (from a thorough spec → plan → implement pipeline down to a research → implement quickie) and the vocabulary they're built from — pick one, or compose your own in a few lines of TypeScript. Either way the same runtime drives it, and you come back to an opened pull request or a well-formed question waiting for you.
+duet is built around one process shape: every artifact — a spec, a design doc, the code — is drafted by one agent and critiqued by another, phase after phase, while you approve direction at a few gates and stay away from the keyboard for the rest. What that process _is_ is yours to say: duet ships four ready workflows (from a thorough spec → plan → implement pipeline down to a research → implement quickie) and the vocabulary they're built from — pick one, or compose your own in a few lines of TypeScript. Either way the same runtime drives it, and you come back to an opened pull request or a well-formed question waiting for you.
 
 It's a personal tool, built for one developer's workflow across their own projects, and published in case the shape is useful to you — not a polished product. Expect rough edges.
 
@@ -10,11 +10,11 @@ It's a personal tool, built for one developer's workflow across their own projec
 
 The process duet automates is one you may already run by hand: two coding agents in parallel — one writing the specs, plans, and code, the other critiquing them — with you copy-pasting between them and nudging each along. In duet, a run executes one **workflow** in two **stages** — an attended **planning** stage and an AFK **delivery** stage — and each stage pairs two **workers**, identified by **duty**: planning's **architect** drafts the documents and its **analyst** critiques them; delivery's **builder** writes the code and its **critic** reviews it (on the relay workflow the checker is a **judge**, which also fixes what it finds). Every duty can bind to either provider (`claude` or `codex`); the **orchestrator** must be `claude` in v1 — Codex-as-orchestrator is designed but unbuilt:
 
-| Voice | Does | Default |
-|---|---|---|
-| **Orchestrator** | Routes the protocol — never writes code, only triages and decides who answers what | `claude` (Opus) |
-| **architect** · **builder** — the makers | The architect writes the spec, plan, or design doc; the builder writes the code and the PR | `claude` (Opus) |
-| **analyst** · **critic** / **judge** — the checkers | Critique each artifact — read-only, except relay's judge, which fixes findings directly and owns the docs + PR | `codex` |
+| Voice                                               | Does                                                                                                           | Default         |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | --------------- |
+| **Orchestrator**                                    | Routes the protocol — never writes code, only triages and decides who answers what                             | `claude` (Opus) |
+| **architect** · **builder** — the makers            | The architect writes the spec, plan, or design doc; the builder writes the code and the PR                     | `claude` (Opus) |
+| **analyst** · **critic** / **judge** — the checkers | Critique each artifact — read-only, except relay's judge, which fixes findings directly and owns the docs + PR | `codex`         |
 
 You pick the workflow at the start (`--workflow`). Under the hood the workflows aren't four hand-built pipelines — each is composed from the same few **phase blocks** (a framing analysis, a document loop, the AFK build, a finishing phase that opens the PR) with named knobs: which document the loop produces, whether the delivery checker critiques or fixes, who owns the finishing steps, which sessions carry across the stage boundary. duet ships four compositions as its standard library, and the same blocks are yours to compose ([below](#compose-your-own-workflow)). Each `→` is a phase the agents work through; each **GATE** is a stop where the run waits for you:
 
@@ -43,7 +43,7 @@ Every workflow shares the same AFK implementation phase and ends by opening a re
 The gates are enforced in code (a statechart), not by a prompt an agent could be talked out of. Between stops a detached background process drives the phase; nothing runs while a run is parked, and you get a desktop notification at every stop. Three things worth knowing about how a run ends:
 
 - Docs are reconciled as the last step of implementation, so the **SHIP** gate reviews code and docs together; `finish` just writes the description and opens the PR.
-- The **OPEN-PR** gate sits *after* the PR opens. Under the hands-off defaults it auto-crosses to done; to stop and review the opened PR, list `finish` in `--gates-at` (rejecting there amends the PR in place). A bare short run still attends all of its gates.
+- The **OPEN-PR** gate sits _after_ the PR opens. Under the hands-off defaults it auto-crosses to done; to stop and review the opened PR, list `finish` in `--gates-at` (rejecting there amends the PR in place). A bare short run still attends all of its gates.
 - A pre-authorized gate auto-crosses only on a clean packet: a `high`-severity decision in it holds the run for you instead, and an `ask_human` question stops the run under any posture. The merge is always yours.
 
 Each phase runs a handful of prompt templates — **snippets** — that carry the workflow's conventions. The stage's maker drafts each artifact from one — the architect from [`write-spec`](docs/snippets.md#write-spec) in spec, [`start-plan`](docs/snippets.md#start-plan) in plan, and [`write-design`](docs/snippets.md#the-blueprint-snippets) on blueprint and relay; the builder from [`implement-direct`](docs/snippets.md#implement-direct) on short — and the checker critiques through altitude-tuned lenses like [`review-spec`](docs/snippets.md#review-spec) (the analyst) and [`review-implementation`](docs/snippets.md#review-implementation) (the critic). Relay's judge works from [`review-and-fix`](docs/snippets.md#review-and-fix) — the same lens, plus the authority to fix what it finds. The snippets are the substance of the workflow, and the part you can reshape to your own methodology — see [Customizing the snippets](#customizing-the-snippets), or the full [snippet reference](docs/snippets.md).
@@ -54,15 +54,15 @@ When no shipped shape says what you mean — say a hotfix lane that triages once
 
 ```ts
 // .duet/workflows/hotfix.ts
-import { build, defineWorkflow, finish, frame } from 'duet/workflows';
+import { build, defineWorkflow, finish, frame } from "duet/workflows";
 
 export default defineWorkflow({
-  name: 'hotfix',
-  title: 'Hotfix (triage → patch → PR)',
-  attend: ['triage'],
+  name: "hotfix",
+  title: "Hotfix (triage → patch → PR)",
+  attend: ["triage"],
   phases: [
-    frame({ name: 'triage' }),
-    build({ name: 'patch', review: 'writable', audit: true }),
+    frame({ name: "triage" }),
+    build({ name: "patch", review: "writable", audit: true }),
     finish(),
   ],
 });
@@ -77,7 +77,7 @@ Mechanics worth knowing: no npm install — the workflow directory is provisione
 Four ideas shape every design choice:
 
 - **Augment, don't replace.** duet drives the same `claude` and `codex` CLIs you already use, with the same prompts, against the same repo. Every artifact — transcripts, branches, commits — is something you could have made by hand. There's no "duet mode" you get locked into.
-- **You own the substance.** The orchestrator does triage, never opinions. Product, direction, and environment questions always reach you; it only decides *who* answers. The gates are structural, not a promise in a prompt.
+- **You own the substance.** The orchestrator does triage, never opinions. Product, direction, and environment questions always reach you; it only decides _who_ answers. The gates are structural, not a promise in a prompt.
 - **Stop anytime.** A run can be paused indefinitely. The state file is a hint; the agents' transcripts are the truth. Drop out to drive `claude --resume` / `codex resume` by hand, then pick duet back up later — or never.
 - **Not a daemon, not an app.** A small CLI you invoke per gate. No GUI, no background service, no webhooks.
 
@@ -133,7 +133,7 @@ duet new --gateless            # walk away from the START — every gate pre-aut
 duet new --retry-infra 2       # tune the bounded infra auto-retry budget (default 3 for new runs; 0 disables)
 ```
 
-Each workflow has a sensible hands-off default: **full** is `overnight` — approve the spec, then walk away (plan, Ship, and the Open-PR gate all auto-cross); **blueprint** and **relay** attend only their Design gate — one interruption for the whole run; **short** attends all three of its gates unless you say `afk`. `--gates-at` names the *complete* set of gates you attend, not a delta: `--gates-at finish` attends **only** the Open-PR gate — everything else auto-crosses; to keep the usual stops *and* add a post-open review, list them all.
+Each workflow has a sensible hands-off default: **full** is `overnight` — approve the spec, then walk away (plan, Ship, and the Open-PR gate all auto-cross); **blueprint** and **relay** attend only their Design gate — one interruption for the whole run; **short** attends all three of its gates unless you say `afk`. `--gates-at` names the _complete_ set of gates you attend, not a delta: `--gates-at finish` attends **only** the Open-PR gate — everything else auto-crosses; to keep the usual stops _and_ add a post-open review, list them all.
 
 ## Everyday commands
 
@@ -200,27 +200,27 @@ model = "claude-opus-4-8"
 
 That's the only config duet has — per-duty (and orchestrator/consultant) provider bindings plus billing posture (`transport`, `budget`), nothing else. Project knowledge never lives here; it goes in the framing.
 
-- **Bindings are per duty; a run overrides them per key.** Config is the account-level default tier; a single run rebinds any duty with the repeatable `--bind <duty>=<provider[:model]>` flag or a framing `bind.<duty>:` key — a duty alone names its stage, so relay's criss-cross is just two flags (`--bind builder=codex --bind judge=claude:claude-opus-4-8`: plan strong, build cheap, judge strong). On full, blueprint, and short the delivery duties *continue* the planning sessions (builder ← architect, critic ← analyst — declared continuity edges); relay's delivery starts fresh by design. An edge whose two duties' frozen bindings cross providers degrades to a fresh session at run creation — echoed by `duet new` and ledgered, never an error — with the committed document as the build's context.
-- **Consultant (optional, off by default).** Add a `[consultant]` table (or `--bind consultant=<provider[:model]>` per run — a binding alone implies it's on) for a second, read-only advisor voice that questions the *bet* (assumptions, product fit) rather than the build — ideally on a different model family from your checkers, which is the point. `--no-consultant` disables a configured one for a single run. On the document-bearing workflows (full, blueprint, relay) it also authors an **acceptance contract** — a short, frozen list of falsifiable assertions of what success means, written before any code — which you ratify at the last gate before the build and a fresh session verifies against the built system before the Ship gate. A failed assertion routes back to the workflow's fixer — the builder; relay's judge — to fix and re-verify first, holding the gate for you only if it stays broken after a bounded loop — you see a summary of what self-healed, not every fix. On relay the verify earns extra weight: the judge both grades and edits the build there, so the consultant's fresh session is the one fully independent pass.
+- **Bindings are per duty; a run overrides them per key.** Config is the account-level default tier; a single run rebinds any duty with the repeatable `--bind <duty>=<provider[:model]>` flag or a framing `bind.<duty>:` key — a duty alone names its stage, so relay's criss-cross is just two flags (`--bind builder=codex --bind judge=claude:claude-opus-4-8`: plan strong, build cheap, judge strong). On full, blueprint, and short the delivery duties _continue_ the planning sessions (builder ← architect, critic ← analyst — declared continuity edges); relay's delivery starts fresh by design. An edge whose two duties' frozen bindings cross providers degrades to a fresh session at run creation — echoed by `duet new` and ledgered, never an error — with the committed document as the build's context.
+- **Consultant (optional, off by default).** Add a `[consultant]` table (or `--bind consultant=<provider[:model]>` per run — a binding alone implies it's on) for a second, read-only advisor voice that questions the _bet_ (assumptions, product fit) rather than the build — ideally on a different model family from your checkers, which is the point. `--no-consultant` disables a configured one for a single run. On the document-bearing workflows (full, blueprint, relay) it also authors an **acceptance contract** — a short, frozen list of falsifiable assertions of what success means, written before any code — which you ratify at the last gate before the build and a fresh session verifies against the built system before the Ship gate. A failed assertion routes back to the workflow's fixer — the builder; relay's judge — to fix and re-verify first, holding the gate for you only if it stays broken after a bounded loop — you see a summary of what self-healed, not every fix. On relay the verify earns extra weight: the judge both grades and edits the build there, so the consultant's fresh session is the one fully independent pass.
 - **Interactive worker transport (advanced, experimental).** Add `transport = "interactive"` under a claude maker duty (`[duties.builder]` or `[duties.architect]`) to drive the interactive `claude` TUI instead of headless `claude -p`, so those turns bill your flat subscription quota rather than the metered credit pool. tmux-driven, maker-duties only, pending one live-auth check — see [`docs/interactive-transport.md`](docs/interactive-transport.md).
 
 ## Customizing the snippets
 
-**What they are.** The snippets are the prompt templates the orchestrator sends the workers — they *are* the workflow, and duet ships an opinionated set: leader-facing specs, TDD-shaped vertical-slice planning, altitude-tuned review lenses. The catalog of the ones worth customizing, with their full bodies, is the [snippet reference](docs/snippets.md).
+**What they are.** The snippets are the prompt templates the orchestrator sends the workers — they _are_ the workflow, and duet ships an opinionated set: leader-facing specs, TDD-shaped vertical-slice planning, altitude-tuned review lenses. The catalog of the ones worth customizing, with their full bodies, is the [snippet reference](docs/snippets.md).
 
-**Why you'd change one.** To make duet work *your* way without forking it — plan to a different methodology, write specs in a different shape, dial your checkers' altitude up or down. The biggest levers are the **generative drafts** — [`write-spec`](docs/snippets.md#write-spec), [`start-plan`](docs/snippets.md#start-plan), [`implement-direct`](docs/snippets.md#implement-direct) — which write the *first* artifact of each phase, so reshaping one reshapes everything downstream.
+**Why you'd change one.** To make duet work _your_ way without forking it — plan to a different methodology, write specs in a different shape, dial your checkers' altitude up or down. The biggest levers are the **generative drafts** — [`write-spec`](docs/snippets.md#write-spec), [`start-plan`](docs/snippets.md#start-plan), [`implement-direct`](docs/snippets.md#implement-direct) — which write the _first_ artifact of each phase, so reshaping one reshapes everything downstream.
 
 **How — two grains.**
 
 - **Coarse: swap the methodology.** The planning snippets cite duet's vendored design and testing lessons through a `{{lessons_dir}}` token. Point it at your own methodology and one swap shifts how the whole plan phase reasons — without editing individual prompts.
 - **Fine: override a snippet.** Replace any single snippet's body, by key, from two optional files layered over the shipped defaults:
 
-  | Layer | File | Scope |
-  |---|---|---|
-  | user | `~/.config/duet/snippets.toml` | you, every project |
-  | project | `<repo>/.duet/snippets.toml` | one repo |
+  | Layer   | File                           | Scope              |
+  | ------- | ------------------------------ | ------------------ |
+  | user    | `~/.config/duet/snippets.toml` | you, every project |
+  | project | `<repo>/.duet/snippets.toml`   | one repo           |
 
-  Both use the shipped library's `[[snippets]]` schema (`key` + `expand`). Precedence is **shipped → user → project**, last-wins per key; an override replaces a snippet's *whole* body (no partial patching). The reference doc has a [worked example](docs/snippets.md#worked-example-overriding-start-plan-to-a-non-tdd-methodology) — overriding `start-plan` to a walking-skeleton (non-TDD) methodology, with the actual `[[snippets]]` block.
+  Both use the shipped library's `[[snippets]]` schema (`key` + `expand`). Precedence is **shipped → user → project**, last-wins per key; an override replaces a snippet's _whole_ body (no partial patching). The reference doc has a [worked example](docs/snippets.md#worked-example-overriding-start-plan-to-a-non-tdd-methodology) — overriding `start-plan` to a walking-skeleton (non-TDD) methodology, with the actual `[[snippets]]` block.
 
 Mechanics:
 
@@ -234,9 +234,9 @@ Mechanics:
 - `consultant-contract` / `consultant-verify` carry the acceptance-contract pair; softening them degrades the falsifiable-success check a fresh session runs before the Ship gate.
 - The gate-adjacent prompts — the severity wording the consultant assigns, the `implementation-handoff` that frames the final review — shape what reaches a human gate.
 
-The *structural* gates are code and can't be forged from a prompt; what an override can erode is the *quality of the signal* feeding a gate decision. Override these knowingly.
+The _structural_ gates are code and can't be forged from a prompt; what an override can erode is the _quality of the signal_ feeding a gate decision. Override these knowingly.
 
-**Framing stays primary.** A snippet override customizes the *tool* — it's the same kind of artifact as duet's own shipped library — not your project. It is **not** the place to tell duet about your codebase; that is the framing's job, the single project-knowledge seam. The project layer is a deliberate, opt-in, at-your-own-cost secondary channel, nothing more.
+**Framing stays primary.** A snippet override customizes the _tool_ — it's the same kind of artifact as duet's own shipped library — not your project. It is **not** the place to tell duet about your codebase; that is the framing's job, the single project-knowledge seam. The project layer is a deliberate, opt-in, at-your-own-cost secondary channel, nothing more.
 
 ## Going deeper
 
@@ -264,10 +264,8 @@ Built and test-verified, awaiting a first live run:
 - the **blueprint** workflow — the one-doc middle workflow above; its design doc-loop already carries live evidence via the composed `deep-relay` run, but the shipped shape itself hasn't run
 - the **relay** workflow — plans on a strong model, builds on a cheap one via per-duty `--bind` bindings, and checks with a writing **judge** that fixes findings directly and owns the docs + PR; its fixer delivery and escalation valve already carry live evidence via `deep-relay`, but the shipped shape itself hasn't run
 - the experimental **interactive-Claude worker transport** (bill a maker duty's turns to your flat subscription quota) — pending one live-auth check; see [`docs/interactive-transport.md`](docs/interactive-transport.md)
-- **warm-starting** the interactive orchestrator from an existing session (`--resume-session`)
-- the **AFK-resilience hardening** (stream watchdog, wall-clock caps, compaction recovery, context-pressure guards) — test-verified at the seams and probed against real transcripts; the induced-failure checks (a stalled stream, a real suspend) are still manual
 
-Codex-as-orchestrator is deliberately unbuilt. Expect rough edges — the open *design* questions and their evidence live in [`docs/open-questions.md`](docs/open-questions.md).
+Codex-as-orchestrator is deliberately unbuilt. Expect rough edges — the open _design_ questions and their evidence live in [`docs/open-questions.md`](docs/open-questions.md).
 
 No build step in dev — Node 24 runs the TypeScript directly:
 
