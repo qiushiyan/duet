@@ -86,6 +86,6 @@ What this spike consciously does *not* harden, and the design for later — the 
 
 ## Out of scope (named so it isn't re-proposed)
 
-- **Orchestrator over interactive Claude** — needs the SDK's custom MCP tools and the cooperative pause; a separate horizon (future-directions §Active "A", open-questions.md §"Codex as the orchestrator"), a lifecycle redesign, not this feature.
+- **Orchestrator over interactive Claude** — needs the SDK's custom MCP tools and the cooperative pause; a separate horizon (open-questions.md §"Settled, still watched" — the interactive orchestrator; §"Codex as the orchestrator"), a lifecycle redesign, not this feature.
 - **Codex over interactive** — no billing payoff (`codex exec` already bills the subscription).
 - **Folding the driver into the tmux viewer** — separate failure domains by design.
