@@ -20,7 +20,16 @@ import type { RunState } from './store.ts';
 
 const CORPUS_STAMP = 'corpus.json';
 const TRANSCRIPTS_DIR = 'transcripts';
-const DUET_VERSION = '0.1.0';
+// Resolved from duet's own package.json so the era stamp can't drift from the
+// released version (the import.meta.url hop is depth-sensitive — re-count on move).
+const DUET_VERSION = (() => {
+  try {
+    const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version?: string };
+    return pkg.version ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
+})();
 
 type CorpusState = Pick<RunState, 'runId' | 'cwd' | 'corpusDir'>;
 
@@ -55,19 +64,24 @@ export function ensureCorpusRecord(state: CorpusState): string | undefined {
   if (!state.corpusDir) return undefined;
   try {
     mkdirSync(state.corpusDir, { recursive: true });
-    writeFileSync(
-      join(state.corpusDir, CORPUS_STAMP),
-      JSON.stringify(
-        {
-          duetVersion: DUET_VERSION,
-          runId: state.runId,
-          sourceCwd: state.cwd,
-          mirroredAt: new Date().toISOString(),
-        },
-        null,
-        2,
-      ) + '\n',
-    );
+    // The stamp is written once — it marks the record's creation era, not the
+    // last write (and a per-append rewrite would churn a synced corpus dir).
+    const stamp = join(state.corpusDir, CORPUS_STAMP);
+    if (!existsSync(stamp)) {
+      writeFileSync(
+        stamp,
+        JSON.stringify(
+          {
+            duetVersion: DUET_VERSION,
+            runId: state.runId,
+            sourceCwd: state.cwd,
+            mirroredAt: new Date().toISOString(),
+          },
+          null,
+          2,
+        ) + '\n',
+      );
+    }
     return state.corpusDir;
   } catch {
     return undefined;
