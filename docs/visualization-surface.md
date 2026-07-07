@@ -199,7 +199,8 @@ src/surfaces/
   graph.ts              NEW — the renderers (ANSI pipeline, --json, --mermaid) + CLI-facing entry
   workflows.ts          EDIT — renderWorkflowCheck builds the blueprint spine; adds checkpoints + bindings
   workflow-source.ts    EDIT — extract a no-provision resolver core; resolveWorkflowSource keeps provisioning
-  stats.ts              EDIT — a trace model (buildTraceModel) + parseTraceEvents (non-turn orch events) + ordering-drift detector
+  stats.ts              EDIT — a trace model (buildTraceModel) + the open-window parsePhaseWindows extension + detectOrderingDrift
+                               (as-built: the deferred `parseTraceEvents` for non-turn orch events was NOT built — steer delivery-time stays a named follow-up)
   status.ts             UNCHANGED — the run view reads its output; the pinned --json schema is not touched
   cli.ts                EDIT — wire `duet graph` (two modes) and `duet stats --trace`
 ```
@@ -218,23 +219,36 @@ renders and the surface stays entirely taxonomy-free — it never sees `challeng
 The spine is the shared truth blueprint and run both lean on. It is **one structural core** with
 **two overlay builders**, not a god-model:
 
+The shapes below are the **as-built** types (reconciled after the build); two
+tactical corrections against the original sketch are called out inline.
+
 ```ts
 // The structure — identical for blueprint and run, since both read a CompiledWorkflow
 interface PhaseNode {
   name: PhaseName;
   block: 'frame' | 'doc-loop' | 'build' | 'finish';
+  artifactKind?: ArtifactKind;                // doc-loop only — the block-summary knob (as-built: added, so
+  reviewPosture?: ReviewPosture;              // build only     — both graph + workflows-check render `doc-loop (spec)` / `build (critique)` from the model)
   stage: StageName;
   gate: { label: string; state: string };
   duties: { maker: Duty; checker: Duty };   // the phase's stage duties
   reviewLoop: boolean;
   roundCap?: number;                          // present when reviewLoop
-  continuityFrom?: Duty;                      // the planning duty a delivery duty continues
   consultantCheckpoint?: ConsultantCheckpoint;
+  // NOTE (as-built): `continuityFrom` was REMOVED from PhaseNode. Continuity is
+  // stage-scoped (a delivery stage carries two edges: builder←architect AND
+  // critic←analyst), which a singular per-phase Duty can't hold — it lives on the
+  // stage node below. Binding-dependent degradation stays overlay data (see GraphModel).
+}
+interface StageNode {
+  name: StageName;
+  duties: { maker: Duty; checker: Duty };
+  continuity: Partial<Record<Duty, Duty>>;    // declared edges keyed by the continuing duty, e.g. { builder: 'architect', critic: 'analyst' }; {} = fresh
 }
 interface WorkflowSpine {
   name: string; displayName: string; source?: WorkflowSource;
   phases: PhaseNode[];
-  stages: { name: StageName; duties: { maker: Duty; checker: Duty } }[];
+  stages: StageNode[];
   defaultPosture: GatePhase[] | undefined;    // attended set; undefined ⇒ attend-all
 }
 
@@ -243,21 +257,29 @@ interface WorkflowSpine {
 function structuralSpine(workflow: CompiledWorkflow): WorkflowSpine
 
 // Overlay 1 — blueprint: config-resolved default bindings + live consultant checkpoints
-function blueprintModel(workflow: CompiledWorkflow, resolved: ResolvedRunConfig): GraphModel /* mode:'blueprint' */
+function blueprintModel(workflow: CompiledWorkflow, source: WorkflowSource | undefined,
+                        resolved: { bindings: VoiceBindings; degradedEdges: DegradedEdge[] }): BlueprintGraphModel
 
 // Overlay 2 — run: position + gate outcomes + rounds + state-derived drift, over StatusModel
-function runGraphModel(spineWorkflow: CompiledWorkflow, status: StatusModel, state: RunState, pos: RunPosition): GraphModel /* mode:'run' */
+function runGraphModel(frozenWorkflow: CompiledWorkflow, status: StatusModel, state: RunState, pos: RunPosition): RunGraphModel
 
-type GraphModel =
-  | { mode: 'blueprint'; spine: WorkflowSpine; bindings: BindingRow[]; degradedEdges: DegradedEdge[];
-      checkpoints: PhaseCheckpoint[] }                          // { phase, mode, kind: render-facing, live } — see the registry export below
-  | { mode: 'run'; spine: WorkflowSpine; nodes: RunNodeState[]; stop: StopModel;
-      ledgers: AwayLedgers; interventions: ContextEvent[] };    // contextEvents at RUN level — no phase in the state shape
+interface BlueprintGraphModel {
+  mode: 'blueprint'; spine: WorkflowSpine; bindings: BindingRow[]; degradedEdges: DegradedEdge[];
+  checkpoints: PhaseCheckpoint[];              // { phase, mode, kind: render-facing, live } — see the registry export below
+}
+interface RunGraphModel {
+  mode: 'run'; runId: string; spine: WorkflowSpine; nodes: RunNodeState[]; stop: StopModel;
+  degradedEdges: DegradedEdge[];              // as-built: the run applies degradedEdgesFor(state.bindings) over the FROZEN manifest,
+                                              // so the arc never implies an edge the run's providers made fresh
+  interventions: ContextEvent[];             // contextEvents at RUN level — no phase in the state shape
+  ledgers: { autoApprovals: StatusModel['autoApprovals']; awayRetries: StatusModel['awayRetries'] };
+}
+type GraphModel = BlueprintGraphModel | RunGraphModel;
 
 interface RunNodeState {
   phase: PhaseName;
   status: 'done' | 'current' | 'future';
-  gate?: { posture: 'attended' | 'pre-authorized'; outcome?: 'auto-crossed' | 'crossed'; heldHigh?: boolean };
+  gate: { posture: 'attended' | 'pre-authorized'; outcome?: 'auto-crossed' | 'crossed'; heldHigh?: true }; // non-optional: every phase gates
   rounds?: { used: number; cap: number };
   drift: DriftFlag[];                          // unexpected-tag | rounds-past-cap | auto-retry | steer-staged (all phase-attributed)
 }
@@ -299,7 +321,7 @@ interface TraceModel {
   phases: { phase: string; inferredWindow: boolean; turns: TraceTurn[]; interventions: TraceEvent[]; drift: OrderingFlag[] }[];
   notes: string[];
 }
-function buildTraceModel(state: RunState): TraceModel   // fs+state composer, sibling of buildStatsModel
+function buildTraceModel(state: RunState, now: number): TraceModel   // fs+state composer, sibling of buildStatsModel; `now` INJECTED (CLI passes Date.now(), tests a fixed clock) so the open-window JSON is deterministic
 ```
 
 `buildTraceModel` reuses `parseVoiceLogTurns` (per-worker `ParsedTurn{voice,tag,startMs,endMs,status}`),
