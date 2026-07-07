@@ -29,7 +29,9 @@ import { machineFor } from '../run/machine.ts';
 import { serveKernelStdio, serveRunScopedKernelStdio } from '../orchestrator/hosts/mcp-server.ts';
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
 import { gradeCommand } from './grade.ts';
-import { buildStatsModel, renderStats } from './stats.ts';
+import { buildStatsModel, buildTraceModel, renderStats, renderTrace } from './stats.ts';
+import { buildBlueprintModel, buildRunGraphModel, renderGraph, renderGraphJson, renderGraphMermaid } from './graph.ts';
+import { blueprintModel } from './graph-model.ts';
 import { runOrchestrate } from '../orchestrator/hosts/orchestrate.ts';
 import { DUTIES, entryOf, handoffWatchLabel, stagesOf, workflowHasConsultantBackstop } from '../registry/workflows.ts';
 import { getEffectiveSnippet, loadEffectiveSnippets, runtimeLibraryContext } from '../orchestrator/library.ts';
@@ -1136,12 +1138,44 @@ program
     'Effort per phase, derived from the voice logs at view time: each phase’s elapsed window and the worker-turn time inside it, plus a per-tag breakdown. Read-only and fail-soft — a missing or interactive-only log degrades to a note. Distinct from status (which never reads logs).',
   )
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
-  .option('--json', 'emit the StatsModel for automation')
-  .action((runId: string | undefined, opts: { json?: boolean }) => {
+  .option('--json', 'emit the StatsModel (or the TraceModel with --trace) for automation')
+  .option('--trace', 'emit the interleaved execution timeline (per-phase turn sequence + interventions + ordering drift) instead of the aggregate')
+  .action((runId: string | undefined, opts: { json?: boolean; trace?: boolean }) => {
     const cwd = process.cwd();
     const state = resolveRun(cwd, runId, 'no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
+    if (opts.trace) {
+      const trace = buildTraceModel(state, Date.now());
+      console.log(opts.json ? JSON.stringify(trace, null, 2) : renderTrace(trace));
+      return;
+    }
     const model = buildStatsModel(state);
     console.log(opts.json ? JSON.stringify(model, null, 2) : renderStats(model));
+  });
+
+program
+  .command('graph')
+  .description(
+    'Draw a workflow or a run: `--workflow <name>` renders the blueprint (the compiled pipeline before any run — phases, gates, default postures, config-resolved bindings, consultant checkpoints); `[runId]` renders the live run arc. Read-only, render-on-demand. ANSI by default, or --json / --mermaid (blueprint only).',
+  )
+  .argument('[runId]', 'run id for the run view (defaults to the latest run in this project)')
+  .option('--workflow <name>', 'render the blueprint for a workflow definition instead of a run')
+  .option('--json', 'emit the GraphModel for automation')
+  .option('--mermaid', 'emit a static Mermaid flowchart (blueprint only)')
+  .action(async (runId: string | undefined, opts: { workflow?: string; json?: boolean; mermaid?: boolean }) => {
+    const cwd = process.cwd();
+    if (opts.workflow) {
+      try {
+        const model = await buildBlueprintModel(cwd, opts.workflow);
+        console.log(opts.mermaid ? renderGraphMermaid(model) : opts.json ? renderGraphJson(model) : renderGraph(model));
+      } catch (err) {
+        fail(err instanceof Error ? err.message : String(err));
+      }
+      return;
+    }
+    if (opts.mermaid) fail('--mermaid is blueprint-only — pass --workflow <name>, or drop --mermaid for the run view.');
+    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with duet new, or pass --workflow <name> for a blueprint.');
+    const model = buildRunGraphModel(state);
+    console.log(opts.json ? renderGraphJson(model) : renderGraph(model));
   });
 
 program
@@ -1215,8 +1249,13 @@ workflowsCmd
   .description('Resolve and compile one workflow definition without starting a run.')
   .action(async (name: string) => {
     try {
-      const resolved = await resolveWorkflowSource(process.cwd(), name);
-      console.log(renderWorkflowCheck(resolved.workflow, resolved.source, process.cwd()));
+      const cwd = process.cwd();
+      // `check` provisions the editor scaffolding (the author is working the
+      // file) — unlike `duet graph --workflow`, which resolves read-only.
+      const resolved = await resolveWorkflowSource(cwd, name);
+      const config = resolveRunConfig({ workflow: resolved.workflow });
+      const model = blueprintModel(resolved.workflow, resolved.source, { bindings: config.bindings, degradedEdges: config.degradedEdges });
+      console.log(renderWorkflowCheck(model, cwd));
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
     }

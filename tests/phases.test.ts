@@ -5,6 +5,7 @@ import {
   WORKFLOWS,
   acceptanceContractPathForSpec,
   consultantCheckpointLive,
+  consultantCheckpointView,
   consultantSnippetFor,
   checkerDutyOf,
   consultantSnippetsForWorkflow,
@@ -514,6 +515,36 @@ describe('consultant checkpoints (registry data per arc)', () => {
     for (const snippet of ['consultant-frame', 'consultant-spec', 'consultant-impl', 'consultant-contract', 'consultant-verify']) {
       expect.soft(snippet.startsWith('review')).toBe(false);
     }
+  });
+
+  test('consultantCheckpointView folds mode + render-facing kind + liveness, hiding the internal `challenge` name', () => {
+    // A checkpoint phase, consultant bound: mode is the registry mode, kind is
+    // render-facing (specGate's internal `challenge` shown as `bet-audit`), live true.
+    expect.soft(consultantCheckpointView('full', 'spec', { consultant: true })).toEqual({
+      mode: 'specGate',
+      kind: 'bet-audit',
+      live: true,
+    });
+    // The generative frame and the backstops render their kinds verbatim.
+    expect.soft(consultantCheckpointView('full', 'frame', { consultant: true })).toEqual({ mode: 'frame', kind: 'generative', live: true });
+    expect.soft(consultantCheckpointView('full', 'plan', { consultant: true })).toEqual({ mode: 'contract', kind: 'backstop', live: true });
+    expect.soft(consultantCheckpointView('full', 'implement', { consultant: true })).toEqual({ mode: 'verify', kind: 'backstop', live: true });
+    // The internal taxonomy never leaks: no view ever reports kind `challenge`.
+    for (const phase of phasesOf('full')) {
+      const view = consultantCheckpointView('full', phase.name, { consultant: true });
+      expect.soft(view?.kind).not.toBe('challenge');
+    }
+    // A phase without a checkpoint yields undefined (not a zero-value object).
+    expect.soft(consultantCheckpointView('full', 'finish', { consultant: true })).toBeUndefined();
+    // Liveness threads consultantCheckpointLive: unbound ⇒ live false but the
+    // static mode/kind still resolve; gateless drops the bet-audit's liveness,
+    // keeps the generative frame and backstop live.
+    expect.soft(consultantCheckpointView('full', 'spec', { consultant: false })).toEqual({ mode: 'specGate', kind: 'bet-audit', live: false });
+    expect.soft(consultantCheckpointView('full', 'spec', { consultant: true, gateless: true })?.live).toBe(false);
+    expect.soft(consultantCheckpointView('full', 'frame', { consultant: true, gateless: true })?.live).toBe(true);
+    expect.soft(consultantCheckpointView('full', 'implement', { consultant: true, gateless: true })?.live).toBe(true);
+    // The RIR implGate is also a bet-audit by render kind (internal `challenge`).
+    expect.soft(consultantCheckpointView('short', 'implement', { consultant: true })).toEqual({ mode: 'implGate', kind: 'bet-audit', live: true });
   });
 
   test('contractAuthorPhaseOf names the contract freeze gate per arc (Full: plan; RIR: none)', () => {

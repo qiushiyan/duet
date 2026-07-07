@@ -431,6 +431,27 @@ const CHECKPOINT_KIND: Record<ConsultantCheckpoint, CheckpointKind> = {
   verify: 'backstop',
 };
 
+/**
+ * The RENDER-facing checkpoint kind — the internal `challenge` name (a holding
+ * bet-audit) shown to a human as `bet-audit`, the two others verbatim. The one
+ * place the internal→display rename lives, so a surface that renders checkpoints
+ * (`consultantCheckpointView`) stays taxonomy-free: it never sees `challenge`.
+ */
+export type CheckpointRenderKind = 'generative' | 'bet-audit' | 'backstop';
+const CHECKPOINT_RENDER_KIND: Record<CheckpointKind, CheckpointRenderKind> = {
+  generative: 'generative',
+  challenge: 'bet-audit',
+  backstop: 'backstop',
+};
+
+/** A phase's consultant checkpoint projected for display: its mode, its render-facing kind, and whether it's live for this run's knobs. */
+export interface ConsultantCheckpointView {
+  /** The static checkpoint mode (registry data — never the internal `challenge` alias, which is a kind, not a mode). */
+  mode: ConsultantCheckpoint;
+  kind: CheckpointRenderKind;
+  live: boolean;
+}
+
 /** Whether a phase's consultant checkpoint is a correctness backstop (contract / verify). */
 export function isBackstopCheckpoint(workflow: WorkflowRef, phase: PhaseName): boolean {
   const mode = phaseSpec(workflow, phase).consultantCheckpoint;
@@ -479,6 +500,30 @@ export function consultantCheckpointLive(workflow: WorkflowRef, phase: PhaseName
   if (!opts.consultant) return false;
   if (consultantSnippetFor(workflow, phase) === undefined) return false;
   return !opts.gateless || survivesGateless(workflow, phase);
+}
+
+/**
+ * A phase's consultant checkpoint projected for a render surface — the single
+ * additive reader that folds the module-private `CHECKPOINT_KIND` map (renamed
+ * to its render-facing form) and `consultantCheckpointLive` into one call, so a
+ * surface never re-encodes the checkpoint taxonomy. Returns `undefined` when the
+ * phase carries no checkpoint (the common case); otherwise `{ mode, kind, live }`
+ * where `kind` is render-facing (`challenge` → `bet-audit`, mapped here) and
+ * `live` is this run's gateless-aware liveness (default-off preserved: no
+ * consultant ⇒ live false).
+ */
+export function consultantCheckpointView(
+  workflow: WorkflowRef,
+  phase: PhaseName,
+  opts: { consultant: boolean; gateless?: boolean },
+): ConsultantCheckpointView | undefined {
+  const mode = phaseSpec(workflow, phase).consultantCheckpoint;
+  if (mode === undefined) return undefined;
+  return {
+    mode,
+    kind: CHECKPOINT_RENDER_KIND[CHECKPOINT_KIND[mode]],
+    live: consultantCheckpointLive(workflow, phase, opts),
+  };
 }
 
 /** Whether a workflow has any backstop checkpoint — full does (contract+verify), short does not. */

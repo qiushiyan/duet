@@ -11,7 +11,19 @@ import {
   renderWorkflowInit,
   renderWorkflowList,
 } from '../src/surfaces/workflows.ts';
+import { blueprintModel } from '../src/surfaces/graph-model.ts';
 import { test } from './helpers/fixtures.ts';
+import { defaultBindingsFor } from '../src/voices/bindings.ts';
+import type { ResolvedWorkflowSource } from '../src/surfaces/workflow-source.ts';
+
+/** Build the blueprint model `renderWorkflowCheck` now renders over — default bindings unless a consultant is asked for. */
+function checkModel(resolved: ResolvedWorkflowSource, opts: { consultant?: boolean } = {}) {
+  const base = defaultBindingsFor(resolved.workflow);
+  const bindings = opts.consultant
+    ? { ...base, consultant: { provider: 'claude' as const, model: 'claude-opus-4-8', transport: 'headless' as const } }
+    : base;
+  return blueprintModel(resolved.workflow, resolved.source, { bindings, degradedEdges: [] });
+}
 
 const cliPath = join(process.cwd(), 'src', 'surfaces', 'cli.ts');
 const sdkUrl = pathToFileURL(join(process.cwd(), 'src', 'workflows.ts')).href;
@@ -117,7 +129,7 @@ describe('duet workflows check', () => {
     );
     const resolved = await resolveWorkflowSource(projectDir, 'deep-relay');
 
-    const out = renderWorkflowCheck(resolved.workflow, resolved.source, projectDir);
+    const out = renderWorkflowCheck(checkModel(resolved), projectDir);
 
     expect.soft(out).toContain('workflow  deep-relay — deep-relay title');
     expect.soft(out).toContain('source    project · .duet/workflows/deep-relay.ts');
@@ -132,6 +144,27 @@ describe('duet workflows check', () => {
     expect.soft(out).toContain('delivery   builder + judge · structurally fresh');
     expect.soft(out).toContain('default attended gates   design');
     expect.soft(out).toContain('acceptance contract      authored at design, verified at implement (when a consultant is bound)');
+  });
+
+  test('enriches the summary with config-resolved bindings and per-phase consultant checkpoints (the same spine as duet graph)', async ({ projectDir }) => {
+    const resolved = await resolveWorkflowSource(projectDir, 'full');
+
+    // Without a consultant bound: bindings show the defaults, checkpoints are latent.
+    const plain = renderWorkflowCheck(checkModel(resolved), projectDir);
+    expect.soft(plain).toContain('bindings (defaults · resolved from ~/.config/duet/config.toml)');
+    expect.soft(plain).toMatch(/architect\s+claude:claude-opus-4-8/);
+    expect.soft(plain).toMatch(/analyst\s+codex/);
+    expect.soft(plain).toContain('consultant checkpoints   (fire when a consultant is bound)');
+    // The per-phase checkpoint kinds, render-facing (never the internal `challenge`).
+    expect.soft(plain).toMatch(/frame\s+generative/);
+    expect.soft(plain).toMatch(/spec\s+bet-audit/);
+    expect.soft(plain).toMatch(/plan\s+backstop/);
+    expect.soft(plain).not.toContain('challenge');
+
+    // With a consultant bound: the consultant binding row appears and the note flips.
+    const withConsultant = renderWorkflowCheck(checkModel(resolved, { consultant: true }), projectDir);
+    expect.soft(withConsultant).toMatch(/consultant\s+claude:claude-opus-4-8/);
+    expect.soft(withConsultant).toContain('consultant checkpoints   (a consultant is bound — these fire)');
   });
 
   test('surfaces resolver and compiler failures without a command-specific wrapper', async ({ projectDir }) => {

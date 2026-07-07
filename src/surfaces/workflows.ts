@@ -1,18 +1,10 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import {
-  WORKFLOWS,
-  contractAuthorPhaseOf,
-  continuityEdgeFor,
-  defaultPosture,
-  defaultPreAuthorizedOf,
-  gatePhasesOf,
-  isShippedWorkflowName,
-  phasesOf,
-  stagesOf,
-} from '../registry/workflows.ts';
-import type { CompiledWorkflow, Duty, GatePhase, PhaseSpec } from '../registry/workflows.ts';
+import { WORKFLOWS, isShippedWorkflowName } from '../registry/workflows.ts';
+import type { GatePhase } from '../registry/workflows.ts';
 import type { WorkflowSource } from '../run/store.ts';
+import { blockSummary } from './graph-model.ts';
+import type { BindingRow, GraphModel, StageNode } from './graph-model.ts';
 import {
   definedWorkflowSources,
   discoverWorkflowSources,
@@ -106,81 +98,76 @@ export function renderWorkflowList(model: WorkflowListModel): string {
   return sections.length > 0 ? sections.join('\n') : 'no workflows found';
 }
 
-function blockSummary(phase: PhaseSpec): string {
-  switch (phase.semantics.block) {
-    case 'frame':
-      return 'frame';
-    case 'doc-loop':
-      return `doc-loop (${phase.semantics.artifactKind})`;
-    case 'build':
-      return `build (${phase.semantics.reviewPosture})`;
-    case 'finish':
-      return 'finish';
-  }
-}
-
-// The compact gate label — the heading's leading "<X> gate" token, not the full
-// packet heading (`heading` is the status line printed above the gate packet at
-// run time; its "— the orchestrator's summary" tail is noise in a structural
-// summary). Every gate heading is "<LABEL> — <description>" (define.ts gate
-// constructors), so the split is total; a heading without the separator falls
-// back to itself.
-function gateLabel(phase: PhaseSpec): string {
-  return phase.gate.heading.split(' — ')[0]!;
-}
-
-function contractVerifyPhase(workflow: CompiledWorkflow): string | undefined {
-  return phasesOf(workflow).find((phase) => phase.consultantCheckpoint === 'verify')?.name;
-}
-
 function formatGatePosture(gates: GatePhase[] | undefined): string {
   if (gates === undefined) return 'all';
   if (gates.length === 0) return 'none — walk away from the start';
   return gates.join(', ');
 }
 
-function continuitySummary(workflow: CompiledWorkflow, deliveryDuties: readonly Duty[]): string {
-  const edges = deliveryDuties
-    .map((duty) => {
-      const from = continuityEdgeFor(workflow, duty);
-      return from ? `${duty}<-${from}` : undefined;
-    })
-    .filter((edge) => edge !== undefined);
+/** A stage's declared continuity edges, in maker-then-checker order — `builder<-architect / critic<-analyst`, or fresh. */
+function continuitySummary(stage: StageNode): string {
+  const edges = Object.entries(stage.continuity).map(([into, from]) => `${into}<-${from}`);
   if (edges.length === 0) return 'structurally fresh';
   return `declares ${edges.join(' / ')} continuity (a cross-provider binding may degrade an edge to fresh at run creation)`;
 }
 
-export function renderWorkflowCheck(workflow: CompiledWorkflow, source: WorkflowSource, cwd: string): string {
-  const phases = phasesOf(workflow);
-  const stages = stagesOf(workflow);
-  const defaultAttended = defaultPosture(gatePhasesOf(workflow), defaultPreAuthorizedOf(workflow));
-  const contractAuthor = contractAuthorPhaseOf(workflow);
-  const contractVerify = contractVerifyPhase(workflow);
+/** Bindings ordered orchestrator → duties → consultant for a stable listing (shared shape with the graph blueprint). */
+function bindingRowsInOrder(rows: BindingRow[]): BindingRow[] {
+  const order = ['orchestrator', 'architect', 'analyst', 'builder', 'critic', 'judge', 'consultant'];
+  return [...rows].sort((a, b) => order.indexOf(a.address) - order.indexOf(b.address));
+}
+
+/**
+ * The `duet workflows check` summary, rendered over the SAME blueprint spine
+ * `duet graph --workflow` uses — the structural join (phases, gates, stages,
+ * continuity, posture) is read off the spine, not re-derived, and the summary
+ * ADDS the two things the graph blueprint surfaces that this command omitted:
+ * the config-resolved default bindings and the per-phase consultant checkpoints.
+ */
+export function renderWorkflowCheck(model: GraphModel & { mode: 'blueprint' }, cwd: string): string {
+  const { spine } = model;
+  const contractAuthor = spine.phases.find((p) => p.consultantCheckpoint === 'contract')?.name;
+  const contractVerify = spine.phases.find((p) => p.consultantCheckpoint === 'verify')?.name;
   const lines = [
-    `workflow  ${workflow.name} — ${workflow.displayName}`,
-    `source    ${formatWorkflowSource(source, cwd).replace(': ', ' · ')}`,
+    `workflow  ${spine.name} — ${spine.displayName}`,
+    `source    ${spine.source ? formatWorkflowSource(spine.source, cwd).replace(': ', ' · ') : 'shipped'}`,
     '',
-    `phases (${phases.length})`,
+    `phases (${spine.phases.length})`,
   ];
 
-  for (const phase of phases) {
+  for (const node of spine.phases) {
     const extras = [
       // Only doc-loop rounds surface; the build phase's own review-loop cap is an
       // internal rail the design excludes as noise ("no round-caps beyond doc-loop rounds").
-      phase.semantics.block === 'doc-loop' ? `${phase.roundCap} rounds` : undefined,
-      phase.name === contractAuthor ? 'authors the acceptance contract' : undefined,
+      node.block === 'doc-loop' ? `${node.roundCap} rounds` : undefined,
+      node.consultantCheckpoint === 'contract' ? 'authors the acceptance contract' : undefined,
     ].filter((extra) => extra !== undefined);
-    lines.push(`  ${phase.name.padEnd(10)} ${blockSummary(phase).padEnd(18)} -> ${gateLabel(phase)}${extras.length > 0 ? ` · ${extras.join(' · ')}` : ''}`);
+    lines.push(`  ${node.name.padEnd(10)} ${blockSummary(node).padEnd(18)} -> ${node.gate.label}${extras.length > 0 ? ` · ${extras.join(' · ')}` : ''}`);
   }
 
   lines.push('', 'stages');
-  for (const stage of stages) {
+  for (const stage of spine.stages) {
     const duties = `${stage.duties.maker} + ${stage.duties.checker}`;
-    const continuity = stage.name === 'delivery' ? ` · ${continuitySummary(workflow, [stage.duties.maker, stage.duties.checker])}` : '';
+    const continuity = stage.name === 'delivery' ? ` · ${continuitySummary(stage)}` : '';
     lines.push(`  ${stage.name.padEnd(10)} ${duties}${continuity}`);
   }
 
-  lines.push('', `default attended gates   ${formatGatePosture(defaultAttended)}`);
+  // The config-resolved default bindings (labeled as defaults, like the graph blueprint).
+  lines.push('', 'bindings (defaults · resolved from ~/.config/duet/config.toml)');
+  for (const row of bindingRowsInOrder(model.bindings)) lines.push(`  ${row.address.padEnd(13)} ${row.label}`);
+  if (model.degradedEdges.length > 0) {
+    lines.push(`  degraded edges: ${model.degradedEdges.map((e) => `${e.into}<-${e.from} (${e.reason})`).join(', ')}`);
+  }
+
+  // The per-phase consultant checkpoints — the second field the plain summary omitted.
+  const checkpoints = model.checkpoints;
+  if (checkpoints.length > 0) {
+    const consultantBound = model.bindings.some((b) => b.address === 'consultant');
+    lines.push('', `consultant checkpoints   ${consultantBound ? '(a consultant is bound — these fire)' : '(fire when a consultant is bound)'}`);
+    for (const c of checkpoints) lines.push(`  ${c.phase.padEnd(10)} ${c.kind}`);
+  }
+
+  lines.push('', `default attended gates   ${formatGatePosture(spine.defaultPosture)}`);
   lines.push(
     `acceptance contract      ${
       contractAuthor ? `authored at ${contractAuthor}, verified at ${contractVerify ?? 'none'} (when a consultant is bound)` : 'none'

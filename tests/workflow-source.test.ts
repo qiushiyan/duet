@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect } from 'vitest';
@@ -13,6 +13,7 @@ import {
   projectWorkflowDir,
   provisionWorkflowDir,
   resolveWorkflowSource,
+  resolveWorkflowSourceReadOnly,
   userWorkflowDir,
   workflowSdkRuntimeUrl,
 } from '../src/surfaces/workflow-source.ts';
@@ -257,5 +258,37 @@ export default defineWorkflow({
 `,
     );
     await expect(resolveWorkflowSource(projectDir, 'plan-fixer')).rejects.toThrow(/plan-fixer\.ts[\s\S]*plan \+ fresh delivery|no prose world exists/);
+  });
+});
+
+describe('resolveWorkflowSourceReadOnly — the no-provision entry point (the blueprint safety guard)', () => {
+  test('resolves a project workflow WITHOUT writing tsconfig/.d.ts, while resolveWorkflowSource DOES provision', async ({ projectDir }) => {
+    writeProjectWorkflow(projectDir, 'instant');
+    const dir = projectWorkflowDir(projectDir);
+    const before = readdirSync(dir).sort();
+    expect(before).toEqual(['instant.ts']); // only the definition file exists
+
+    const resolved = await resolveWorkflowSourceReadOnly(projectDir, 'instant');
+    expect.soft(resolved.workflow.name).toBe('instant');
+    expect.soft(resolved.source).toMatchObject({ layer: 'project' });
+    // The load-bearing assertion: the dir is byte-for-byte as before — no
+    // tsconfig.json, no duet-workflows.d.ts was written.
+    expect(readdirSync(dir).sort()).toEqual(before);
+
+    // Control: the provisioning entry point on the SAME dir DOES scaffold.
+    await resolveWorkflowSource(projectDir, 'instant');
+    expect(readdirSync(dir).sort()).toEqual(['duet-workflows.d.ts', 'instant.ts', 'tsconfig.json']);
+  });
+
+  test('a shipped-workflow blueprint neither imports nor writes (fully read-only)', async ({ projectDir }) => {
+    // No .duet/workflows dir exists at all — a shipped read-only resolve must not create it.
+    const dir = projectWorkflowDir(projectDir);
+    expect(existsSync(dir)).toBe(false);
+
+    const resolved = await resolveWorkflowSourceReadOnly(projectDir, 'full');
+    expect.soft(resolved.workflow.name).toBe('full');
+    expect.soft(resolved.source.layer).toBe('shipped');
+    // Nothing was scaffolded — the workflow dir still does not exist.
+    expect(existsSync(dir)).toBe(false);
   });
 });

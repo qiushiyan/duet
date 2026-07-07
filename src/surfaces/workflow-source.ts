@@ -267,15 +267,24 @@ async function loadWorkflowFile(path: string, requestedName: string): Promise<Co
   return workflow;
 }
 
-export async function resolveWorkflowSource(
+/**
+ * The resolution CORE — candidate discovery, the shadowing / not-found
+ * rejections, and the compile (`loadWorkflowFile` for a definition file, the
+ * validated spec for a shipped workflow). It writes NOTHING: the two public
+ * entry points differ only in whether they provision the workflow dirs first, so
+ * "which resolver writes" is a property of the entry point by construction, not a
+ * boolean a caller could pass wrong. Compiling a project definition still
+ * EXECUTES its top-level code via dynamic import (irreducible — see
+ * `loadWorkflowFile`); the read-only entry removes the filesystem writes, not the
+ * code execution.
+ */
+async function resolveWorkflowSourceCore(
   cwd: string,
   name: WorkflowName,
-  opts: { home?: string } = {},
+  opts: { home?: string },
 ): Promise<ResolvedWorkflowSource> {
   const projectDir = projectWorkflowDir(cwd);
   const userDir = userWorkflowDir(opts.home);
-  if (existsSync(projectDir)) provisionWorkflowDir(projectDir);
-  if (existsSync(userDir)) provisionWorkflowDir(userDir);
   const candidateSources = candidateLayersFor(name, projectDir, userDir);
 
   if (candidateSources.length > 1) {
@@ -301,4 +310,38 @@ export async function resolveWorkflowSource(
     return { workflow: validatedWorkflowSpec(workflowDefinition(name)), source: source! };
   }
   return { workflow: await loadWorkflowFile(source!.path!, name), source: source! };
+}
+
+/**
+ * Resolve and compile a workflow, PROVISIONING the project/user workflow dirs
+ * first (the editor scaffolding — a `tsconfig.json` + a version-stamped `.d.ts`).
+ * Correct for `duet workflows check` and `duet new`, where the author is working
+ * the file. Behavior unchanged from before the read-only split.
+ */
+export async function resolveWorkflowSource(
+  cwd: string,
+  name: WorkflowName,
+  opts: { home?: string } = {},
+): Promise<ResolvedWorkflowSource> {
+  const projectDir = projectWorkflowDir(cwd);
+  const userDir = userWorkflowDir(opts.home);
+  if (existsSync(projectDir)) provisionWorkflowDir(projectDir);
+  if (existsSync(userDir)) provisionWorkflowDir(userDir);
+  return resolveWorkflowSourceCore(cwd, name, opts);
+}
+
+/**
+ * Resolve and compile a workflow WITHOUT provisioning — no filesystem writes. The
+ * `duet graph --workflow` entry point, which must not scaffold an editor for a
+ * read-only view. A shipped-workflow blueprint neither imports nor writes (fully
+ * read-only); a project/user blueprint still executes the definition's code on
+ * import (compiling any definition runs it — the honest, irreducible boundary),
+ * but writes nothing.
+ */
+export async function resolveWorkflowSourceReadOnly(
+  cwd: string,
+  name: WorkflowName,
+  opts: { home?: string } = {},
+): Promise<ResolvedWorkflowSource> {
+  return resolveWorkflowSourceCore(cwd, name, opts);
 }

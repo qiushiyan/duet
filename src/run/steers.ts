@@ -65,6 +65,59 @@ export function listPendingSteers(state: RunState): Steer[] {
 }
 
 /**
+ * Every staged steer this run has seen — BOTH the undelivered ones (`steers/`)
+ * and the already-delivered audit trail (`steers/delivered/`), in staging order.
+ * The trace's history reader: unlike `listPendingSteers` (staging only), a "what
+ * happened" timeline must include a steer that was already consumed. Fail-soft
+ * (a missing dir, an unparseable file, or valid JSON of the WRONG SHAPE is
+ * skipped, never thrown) and tolerant of a mid-scan delivery rename: a file that
+ * moves between the two dirs while we read appears once (deduped by filename) or
+ * neither (skipped on ENOENT), never twice. Shape validation matters because the
+ * trace derives `Date.parse(stagedAt)` and renders it — a `NaN` stamp would throw
+ * at render; a malformed steer is dropped here instead. Scoped to this reader:
+ * `listPendingSteers` (the live delivery path) is deliberately left untouched.
+ */
+function isValidSteerBody(body: unknown): body is Omit<Steer, 'file'> {
+  if (typeof body !== 'object' || body === null) return false;
+  const b = body as Record<string, unknown>;
+  return (
+    typeof b.text === 'string' &&
+    typeof b.stagedAt === 'string' &&
+    !Number.isNaN(Date.parse(b.stagedAt)) &&
+    (b.stagedDuring === undefined || typeof b.stagedDuring === 'string')
+  );
+}
+
+export function listStagedSteersForTrace(state: RunState): Steer[] {
+  const dir = steersDir(state);
+  const steers: Steer[] = [];
+  const seen = new Set<string>();
+  // Staging first, then delivered — a file that renamed staging→delivered mid-scan
+  // is missed in staging (ENOENT on read) and picked up in the delivered pass.
+  for (const scanDir of [dir, join(dir, 'delivered')]) {
+    if (!existsSync(scanDir)) continue;
+    let entries: import('node:fs').Dirent[];
+    try {
+      entries = readdirSync(scanDir, { withFileTypes: true });
+    } catch {
+      continue; // the dir vanished between existsSync and readdir — skip, don't throw
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.json') || seen.has(entry.name)) continue;
+      try {
+        const body: unknown = JSON.parse(readFileSync(join(scanDir, entry.name), 'utf8'));
+        if (!isValidSteerBody(body)) continue; // valid JSON, wrong shape — skip (a NaN stamp would throw at render)
+        steers.push({ file: entry.name, ...body });
+        seen.add(entry.name);
+      } catch {
+        // Half-written, foreign, or moved mid-scan — skip rather than break the trace.
+      }
+    }
+  }
+  return steers.sort((a, b) => a.file.localeCompare(b.file));
+}
+
+/**
  * Consume delivered steers: rename into steers/delivered/ (kept, not deleted —
  * the audit trail). ENOENT is swallowed: the orchestrator may issue tool
  * calls in parallel, and a steer the other drain already moved is delivered,

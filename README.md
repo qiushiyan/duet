@@ -145,6 +145,9 @@ duet status --brief            # lean digest: position, stop kind, headline, nex
 duet status --json --wait      # block until the next stop, then print (scripting/supervision)
 duet doctor                    # per-voice health: working / thinking / retrying / stuck / crashed
 duet stats                     # effort per phase — each phase's elapsed window and worker-turn time, from the logs
+duet stats --trace             # the interleaved turn-by-turn timeline (with interventions and ordering drift)
+duet graph                     # see it: the run's whole arc with the live cursor, gate outcomes, and drift flags
+duet graph --workflow <name>   # ...or a workflow's shape before any run (--mermaid for a docs diagram)
 duet grade                     # end-of-run: verdict each reconstructed decision point right/wrong (calibration); --list previews
 
 duet continue --approve        # cross the current gate (optionally: --approve "a rider with tweaks")
@@ -269,6 +272,7 @@ Built and test-verified, awaiting a first live run:
 
 - the **blueprint** workflow — the one-doc middle workflow above; its design doc-loop already carries live evidence via the composed `deep-relay` run, but the shipped shape itself hasn't run
 - the **relay** workflow — plans on a strong model, builds on a cheap one via per-duty `--bind` bindings, and checks with a writing **judge** that fixes findings directly and owns the docs + PR; its fixer delivery and escalation valve already carry live evidence via `deep-relay`, but the shipped shape itself hasn't run
+- the read-only **`duet graph`** visualization surface (a workflow's shape, or a run's live arc with gate outcomes and state-derived drift flags) and **`duet stats --trace`** (the interleaved turn timeline) — render-on-demand views over a run's on-disk state and logs; test-verified and CLI-driven, but not yet pointed at a live run's artifacts
 - the experimental **interactive-Claude worker transport** (bill a maker duty's turns to your flat subscription quota) — pending one live-auth check; see [`docs/interactive-transport.md`](docs/interactive-transport.md)
 - **inline provider tuning** — a per-binding model (codex included), a normalized `effort`, and a config-only native-arg passthrough (`claude_args` / `codex_config`), guarded by a `duet new` preflight that fails a bad binding at creation rather than mid-build; parsing, provider threading, and the preflight are test-verified, but no live run has exercised them end to end yet
 - the **run corpus** — an opt-in central archive (`[corpus] dir` in config) every run's record mirrors into fail-soft, with gzipped transcript capture at run end / purge, plus the `scripts/corpus/` analytics and backfill; the reader side has run live (backfill + analytics swept the surviving pre-remodel corpus, refused by design with a skip count), but no run has mirrored live yet — the method lives in [`docs/corpus-runbook.md`](docs/corpus-runbook.md)
