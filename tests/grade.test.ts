@@ -18,7 +18,7 @@ function seedQuestionRun(run: Parameters<typeof saveRunState>[0]): void {
 /** A run carrying a stopped gate, an auto-crossed gate, and a held-high gate. */
 function seedMixedRun(run: Parameters<typeof saveRunState>[0]): void {
   run.gatesAt = ['spec'];
-  run.autoApprovals = [{ gate: 'plan', at: '2026-07-07T10:05:00.000Z' }];
+  run.autoApprovals = [{ gate: 'planApprovalGate', at: '2026-07-07T10:05:00.000Z' }];
   run.phaseSummaries.spec = { summary: 'spec approved', artifacts: ['docs/spec.md'] };
   run.phaseSummaries.plan = { summary: 'plan packet', artifacts: [] };
   run.phaseSummaries.implement = {
@@ -141,7 +141,7 @@ describe('gradeCommand', () => {
 
   test('a missing orchestrator log surfaces its coverage note on the write path, not only on --list', async ({ projectDir, run }) => {
     run.gatesAt = [];
-    run.autoApprovals = [{ gate: 'plan', at: '2026-07-07T10:05:00.000Z' }];
+    run.autoApprovals = [{ gate: 'planApprovalGate', at: '2026-07-07T10:05:00.000Z' }];
     run.phaseSummaries.plan = { summary: 'plan packet', artifacts: [] };
     saveRunState(run);
     // No orchestrator.log written — discovery degrades to state-sourced points + a note.
