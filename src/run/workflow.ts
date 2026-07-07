@@ -16,10 +16,6 @@ export function workflowPath(cwd: string, runId: string): string {
   return join(cwd, '.duet', 'runs', runId, WORKFLOW_FILE);
 }
 
-export function hasFrozenWorkflow(cwd: string, runId: string): boolean {
-  return existsSync(workflowPath(cwd, runId));
-}
-
 export function writeFrozenWorkflow(state: Pick<RunState, 'cwd' | 'runId' | 'workflow' | 'corpusDir'>, workflow: CompiledWorkflow): void {
   if (workflow.name !== state.workflow) {
     throw new Error(

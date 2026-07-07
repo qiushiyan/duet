@@ -17,7 +17,7 @@ import {
 import type { CompiledWorkflow, GatePhase, PhaseName, WorkflowName } from '../registry/workflows.ts';
 import type { ContextUsage, VoiceAddress } from '../voices/providers/types.ts';
 import type { ErrorClass, RetryState } from '../voices/health.ts';
-import { hasFrozenWorkflow, workflowFor, writeFrozenWorkflow } from './workflow.ts';
+import { WORKFLOW_FILE, workflowFor, workflowForRunDir, writeFrozenWorkflow } from './workflow.ts';
 import { allocateCorpusRecordDir, mirrorAppend, mirrorFile } from './corpus.ts';
 
 /**
@@ -632,7 +632,7 @@ export function loadRunState(cwd: string, runId: string): RunState {
 export function loadRunStateFromDir(runDir: string): RunState {
   const path = join(runDir, STATE_FILE);
   if (!existsSync(path)) throw new Error(`no run state at ${path}`);
-  return normalizeRunState(JSON.parse(readFileSync(path, 'utf8')) as RunState);
+  return normalizeRunState(JSON.parse(readFileSync(path, 'utf8')) as RunState, runDir);
 }
 
 /**
@@ -659,7 +659,7 @@ export class UnloadableRunError extends Error {
  * nothing is lost that the augmentation principle promised). Past this
  * boundary every reader trusts the one duty-keyed shape.
  */
-function normalizeRunState(state: RunState): RunState {
+function normalizeRunState(state: RunState, runDir: string): RunState {
   const legacy = state as RunState & { workerSessions?: unknown; workflow?: string };
   if ((state.bindings as { duties?: unknown } | undefined)?.duties === undefined || legacy.workerSessions !== undefined) {
     throw new UnloadableRunError(
@@ -667,11 +667,11 @@ function normalizeRunState(state: RunState): RunState {
       `run ${state.runId} predates the duty-keyed remodel (its state binds implementer/reviewer seats) — duet no longer loads it. Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .duet/runs/${state.runId}.`,
     );
   }
-  // A persisted workflow with neither a frozen spec nor a shipped registry row
-  // is unloadable — reject with the same manual path out.
-  // Object.hasOwn, not `in`: `in` sees prototype-inherited keys, so a
-  // hand-written `workflow: "toString"` would pass the guard and crash later.
-  if (legacy.workflow !== undefined && !isShippedWorkflowName(legacy.workflow) && !hasFrozenWorkflow(state.cwd, state.runId)) {
+  // A persisted workflow with neither a frozen spec (in THIS dir — `runDir`, not
+  // a state.cwd-derived path, so a record loaded from the corpus archive resolves
+  // against the archive) nor a shipped registry row is unloadable — reject with
+  // the manual path out.
+  if (legacy.workflow !== undefined && !isShippedWorkflowName(legacy.workflow) && !existsSync(join(runDir, WORKFLOW_FILE))) {
     throw new UnloadableRunError(
       state.runId,
       `run ${state.runId} names workflow "${legacy.workflow}" but has no frozen workflow.json and it is not in the shipped registry (${Object.keys(WORKFLOWS).join(' · ')}) — project/user workflow files are read only at duet new, so this run cannot be reconstructed. Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .duet/runs/${state.runId}.`,
@@ -682,7 +682,7 @@ function normalizeRunState(state: RunState): RunState {
   // one lacks it — 'full' is the shipped default those runs ran on.
   legacy.workflow ??= 'full';
   try {
-    workflowFor(state);
+    workflowForRunDir(state, runDir);
   } catch (err) {
     throw new UnloadableRunError(
       state.runId,

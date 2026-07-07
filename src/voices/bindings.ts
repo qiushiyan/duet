@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { parse } from 'smol-toml';
 import { DUTIES, continuityEdgeFor, stageOfDuty, stageOfDutyLane, stagesOf } from '../registry/workflows.ts';
 import type { Duty, WorkflowRef } from '../registry/workflows.ts';
@@ -339,7 +339,16 @@ function parseCorpusRoot(raw: unknown): string {
   if (typeof dir !== 'string' || dir.trim() === '') {
     throw new Error('config: [corpus].dir must be a non-empty string path');
   }
-  return resolve(expandConfigPath(dir.trim()));
+  const expanded = expandConfigPath(dir.trim());
+  // A central archive shared across projects must resolve to one place — a
+  // relative dir would bind to whatever cwd read it (the project at `duet new`,
+  // the duet repo when a script runs), silently fragmenting the archive.
+  if (!isAbsolute(expanded)) {
+    throw new Error(
+      `config: [corpus].dir must be an absolute path or start with ~ (it names a central archive shared across projects), got ${JSON.stringify(dir)}`,
+    );
+  }
+  return expanded;
 }
 
 /** The account-level config file: per-address binding tables + the budget/corpus keys. */

@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
-import { gunzipSync } from 'node:zlib';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { UnloadableRunError, loadRunStateFromDir } from '../../src/run/store.ts';
@@ -20,6 +19,8 @@ export interface LoadSummary {
   skippedUnloadable: number;
   skippedForeign: number;
   source: 'corpus' | 'sweep';
+  /** Set when a configured (not explicit) corpus was empty and we swept instead. */
+  fallbackNote?: string;
 }
 
 export interface CorpusCliOptions {
@@ -121,10 +122,29 @@ function loadOne(runDir: string, source: 'corpus' | 'sweep'): CorpusRecord | { u
 }
 
 export function loadCorpusRecords(opts: { corpusDir?: string; sweepRoots?: readonly string[] } = {}): LoadSummary {
-  const corpusDir = opts.corpusDir ?? configuredCorpusDir();
+  const explicit = opts.corpusDir; // an explicit --corpus is authoritative
+  const corpusDir = explicit ?? configuredCorpusDir();
   const corpusDirs = corpusDir ? corpusRecordDirs(corpusDir) : [];
-  const source: 'corpus' | 'sweep' = corpusDirs.length > 0 ? 'corpus' : 'sweep';
-  const dirs = source === 'corpus' ? corpusDirs : findLiveRunDirs(opts.sweepRoots?.length ? opts.sweepRoots : defaultSweepRoots());
+
+  let source: 'corpus' | 'sweep';
+  let dirs: string[];
+  let fallbackNote: string | undefined;
+  if (corpusDirs.length > 0) {
+    source = 'corpus';
+    dirs = corpusDirs;
+  } else if (explicit) {
+    // An explicit --corpus that is empty means empty — never silently sweep ~/dev.
+    source = 'corpus';
+    dirs = [];
+  } else {
+    // No explicit corpus: fall back to a live sweep (the young-archive convenience),
+    // but announce it when a configured archive was simply empty.
+    source = 'sweep';
+    const roots = opts.sweepRoots?.length ? opts.sweepRoots : defaultSweepRoots();
+    dirs = findLiveRunDirs(roots);
+    if (corpusDir) fallbackNote = `corpus ${corpusDir} has no records yet — swept ${roots.join(', ')} instead`;
+  }
+
   const records: CorpusRecord[] = [];
   let skippedUnloadable = 0;
   let skippedForeign = 0;
@@ -135,20 +155,12 @@ export function loadCorpusRecords(opts: { corpusDir?: string; sweepRoots?: reado
     else records.push(loaded);
   }
   records.sort((a, b) => b.state.createdAt.localeCompare(a.state.createdAt));
-  return { records, skippedUnloadable, skippedForeign, source };
+  return { records, skippedUnloadable, skippedForeign, source, ...(fallbackNote ? { fallbackNote } : {}) };
 }
 
 export function readText(path: string): string | undefined {
   try {
     return readFileSync(path, 'utf8');
-  } catch {
-    return undefined;
-  }
-}
-
-export function readGzipText(path: string): string | undefined {
-  try {
-    return gunzipSync(readFileSync(path)).toString('utf8');
   } catch {
     return undefined;
   }
@@ -170,11 +182,8 @@ export function workerLogNames(record: CorpusRecord): string[] {
   }
 }
 
-export function ensureDir(path: string): void {
-  mkdirSync(path, { recursive: true });
-}
-
 export function printLoadSummary(summary: LoadSummary): void {
+  if (summary.fallbackNote) console.error(summary.fallbackNote);
   console.error(
     `loaded ${summary.records.length} ${summary.source} record(s); skipped unloadable=${summary.skippedUnloadable}, foreign=${summary.skippedForeign}`,
   );

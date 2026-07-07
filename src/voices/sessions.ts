@@ -9,7 +9,7 @@ import { sessionKeyFor } from './policy.ts';
 // downward: runDirOf as a value, the state shapes type-only (erased at build).
 import { runDirOf } from '../run/store.ts';
 import type { RunState, SessionKey } from '../run/store.ts';
-import { transcriptArchiveDir } from '../run/corpus.ts';
+import { reconcileRecord, transcriptArchiveDir } from '../run/corpus.ts';
 import { workflowFor } from '../run/workflow.ts';
 
 /**
@@ -105,14 +105,41 @@ function transcriptNamePart(raw: string): string {
   return raw.replace(/[^A-Za-z0-9._-]/g, '_') || 'session';
 }
 
+/**
+ * Every tracked session as a (key, provider, sessionId) ref, WITHOUT resolving
+ * the workflow — the orchestrator plus each populated slot in `state.sessions`
+ * (the duties and the consultant), read straight off the persisted records.
+ * This is the workflow-independent enumeration both `purgeRun` (delete) and
+ * `captureRunTranscripts` (archive) share, so they cover the same set and
+ * neither is stranded by a corrupt/mismatched `workflow.json` — capture must be
+ * as robust as the deletion it guards. Order is cosmetic here (both consumers
+ * key by session, not position); `resolveSessions` keeps the workflow-ordered
+ * variant for the status hot path.
+ */
+function trackedSessions(state: RunState): SessionRef[] {
+  const refs: SessionRef[] = [];
+  if (state.orchestratorSessionId) {
+    refs.push({ key: 'orchestrator', provider: state.bindings.orchestrator.provider, sessionId: state.orchestratorSessionId });
+  }
+  for (const [key, record] of Object.entries(state.sessions)) {
+    if (record) refs.push({ key: key as SessionKey, provider: record.provider, sessionId: record.id });
+  }
+  return refs;
+}
+
 export function captureRunTranscripts(state: RunState, home: string = homedir()): string[] {
   const captured: string[] = [];
   try {
     const archiveDir = transcriptArchiveDir(state);
     if (!archiveDir) return captured;
-    for (const ref of resolveSessions(state)) {
+    const seen = new Set<string>();
+    for (const ref of trackedSessions(state)) {
       const paths = locateSessionTranscripts(ref.provider, ref.sessionId, home);
       paths.forEach((path, index) => {
+        // A continuity-edge session shared by two slots resolves to one file —
+        // archive it once (the same dedup purge applies to its deletion).
+        if (seen.has(path)) return;
+        seen.add(path);
         try {
           const numbered = paths.length > 1 ? `.${index + 1}` : '';
           const target = join(
@@ -218,27 +245,21 @@ export interface PurgeResult {
  * tests resolve transcripts under a tmp dir.
  */
 export function purgeRun(state: RunState, home: string = homedir()): PurgeResult {
+  // Archive everything before the point of no return: sweep the non-funneled
+  // run files into the corpus (driver.log, still-pending steers/) AND capture
+  // the transcripts. Both no-op when the corpus is off.
+  reconcileRecord(state);
   captureRunTranscripts(state, home);
-  const sessions: Array<{ provider: 'claude' | 'codex'; sessionId: string }> = [];
-  if (state.orchestratorSessionId) {
-    sessions.push({ provider: state.bindings.orchestrator.provider, sessionId: state.orchestratorSessionId });
-  }
-  // Every tracked session slot, by exact session-id match — each duty's record
-  // plus the consultant's latest checkpoint. The per-duty keys keep every
-  // era's transcript reachable (the old per-role shape tracked only the
-  // latest, losing the planning-era transcript after a provider switch).
-  // Prior consultant checkpoint transcripts are intentionally left on disk:
-  // the slot tracks only the latest id and sessions.ts matches by exact id
-  // (never a directory sweep), so purge cannot reach them. The same limit
-  // applies to a slot a compact-abort session reset cleared
-  // (sessionSlotsToReset — it may clear the planning slot an edge walked to):
-  // a record purge never saw is a transcript purge leaves behind.
-  for (const record of Object.values(state.sessions)) {
-    if (record) sessions.push({ provider: record.provider, sessionId: record.id });
-  }
 
+  // Every tracked session, by exact session-id match — the SAME workflow-
+  // independent enumeration capture uses, deduped so a continuity-edge shared
+  // session is removed once. Prior consultant checkpoint transcripts are
+  // intentionally left on disk: the slot tracks only the latest id and we match
+  // by exact id (never a directory sweep), so purge cannot reach them — as with
+  // a slot a compact-abort reset cleared (a record purge never saw is a
+  // transcript purge leaves behind).
   const transcripts = [
-    ...new Set(sessions.flatMap((s) => locateSessionTranscripts(s.provider, s.sessionId, home))),
+    ...new Set(trackedSessions(state).flatMap((s) => locateSessionTranscripts(s.provider, s.sessionId, home))),
   ];
   for (const path of transcripts) rmSync(path, { force: true });
 

@@ -1,15 +1,15 @@
 import {
   appendFileSync,
   copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { RunState } from './store.ts';
 
 /**
@@ -133,41 +133,28 @@ function isIncludedTopLevelFile(name: string): boolean {
   );
 }
 
-function copyTree(src: string, dst: string): void {
-  const st = statSync(src);
-  if (st.isDirectory()) {
-    mkdirSync(dst, { recursive: true });
-    for (const entry of readdirSync(src, { withFileTypes: true })) {
-      copyTree(join(src, entry.name), join(dst, entry.name));
-    }
-    return;
-  }
-  if (!st.isFile()) return;
-  mkdirSync(dirname(dst), { recursive: true });
-  copyFileSync(src, dst);
-}
-
 /**
  * Reconcile the corpus record to the run dir's included artifacts at a
  * quiescent point. Live mechanics and scratch are deliberately excluded; the
- * transcript archive is owned by the voices layer and preserved here.
+ * transcript archive is owned by the voices layer and preserved here. `srcDir`
+ * defaults to the run's live dir but is passed explicitly by backfill, which
+ * mirrors from wherever it swept the dir (never a state.cwd-derived guess).
  */
-export function reconcileRecord(state: CorpusState): void {
+export function reconcileRecord(state: CorpusState, srcDir: string = runDirOfState(state)): void {
   try {
     const recordDir = ensureCorpusRecord(state);
     if (!recordDir) return;
-    const srcDir = runDirOfState(state);
     if (!existsSync(srcDir)) return;
 
     for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
       if (entry.isFile() && isIncludedTopLevelFile(entry.name)) {
-        copyTree(join(srcDir, entry.name), join(recordDir, entry.name));
+        cpSync(join(srcDir, entry.name), join(recordDir, entry.name), { recursive: true });
         continue;
       }
       if (entry.isDirectory() && entry.name === 'steers') {
         const dst = join(recordDir, entry.name);
         rmSync(dst, { recursive: true, force: true });
-        copyTree(join(srcDir, entry.name), dst);
+        cpSync(join(srcDir, entry.name), dst, { recursive: true });
       }
     }
   } catch {
@@ -185,8 +172,4 @@ export function transcriptArchiveDir(state: CorpusState): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-export function corpusRecordName(path: string): string {
-  return basename(path);
 }

@@ -640,6 +640,37 @@ describe('workflow identity', () => {
     expect(() => machineFor(workflowFor(loaded))).not.toThrow();
   });
 
+  test('a project-composed workflow record loads from the corpus after its source dir is gone', ({ projectDir }) => {
+    const workflow = compileWorkflow(
+      defineWorkflow({
+        name: 'custom-short',
+        title: 'Custom Short',
+        presets: { afk: [] },
+        phases: [frame({ name: 'research' }), build({ review: 'writable', audit: true }), finish()],
+      }),
+    );
+    const corpusRoot = join(projectDir, 'corpus');
+    const created = createRun({
+      cwd: projectDir,
+      workflow: workflow.name,
+      workflowSpec: workflow,
+      bindings: defaultBindingsFor(workflow),
+      framing: 'f',
+      corpusRoot,
+    });
+    const record = created.corpusDir!;
+    expect.soft(existsSync(join(record, 'workflow.json'))).toBe(true);
+
+    // Simulate the worktree being cleaned up — the whole reason the corpus exists.
+    rmSync(runDirOf(projectDir, created.runId), { recursive: true, force: true });
+
+    // The record still loads, resolving its non-shipped workflow from the record
+    // dir it was handed — NOT the deleted state.cwd/.duet/runs path.
+    const loaded = loadRunStateFromDir(record);
+    expect.soft(loaded.workflow).toBe('custom-short');
+    expect.soft(workflowForRunDir(loaded, record).displayName).toBe('Custom Short');
+  });
+
   test('workflow-file mismatch is rejected at the load boundary', ({ projectDir, run }) => {
     const state = JSON.parse(readFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), 'utf8'));
     state.workflow = 'custom-short';

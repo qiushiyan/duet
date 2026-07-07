@@ -27,8 +27,12 @@ function rowsForRecord(record: ReturnType<typeof loadCorpusRecords>['records'][n
     const log = readLog(record, voice);
     return log ? parseVoiceLogTurns(voice, log).turns : [];
   });
-  const rows = windows.map((w) => {
-    const phaseTurns = turns.filter((t) => t.startMs >= w.startMs && t.startMs <= w.endMs);
+  // Attribute each turn to its FIRST containing window, so a turn starting on a
+  // boundary shared by two windows counts once — matching stats.ts phaseForTurn.
+  const windowIndexOf = (startMs: number): number =>
+    windows.findIndex((w) => startMs >= w.startMs && startMs <= w.endMs);
+  const rows = windows.map((w, i) => {
+    const phaseTurns = turns.filter((t) => windowIndexOf(t.startMs) === i);
     const spanMs = w.endMs - w.startMs;
     const busyMs = unionDurationMs(phaseTurns);
     return {

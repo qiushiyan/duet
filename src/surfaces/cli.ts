@@ -52,6 +52,7 @@ import {
 } from '../run/store.ts';
 import type { RunState, Voice } from '../run/store.ts';
 import { workflowFor } from '../run/workflow.ts';
+import { reconcileRecord } from '../run/corpus.ts';
 import { captureRunTranscripts, purgeRun } from '../voices/sessions.ts';
 import { listPendingSteers, stageSteer } from '../run/steers.ts';
 
@@ -957,6 +958,7 @@ program
     }
 
     markAbandoned(fresh);
+    reconcileRecord(fresh);
     captureRunTranscripts(fresh);
     console.log(
       `run ${fresh.runId} abandoned — transcripts kept (revive with: duet continue ${fresh.runId}, or wipe with: duet abandon ${fresh.runId} --purge)`,

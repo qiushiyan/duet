@@ -388,8 +388,11 @@ describe('corpus config — account-level archive root', () => {
 
     const badTable = configIn(join(projectDir, 'bad-table'), 'corpus = "somewhere"');
     const badDir = configIn(join(projectDir, 'bad-dir'), '[corpus]\ndir = ""');
+    const relDir = configIn(join(projectDir, 'rel-dir'), '[corpus]\ndir = "corpus"');
     expect.soft(() => resolveRunConfig({ workflow: 'full' }, badTable)).toThrow(/\[corpus\] must be a table/);
     expect.soft(() => resolveRunConfig({ workflow: 'full' }, badDir)).toThrow(/\[corpus\]\.dir/);
+    // A relative dir would resolve differently per invoking cwd — rejected, not silently absolutized.
+    expect.soft(() => resolveRunConfig({ workflow: 'full' }, relDir)).toThrow(/must be an absolute path/);
   });
 });
 

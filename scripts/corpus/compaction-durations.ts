@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import {
   heartbeatCountBetween,
-  parseDriverHeartbeats,
+  parseHeartbeats,
   parseVoiceLogTurns,
 } from '../../src/surfaces/stats.ts';
 import type { ParsedTurn } from '../../src/surfaces/stats.ts';
@@ -22,10 +22,14 @@ function main(): void {
   const summary = loadCorpusRecords({ ...(opts.corpusDir ? { corpusDir: opts.corpusDir } : {}), sweepRoots: opts.sweepRoots });
   const turns: CompactionTurn[] = [];
   for (const record of summary.records) {
-    const heartbeats = parseDriverHeartbeats(readLog(record, 'driver') ?? '');
     for (const voice of workerLogNames(record)) {
       const log = readLog(record, voice);
       if (!log) continue;
+      // Heartbeats come from the WORKER log (ISO-stamped `⏳ … elapsed`), not
+      // driver.log — whose `[send_prompt]`-prefixed copy carries no timestamp to
+      // parse. Same 5-minute cadence, so the count inside a turn window is the
+      // machine-awake cross-check (few heartbeats in a long turn ⇒ a suspend).
+      const heartbeats = parseHeartbeats(log);
       for (const turn of parseVoiceLogTurns(voice, log).turns.filter(isCompactionLike)) {
         turns.push({
           ...turn,

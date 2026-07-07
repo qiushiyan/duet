@@ -54,9 +54,10 @@ worker turns.
 `compaction-durations.ts`
 
 Lists `/compact`, reread, and recover-like turns by duration, flagging anything
-over 10 minutes. It also counts `driver.log` heartbeats inside the turn window;
-a long turn with only one or two heartbeats often means the machine slept rather
-than computed.
+over 10 minutes. It also counts the worker log's `⏳ … elapsed` heartbeats inside
+the turn window (the driver-log copy carries no parseable timestamp, so the
+worker log is the source); a long turn with only one or two heartbeats often
+means the machine slept rather than computed.
 
 `backfill.ts`
 
@@ -68,8 +69,8 @@ skipped with counts.
 ## Caveats
 
 - Durations are wall-clock from stored UTC log timestamps. A giant "turn" can be
-  machine sleep. Cross-check suspicious spans against `driver.log` heartbeat
-  cadence (`about every 5 minutes` during a healthy running driver).
+  machine sleep. Cross-check suspicious spans against the worker log's heartbeat
+  cadence (`about every 5 minutes` during a healthy running turn).
 - The corpus is usually small. Treat medians, maxima, and outliers as triage
   signals, not statistically robust distributions.
 - Product readers refuse old eras. These scripts tolerate them by skipping

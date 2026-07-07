@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { gapsBetweenTurns, parsePhaseWindows, parseVoiceLogTurns } from '../../src/surfaces/stats.ts';
+import { gapsBetweenTurns, parsePhaseWindows, parseVoiceLogTurns, phaseForTurn } from '../../src/surfaces/stats.ts';
 import type { ParsedTurn } from '../../src/surfaces/stats.ts';
 import { formatDuration } from '../../src/view/timefmt.ts';
 import { loadCorpusRecords, parseCorpusCliArgs, printLoadSummary, readLog, workerLogNames } from './lib.ts';
@@ -33,16 +33,16 @@ function allTurns(): { turns: CorpusTurn[]; skippedUnloadable: number; skippedFo
       const windows = parsePhaseWindows(readLog(record, 'orchestrator') ?? '', Number.isNaN(runStartMs) ? 0 : runStartMs).windows;
       return workerLogNames(record).flatMap((voice) => {
         const log = readLog(record, voice);
-        return log
-          ? parseVoiceLogTurns(voice, log).turns.map((turn) => ({
-              ...turn,
-              runId: record.state.runId,
-              workflow: record.state.workflow,
-              ...(windows.find((w) => turn.startMs >= w.startMs && turn.startMs <= w.endMs)?.phase
-                ? { phase: windows.find((w) => turn.startMs >= w.startMs && turn.startMs <= w.endMs)!.phase }
-                : {}),
-            }))
-          : [];
+        if (!log) return [];
+        return parseVoiceLogTurns(voice, log).turns.map((turn) => {
+          const phase = phaseForTurn(windows, turn.startMs);
+          return {
+            ...turn,
+            runId: record.state.runId,
+            workflow: record.state.workflow,
+            ...(phase ? { phase } : {}),
+          };
+        });
       });
     },
   );
@@ -116,8 +116,18 @@ function main(): void {
     );
   }
 
-  const gaps = gapsBetweenTurns(turns, 25 * 60_000);
-  console.log('\nbig gaps >25m between worker turns');
+  // Gaps are within-run idle, so group by run before diffing consecutive turns —
+  // a global sort would report the wall-clock span between two separate runs as a gap.
+  const byRun = new Map<string, CorpusTurn[]>();
+  for (const turn of turns) {
+    const list = byRun.get(turn.runId);
+    if (list) list.push(turn);
+    else byRun.set(turn.runId, [turn]);
+  }
+  const gaps = [...byRun.values()]
+    .flatMap((runTurns) => gapsBetweenTurns(runTurns, 25 * 60_000))
+    .sort((a, b) => b.durationMs - a.durationMs);
+  console.log('\nbig gaps >25m between worker turns (within a run)');
   if (gaps.length === 0) console.log('  none');
   for (const gap of gaps.slice(0, 40)) {
     console.log(`  ${formatDuration(gap.durationMs).padEnd(6)} after ${gap.before.voice}:${gap.before.tag} → ${gap.after.voice}:${gap.after.tag}`);

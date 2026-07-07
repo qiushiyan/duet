@@ -37,7 +37,7 @@ const TS = String.raw`\[(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z)\]`;
 const PHASE_OPEN = new RegExp(`^${TS} ◀ harness prompt \\(phase=(\\w+)\\)`);
 const PHASE_CLOSE = new RegExp(`^${TS} advance_phase \\((\\w+)\\)`);
 const TURN_START = new RegExp(`^${TS} ◀ prompt \\(tag=([^,)]+)`);
-const TURN_END = new RegExp(`^${TS} (▶ response|◼ budget-control stop|✗ turn failed(?::\\s*(.*))?)`);
+const TURN_END = new RegExp(`^${TS} (▶ response|◼ budget-control stop|✗ turn failed(?::\\s*(.*))?|⚠ .*aborted.*)`);
 const HEARTBEAT = new RegExp(`^${TS} ⏳ .*?(\\d+)m elapsed`);
 
 export interface PhaseWindow {
@@ -150,7 +150,11 @@ export function parsePhaseWindows(log: string, runStartMs = 0): { windows: Phase
 function statusForTerminal(marker: string, detail: string | undefined): TurnStatus {
   if (marker.startsWith('▶')) return 'ok';
   if (marker.startsWith('◼')) return 'budget';
-  return /tim(?:e|ed|eout|ed out|out)/i.test(detail ?? marker) ? 'timeout' : 'failed';
+  // A `⚠` abort is a resumable cut — wall-clock cap, context cap, or an aborted
+  // `/compact` — none of which arrive as `✗ turn failed`, so they land here.
+  if (marker.startsWith('⚠')) return 'timeout';
+  // Word-boundaried so "timed out"/"timeout" match but "runtime"/"timestamp" don't.
+  return /timed?[\s-]?out/i.test(detail ?? marker) ? 'timeout' : 'failed';
 }
 
 export function parseVoiceLogTurns(voice: string, log: string): { turns: ParsedTurn[]; dangling: number } {
@@ -229,13 +233,20 @@ export function gapsBetweenTurns(turns: readonly ParsedTurn[], thresholdMs: numb
   return gaps;
 }
 
-export interface DriverHeartbeat {
+export interface Heartbeat {
   atMs: number;
   elapsedMinutes: number;
 }
 
-export function parseDriverHeartbeats(log: string): DriverHeartbeat[] {
-  const heartbeats: DriverHeartbeat[] = [];
+/**
+ * Parse the `⏳ … Nm elapsed` heartbeat cadence out of a log. Reads from a
+ * voice log, whose heartbeats carry the ISO stamp `HEARTBEAT` anchors on — the
+ * driver log's copy is `[send_prompt]`-prefixed with no stamp, so it never
+ * matches. Same 5-minute interval either way, so the worker log is the honest
+ * (and parseable) source for "how many heartbeats fired inside this turn".
+ */
+export function parseHeartbeats(log: string): Heartbeat[] {
+  const heartbeats: Heartbeat[] = [];
   for (const line of log.split('\n')) {
     const match = HEARTBEAT.exec(line);
     if (!match) continue;
@@ -246,8 +257,18 @@ export function parseDriverHeartbeats(log: string): DriverHeartbeat[] {
   return heartbeats;
 }
 
-export function heartbeatCountBetween(heartbeats: readonly DriverHeartbeat[], startMs: number, endMs: number): number {
+export function heartbeatCountBetween(heartbeats: readonly Heartbeat[], startMs: number, endMs: number): number {
   return heartbeats.filter((h) => h.atMs >= startMs && h.atMs <= endMs).length;
+}
+
+/**
+ * The one turn→phase attribution rule, shared by `buildStats` and the corpus
+ * scripts so their numbers can't drift: a turn belongs to the FIRST window
+ * (chronological push order) whose closed span contains its start, so a turn
+ * that starts on a shared window boundary attributes once, to the earlier phase.
+ */
+export function phaseForTurn(windows: readonly PhaseWindow[], startMs: number): string | undefined {
+  return windows.find((w) => startMs >= w.startMs && startMs <= w.endMs)?.phase;
 }
 
 /**
@@ -300,7 +321,7 @@ export function buildStats(
   let unattributed = 0;
   for (const t of turns) {
     const dur = t.endMs - t.startMs;
-    const phase = windows.find((w) => t.startMs >= w.startMs && t.startMs <= w.endMs)?.phase;
+    const phase = phaseForTurn(windows, t.startMs);
     if (phase) {
       workerMs.set(phase, (workerMs.get(phase) ?? 0) + dur);
       turnCount.set(phase, (turnCount.get(phase) ?? 0) + 1);

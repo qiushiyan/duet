@@ -28,9 +28,14 @@ function main(): void {
     try {
       const state = loadRunStateFromDir(runDir);
       workflowForRunDir(state, runDir);
-      const corpusDir = state.corpusDir ?? allocateCorpusRecordDir(corpusRoot, state.runId, state.cwd);
+      // Always target the requested root (idempotent for a run already mirrored
+      // there via allocateCorpusRecordDir's same-record check), so the summary's
+      // destination is honest even for a run frozen to a different corpusDir.
+      // Reconcile from the swept `runDir`, never a state.cwd guess, so a project
+      // relocated since creation still mirrors instead of copying nothing.
+      const corpusDir = allocateCorpusRecordDir(corpusRoot, state.runId, state.cwd);
       const mirrorState = { ...state, corpusDir };
-      reconcileRecord(mirrorState);
+      reconcileRecord(mirrorState, runDir);
       transcripts += captureRunTranscripts(mirrorState).length;
       mirrored += 1;
     } catch (err) {

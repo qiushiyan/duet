@@ -167,6 +167,25 @@ describe('purgeRun', () => {
     expect.soft(readdirSync(transcriptDir).some((f) => f.endsWith('.jsonl'))).toBe(false);
   });
 
+  test('captures transcripts even when workflow.json is corrupt (capture is workflow-independent)', ({ projectDir, run }) => {
+    const h = home();
+    const corpusDir = join(projectDir, 'corpus', run.runId);
+    writeClaudeTranscript(h, '-proj', 'orch-1');
+    run.corpusDir = corpusDir;
+    run.orchestratorSessionId = 'orch-1';
+    saveRunState(run);
+
+    // Load while valid, then corrupt the frozen workflow on disk — the window
+    // where the old resolveSessions→workflowFor path threw and lost the
+    // transcript un-archived while purge still deleted it.
+    const loaded = loadRunState(projectDir, run.runId);
+    writeFileSync(join(runDirOf(projectDir, run.runId), 'workflow.json'), 'not json');
+
+    const captured = captureRunTranscripts(loaded, h);
+    expect.soft(captured).toEqual([join(corpusDir, 'transcripts', 'orchestrator.orch-1.jsonl.gz')]);
+    expect.soft(existsSync(join(corpusDir, 'transcripts', 'orchestrator.orch-1.jsonl.gz'))).toBe(true);
+  });
+
   test('transcript capture is silent and skipped when the corpus is off', ({ projectDir, run }) => {
     const h = home();
     writeClaudeTranscript(h, '-proj', 'orch-1');

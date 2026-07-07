@@ -4,7 +4,7 @@ import {
   buildStatsModel,
   gapsBetweenTurns,
   heartbeatCountBetween,
-  parseDriverHeartbeats,
+  parseHeartbeats,
   parseVoiceLogTurns,
   renderStats,
   unionDurationMs,
@@ -218,6 +218,26 @@ describe('corpus telemetry primitives', () => {
     ]);
   });
 
+  plain('parseVoiceLogTurns closes ⚠ resumable aborts as timeout and does not read "runtime" as one', () => {
+    const log = [
+      line(at(0), '◀ prompt (tag=wall-clock, from orchestrator)'),
+      line(at(1), '⚠ turn aborted (resumable) (session s1)'),
+      line(at(2), '◀ prompt (tag=compact, from orchestrator)'),
+      line(at(3), '⚠ /compact aborted — builder session reset; re-anchor with recover-context'),
+      line(at(4), '◀ prompt (tag=runtime-fail, from orchestrator)'),
+      line(at(5), '✗ turn failed: runtime error while connecting'),
+    ].join('\n');
+
+    const parsed = parseVoiceLogTurns('builder', log);
+    // ⚠ aborts are terminal lines — they close their turn instead of leaving it dangling.
+    expect.soft(parsed.dangling).toBe(0);
+    expect.soft(parsed.turns.map((t) => [t.tag, t.status])).toEqual([
+      ['wall-clock', 'timeout'],
+      ['compact', 'timeout'],
+      ['runtime-fail', 'failed'],
+    ]);
+  });
+
   plain('gapsBetweenTurns reports only gaps over the threshold, ordered by turn time', () => {
     const turns = parseVoiceLogTurns(
       'builder',
@@ -237,8 +257,8 @@ describe('corpus telemetry primitives', () => {
     expect.soft(gaps[0]?.after.tag).toBe('c');
   });
 
-  plain('driver heartbeats parse from stored UTC lines and can be counted across a turn', () => {
-    const heartbeats = parseDriverHeartbeats(
+  plain('heartbeats parse from stored UTC lines and can be counted across a turn', () => {
+    const heartbeats = parseHeartbeats(
       [
         line(at(0), '⏳ implement phase still running — 5m elapsed'),
         line(at(5), '⏳ implement phase still running — 10m elapsed'),
