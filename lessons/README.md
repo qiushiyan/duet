@@ -1,14 +1,14 @@
 # Vendored methodology lessons (`lessons/`)
 
 These are **vendored snapshots**, not authored here. They are duet's quality
-opinion for the PLAN phase — what counts as good design (deep modules, seams,
-the deletion test, illegal states) and good implementation (TDD discipline,
-mocking strategy, the Vitest toolkit). The three PLAN/RIR snippets in
-`snippets.toml` (`start-plan`, `review-plan`, `implement-direct`) cite them by a
-`{{lessons_dir}}/…` path that `src/snippets.ts` resolves to this directory at
-serve time, so a worker on any install reads the real files, not a path on the
-author's machine. They ship in the npm package (`package.json` `files` includes
-`lessons`).
+opinion for the planning and build phases — what counts as good design (deep
+modules, seams, the deletion test, illegal states) and good implementation (TDD
+discipline, mocking strategy, the Vitest toolkit). The planning and build
+snippets (`snippets/doc-plan.toml`, `snippets/doc-design.toml`,
+`snippets/build.toml`) cite them by a `{{lessons_dir}}/…` path that
+`src/orchestrator/library.ts` resolves to this directory at serve time, so a
+worker on any install reads the real files, not a path on the author's machine.
+They ship in the npm package (`package.json` `files` includes `lessons`).
 
 ## The two topics
 
@@ -47,7 +47,7 @@ duet/lessons/              ← this vendored, shippable copy ({{lessons_dir}})
   author's diff anchor, never read by a worker.
 - **Refresh:** `pnpm vendor-lessons` (copies the two topic dirs in wholesale;
   `--dry-run` to preview; `DUET_LESSONS_DIR` overrides the source). Re-vendoring
-  is a deliberate manual step — the mirror of the `snippets.toml` ⟷ tabtype
+  is a deliberate manual step — the mirror of the snippets ⟷ tabtype
   hand-sync, which runs the opposite direction (repo → tabtype). The provenance
   audit is `git diff` on this directory. **Do not hand-edit files here:** edit
   the canonical copy and re-vendor, or the next refresh overwrites the change.
