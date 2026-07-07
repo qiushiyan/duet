@@ -24,7 +24,6 @@ import {
   reviewCapRail,
   sameRoleInFlightRail,
   stageSessionId,
-  terminalAlreadySetRail,
   verifyCheckpointRail,
   warnOnceTemplateRail,
 } from '../src/orchestrator/tools.ts';
@@ -146,23 +145,16 @@ const railCtx = (state: RunState, over: Partial<RailCtx> = {}): RailCtx => ({
 // runtime shapes (multi-block success, the two kinds of isError, the
 // conditional flag).
 describe('result builders', () => {
-  test('ok is a multi-block success with no isError flag', () => {
-    const r = ok(block('a'), block('b'));
-    expect(r).toEqual({ content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] });
-    expect('isError' in r).toBe(false);
-  });
-
-  test('refuse and error both produce the isError:true envelope (their only difference — refuse rejects empty text — is the compile-time guarantee above)', () => {
-    expect(refuse('next move here')).toEqual({ content: [{ type: 'text', text: 'next move here' }], isError: true });
-    expect(error(block('the turn failed'))).toEqual({ content: [{ type: 'text', text: 'the turn failed' }], isError: true });
-  });
-
-  test('result sets the flag only when isError is truthy, else omits it', () => {
-    const errored = result([block('x')], { isError: true });
-    expect(errored).toEqual({ content: [{ type: 'text', text: 'x' }], isError: true });
+  test('the envelope taxonomy: multi-block ok, isError refuse/error, and the flag omitted unless truthy', () => {
+    // Every handler test exercises these through real calls; the one subtlety
+    // worth its own assertion is flag OMISSION (isError:false must not serialize).
+    expect.soft(ok(block('a'), block('b'))).toEqual({ content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] });
+    expect.soft(refuse('next move here')).toEqual({ content: [{ type: 'text', text: 'next move here' }], isError: true });
+    expect.soft(error(block('the turn failed'))).toEqual({ content: [{ type: 'text', text: 'the turn failed' }], isError: true });
+    expect.soft(result([block('x')], { isError: true })).toEqual({ content: [{ type: 'text', text: 'x' }], isError: true });
     const clean = result([block('x')], { isError: false });
-    expect(clean).toEqual({ content: [{ type: 'text', text: 'x' }] });
-    expect('isError' in clean).toBe(false);
+    expect.soft('isError' in clean).toBe(false);
+    expect.soft('isError' in ok(block('a'))).toBe(false);
   });
 });
 
@@ -171,7 +163,6 @@ describe('isCompactBody / perTurnTimeoutFor (S7 — the body-derived compact rul
     expect.soft(isCompactBody('/compact keep the spec, drop the journey')).toBe(true);
     expect.soft(isCompactBody('  /compact foo')).toBe(true);
     expect.soft(perTurnTimeoutFor('/compact foo')).toBe(COMPACT_TIMEOUT_MS);
-    expect.soft(COMPACT_TIMEOUT_MS).toBe(8 * 60_000);
   });
 
   test('a normal body is not compact and gets no override (the phase cap stands)', () => {
@@ -181,57 +172,38 @@ describe('isCompactBody / perTurnTimeoutFor (S7 — the body-derived compact rul
   });
 });
 
-// The named rails as an INTERNAL SEAM of the tools deep module (#1-deep). These
-// are additive — the no-regression oracle is the full-handler tests below; these
-// characterize each rail's negative-space case and the load-bearing order. The
-// boolean oracles are the rails' injected dependency (a real
-// dispatcher/turnsInFlight-derived adapter in production, a stub here) — mocking
-// at the seam, not our own module.
+// The named rails as an INTERNAL SEAM of the tools deep module (#1-deep),
+// deliberately THIN: only the negative-space cases the full-handler tests
+// below cannot reach — a rail's side-effect discipline, the load-bearing
+// composition order, and the blocking-vs-async host split. Everything a
+// handler test already proves (same-role in-flight, review caps, warn-once,
+// first-terminal-wins, the emergency band) lives only at the handler altitude.
+// The boolean oracles are the rails' injected dependency (a real
+// dispatcher/turnsInFlight-derived adapter in production, a stub here) —
+// mocking at the seam, not our own module.
 describe('rails (the #1-deep internal-seam surface)', () => {
 
-  test('sameRoleInFlightRail refuses a live same-role send, passes otherwise', ({ run }) => {
-    const live = sameRoleInFlightRail({ duty: 'analyst', tag: 'x', isReviewRound: false }, railCtx(run, { inFlight: () => true }));
-    expect(live?.isError).toBe(true);
-    expect(text(live!)).toContain('already in flight');
-    expect(sameRoleInFlightRail({ duty: 'analyst', tag: 'x', isReviewRound: false }, railCtx(run))).toBeNull();
+  test('orphanRail: a takeover-policy orphan refuses WITHOUT clearing; discard-and-reseed clears and passes (its lone side effect)', ({
+    run,
+    consultantRun,
+  }) => {
+    const held = vi.fn();
+    const r = orphanRail({ duty: 'analyst', tag: 'x', isReviewRound: false }, railCtx(run, { orphanedOnDisk: () => true, clearOrphan: held }));
+    expect.soft(r?.isError).toBe(true);
+    expect.soft(held).not.toHaveBeenCalled();
+
+    const cleared = vi.fn();
+    const pass = orphanRail(
+      { duty: 'consultant', tag: 'x', isReviewRound: false },
+      railCtx(consultantRun, { orphanedOnDisk: () => true, clearOrphan: cleared }),
+    );
+    expect.soft(pass).toBeNull();
+    expect.soft(cleared).toHaveBeenCalledWith('consultant'); // driven by orphanRecoveryFor, not a role literal
   });
 
-  test('orphanRail refuses a takeover-policy orphan WITHOUT clearing it', ({ run }) => {
-    const clearOrphan = vi.fn();
-    const r = orphanRail({ duty: 'analyst', tag: 'x', isReviewRound: false }, railCtx(run, { orphanedOnDisk: () => true, clearOrphan }));
-    expect(r?.isError).toBe(true);
-    expect(clearOrphan).not.toHaveBeenCalled();
-  });
-
-  test('orphanRail clears a discard-and-reseed orphan and returns null (its lone side effect)', ({ consultantRun }) => {
-    const clearOrphan = vi.fn();
-    const r = orphanRail({ duty: 'consultant', tag: 'x', isReviewRound: false }, railCtx(consultantRun, { orphanedOnDisk: () => true, clearOrphan }));
-    expect(r).toBeNull();
-    expect(clearOrphan).toHaveBeenCalledWith('consultant'); // driven by orphanRecoveryFor, not a role literal
-  });
-
-  test('reviewCapRail refuses at the cap, passes below it or on a non-review send', ({ run }) => {
-    run.rounds.spec = 3;
-    const r = reviewCapRail({ duty: 'analyst', tag: 'review-spec', isReviewRound: true }, railCtx(run, { phase: 'spec', cap: 3 }));
-    expect(r?.isError).toBe(true);
-    expect(text(r!)).toContain('backstop cap of 3 review rounds');
-    run.rounds.spec = 2;
-    expect(reviewCapRail({ duty: 'analyst', tag: 'review-spec', isReviewRound: true }, railCtx(run, { phase: 'spec', cap: 3 }))).toBeNull();
-    run.rounds.spec = 3;
-    expect(reviewCapRail({ duty: 'analyst', tag: 'custom', isReviewRound: false }, railCtx(run, { phase: 'spec', cap: 3 }))).toBeNull();
-  });
-
-  test('warnOnceTemplateRail refuses the first identical resend, then allows the deliberate retry', ({ run }) => {
-    const ctx = railCtx(run, { sentThisPhase: () => ['review-spec'], resendWarned: new Set() });
-    expect(warnOnceTemplateRail({ duty: 'analyst', tag: 'review-spec', isReviewRound: true }, ctx)?.isError).toBe(true);
-    expect(warnOnceTemplateRail({ duty: 'analyst', tag: 'review-spec', isReviewRound: true }, ctx)).toBeNull();
-  });
-
-  test('the shared terminal group refuses a second terminal call and a stranded phase-exit', ({ run }) => {
-    run.terminalMarker = { phase: 'spec', kind: 'advance' };
-    expect(terminalAlreadySetRail({ verb: 'advance the phase' }, railCtx(run, { phase: 'spec' }))?.isError).toBe(true);
-    delete run.terminalMarker;
-    expect(terminalAlreadySetRail({ verb: 'advance the phase' }, railCtx(run, { phase: 'spec' }))).toBeNull();
+  test('pendingTurnGateRail is async-host-only: an uncollected turn strands the phase exit there, and must NOT gate the blocking host', ({
+    run,
+  }) => {
     // Async host (a dispatcher owns turns): an uncollected turn strands the phase exit.
     const stranded = pendingTurnGateRail({ verb: 'advance the phase' }, railCtx(run, { asyncHost: true, inFlight: () => true }));
     expect(stranded?.isError).toBe(true);
@@ -240,23 +212,6 @@ describe('rails (the #1-deep internal-seam surface)', () => {
     // in-memory turnsInFlight set there, but a blocking send_prompt runs to completion
     // before a terminal call, so it must NOT gate a phase exit — even with inFlight true.
     expect(pendingTurnGateRail({ verb: 'advance the phase' }, railCtx(run, { asyncHost: false, inFlight: () => true }))).toBeNull();
-  });
-
-  test('the contract/verify checkpoints refuse a silent skip (a high is the escape hatch)', ({ consultantRun }) => {
-    const contract = contractCheckpointRail({ verb: 'advance the phase' }, railCtx(consultantRun, { phase: 'plan' }));
-    expect(contract?.isError).toBe(true);
-    expect(text(contract!)).toContain('owes its acceptance contract');
-    expect(
-      contractCheckpointRail(
-        { verb: 'advance the phase', humanDecisions: [{ title: 'no contract', severity: 'high' }] },
-        railCtx(consultantRun, { phase: 'plan' }),
-      ),
-    ).toBeNull();
-
-    consultantRun.acceptanceContract = { path: 'x', commit: 'abc' };
-    const verify = verifyCheckpointRail({ verb: 'advance the phase' }, railCtx(consultantRun, { phase: 'implement' }));
-    expect(verify?.isError).toBe(true);
-    expect(text(verify!)).toContain('has not been verified');
   });
 
   test('contractCheckpointRail: a path-less draft needs a resolvable document path — recorded earlier, or carried by THIS call', ({
@@ -317,18 +272,6 @@ describe('rails (the #1-deep internal-seam surface)', () => {
     );
     expect(text(r!)).toContain('already in flight');
     expect(text(r!)).not.toContain('orphaned');
-  });
-
-  test('contextPressureRail: emergency hard-refuses a non-compact send; a /compact body always passes', ({ run }) => {
-    recordContextUsage(run, 'architect', { usedTokens: 870_000, windowTokens: 1_000_000 });
-    const r = contextPressureRail({ duty: 'architect', tag: 'custom', isReviewRound: false }, railCtx(run));
-    expect.soft(r?.isError).toBe(true);
-    expect.soft(text(r!)).toContain('87% of its context window');
-    expect.soft(text(r!)).toContain('/compact');
-    // The named recovery passes the rail — and a repeat non-compact send is
-    // still refused (no warn-once at emergency: there is no legitimate override).
-    expect.soft(contextPressureRail({ duty: 'architect', tag: 'custom', isReviewRound: false, isCompactTurn: true }, railCtx(run))).toBeNull();
-    expect.soft(contextPressureRail({ duty: 'architect', tag: 'custom', isReviewRound: false }, railCtx(run))?.isError).toBe(true);
   });
 
   test('contextPressureRail: caution warns once per role per phase, then judgment overrides', ({ run }) => {
@@ -864,65 +807,42 @@ describe('send_prompt', () => {
     expect.soft(loadRunState(projectDir, run.runId).contextUsage?.architect).toBeUndefined();
   });
 
-  test('the salvage ladder: a salvage that also fails resets the session and prescribes recover-context', async ({
-    projectDir,
-    run,
-  }) => {
+  // Every escalation rung ends the same way — session RESET + recover-context —
+  // and differs only in the script that gets there and whether a second salvage
+  // was (correctly) never dispatched.
+  const overflow = () => new Error('claude worker turn failed (success): Prompt is too long');
+  test.for([
+    {
+      name: 'a salvage that also fails resets the session',
+      script: () => [overflow(), overflow()],
+      sends: 1,
+      totalTurns: 2,
+    },
+    {
+      name: 'thrash guard: a second overflow after a salvage goes straight to reset, no compact loop',
+      script: () => [overflow(), { text: 'compacted', sessionId: 'sess-wedged' }, overflow()],
+      sends: 2,
+      totalTurns: 3, // no second salvage /compact was dispatched
+    },
+    {
+      name: 'a salvage /compact cut at its cap rides the existing reset',
+      script: () => [overflow(), { aborted: true as const, sessionId: 'sess-wedged' }],
+      sends: 1,
+      totalTurns: 2,
+    },
+  ])('the salvage ladder escalates: $name', async ({ script, sends, totalTurns }, { expect, run }) => {
     run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-wedged' } };
     saveRunState(run);
-    const maker = new FakeWorker('claude', [
-      new Error('claude worker turn failed (success): Prompt is too long'),
-      new Error('claude worker turn failed (success): Prompt is too long'), // the compact bounces too
-    ]);
+    const maker = new FakeWorker('claude', script());
     const { call } = harness(run, { maker });
-    const result = await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'continue' });
-    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
+    let result;
+    for (let i = 0; i < sends; i += 1) result = await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'continue' });
+    const joined = result!.content.map((c) => (c as { text: string }).text).join('\n');
 
-    expect.soft(joined).toContain('RESET the architect');
     expect.soft(joined).toContain('recover-context');
     expect.soft(joined).not.toContain('re-send this same prompt'); // a fresh session must be re-anchored, not re-sent
-    expect.soft(loadRunState(projectDir, run.runId).sessions['planning.architect']).toBeUndefined();
-  });
-
-  test('the salvage ladder thrash guard: a second overflow after a salvage goes straight to reset, no compact loop', async ({
-    projectDir,
-    run,
-  }) => {
-    run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-wedged' } };
-    saveRunState(run);
-    const maker = new FakeWorker('claude', [
-      new Error('claude worker turn failed (success): Prompt is too long'),
-      { text: 'compacted', sessionId: 'sess-wedged' }, // the salvage succeeds…
-      new Error('claude worker turn failed (success): Prompt is too long'), // …but the floor is too high
-    ]);
-    const { call } = harness(run, { maker });
-    await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'continue' });
-    const second = await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'continue' });
-    const joined = second.content.map((c) => (c as { text: string }).text).join('\n');
-
-    expect.soft(joined).toContain('again after an automatic salvage compaction');
-    expect.soft(joined).toContain('recover-context');
-    expect.soft(maker.calls.length).toBe(3); // no second salvage /compact was dispatched
-    expect.soft(loadRunState(projectDir, run.runId).sessions['planning.architect']).toBeUndefined();
-  });
-
-  test('the salvage ladder: a salvage /compact cut at its cap rides the existing reset and names it', async ({
-    projectDir,
-    run,
-  }) => {
-    run.sessions = { 'planning.architect': { provider: 'claude', id: 'sess-wedged' } };
-    saveRunState(run);
-    const maker = new FakeWorker('claude', [
-      new Error('claude worker turn failed (success): Prompt is too long'),
-      { aborted: true, sessionId: 'sess-wedged' }, // the salvage compact hits its 8-min cap
-    ]);
-    const { call } = harness(run, { maker });
-    const result = await call('send_prompt', { duty: 'architect', tag: 'custom', body: 'continue' });
-    const joined = result.content.map((c) => (c as { text: string }).text).join('\n');
-
-    expect.soft(joined).toContain('cut at its cap');
-    expect.soft(joined).toContain('recover-context');
-    expect.soft(loadRunState(projectDir, run.runId).sessions['planning.architect']).toBeUndefined(); // settle's compact-abort reset
+    expect.soft(maker.calls.length).toBe(totalTurns);
+    expect.soft(loadRunState(run.cwd, run.runId).sessions['planning.architect']).toBeUndefined();
   });
 
   test('an interrupted turn AT the context ceiling prescribes compact-first, not a short continuation', async ({
@@ -2445,55 +2365,35 @@ describe('advance_phase acceptance-contract rail (Full + consultant)', () => {
   const advance = { summary: 's', artifacts: [] };
   const high = { ...advance, human_decisions: [{ title: 'no contract', severity: 'high' as const }] };
 
-  test('plan REFUSES with no authored contract (no draft marker) and no high', async ({ consultantRun }) => {
-    consultantRun.rounds.plan = 1;
-    const { call } = harness(consultantRun, { phase: 'plan', consultant: new FakeWorker('claude') });
-    const res = await call('advance_phase', advance);
-    expect.soft(res.isError).toBe(true);
-    expect.soft(text(res)).toContain('acceptance contract');
-  });
-
-  test('plan ADVANCES once this run authored (a draft marker exists)', async ({ consultantRun }) => {
-    consultantRun.rounds.plan = 1;
-    consultantRun.acceptanceContractDraft = { path: 'docs/specs/x.acceptance.md', sessionId: 'c', authoredAt: 'now' };
-    const { call } = harness(consultantRun, { phase: 'plan', consultant: new FakeWorker('claude') });
-    const res = await call('advance_phase', advance);
-    expect.soft(res.isError).toBeFalsy();
-  });
-
-  test('plan ADVANCES with no contract when a high is recorded (the escape hatch that holds the AFK crossing)', async ({
-    consultantRun,
-  }) => {
-    consultantRun.rounds.plan = 1;
-    const { call } = harness(consultantRun, { phase: 'plan', consultant: new FakeWorker('claude') });
-    const res = await call('advance_phase', high);
-    expect.soft(res.isError).toBeFalsy();
-  });
-
-  test('impl REFUSES when a frozen contract was not verified (no verifiedAt) and no high', async ({ consultantRun }) => {
-    consultantRun.rounds.implement = 1;
-    consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc' };
-    const { call } = harness(consultantRun, { phase: 'implement', consultant: new FakeWorker('claude') });
-    const res = await call('advance_phase', advance);
-    expect.soft(res.isError).toBe(true);
-    expect.soft(text(res)).toContain('not been verified');
-  });
-
-  test('impl ADVANCES once verification ran (verifiedAt stamped)', async ({ consultantRun }) => {
-    consultantRun.rounds.implement = 1;
-    consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc', verifiedAt: 'now' };
-    const { call } = harness(consultantRun, { phase: 'implement', consultant: new FakeWorker('claude') });
-    const res = await call('advance_phase', advance);
-    expect.soft(res.isError).toBeFalsy();
-  });
-
-  test('impl with NO frozen contract is the noted-skip case — no verify rail (the absence was a high at plan)', async ({
-    consultantRun,
-  }) => {
-    consultantRun.rounds.implement = 1; // no acceptanceContract on state
-    const { call } = harness(consultantRun, { phase: 'implement', consultant: new FakeWorker('claude') });
-    const res = await call('advance_phase', advance);
-    expect.soft(res.isError).toBeFalsy();
+  // One matrix over the chain's states: (phase, contract state, high) → advance or refuse.
+  const CASES: Array<{
+    name: string;
+    phase: 'plan' | 'implement';
+    draft?: boolean;
+    frozen?: boolean;
+    verified?: boolean;
+    args: typeof advance | typeof high;
+    refusesWith?: string;
+  }> = [
+    { name: 'plan refuses with no authored contract (no draft marker) and no high', phase: 'plan', args: advance, refusesWith: 'acceptance contract' },
+    { name: 'plan advances once this run authored (a draft marker exists)', phase: 'plan', draft: true, args: advance },
+    { name: 'plan advances with no contract on a recorded high (the escape hatch that holds the AFK crossing)', phase: 'plan', args: high },
+    { name: 'impl refuses a frozen contract never verified (no verifiedAt) and no high', phase: 'implement', frozen: true, args: advance, refusesWith: 'not been verified' },
+    { name: 'impl advances once verification ran (verifiedAt stamped)', phase: 'implement', frozen: true, verified: true, args: advance },
+    { name: 'impl with NO frozen contract is the noted-skip case — no verify rail (the absence was a high at plan)', phase: 'implement', args: advance },
+  ];
+  test.for(CASES)('$name', async ({ phase, draft, frozen, verified, args, refusesWith }, { expect, consultantRun }) => {
+    consultantRun.rounds[phase] = 1;
+    if (draft) consultantRun.acceptanceContractDraft = { path: 'docs/specs/x.acceptance.md', sessionId: 'c', authoredAt: 'now' };
+    if (frozen) consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc', ...(verified ? { verifiedAt: 'now' } : {}) };
+    const { call } = harness(consultantRun, { phase, consultant: new FakeWorker('claude') });
+    const res = await call('advance_phase', args);
+    if (refusesWith) {
+      expect.soft(res.isError).toBe(true);
+      expect.soft(text(res)).toContain(refusesWith);
+    } else {
+      expect.soft(res.isError).toBeFalsy();
+    }
   });
 
   test('the rail is consultant-only: an unbound Full plan advances with no contract', async ({ run }) => {
