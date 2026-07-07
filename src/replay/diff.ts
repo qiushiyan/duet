@@ -36,6 +36,7 @@ export interface TerminalComparison {
   readonly original?: { verb: 'advance_phase' | 'ask_human'; body: string };
   readonly fresh?: { verb: 'advance_phase' | 'ask_human'; body: string };
   readonly structural?: string;
+  readonly unanchored?: true;
 }
 
 export interface ReplayDiff {
@@ -64,7 +65,7 @@ export function diffReplay(input: ReplayDiffInput): ReplayDiff {
       if (fresh && exhaustedForSend(fresh, exhausted)) structural = 'scripted worker exhausted for this send_prompt';
       else if (!original || !fresh) structural = original ? 'fresh trace is missing this send_prompt' : 'fresh trace has an extra send_prompt';
       else if (original.tag !== fresh.tag) structural = `snippet tag changed from ${original.tag} to ${fresh.tag}`;
-      else if (!sameSet(original.duties, fresh.duties)) structural = `fan-out membership changed from ${original.duties.join(',')} to ${fresh.duties.join(',')}`;
+      else if (!sameSet(original.duties, fresh.duties)) structural = dutyStructuralMessage(original.duties, fresh.duties);
       else if (!sameOrdinals(original, fresh)) structural = 'per-duty ordinal changed for this send_prompt';
       else if (original.body !== fresh.body) adaptation = { originalBody: original.body, freshBody: fresh.body };
     }
@@ -83,7 +84,7 @@ export function diffReplay(input: ReplayDiffInput): ReplayDiff {
     });
   }
 
-  const terminal = terminalComparison(input.original, input.phase, input.freshEvents);
+  const terminal = terminalComparison(input.original, input.phase, input.freshEvents, unanchoredFromIndex !== undefined);
   if (terminal.structural && firstStructuralDivergence === undefined) firstStructuralDivergence = `terminal: ${terminal.structural}`;
   return {
     sends,
@@ -96,28 +97,32 @@ export function diffReplay(input: ReplayDiffInput): ReplayDiff {
 function originalSendShapes(trace: ProtocolTrace, phase: string): SendShape[] {
   const prompts = trace.events.filter((event): event is WorkerPromptEvent => event.kind === 'worker_prompt' && event.phase === phase);
   const emitted = new Set<number>();
+  const ordinals = new Map<string, number>();
   const sends: SendShape[] = [];
   for (const prompt of prompts) {
     if (emitted.has(prompt.order)) continue;
     if (prompt.fanoutId) {
       const group = prompts.filter((candidate) => candidate.fanoutId === prompt.fanoutId).sort((a, b) => a.order - b.order);
       for (const member of group) emitted.add(member.order);
+      const ordinalsByDuty: Record<string, number> = {};
+      for (const member of group) ordinalsByDuty[member.voice] = nextOrdinal(ordinals, member.voice);
       sends.push({
         duties: group.map((member) => member.voice),
         tag: prompt.tag,
         body: prompt.body,
         compact: isCompactBody(prompt.body),
-        ordinalsByDuty: Object.fromEntries(group.map((member) => [member.voice, member.ordinal])),
+        ordinalsByDuty,
       });
       continue;
     }
     emitted.add(prompt.order);
+    const ordinal = nextOrdinal(ordinals, prompt.voice);
     sends.push({
       duties: [prompt.voice],
       tag: prompt.tag,
       body: prompt.body,
       compact: isCompactBody(prompt.body),
-      ordinalsByDuty: { [prompt.voice]: prompt.ordinal },
+      ordinalsByDuty: { [prompt.voice]: ordinal },
     });
   }
   return sends;
@@ -138,11 +143,18 @@ function freshSendShapes(events: readonly CapturedToolEvent[]): SendShape[] {
     });
 }
 
-function terminalComparison(original: ProtocolTrace, phase: string, freshEvents: readonly CapturedToolEvent[]): TerminalComparison {
+function terminalComparison(original: ProtocolTrace, phase: string, freshEvents: readonly CapturedToolEvent[], unanchored: boolean): TerminalComparison {
   const originalTerminal = original.events.find((event): event is TerminalEvent => event.kind === 'terminal' && event.phase === phase);
   const freshTerminal = freshEvents.find((event): event is Extract<CapturedToolEvent, { kind: 'terminal' }> => event.kind === 'terminal');
   const originalShape = originalTerminal ? { verb: originalTerminal.verb, body: originalTerminal.body } : undefined;
   const freshShape = freshTerminal ? { verb: freshTerminal.verb, body: freshTerminal.body } : undefined;
+  if (unanchored) {
+    return {
+      ...(originalShape ? { original: originalShape } : {}),
+      ...(freshShape ? { fresh: freshShape } : {}),
+      unanchored: true,
+    };
+  }
   if (!originalShape || !freshShape) {
     return {
       ...(originalShape ? { original: originalShape } : {}),
@@ -156,11 +168,24 @@ function terminalComparison(original: ProtocolTrace, phase: string, freshEvents:
 }
 
 function sameSet(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && [...a].sort().every((value, index) => value === [...b].sort()[index]);
+  const as = [...a].sort();
+  const bs = [...b].sort();
+  return as.length === bs.length && as.every((value, index) => value === bs[index]);
 }
 
 function sameOrdinals(a: SendShape, b: SendShape): boolean {
   return a.duties.every((duty) => a.ordinalsByDuty[duty] === b.ordinalsByDuty[duty]);
+}
+
+function nextOrdinal(ordinals: Map<string, number>, duty: string): number {
+  const ordinal = (ordinals.get(duty) ?? 0) + 1;
+  ordinals.set(duty, ordinal);
+  return ordinal;
+}
+
+function dutyStructuralMessage(original: readonly string[], fresh: readonly string[]): string {
+  if (original.length === 1 && fresh.length === 1) return `worker duty changed from ${original[0]} to ${fresh[0]}`;
+  return `fan-out membership changed from ${original.join(',')} to ${fresh.join(',')}`;
 }
 
 function exhaustedForSend(send: SendShape, exhausted: ReadonlySet<string>): boolean {

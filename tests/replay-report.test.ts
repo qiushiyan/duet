@@ -39,13 +39,15 @@ describe('replay report rendering', () => {
       recordId: '20260707-0647-0dbb',
       phase: 'design',
       outputDir: '/tmp/replay',
-      reconstructionNotes: ['list_snippets served from current snippet library'],
+      reconstructionNotes: ['raw historical list_snippets tool output is not recorded; replay serves the current snippet library if list_snippets is called'],
       freshRun: { id: 'fresh-1', outcome: 'flagged', diff },
     });
 
     const text = renderReplayReportText(report);
     expect.soft(text).toContain('# Corpus Replay: 20260707-0647-0dbb design');
-    expect.soft(text).toContain('- list_snippets served from current snippet library');
+    expect
+      .soft(text)
+      .toContain('- raw historical list_snippets tool output is not recorded; replay serves the current snippet library if list_snippets is called');
     expect.soft(text).toContain('First structural divergence: send_prompt[1]: snippet tag changed from review-design to update-design');
     expect.soft(text).toContain('- [0] adaptation drift');
     expect.soft(text).toContain('- [1] structural: snippet tag changed from review-design to update-design');
@@ -67,5 +69,29 @@ describe('replay report rendering', () => {
     expect.soft(parsed.freshRuns).toHaveLength(1);
     expect.soft(parsed.freshRuns[0].diff.firstStructuralDivergence).toBe(diff.firstStructuralDivergence);
     expect.soft(parsed.record).toEqual({ id: 'record-a', phase: 'design' });
+  });
+
+  test('renders terminal post-divergence status without presenting a structural terminal verdict', () => {
+    const report = buildReplayReport({
+      recordId: 'record-a',
+      phase: 'design',
+      outputDir: '/tmp/replay',
+      reconstructionNotes: [],
+      freshRun: {
+        id: 'fresh-1',
+        diff: {
+          sends: [],
+          terminal: {
+            original: { verb: 'advance_phase', body: 'original summary' },
+            fresh: { verb: 'ask_human', body: 'fresh question' },
+            unanchored: true,
+          },
+        },
+      },
+    });
+
+    const text = renderReplayReportText(report);
+    expect.soft(text).toContain('- status: post-divergence, not comparable');
+    expect.soft(text).not.toContain('terminal verb changed');
   });
 });

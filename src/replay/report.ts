@@ -87,6 +87,7 @@ function renderSend(send: SendComparison): string[] {
 function renderTerminal(terminal: TerminalComparison): string[] {
   const original = terminal.original ? `${terminal.original.verb}: ${oneLine(terminal.original.body)}` : 'missing';
   const fresh = terminal.fresh ? `${terminal.fresh.verb}: ${oneLine(terminal.fresh.body)}` : 'missing';
+  if (terminal.unanchored) return ['- status: post-divergence, not comparable', `- original: ${original}`, `- fresh: ${fresh}`];
   return [`- status: ${terminal.structural ? `structural: ${terminal.structural}` : 'aligned'}`, `- original: ${original}`, `- fresh: ${fresh}`];
 }
 

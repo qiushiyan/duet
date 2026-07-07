@@ -41,6 +41,39 @@ describe('diffReplay', () => {
     });
   });
 
+  test('compares original ordinals phase-locally when the voice was used in a prior phase', () => {
+    const original = parseProtocolTrace({
+      orchestratorLog: [
+        entry(0, '◀ harness prompt (phase=frame)', 'frame brief'),
+        entry(5, 'advance_phase (frame)', 'frame done'),
+        entry(6, '◀ harness prompt (phase=design)', 'design brief'),
+        entry(50, 'advance_phase (design)', 'done'),
+      ].join(''),
+      workerLogs: [
+        {
+          voice: 'architect',
+          log: [
+            entry(1, '◀ prompt (tag=think-holistic, from orchestrator)', 'frame read'),
+            entry(2, '▶ response (session architect-frame)', 'frame response'),
+            entry(7, '◀ prompt (tag=write-design, from orchestrator)', 'design write'),
+            entry(8, '▶ response (session architect-design)', 'design response'),
+          ].join(''),
+        },
+      ],
+    });
+
+    const diff = diffReplay({
+      original,
+      phase: 'design',
+      freshEvents: [send(['architect'], 'write-design', 'design write'), advance()],
+    });
+
+    expect.soft(diff.firstStructuralDivergence).toBeUndefined();
+    expect.soft(diff.sends[0]?.structural).toBeUndefined();
+    expect.soft(diff.sends[0]?.original?.ordinalsByDuty).toEqual({ architect: 1 });
+    expect.soft(diff.sends[0]?.fresh?.ordinalsByDuty).toEqual({ architect: 1 });
+  });
+
   test('marks the first structural divergence and labels later body drift unanchored', () => {
     const diff = diffReplay({
       original: traceWith([
@@ -51,7 +84,7 @@ describe('diffReplay', () => {
       freshEvents: [
         send(['architect'], 'review-design', 'write'),
         send(['analyst'], 'review-design', 'review with new wording'),
-        advance(),
+        advance('fresh terminal after divergence'),
       ],
     });
 
@@ -59,6 +92,18 @@ describe('diffReplay', () => {
     expect.soft(diff.unanchoredFromIndex).toBe(0);
     expect.soft(diff.sends[1]).toMatchObject({ unanchored: true });
     expect.soft(diff.sends[1]?.adaptation).toBeUndefined();
+    expect.soft(diff.terminal).toMatchObject({ unanchored: true });
+    expect.soft(diff.terminal.structural).toBeUndefined();
+  });
+
+  test('names single-duty routing changes as worker duty changes', () => {
+    const diff = diffReplay({
+      original: traceWith([{ voice: 'architect', tag: 'write-design', body: 'write' }]),
+      phase: 'design',
+      freshEvents: [send(['analyst'], 'write-design', 'write'), advance()],
+    });
+
+    expect.soft(diff.firstStructuralDivergence).toBe('send_prompt[0]: worker duty changed from architect to analyst');
   });
 
   test('treats changed terminal verb and payload as structural drift', () => {
