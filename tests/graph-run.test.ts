@@ -56,13 +56,37 @@ describe('runGraphModel — done/current/future + gate outcomes', () => {
     expect(model.nodes.some((n) => n.status === 'current')).toBe(false);
   });
 
-  test('abandoned position ⇒ no live cursor; started phases render as reached', ({ run }) => {
-    run.phaseStarted = { frame: true, spec: true };
+  test('abandoned ⇒ no cursor; a phase is done/crossed only when a LATER phase started (crossing proof)', ({ run }) => {
+    run.phaseStarted = { frame: true, spec: true }; // reached spec; spec never advanced
     const model = runModel(run, { kind: 'abandoned' });
     expect(model.nodes.some((n) => n.status === 'current')).toBe(false);
+    // frame's gate is PROVEN crossed — a later phase (spec) started.
     expect(node(model.nodes, 'frame').status).toBe('done');
-    expect(node(model.nodes, 'spec').status).toBe('done');
+    expect(node(model.nodes, 'frame').gate.outcome).toBe('crossed');
+    // spec is the furthest reached: started but NOT proven crossed → future, no outcome.
+    expect(node(model.nodes, 'spec').status).toBe('future');
+    expect(node(model.nodes, 'spec').gate.outcome).toBeUndefined();
     expect(node(model.nodes, 'plan').status).toBe('future');
+  });
+
+  test('abandoned NEVER claims an uncrossed gate crossed (phaseStarted is entry-sent, not crossed)', ({ run }) => {
+    run.phaseStarted = { frame: true }; // frame reached, never advanced; nothing after it
+    run.autoApprovals = [];
+    const model = runModel(run, { kind: 'abandoned' });
+    // The furthest-reached phase was merely started — no later phase, no ledgered
+    // auto-approval — so it must not be claimed crossed (the honesty invariant, the
+    // temporal analogue of never-"attended").
+    const frame = node(model.nodes, 'frame');
+    expect(frame.status).toBe('future');
+    for (const n of model.nodes) expect(n.gate.outcome).toBeUndefined();
+  });
+
+  test('abandoned: a ledgered auto-approval is crossing proof even without a recorded later phaseStarted', ({ run }) => {
+    run.phaseStarted = { frame: true };
+    run.autoApprovals = [{ gate: 'directionGate', at: '2026-07-07T10:00:00.000Z' }]; // frame's gate auto-crossed
+    const model = runModel(run, { kind: 'abandoned' });
+    expect(node(model.nodes, 'frame').status).toBe('done');
+    expect(node(model.nodes, 'frame').gate.outcome).toBe('auto-crossed');
   });
 
   test('a high human decision holding a (pre-authorized) gate sets heldHigh', ({ run }) => {

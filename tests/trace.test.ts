@@ -5,6 +5,7 @@ import {
   buildStatsModel,
   buildTraceModel,
   detectOrderingDrift,
+  openPhaseFor,
   parsePhaseWindows,
 } from '../src/surfaces/stats.ts';
 import { runDirOf, saveRunState } from '../src/run/store.ts';
@@ -52,6 +53,34 @@ describe('parsePhaseWindows — the open current-phase window (P1b)', () => {
     const log = `[${at(0, 0)}] ◀ harness prompt (phase=spec)\n[${at(0, 10)}] advance_phase (spec)\n[${at(0, 11)}] ◀ harness prompt (phase=plan)\n`;
     const { windows } = parsePhaseWindows(log, 0);
     expect(windows.map((w) => w.phase)).toEqual(['spec']); // plan's open is NOT emitted
+  });
+
+  test('a project phase name with a hyphen or space parses (not just \\w) — M1', () => {
+    // define.ts only rejects empty/duplicate names, so `ship-it` / `open pr` are legal.
+    const log = `[${at(0, 0)}] ◀ harness prompt (phase=ship-it)\n[${at(0, 5)}] advance_phase (ship-it)\n` +
+      `[${at(0, 6)}] ◀ harness prompt (phase=open pr)\n[${at(0, 9)}] advance_phase (open pr)\n`;
+    const { windows } = parsePhaseWindows(log, 0);
+    expect(windows.map((w) => w.phase)).toEqual(['ship-it', 'open pr']);
+    // The window is real (not inferred) — both open and close matched.
+    expect(windows.every((w) => w.inferred === undefined)).toBe(true);
+  });
+});
+
+describe('openPhaseFor — the open window fires only for genuinely-open positions (M2)', () => {
+  test('running / interactive / crashed / flag name their open phase', () => {
+    expect(openPhaseFor({ kind: 'running', pid: 1, phase: 'spec' })).toBe('spec');
+    expect(openPhaseFor({ kind: 'interactive', phase: 'spec' })).toBe('spec');
+    expect(openPhaseFor({ kind: 'crashed', phase: 'spec' })).toBe('spec');
+    expect(openPhaseFor({ kind: 'flag', phase: 'spec' })).toBe('spec');
+  });
+
+  test('a GATE position is excluded — its phase already advanced (window closed), so no open window is synthesized', () => {
+    expect(openPhaseFor({ kind: 'gate', phase: 'spec' })).toBeUndefined();
+  });
+
+  test('done / abandoned carry no open phase', () => {
+    expect(openPhaseFor({ kind: 'done' })).toBeUndefined();
+    expect(openPhaseFor({ kind: 'abandoned' })).toBeUndefined();
   });
 });
 
@@ -169,5 +198,19 @@ describe('listStagedSteersForTrace — both dirs, delivered included', () => {
     writeFileSync(join(delivered, s.file), JSON.stringify({ text: 'racing', stagedAt: s.stagedAt, stagedDuring: 'frame' }));
     const all = listStagedSteersForTrace(run);
     expect(all.filter((x) => x.file === s.file)).toHaveLength(1);
+  });
+
+  test('valid JSON of the wrong shape (missing/non-string stagedAt) is skipped, never surfacing a NaN stamp (M5)', ({ run }) => {
+    stageSteer(run, 'good note', 'frame');
+    const dir = join(runDirOf(run.cwd, run.runId), 'steers');
+    // Parseable JSON, but a malformed steer: no stagedAt → Date.parse(undefined)=NaN,
+    // which would throw at render. It must be dropped here instead.
+    writeFileSync(join(dir, '00000000-bad.json'), JSON.stringify({ text: 'no timestamp', stagedDuring: 'frame' }));
+    writeFileSync(join(dir, '00000001-badts.json'), JSON.stringify({ text: 'bad ts', stagedAt: 'not-a-date', stagedDuring: 'frame' }));
+    const all = listStagedSteersForTrace(run);
+    expect(all.map((s) => s.text)).toEqual(['good note']); // only the well-formed steer survives
+    // And the trace built over it renders without throwing.
+    const model = buildTraceModel(run, Date.parse(run.createdAt) + 60_000);
+    expect(() => JSON.stringify(model)).not.toThrow();
   });
 });
