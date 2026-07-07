@@ -118,6 +118,30 @@ describe('killDriver', () => {
   test('is a no-op when no driver is running', async ({ run }) => {
     expect(await killDriver(run)).toBeUndefined();
   });
+
+  test('escalates to SIGKILL when the driver traps SIGTERM past the grace', async ({ projectDir, run, onTestFinished }) => {
+    // A driver that ignores the polite signal and lingers — only the
+    // uncatchable escalation ends it. "armed" on stdout proves the trap is
+    // installed before killDriver signals (else the default SIGTERM action
+    // would win the race and the test would pass without escalating).
+    const child = spawn(
+      process.execPath,
+      ['-e', 'process.on("SIGTERM", () => {}); console.log("armed"); setInterval(() => {}, 1000)'],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    onTestFinished(() => {
+      child.kill('SIGKILL');
+    });
+    await new Promise((resolve) => child.stdout!.once('data', resolve));
+    writeFileSync(join(runDirOf(projectDir, run.runId), 'driver.pid'), `${child.pid}\n`);
+    const exitSignal = new Promise((resolve) => child.once('exit', (_code, signal) => resolve(signal)));
+
+    const killed = await killDriver(loadRunState(projectDir, run.runId), { graceMs: 300, pollMs: 50 });
+
+    expect.soft(killed).toBe(child.pid);
+    expect.soft(await exitSignal).toBe('SIGKILL'); // SIGTERM was trapped; the escalation ended it
+    expect.soft(aliveDriverPid(loadRunState(projectDir, run.runId))).toBeUndefined();
+  });
 });
 
 describe('purgeRun', () => {
