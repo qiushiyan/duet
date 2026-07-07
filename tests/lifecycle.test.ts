@@ -388,6 +388,11 @@ describe('crossInteractive + the interactive continue model (Slice 4)', () => {
     expect.soft(probeRunPosition(after)).toEqual({ kind: 'interactive', phase: 'implement' });
   });
 
+  // These two predicate pins overlap tests/continue-planner.test.ts (the decision
+  // oracle), but each still owns branches the planner suite never reaches:
+  // interactiveContinueAction's reject-at-the-handoff-gate and
+  // headless-with-a-decision arms; validateInteractiveCrossing's answer-at-a-gate
+  // and decision-at-a-rest arms. They stay until the oracle grows those cases.
   test('interactiveContinueAction (full): handoffGate-approve and any --headless hand off; earlier gates rest inline', () => {
     expect.soft(interactiveContinueAction('full', 'plan', 'approve', false)).toBe('handoff');
     expect.soft(interactiveContinueAction('full', 'frame', 'approve', false)).toBe('inline');

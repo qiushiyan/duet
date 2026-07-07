@@ -10,7 +10,6 @@ import type { PhaseEvent } from '../src/run/phase-events.ts';
 import { loadRunState, markAbandoned, runDirOf, saveRunState } from '../src/run/store.ts';
 import { captureRunTranscripts, purgeRun } from '../src/voices/sessions.ts';
 import { locateSessionTranscripts } from '../src/voices/sessions.ts';
-import { buildStatusModel, renderStatus, steerRefusal } from '../src/surfaces/status.ts';
 import { test } from './helpers/fixtures.ts';
 import { scriptedMachine } from './helpers/scripted-machine.ts';
 
@@ -219,37 +218,5 @@ describe('purgeRun', () => {
     expect.soft(existsSync(latest)).toBe(false);
     expect.soft(result.transcripts).not.toContain(prior);
     expect.soft(existsSync(prior)).toBe(true); // the prior checkpoint transcript survives, by design
-  });
-});
-
-describe('status at an abandoned / done stop', () => {
-  const render = (run: Parameters<typeof buildStatusModel>[0]) =>
-    renderStatus(buildStatusModel(run, { kind: 'abandoned' }, []));
-
-  test('the abandoned stop model carries the revive and purge commands', ({ run }) => {
-    run.abandoned = { at: '2026-06-17T09:00:00.000Z' };
-    const model = buildStatusModel(run, { kind: 'abandoned' }, []);
-    expect.soft(model.stop).toMatchObject({
-      kind: 'abandoned',
-      at: '2026-06-17T09:00:00.000Z',
-      revive: `duet continue ${run.runId}`,
-      purge: `duet abandon ${run.runId} --purge`,
-    });
-    const text = render(run);
-    expect.soft(text).toContain('abandoned');
-    expect.soft(text).toContain(`duet continue ${run.runId}`);
-    expect.soft(text).toContain(`duet abandon ${run.runId} --purge`);
-  });
-
-  test('steering an abandoned run is refused toward revive/new', ({ run }) => {
-    const copy = steerRefusal('full', { kind: 'abandoned' }, run.runId);
-    expect.soft(copy).toContain('abandoned');
-    expect.soft(copy).toContain(`duet continue ${run.runId}`);
-  });
-
-  test('a done run points at GitHub merge and the purge cleanup', ({ run }) => {
-    const text = renderStatus(buildStatusModel(run, { kind: 'done' }, []));
-    expect.soft(text).toContain('merge the PR on GitHub');
-    expect.soft(text).toContain(`duet abandon ${run.runId} --purge`);
   });
 });
