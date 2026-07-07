@@ -77,6 +77,13 @@ export interface ContextEvent {
   windowTokens?: number;
 }
 
+export interface Grade {
+  key: string;
+  verdict: 'right' | 'wrong';
+  note?: string;
+  gradedAt: string;
+}
+
 export interface WorkflowSource {
   layer: 'shipped' | 'project' | 'user';
   path?: string;
@@ -165,6 +172,12 @@ export interface RunState {
   gatesAt?: GatePhase[];
   /** Gates auto-crossed under pre-authorization, for the morning review. */
   autoApprovals?: Array<{ gate: string; at: string }>;
+  /**
+   * Human calibration verdicts for reconstructed decision points. Additive and
+   * absent by default: existing readers stay byte-for-byte unchanged until the
+   * human grades a run. Upserted by structural `key`, never appended blindly.
+   */
+  grades?: Grade[];
   /**
    * Infra failures auto-retried under the retry budget (#4b), for the morning
    * review — a SIBLING of autoApprovals, not the gate-shaped field (a retry has no
@@ -843,6 +856,21 @@ export function markWorkerDispatched(state: RunState): void {
 export function setGatesAt(state: RunState, gatesAt: GatePhase[]): void {
   mutate(state, (s) => {
     s.gatesAt = gatesAt;
+    return true;
+  });
+}
+
+export function upsertGrade(state: RunState, grade: Grade): void {
+  mutate(state, (s) => {
+    const grades = (s.grades ??= []);
+    const existing = grades.findIndex((g) => g.key === grade.key);
+    if (existing === -1) {
+      grades.push(grade);
+      return true;
+    }
+    const prev = grades[existing]!;
+    if (prev.verdict === grade.verdict && prev.note === grade.note && prev.gradedAt === grade.gradedAt) return false;
+    grades[existing] = grade;
     return true;
   });
 }

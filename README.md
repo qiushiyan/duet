@@ -148,6 +148,7 @@ duet stats                     # effort per phase — each phase's elapsed windo
 duet stats --trace             # the interleaved turn-by-turn timeline (with interventions and ordering drift)
 duet graph                     # see it: the run's whole arc with the live cursor, gate outcomes, and drift flags
 duet graph --workflow <name>   # ...or a workflow's shape before any run (--mermaid for a docs diagram)
+duet grade                     # end-of-run: verdict each reconstructed decision point right/wrong (calibration); --list previews
 
 duet continue --approve        # cross the current gate (optionally: --approve "a rider with tweaks")
 duet continue --reject "..."   # send the artifact back; your words reach the orchestrator verbatim
@@ -275,6 +276,7 @@ Built and test-verified, awaiting a first live run:
 - the experimental **interactive-Claude worker transport** (bill a maker duty's turns to your flat subscription quota) — pending one live-auth check; see [`docs/interactive-transport.md`](docs/interactive-transport.md)
 - **inline provider tuning** — a per-binding model (codex included), a normalized `effort`, and a config-only native-arg passthrough (`claude_args` / `codex_config`), guarded by a `duet new` preflight that fails a bad binding at creation rather than mid-build; parsing, provider threading, and the preflight are test-verified, but no live run has exercised them end to end yet
 - the **run corpus** — an opt-in central archive (`[corpus] dir` in config) every run's record mirrors into fail-soft, with gzipped transcript capture at run end / purge, plus the `scripts/corpus/` analytics and backfill; the reader side has run live (backfill + analytics swept the surviving pre-remodel corpus, refused by design with a skip count), but no run has mirrored live yet — the method lives in [`docs/corpus-runbook.md`](docs/corpus-runbook.md)
+- **decision grading** — `duet grade` reconstructs a finished run's human decision points (gate stops, auto-crossings, held highs, queued questions) from its ledgers and log, takes a plain right/wrong verdict on each — plus human-declared missed stops — and surfaces the triage-precision signal in `duet stats` and a corpus aggregation (`scripts/corpus/grade-precision.ts`); the reconstruction core and command are test-verified, but no run has been graded live yet — the ritual lives in [`docs/corpus-runbook.md`](docs/corpus-runbook.md)
 
 Codex-as-orchestrator is deliberately unbuilt. Expect rough edges — the open _design_ questions and their evidence live in [`docs/open-questions.md`](docs/open-questions.md).
 

@@ -14,6 +14,8 @@ The bet: modern models follow concrete triage examples well, and the failure is 
 
 Evidence cuts both ways. A full framing-to-ship run held triage cleanly — product calls waited for gates, environment limits were reported honestly, no spurious AFK interrupts. But one run showed the under-side miss the rules don't prevent: the orchestrator took a maker's rebuttal of a checker's finding at face value rather than routing it to verify. The fix was an instruction edit — a route-to-verify example and a review-loop clause in `src/orchestrator/briefs.ts`. Whether it holds is for a later run's notes.
 
+The read is no longer eyeballed from transcripts: `duet grade` records a plain right/wrong verdict on every reconstructed stop of a finished run, and `scripts/corpus/grade-precision.ts` aggregates the over-flag / under-flag rates by workflow and gate (`docs/corpus-runbook.md`). The question stays open until graded runs accumulate — the instrument only makes the false-positive/false-negative signal durable, it doesn't answer whether precision is good enough.
+
 ## Worker output schema
 
 `schemas/agent-response.json` was the dumb router's protocol contract: `needs_human` and `disagree` were how judgment-free code detected exceptions. The orchestrator reads prose now, so the schema isn't load-bearing — but a minimal `{response_text}` envelope might still make routing cleaner than scraping chatty final messages.

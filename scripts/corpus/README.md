@@ -7,6 +7,7 @@ product CLI surface: run them with Node 24 directly, for example:
 node scripts/corpus/phase-timings.ts
 node scripts/corpus/turn-stats.ts
 node scripts/corpus/compaction-durations.ts
+node scripts/corpus/grade-precision.ts
 node scripts/corpus/backfill.ts --corpus ~/duet-corpus --sweep ~/dev
 ```
 
@@ -58,6 +59,12 @@ over 10 minutes. It also counts the worker log's `⏳ … elapsed` heartbeats in
 the turn window (the driver-log copy carries no parseable timestamp, so the
 worker log is the source); a long turn with only one or two heartbeats often
 means the machine slept rather than computed.
+
+`grade-precision.ts`
+
+Aggregates human decision grades by workflow, phase, decision kind, and grading
+month. It reports over-flag rate (`FP / stopped`) and under-flag rate
+(`FN / did-not-stop`, including human-declared missed stops).
 
 `backfill.ts`
 

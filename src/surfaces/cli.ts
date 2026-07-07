@@ -28,6 +28,7 @@ import type { HumanEvent } from './lifecycle.ts';
 import { machineFor } from '../run/machine.ts';
 import { serveKernelStdio, serveRunScopedKernelStdio } from '../orchestrator/hosts/mcp-server.ts';
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
+import { gradeCommand } from './grade.ts';
 import { buildStatsModel, buildTraceModel, renderStats, renderTrace } from './stats.ts';
 import { buildBlueprintModel, buildRunGraphModel, renderGraph, renderGraphJson, renderGraphMermaid } from './graph.ts';
 import { blueprintModel } from './graph-model.ts';
@@ -1114,6 +1115,21 @@ program
     const state = resolveRun(cwd, runId, 'no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
     const model = await buildDoctorModel(state, { now: Date.now() });
     console.log(opts.json ? JSON.stringify(model, null, 2) : renderDoctor(model));
+  });
+
+program
+  .command('grade')
+  .description('Grade a run’s reconstructed decision points: gate stops, auto-crossings, held highs, queued questions, and human-declared missed stops.')
+  .argument('[runId]', 'run id (defaults to the latest done run in this project)')
+  .option('--list', 'print the decision points and existing grades without recording anything')
+  .option('--json', 'with --list, emit machine-readable decision points')
+  .option('--set <key=verdict>', 'record right|wrong for a decision point key; repeatable', (value: string, prev: string[]) => [...prev, value], [] as string[])
+  .option('--note <key=text>', 'attach or replace a note for a key; repeatable and separate from --set so note text can contain colons', (value: string, prev: string[]) => [...prev, value], [] as string[])
+  .option('--missed <phase:id=text>', 'record a human-declared missed stop; repeatable', (value: string, prev: string[]) => [...prev, value], [] as string[])
+  .action(async (runId: string | undefined, opts: { list?: boolean; json?: boolean; set: string[]; note: string[]; missed: string[] }) => {
+    const result = await gradeCommand(process.cwd(), runId, opts);
+    if (!result.ok) fail(result.error);
+    console.log(result.output);
   });
 
 program
