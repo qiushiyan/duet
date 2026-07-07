@@ -32,7 +32,9 @@ describe('preflightBinding', () => {
 
     expect.soft(outcome).toEqual({ status: 'warning', warnings: ['Warning: native warning'] });
     expect.soft(worker.calls).toHaveLength(1);
-    expect.soft(worker.calls[0]?.prompt).toBe('Reply with the single word OK.');
+    // A non-empty probe prompt; its wording is not load-bearing — the disposition
+    // reads only the turn's warnings and thrown errors, never the reply text.
+    expect.soft(worker.calls[0]?.prompt).toBeTruthy();
     expect.soft(worker.calls[0]?.cwd).toBe(projectDir);
     expect.soft(worker.calls[0]?.sessionId).toBeUndefined();
     expect.soft(worker.calls[0]?.onSessionId).toBeUndefined();

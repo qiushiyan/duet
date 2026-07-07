@@ -61,7 +61,10 @@ describe('parseClaudeTurn (the CLI output boundary)', () => {
 
   test('a non-budget failed turn surfaces the subtype and the partial result (still throws)', () => {
     const stdout = JSON.stringify([{ ...result, subtype: 'error_during_execution', is_error: true, result: 'crashed' }]);
-    expect(() => parseClaudeTurn(stdout, 'prompt')).toThrow('claude worker turn failed (error_during_execution): crashed');
+    // The subtype and the cause must both survive into the error; the sentence
+    // around them is not pinned.
+    expect.soft(() => parseClaudeTurn(stdout, 'prompt')).toThrow(/error_during_execution/);
+    expect.soft(() => parseClaudeTurn(stdout, 'prompt')).toThrow(/crashed/);
   });
 
   test('a budget cutoff WITH a session id returns a budget-truncated checkpoint, not a throw', () => {
@@ -407,6 +410,10 @@ describe('recoverClaudeFailure (S5 — the accepted-abort vs never-accepted spli
     expect.soft(turn.sessionId).toBe('sess-abc');
   });
 
+  // The S5 seam: scripting a WallClockExceededError models a turn aborted at its
+  // wall-clock cap, driving the abort outcome without a real overrun. Higher-level
+  // suites can script the same error through the WorkerProvider interface — a
+  // FakeWorker already relays a scripted Error as a rejection, no fixture change.
   test('a WallClockExceededError with an accepted transcript ⇒ aborted checkpoint (the suspend-on-wake path)', () => {
     const turn = recoverClaudeFailure(new WallClockExceededError(90 * 60_000), 'do it', {
       sessionId: 'sess-wc',
@@ -473,21 +480,12 @@ describe('recoverClaudeFailure (S5 — the accepted-abort vs never-accepted spli
   });
 });
 
-describe('claudeArgs (the session-flag + budget-cap seams)', () => {
-  test('a fresh turn predeclares its id with --session-id (and no --resume)', () => {
-    // Predeclaring the id is what lets runTurn announce it BEFORE spawn — the
-    // live-activity poll can then find this turn's transcript from its start.
-    const args = claudeArgs({ sessionId: 'mint-1', resume: false }, { model: 'claude-opus-4-8' });
-    expect.soft(args[args.indexOf('--session-id') + 1]).toBe('mint-1');
-    expect.soft(args).not.toContain('--resume');
-  });
-
-  test('a resume turn uses --resume (and no --session-id)', () => {
-    const args = claudeArgs({ sessionId: 'sess-7', resume: true }, { model: 'claude-opus-4-8' });
-    expect.soft(args[args.indexOf('--resume') + 1]).toBe('sess-7');
-    expect.soft(args).not.toContain('--session-id');
-  });
-
+describe('claudeArgs (the budget-cap + permission seams)', () => {
+  // Only the rows the integration argv paths can't reach live here. The session
+  // flags (fresh --session-id / resume --resume) are re-proven byte-for-byte by
+  // the ClaudeWorker.runTurn argv asserts above, and the effort + native-argv
+  // passthrough by provider-factory.test.ts's createWorkers→runTurn argv assert
+  // — so those rows are pinned there, not duplicated here.
   test('passes --max-budget-usd when the cap is a number', () => {
     const args = claudeArgs({ sessionId: 's', resume: false }, { model: 'claude-opus-4-8', maxBudgetUsd: 10 });
     expect.soft(args).toContain('--max-budget-usd');
@@ -509,15 +507,5 @@ describe('claudeArgs (the session-flag + budget-cap seams)', () => {
       expect.soft(args[args.indexOf('--permission-mode') + 1]).toBe('bypassPermissions');
       expect.soft(args).not.toContain('--disallowed-tools');
     }
-  });
-
-  test('passes normalized effort and appends native argv after duet-owned flags', () => {
-    const args = claudeArgs(
-      { sessionId: 's', resume: false },
-      { model: 'claude-opus-4-8', effort: 'xhigh', nativeArgs: ['--fallback-model', 'claude-opus-4-6'] },
-    );
-    expect.soft(args[args.indexOf('--effort') + 1]).toBe('xhigh');
-    expect.soft(args.slice(-2)).toEqual(['--fallback-model', 'claude-opus-4-6']);
-    expect.soft(args.indexOf('--permission-mode')).toBeLessThan(args.indexOf('--fallback-model'));
   });
 });

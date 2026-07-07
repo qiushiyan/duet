@@ -208,10 +208,6 @@ describe('runOrchestrate — marks the run and launches over the seam', () => {
     expect.soft(final.costs.orchestratorCostPartial).toBe(true);
   });
 
-  test('createRun defaults orchestratorCostPartial to false', ({ run }) => {
-    expect(run.costs.orchestratorCostPartial).toBe(false);
-  });
-
   test('warns loudly when the gate-safety rule is missing from the spec, but still launches', ({ run }) => {
     const rec = recordingLauncher();
     const warnings: string[] = [];

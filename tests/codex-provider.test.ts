@@ -80,18 +80,9 @@ describe('codexThreadOptions (the sandbox-deferral seam)', () => {
     expect.soft(codexThreadOptions({}).sandboxMode).toBeUndefined();
   });
 
-  test('passes the working directory through', () => {
-    expect(codexThreadOptions({ cwd: '/repo' }).workingDirectory).toBe('/repo');
-  });
-
-  test('passes explicit model and normalized effort as thread options', () => {
-    expect(codexThreadOptions({ cwd: '/repo' }, { model: 'gpt-5.5', effort: 'xhigh' })).toEqual({
-      workingDirectory: '/repo',
-      model: 'gpt-5.5',
-      modelReasoningEffort: 'xhigh',
-    });
-  });
-
+  // The workingDirectory/model/modelReasoningEffort passthrough rows live only in
+  // the CodexWorker test below — its startThread assert re-proves the exact
+  // thread-options object at the SDK boundary, so pure rows would duplicate it.
   test('CodexWorker builds the SDK client with native config and starts a thread with model/effort', async () => {
     codexConstructedOptions.length = 0;
     codexStartThreadOptions.mockClear();

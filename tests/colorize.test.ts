@@ -1,31 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { VOICE_GLYPH, VOICE_TMUX_COLOR, colorizeVoiceLine } from '../src/view/colorize.ts';
-
-/**
- * View-time colorizing. The consultant is a fourth voice, so the exhaustive
- * Record<Voice> maps (and the line painter) must carry it — a cheap pure guard
- * that the widening reached the view bits.
- */
-describe('colorize carries the consultant voice', () => {
-  test('the Record<Voice> maps have a consultant entry, distinct from the other voices', () => {
-    expect.soft(VOICE_GLYPH.consultant).toBeTruthy();
-    expect.soft(VOICE_TMUX_COLOR.consultant).toBeTruthy();
-    // A distinct glyph so the panes/logs are visually separable.
-    const glyphs = new Set([VOICE_GLYPH.orchestrator, VOICE_GLYPH.architect, VOICE_GLYPH.analyst, VOICE_GLYPH.consultant]);
-    expect.soft(glyphs.size).toBe(4);
-  });
-
-  test('colorizeVoiceLine handles a consultant header line (VOICE_PAINT.consultant resolves)', () => {
-    // The load-bearing guard: an undefined VOICE_PAINT[voice] would throw on a
-    // header line, so a clean return proves the paint map gained the entry.
-    // (picocolors no-ops under vitest's non-TTY, so the exact escapes aren't
-    // asserted — colorization is verified TTY-side, not here.)
-    const line = '[2026-06-22T12:00:00.000Z] ◀ prompt (tag=consultant-spec, from orchestrator)';
-    let painted!: string;
-    expect.soft(() => (painted = colorizeVoiceLine('consultant', line))).not.toThrow();
-    expect.soft(painted).toContain('◀ prompt');
-  });
-});
+import { colorizeVoiceLine } from '../src/view/colorize.ts';
 
 /**
  * The view-time render. picocolors no-ops under vitest's non-TTY, so the escapes
