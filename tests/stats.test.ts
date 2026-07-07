@@ -1,5 +1,14 @@
 import { describe, expect, test as plain } from 'vitest';
-import { buildStats, buildStatsModel, renderStats } from '../src/surfaces/stats.ts';
+import {
+  buildStats,
+  buildStatsModel,
+  gapsBetweenTurns,
+  heartbeatCountBetween,
+  parseHeartbeats,
+  parseVoiceLogTurns,
+  renderStats,
+  unionDurationMs,
+} from '../src/surfaces/stats.ts';
 import { phasesOf } from '../src/registry/workflows.ts';
 import { formatDuration } from '../src/view/timefmt.ts';
 import { appendVoiceLog } from '../src/run/store.ts';
@@ -175,6 +184,92 @@ describe('buildStats — the architect-model label', () => {
     const orchestrator = [line(at(0), '◀ harness prompt (phase=implement)'), line(at(5), 'advance_phase (implement)')].join('\n');
     const model = buildStats('run-nolbl', orchestrator, [], FULL_ORDER);
     expect.soft(model.phases[0]).not.toHaveProperty('makerModel');
+  });
+});
+
+describe('corpus telemetry primitives', () => {
+  plain('unionDurationMs merges overlapping worker intervals so parallel turns do not double-count busy time', () => {
+    expect(
+      unionDurationMs([
+        { startMs: 0, endMs: 10 },
+        { startMs: 5, endMs: 20 },
+        { startMs: 30, endMs: 35 },
+      ]),
+    ).toBe(25);
+  });
+
+  plain('parseVoiceLogTurns classifies ok, budget, failed, and timeout terminal lines', () => {
+    const log = [
+      line(at(0), '◀ prompt (tag=ok-turn, from orchestrator)'),
+      line(at(1), '▶ response (session s1)'),
+      line(at(2), '◀ prompt (tag=budget-turn, from orchestrator)'),
+      line(at(3), '◼ budget-control stop: per-turn cap reached'),
+      line(at(4), '◀ prompt (tag=timeout-turn, from orchestrator)'),
+      line(at(5), '✗ turn failed: operation timed out'),
+      line(at(6), '◀ prompt (tag=failed-turn, from orchestrator)'),
+      line(at(7), '✗ turn failed: auth rejected'),
+    ].join('\n');
+
+    expect(parseVoiceLogTurns('builder', log).turns.map((t) => [t.tag, t.status])).toEqual([
+      ['ok-turn', 'ok'],
+      ['budget-turn', 'budget'],
+      ['timeout-turn', 'timeout'],
+      ['failed-turn', 'failed'],
+    ]);
+  });
+
+  plain('parseVoiceLogTurns closes ⚠ resumable aborts as timeout and does not read "runtime" as one', () => {
+    const log = [
+      line(at(0), '◀ prompt (tag=wall-clock, from orchestrator)'),
+      line(at(1), '⚠ turn aborted (resumable) (session s1)'),
+      line(at(2), '◀ prompt (tag=compact, from orchestrator)'),
+      line(at(3), '⚠ /compact aborted — builder session reset; re-anchor with recover-context'),
+      line(at(4), '◀ prompt (tag=runtime-fail, from orchestrator)'),
+      line(at(5), '✗ turn failed: runtime error while connecting'),
+    ].join('\n');
+
+    const parsed = parseVoiceLogTurns('builder', log);
+    // ⚠ aborts are terminal lines — they close their turn instead of leaving it dangling.
+    expect.soft(parsed.dangling).toBe(0);
+    expect.soft(parsed.turns.map((t) => [t.tag, t.status])).toEqual([
+      ['wall-clock', 'timeout'],
+      ['compact', 'timeout'],
+      ['runtime-fail', 'failed'],
+    ]);
+  });
+
+  plain('gapsBetweenTurns reports only gaps over the threshold, ordered by turn time', () => {
+    const turns = parseVoiceLogTurns(
+      'builder',
+      [
+        line(at(0), '◀ prompt (tag=a, from orchestrator)'),
+        line(at(1), '▶ response (session s1)'),
+        line(at(2), '◀ prompt (tag=b, from orchestrator)'),
+        line(at(3), '▶ response (session s1)'),
+        line(at(40), '◀ prompt (tag=c, from orchestrator)'),
+        line(at(41), '▶ response (session s1)'),
+      ].join('\n'),
+    ).turns;
+
+    const gaps = gapsBetweenTurns(turns, 25 * 60_000);
+    expect.soft(gaps).toHaveLength(1);
+    expect.soft(gaps[0]?.before.tag).toBe('b');
+    expect.soft(gaps[0]?.after.tag).toBe('c');
+  });
+
+  plain('heartbeats parse from stored UTC lines and can be counted across a turn', () => {
+    const heartbeats = parseHeartbeats(
+      [
+        line(at(0), '⏳ implement phase still running — 5m elapsed'),
+        line(at(5), '⏳ implement phase still running — 10m elapsed'),
+        line(at(12), 'not a heartbeat'),
+      ].join('\n'),
+    );
+    expect.soft(heartbeats).toEqual([
+      { atMs: Date.parse(at(0)), elapsedMinutes: 5 },
+      { atMs: Date.parse(at(5)), elapsedMinutes: 10 },
+    ]);
+    expect.soft(heartbeatCountBetween(heartbeats, Date.parse(at(1)), Date.parse(at(6)))).toBe(1);
   });
 });
 

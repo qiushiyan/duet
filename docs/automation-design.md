@@ -71,7 +71,7 @@ Exactly two providers exist. Their *defaults* differ — claude names a model pe
 
 **Capability contract per voice.** The worker duties need session resume and streamed output; both providers satisfy these today (claude via the SDK/CLI, codex via `resume`). Workers run with **full permissions** — claude headless via `--permission-mode bypassPermissions`, codex by deferring entirely to the user's `~/.codex/config.toml` (no `--sandbox` flag) — so duet's coding agents are no more restricted than the user's own manual workflow (2026-06-22). This superseded a per-duty OS sandbox: codex `read-only` is a Seatbelt profile that denies *all* local writes and network, which broke even a read-only checker's own evidence tooling (a `tsx`/Node tool's `$TMPDIR` IPC socket dies with `listen EPERM`; outbound reads are blocked) *and* overrode the user's config. A checker's review-only behavior is now a **prompt-level convention** (the `review-*` snippets ask for critique, not edits), not a sandbox. The **orchestrator** demands more: custom harness tools (`send_prompt`, `ask_human`, …), read-only enforcement, and pause/resume at a tool call. The claude provider satisfies this natively (Agent SDK in-process tools + `canUseTool`). A local MCP server exposing the harness tools now **exists** — the kernel is host-neutral and served over standard stdio MCP (above) — so the harness-side half of the codex bridge is no longer hypothetical; what remains unbuilt is the codex-side wiring and its two open verification questions (pause/resume at a tool call, tool-call faithfulness), which remain open (open-questions.md §"Codex as the orchestrator").
 
-**Configuration.** Config holds **account-level binding defaults** — the one config duet ships, scoped to voice→provider bindings (model, effort, native passthrough) **plus account/billing posture** (`transport`, `budget`) and nothing else. The run-long voices are top-level tables; the duties get `[duties.<duty>]` tables:
+**Configuration.** Config holds **account-level binding defaults** — the one config duet ships, scoped to voice→provider bindings (model, effort, native passthrough) **plus account posture** (`transport`, `budget`, and the opt-in `[corpus] dir` — a central, analysis-only archive every run's record mirrors into, fail-soft and default-absent; `docs/corpus-runbook.md`) and nothing else. The run-long voices are top-level tables; the duties get `[duties.<duty>]` tables:
 
 ```toml
 # ~/.config/duet/config.toml — account-level binding defaults + billing posture.
@@ -114,6 +114,12 @@ provider = "codex"
 [consultant]
 provider = "claude"
 model = "claude-opus-4-8"
+
+# Optional telemetry posture — presence turns on the corpus mirror: every run's
+# record (logs, state, gzipped transcripts) also lands here, fail-soft, so it
+# outlives its worktree (docs/corpus-runbook.md).
+# [corpus]
+# dir = "~/duet-corpus"
 ```
 
 Per-run, one repeatable flag overrides any of it: **`--bind <address>=<provider[:model][@effort]>`** (e.g. `--bind builder=codex:gpt-5-codex@high --bind judge=claude:claude-fable-5`; the native passthrough is config-only, never inline). A duty alone names its stage — duty names are globally stage-unique, enforced by `validateRegistry` (an explicit `stage.duty` long form is reserved for a future collision, documented but not built) — and the run-long voices ride the same grammar: `--bind orchestrator=…` (claude-only in v1), `--bind consultant=…` (binding one implies it is on; `--no-consultant` disables a bound one for one run and wins). The file above is also the **shipped default** when absent: the maker lanes and both run-long claude voices on claude/Opus 4.8 (updated 2026-06-15 from the earlier Fable-5 default), the checker lanes on codex — the cross-family review is the shipped posture. A costlier model like Fable 5 (~2× Opus) binds to any single address per run when an artifact-heavy feature warrants it.

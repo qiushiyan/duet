@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { parse } from 'smol-toml';
 import { DUTIES, continuityEdgeFor, stageOfDuty, stageOfDutyLane, stagesOf } from '../registry/workflows.ts';
 import type { Duty, WorkflowRef } from '../registry/workflows.ts';
@@ -327,8 +327,32 @@ export function parseBudget(value: unknown): number | undefined {
   return n;
 }
 
-/** The account-level config file: per-address binding tables + the budget key. */
-function loadConfigFile(configPath: string): { byAddress: Partial<Record<BindAddress, Binding>>; budget?: number } {
+function expandConfigPath(path: string): string {
+  if (path === '~') return homedir();
+  if (path.startsWith('~/')) return join(homedir(), path.slice(2));
+  return path;
+}
+
+function parseCorpusRoot(raw: unknown): string {
+  if (typeof raw !== 'object' || raw === null) throw new Error('config: [corpus] must be a table');
+  const dir = (raw as Record<string, unknown>)['dir'];
+  if (typeof dir !== 'string' || dir.trim() === '') {
+    throw new Error('config: [corpus].dir must be a non-empty string path');
+  }
+  const expanded = expandConfigPath(dir.trim());
+  // A central archive shared across projects must resolve to one place — a
+  // relative dir would bind to whatever cwd read it (the project at `duet new`,
+  // the duet repo when a script runs), silently fragmenting the archive.
+  if (!isAbsolute(expanded)) {
+    throw new Error(
+      `config: [corpus].dir must be an absolute path or start with ~ (it names a central archive shared across projects), got ${JSON.stringify(dir)}`,
+    );
+  }
+  return expanded;
+}
+
+/** The account-level config file: per-address binding tables + the budget/corpus keys. */
+function loadConfigFile(configPath: string): { byAddress: Partial<Record<BindAddress, Binding>>; budget?: number; corpusRoot?: string } {
   const byAddress: Partial<Record<BindAddress, Binding>> = {};
   if (!existsSync(configPath)) return { byAddress };
   const config = parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>;
@@ -352,7 +376,12 @@ function loadConfigFile(configPath: string): { byAddress: Partial<Record<BindAdd
     }
   }
   const budget = config['budget'] !== undefined ? parseBudget(config['budget']) : undefined;
-  return { byAddress, ...(budget !== undefined ? { budget } : {}) };
+  const corpusRoot = config['corpus'] !== undefined ? parseCorpusRoot(config['corpus']) : undefined;
+  return { byAddress, ...(budget !== undefined ? { budget } : {}), ...(corpusRoot !== undefined ? { corpusRoot } : {}) };
+}
+
+export function resolveConfiguredCorpusRoot(configPath: string = CONFIG_PATH): string | undefined {
+  return loadConfigFile(configPath).corpusRoot;
 }
 
 /**
@@ -477,8 +506,8 @@ export function resolveRunConfig(
     budgetOverride?: string;
   },
   configPath: string = CONFIG_PATH,
-): { bindings: VoiceBindings; degradedEdges: DegradedEdge[]; budget?: number } {
-  const { byAddress: configBinds, budget: configBudget } = loadConfigFile(configPath);
+): { bindings: VoiceBindings; degradedEdges: DegradedEdge[]; budget?: number; corpusRoot?: string } {
+  const { byAddress: configBinds, budget: configBudget, corpusRoot } = loadConfigFile(configPath);
   if (opts.noConsultant && opts.flagBinds?.consultant !== undefined) {
     throw new Error('--no-consultant and --bind consultant=… contradict each other — drop one');
   }
@@ -547,7 +576,12 @@ export function resolveRunConfig(
 
   const bindings: VoiceBindings = { orchestrator, duties, ...(consultant ? { consultant } : {}) };
   const budget = opts.budgetOverride !== undefined ? parseBudget(opts.budgetOverride) : configBudget;
-  return { bindings, degradedEdges: degradedEdgesFor(bindings, opts.workflow), ...(budget !== undefined ? { budget } : {}) };
+  return {
+    bindings,
+    degradedEdges: degradedEdgesFor(bindings, opts.workflow),
+    ...(budget !== undefined ? { budget } : {}),
+    ...(corpusRoot !== undefined ? { corpusRoot } : {}),
+  };
 }
 
 /** Format a binding for echoes and status: `provider[:model][@effort][ (interactive)]`. */

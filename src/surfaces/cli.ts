@@ -52,7 +52,8 @@ import {
 } from '../run/store.ts';
 import type { RunState, Voice } from '../run/store.ts';
 import { workflowFor } from '../run/workflow.ts';
-import { purgeRun } from '../voices/sessions.ts';
+import { reconcileRecord } from '../run/corpus.ts';
+import { captureRunTranscripts, purgeRun } from '../voices/sessions.ts';
 import { listPendingSteers, stageSteer } from '../run/steers.ts';
 
 /**
@@ -392,7 +393,7 @@ program
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
     }
-    const { bindings, degradedEdges, budget } = resolved;
+    const { bindings, degradedEdges, budget, corpusRoot } = resolved;
 
     let preflightReport: PreflightReport = { byAddress: {} };
     try {
@@ -414,6 +415,7 @@ program
       ...(branch ? { branch } : {}),
       bindings,
       ...(budget !== undefined ? { budget } : {}),
+      ...(corpusRoot !== undefined ? { corpusRoot } : {}),
     });
     // The editor draft is archived into the run dir by createRun; the
     // staging file is consumed so the next bare `duet new` starts fresh.
@@ -956,6 +958,8 @@ program
     }
 
     markAbandoned(fresh);
+    reconcileRecord(fresh);
+    captureRunTranscripts(fresh);
     console.log(
       `run ${fresh.runId} abandoned — transcripts kept (revive with: duet continue ${fresh.runId}, or wipe with: duet abandon ${fresh.runId} --purge)`,
     );

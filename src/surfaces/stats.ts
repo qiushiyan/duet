@@ -37,17 +37,24 @@ const TS = String.raw`\[(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z)\]`;
 const PHASE_OPEN = new RegExp(`^${TS} ◀ harness prompt \\(phase=(\\w+)\\)`);
 const PHASE_CLOSE = new RegExp(`^${TS} advance_phase \\((\\w+)\\)`);
 const TURN_START = new RegExp(`^${TS} ◀ prompt \\(tag=([^,)]+)`);
-const TURN_END = new RegExp(`^${TS} (?:▶ response|◼ budget-control stop|✗ turn failed)`);
+const TURN_END = new RegExp(`^${TS} (▶ response|◼ budget-control stop|✗ turn failed(?::\\s*(.*))?|⚠ .*aborted.*)`);
+const HEARTBEAT = new RegExp(`^${TS} ⏳ .*?(\\d+)m elapsed`);
 
-interface Window {
+export interface PhaseWindow {
   phase: string;
   startMs: number;
   endMs: number;
+  inferred?: true;
 }
-interface Turn {
+export type TurnStatus = 'ok' | 'budget' | 'failed' | 'timeout';
+
+export interface ParsedTurn {
+  voice: string;
   tag: string;
   startMs: number;
   endMs: number;
+  status: TurnStatus;
+  terminal: string;
 }
 
 export interface PhaseStat {
@@ -86,8 +93,8 @@ export interface StatsModel {
 /** Parse the orchestrator log into phase windows. `sawOpen` distinguishes "no
  *  headless phases" (an interactive run) from "no log"; `inferred` counts the
  *  windows synthesized from a bare gate crossing (below). */
-function parsePhaseWindows(log: string, runStartMs = 0): { windows: Window[]; sawOpen: boolean; inferred: number } {
-  const windows: Window[] = [];
+export function parsePhaseWindows(log: string, runStartMs = 0): { windows: PhaseWindow[]; sawOpen: boolean; inferred: number } {
+  const windows: PhaseWindow[] = [];
   const openByPhase = new Map<string, number>();
   let sawOpen = false;
   let inferred = 0;
@@ -118,12 +125,14 @@ function parsePhaseWindows(log: string, runStartMs = 0): { windows: Window[]; sa
       // of time for the run's first phase), so the phase's worker turns
       // attribute instead of orphaning. Elapsed spans stay approximate; the
       // caller notes it.
-      if (start === undefined) {
+      const wasInferred = start === undefined;
+      if (wasInferred) {
         start = lastCloseMs ?? runStartMs;
         inferred++;
       }
-      if (ms >= start) {
-        windows.push({ phase, startMs: start, endMs: ms });
+      const startMs = start;
+      if (startMs !== undefined && ms >= startMs) {
+        windows.push({ phase, startMs, endMs: ms, ...(wasInferred ? { inferred: true } : {}) });
         openByPhase.delete(phase); // a later re-entry opens a fresh window
         lastCloseMs = ms;
       }
@@ -138,8 +147,18 @@ function parsePhaseWindows(log: string, runStartMs = 0): { windows: Window[]; sa
  * log read mid-turn) or a truncated log; the caller notes it rather than letting
  * the turn silently vanish from the totals.
  */
-function parseTurns(log: string): { turns: Turn[]; dangling: number } {
-  const turns: Turn[] = [];
+function statusForTerminal(marker: string, detail: string | undefined): TurnStatus {
+  if (marker.startsWith('▶')) return 'ok';
+  if (marker.startsWith('◼')) return 'budget';
+  // A `⚠` abort is a resumable cut — wall-clock cap, context cap, or an aborted
+  // `/compact` — none of which arrive as `✗ turn failed`, so they land here.
+  if (marker.startsWith('⚠')) return 'timeout';
+  // Word-boundaried so "timed out"/"timeout" match but "runtime"/"timestamp" don't.
+  return /timed?[\s-]?out/i.test(detail ?? marker) ? 'timeout' : 'failed';
+}
+
+export function parseVoiceLogTurns(voice: string, log: string): { turns: ParsedTurn[]; dangling: number } {
+  const turns: ParsedTurn[] = [];
   let pending: { tag: string; startMs: number } | undefined;
   let dangling = 0;
   for (const line of log.split('\n')) {
@@ -155,12 +174,101 @@ function parseTurns(log: string): { turns: Turn[]; dangling: number } {
     const end = TURN_END.exec(line);
     if (end && pending) {
       const ms = Date.parse(end[1]!);
-      if (!Number.isNaN(ms) && ms >= pending.startMs) turns.push({ tag: pending.tag, startMs: pending.startMs, endMs: ms });
+      if (!Number.isNaN(ms) && ms >= pending.startMs) {
+        turns.push({
+          voice,
+          tag: pending.tag,
+          startMs: pending.startMs,
+          endMs: ms,
+          status: statusForTerminal(end[2]!, end[3]),
+          terminal: end[2]!,
+        });
+      }
       pending = undefined;
     }
   }
   if (pending) dangling++; // open at EOF — in flight, or the log ends mid-turn
   return { turns, dangling };
+}
+
+export function unionDurationMs(intervals: Array<{ startMs: number; endMs: number }>): number {
+  const sorted = intervals
+    .filter((i) => Number.isFinite(i.startMs) && Number.isFinite(i.endMs) && i.endMs >= i.startMs)
+    .sort((a, b) => a.startMs - b.startMs);
+  let total = 0;
+  let open: { startMs: number; endMs: number } | undefined;
+  for (const interval of sorted) {
+    if (!open) {
+      open = { ...interval };
+      continue;
+    }
+    if (interval.startMs <= open.endMs) {
+      open.endMs = Math.max(open.endMs, interval.endMs);
+      continue;
+    }
+    total += open.endMs - open.startMs;
+    open = { ...interval };
+  }
+  if (open) total += open.endMs - open.startMs;
+  return total;
+}
+
+export interface TurnGap {
+  startMs: number;
+  endMs: number;
+  durationMs: number;
+  before: ParsedTurn;
+  after: ParsedTurn;
+}
+
+export function gapsBetweenTurns(turns: readonly ParsedTurn[], thresholdMs: number): TurnGap[] {
+  const sorted = [...turns].sort((a, b) => a.startMs - b.startMs);
+  const gaps: TurnGap[] = [];
+  for (let i = 1; i < sorted.length; i += 1) {
+    const before = sorted[i - 1]!;
+    const after = sorted[i]!;
+    const durationMs = after.startMs - before.endMs;
+    if (durationMs >= thresholdMs) gaps.push({ startMs: before.endMs, endMs: after.startMs, durationMs, before, after });
+  }
+  return gaps;
+}
+
+export interface Heartbeat {
+  atMs: number;
+  elapsedMinutes: number;
+}
+
+/**
+ * Parse the `⏳ … Nm elapsed` heartbeat cadence out of a log. Reads from a
+ * voice log, whose heartbeats carry the ISO stamp `HEARTBEAT` anchors on — the
+ * driver log's copy is `[send_prompt]`-prefixed with no stamp, so it never
+ * matches. Same 5-minute interval either way, so the worker log is the honest
+ * (and parseable) source for "how many heartbeats fired inside this turn".
+ */
+export function parseHeartbeats(log: string): Heartbeat[] {
+  const heartbeats: Heartbeat[] = [];
+  for (const line of log.split('\n')) {
+    const match = HEARTBEAT.exec(line);
+    if (!match) continue;
+    const atMs = Date.parse(match[1]!);
+    const elapsedMinutes = Number(match[2]);
+    if (!Number.isNaN(atMs) && Number.isFinite(elapsedMinutes)) heartbeats.push({ atMs, elapsedMinutes });
+  }
+  return heartbeats;
+}
+
+export function heartbeatCountBetween(heartbeats: readonly Heartbeat[], startMs: number, endMs: number): number {
+  return heartbeats.filter((h) => h.atMs >= startMs && h.atMs <= endMs).length;
+}
+
+/**
+ * The one turn→phase attribution rule, shared by `buildStats` and the corpus
+ * scripts so their numbers can't drift: a turn belongs to the FIRST window
+ * (chronological push order) whose closed span contains its start, so a turn
+ * that starts on a shared window boundary attributes once, to the earlier phase.
+ */
+export function phaseForTurn(windows: readonly PhaseWindow[], startMs: number): string | undefined {
+  return windows.find((w) => startMs >= w.startMs && startMs <= w.endMs)?.phase;
 }
 
 /**
@@ -191,13 +299,13 @@ export function buildStats(
     notes.push(`${inferred} phase window(s) inferred from gate crossings (interactively orchestrated phases log no entry header) — those elapsed spans are approximate.`);
   }
 
-  const turns: Turn[] = [];
+  const turns: ParsedTurn[] = [];
   for (const { voice, log } of workers) {
     if (log === undefined) {
       notes.push(`${voice} log missing — its turns aren't counted.`);
       continue;
     }
-    const parsed = parseTurns(log);
+    const parsed = parseVoiceLogTurns(voice, log);
     turns.push(...parsed.turns);
     if (parsed.dangling > 0) {
       notes.push(`${voice}: ${parsed.dangling} turn(s) still open (in flight, or a truncated log) — not counted.`);
@@ -213,7 +321,7 @@ export function buildStats(
   let unattributed = 0;
   for (const t of turns) {
     const dur = t.endMs - t.startMs;
-    const phase = windows.find((w) => t.startMs >= w.startMs && t.startMs <= w.endMs)?.phase;
+    const phase = phaseForTurn(windows, t.startMs);
     if (phase) {
       workerMs.set(phase, (workerMs.get(phase) ?? 0) + dur);
       turnCount.set(phase, (turnCount.get(phase) ?? 0) + 1);

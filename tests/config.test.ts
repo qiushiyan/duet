@@ -373,6 +373,29 @@ describe('budget — flag over config over the off default', () => {
   });
 });
 
+describe('corpus config — account-level archive root', () => {
+  test('absent config keeps corpus off; [corpus].dir resolves once from the same config reader', ({ projectDir }) => {
+    expect.soft(resolveRunConfig({ workflow: 'full' }, missing(projectDir)).corpusRoot).toBeUndefined();
+
+    const root = join(projectDir, 'duet-corpus');
+    const path = configIn(projectDir, `[corpus]\ndir = "${root}"`);
+    expect.soft(resolveRunConfig({ workflow: 'full' }, path).corpusRoot).toBe(root);
+  });
+
+  test('tilde expands and malformed corpus tables fail closed', ({ projectDir }) => {
+    const homePath = configIn(join(projectDir, 'homey'), '[corpus]\ndir = "~/duet-corpus"');
+    expect.soft(resolveRunConfig({ workflow: 'full' }, homePath).corpusRoot).toMatch(/duet-corpus$/);
+
+    const badTable = configIn(join(projectDir, 'bad-table'), 'corpus = "somewhere"');
+    const badDir = configIn(join(projectDir, 'bad-dir'), '[corpus]\ndir = ""');
+    const relDir = configIn(join(projectDir, 'rel-dir'), '[corpus]\ndir = "corpus"');
+    expect.soft(() => resolveRunConfig({ workflow: 'full' }, badTable)).toThrow(/\[corpus\] must be a table/);
+    expect.soft(() => resolveRunConfig({ workflow: 'full' }, badDir)).toThrow(/\[corpus\]\.dir/);
+    // A relative dir would resolve differently per invoking cwd — rejected, not silently absolutized.
+    expect.soft(() => resolveRunConfig({ workflow: 'full' }, relDir)).toThrow(/must be an absolute path/);
+  });
+});
+
 describe('formatBinding — the echo/status rendering', () => {
   test('provider, model, effort, and the interactive marker', () => {
     expect.soft(formatBinding({ provider: 'codex' })).toBe('codex');
