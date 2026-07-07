@@ -112,6 +112,8 @@ export interface ProtocolTraceInput {
   readonly workerLogs: readonly { voice: string; log?: string }[];
 }
 
+const FANOUT_PROXIMITY_MS = 10;
+
 type DraftMeta = {
   readonly order: number;
   readonly sourceIndex: number;
@@ -268,7 +270,7 @@ export function parseProtocolTrace(input: ProtocolTraceInput): ProtocolTrace {
     .sort((a, b) => a.atMs - b.atMs || a.sourceIndex - b.sourceIndex)
     .map((event, order) => ({ ...event, order }));
   const phased = assignPhases(ordered);
-  const withFanouts = assignFanouts(phased);
+  const withFanouts = assignFanouts(phased, notes);
 
   return {
     events: withFanouts,
@@ -292,11 +294,11 @@ function assignPhases(events: readonly DraftEvent[]): ProtocolEvent[] {
   });
 }
 
-function assignFanouts(events: readonly ProtocolEvent[]): ProtocolEvent[] {
+function assignFanouts(events: readonly ProtocolEvent[], notes: string[]): ProtocolEvent[] {
   const promptGroups = new Map<string, WorkerPromptEvent[]>();
   for (const event of events) {
     if (event.kind !== 'worker_prompt') continue;
-    const key = `${event.at}\0${event.tag}\0${event.body}`;
+    const key = `${event.tag}\0${event.body}`;
     const group = promptGroups.get(key) ?? [];
     group.push(event);
     promptGroups.set(key, group);
@@ -304,10 +306,30 @@ function assignFanouts(events: readonly ProtocolEvent[]): ProtocolEvent[] {
   const fanoutByOrder = new Map<number, string>();
   let fanoutOrdinal = 0;
   for (const group of promptGroups.values()) {
-    if (group.length < 2) continue;
-    fanoutOrdinal += 1;
-    const id = `fanout-${fanoutOrdinal}`;
-    for (const event of group) fanoutByOrder.set(event.order, id);
+    const sorted = [...group].sort((a, b) => a.atMs - b.atMs || a.order - b.order);
+    let cluster: WorkerPromptEvent[] = [];
+    const flush = (): void => {
+      if (new Set(cluster.map((event) => event.voice)).size < 2) {
+        cluster = [];
+        return;
+      }
+      fanoutOrdinal += 1;
+      const id = `fanout-${fanoutOrdinal}`;
+      const stamps = new Set(cluster.map((event) => event.at));
+      if (stamps.size > 1) {
+        notes.push(
+          `fanout ${id} inferred by ${FANOUT_PROXIMITY_MS}ms proximity for tag ${cluster[0]?.tag ?? 'unknown'}; original log stamps differed`,
+        );
+      }
+      for (const event of cluster) fanoutByOrder.set(event.order, id);
+      cluster = [];
+    };
+    for (const event of sorted) {
+      const previous = cluster[cluster.length - 1];
+      if (previous && event.atMs - previous.atMs > FANOUT_PROXIMITY_MS) flush();
+      cluster.push(event);
+    }
+    flush();
   }
   return events.map((event) => {
     if (event.kind !== 'worker_prompt') return event;

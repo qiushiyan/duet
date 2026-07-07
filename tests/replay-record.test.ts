@@ -66,13 +66,13 @@ describe('parseProtocolTrace', () => {
     expect.soft(trace.events[2]).toMatchObject({ kind: 'terminal', verb: 'ask_human', body: 'Which way?', phase: 'design' });
   });
 
-  test('marks an exact same-stamp same-body multi-worker prompt as a fan-out', () => {
+  test('marks a near-simultaneous same-body multi-worker prompt as a fan-out', () => {
     const body = 'same neutral read';
     const trace = parseProtocolTrace({
       orchestratorLog: [entry(0, '◀ harness prompt (phase=frame)', 'brief')].join(''),
       workerLogs: [
         { voice: 'architect', log: entry(1, '◀ prompt (tag=think-holistic, from orchestrator)', body) },
-        { voice: 'analyst', log: entry(1, '◀ prompt (tag=think-holistic, from orchestrator)', body) },
+        { voice: 'analyst', log: entry(1, '◀ prompt (tag=think-holistic, from orchestrator)', body, 1) },
       ],
     });
 
@@ -87,6 +87,7 @@ describe('parseProtocolTrace', () => {
     ]);
     const prompts = trace.events.filter((event) => event.kind === 'worker_prompt');
     expect.soft(prompts.map((event) => event.fanoutId)).toEqual(['fanout-1', 'fanout-1']);
+    expect.soft(trace.notes).toContain('fanout fanout-1 inferred by 10ms proximity for tag think-holistic; original log stamps differed');
   });
 
   test('reports missing logs and unmatched worker turns as notes', () => {
