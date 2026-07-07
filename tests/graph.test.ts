@@ -81,15 +81,34 @@ describe('renderGraph — the blueprint ANSI pipeline', () => {
 });
 
 describe('renderGraphMermaid — the static blueprint flowchart', () => {
-  test('emits a plain-text flowchart of the spine, gates chained', () => {
+  test('emits a plain-text flowchart of the spine, gates chained by index-derived ids', () => {
     const out = renderGraphMermaid(blueprint('short'));
     expect(out.startsWith('flowchart TD')).toBe(true);
-    expect(out).toContain('research["research: frame"]');
-    expect(out).toContain('research --> research_gate');
-    expect(out).toContain('research_gate --> implement');
+    // Ids are index-derived (p0, p0_gate), the phase name lives only in the label.
+    expect(out).toContain('p0["research: frame"]');
+    expect(out).toContain('p0 --> p0_gate');
+    expect(out).toContain('p0_gate --> p1');
     // No control/ESC characters in the docs artifact (a static, plain-text diagram).
     // eslint-disable-next-line no-control-regex
     expect(/[\u0000-\u001f]/.test(out.replace(/\n/g, ""))).toBe(false);
+  });
+
+  test('a project phase name with a space is safe — it never becomes a bare Mermaid id', async ({ projectDir }) => {
+    const dir = join(projectDir, '.duet', 'workflows');
+    mkdirSync(dir, { recursive: true });
+    const sdk = join(process.cwd(), 'src', 'workflows.ts');
+    writeFileSync(
+      join(dir, 'spacey.ts'),
+      `import { build, defineWorkflow, finish, frame } from ${JSON.stringify(sdk)};\n` +
+        `export default defineWorkflow({ name: 'spacey', title: 'Spacey', presets: { afk: [] }, phases: [frame({ name: 'open pr' }), build({ review: 'writable', audit: true }), finish()] });\n`,
+    );
+    const model = await buildBlueprintModel(projectDir, 'spacey', { configPath: join(projectDir, 'none.toml') });
+    const out = renderGraphMermaid(model);
+    // The spaced name appears only inside a quoted label on an index-derived id.
+    expect(out).toContain('p0["open pr: frame"]');
+    expect(out).toContain('p0 --> p0_gate');
+    // It must NOT appear as a bare node/id token (which would be invalid Mermaid).
+    expect(out).not.toMatch(/(^|\s)open pr[\[{]/);
   });
 });
 

@@ -119,14 +119,22 @@ export function renderGraphMermaid(model: GraphModel): string {
   const checkpointByPhase = new Map(model.checkpoints.map((c) => [c.phase, c]));
   const lines: string[] = ['flowchart TD'];
   spine.phases.forEach((node, i) => {
+    // IDs are index-derived (p0, p0_gate), never the phase name: a project-authored
+    // name may carry spaces/hyphens/punctuation, which are invalid in a Mermaid id.
+    // The name only ever appears inside a quoted, escaped LABEL.
+    const id = `p${i}`;
     const posture = attendedByDefault(spine, node.name) ? 'attend' : 'auto';
     const checkpoint = checkpointByPhase.get(node.name);
     const ck = checkpoint?.live ? ` · ${checkpoint.kind}` : '';
-    lines.push(`  ${node.name}["${node.name}: ${blockSummary(node)}"]`);
-    lines.push(`  ${node.name}_gate{{"${node.gate.label} (${posture}${ck})"}}`);
-    lines.push(`  ${node.name} --> ${node.name}_gate`);
-    const next = spine.phases[i + 1];
-    if (next) lines.push(`  ${node.name}_gate --> ${next.name}`);
+    lines.push(`  ${id}["${mermaidLabel(`${node.name}: ${blockSummary(node)}`)}"]`);
+    lines.push(`  ${id}_gate{{"${mermaidLabel(`${node.gate.label} (${posture}${ck})`)}"}}`);
+    lines.push(`  ${id} --> ${id}_gate`);
+    if (i < spine.phases.length - 1) lines.push(`  ${id}_gate --> p${i + 1}`);
   });
   return lines.join('\n');
+}
+
+/** Escape a Mermaid node label — quotes become the HTML entity Mermaid renders, so a name with a `"` can't break out of the quoted label. */
+function mermaidLabel(text: string): string {
+  return text.replace(/"/g, '#quot;');
 }
