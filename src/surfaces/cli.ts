@@ -29,7 +29,7 @@ import { machineFor } from '../run/machine.ts';
 import { serveKernelStdio, serveRunScopedKernelStdio } from '../orchestrator/hosts/mcp-server.ts';
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
 import { buildStatsModel, renderStats } from './stats.ts';
-import { buildBlueprintModel, renderGraph, renderGraphJson, renderGraphMermaid } from './graph.ts';
+import { buildBlueprintModel, buildRunGraphModel, renderGraph, renderGraphJson, renderGraphMermaid } from './graph.ts';
 import { blueprintModel } from './graph-model.ts';
 import { runOrchestrate } from '../orchestrator/hosts/orchestrate.ts';
 import { DUTIES, entryOf, handoffWatchLabel, stagesOf, workflowHasConsultantBackstop } from '../registry/workflows.ts';
@@ -1151,9 +1151,9 @@ program
       return;
     }
     if (opts.mermaid) fail('--mermaid is blueprint-only — pass --workflow <name>, or drop --mermaid for the run view.');
-    // The run view (duet graph [runId]) is wired in a later slice.
-    void runId;
-    fail('the run view (duet graph [runId]) is not wired yet — use duet graph --workflow <name> for the blueprint.');
+    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with duet new, or pass --workflow <name> for a blueprint.');
+    const model = buildRunGraphModel(state);
+    console.log(opts.json ? renderGraphJson(model) : renderGraph(model));
   });
 
 program

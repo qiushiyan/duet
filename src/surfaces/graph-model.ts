@@ -19,11 +19,14 @@
  */
 
 import {
+  ANYTIME_SNIPPETS,
   consultantCheckpointView,
   continuityEdgeFor,
   defaultPosture,
   defaultPreAuthorizedOf,
   gatePhasesOf,
+  phaseOfGateState,
+  phaseSnippetsFor,
   phasesOf,
   stageOf,
   stagesOf,
@@ -39,9 +42,13 @@ import type {
   ReviewPosture,
   StageName,
 } from '../registry/workflows.ts';
-import { allBindings, formatBinding } from '../voices/bindings.ts';
+import { allBindings, degradedEdgesFor, formatBinding } from '../voices/bindings.ts';
 import type { BindAddress, DegradedEdge, VoiceBindings } from '../voices/bindings.ts';
-import type { WorkflowSource } from '../run/store.ts';
+import type { ContextEvent, RunState, WorkflowSource } from '../run/store.ts';
+import type { RunPosition } from '../run/position.ts';
+import type { VoiceAddress } from '../voices/providers/types.ts';
+import type { ErrorClass } from '../voices/health.ts';
+import type { StatusModel, StopModel } from './status.ts';
 
 /** One phase, projected structurally — identical for every view (the frozen shape). */
 export interface PhaseNode {
@@ -175,13 +182,8 @@ export interface PhaseCheckpoint {
   live: boolean;
 }
 
-/**
- * The render-ready graph model — one discriminated shape per view. The blueprint
- * overlay adds config-resolved default bindings, the degraded edges those bindings
- * imply, and the live consultant checkpoints; the run overlay (added with the run
- * view) adds live position over the frozen workflow.
- */
-export type GraphModel = {
+/** The blueprint view: the structural spine + config-resolved default bindings, their degraded edges, and the live consultant checkpoints. */
+export interface BlueprintGraphModel {
   mode: 'blueprint';
   spine: WorkflowSpine;
   /** Config-resolved DEFAULT bindings — what would run here, labeled as defaults by the renderer. */
@@ -189,7 +191,54 @@ export type GraphModel = {
   degradedEdges: DegradedEdge[];
   /** Per-phase consultant checkpoints (only phases that carry one). */
   checkpoints: PhaseCheckpoint[];
-};
+}
+
+/** A phase's live overlay state — its position in the arc, gate outcome, rounds, and any state-derived drift. */
+export interface RunNodeState {
+  phase: PhaseName;
+  status: 'done' | 'current' | 'future';
+  /** Every phase gates; posture is known always, outcome only once the gate is behind the cursor. */
+  gate: {
+    posture: 'attended' | 'pre-authorized';
+    /** How a PASSED gate was crossed — `auto-crossed` when ledgered in autoApprovals, else `crossed`. Never "attended" (state does not attest an explicit human approval). */
+    outcome?: 'auto-crossed' | 'crossed';
+    /** A `high` human decision that holds/held this (possibly pre-authorized) gate. */
+    heldHigh?: true;
+  };
+  /** used/cap for a review-loop phase. */
+  rounds?: { used: number; cap: number };
+  /** State-derived divergence from the expected shape — all phase-attributed (no log read). */
+  drift: DriftFlag[];
+}
+
+/** A phase-attributed drift signal — the run view's state-derived divergence flags (distinct from the trace's log-timeline drift; deliberately not a shared engine). */
+export type DriftFlag =
+  | { kind: 'unexpected-tag'; tag: string; voice: VoiceAddress }
+  | { kind: 'rounds-past-cap'; used: number; cap: number }
+  | { kind: 'auto-retry'; errorClass: ErrorClass; attempt: number }
+  | { kind: 'steer-staged'; stagedAt: string };
+
+/** The run view: the frozen workflow's structural spine with live position, gate outcomes, rounds, drift, and the run-level intervention summary overlaid. */
+export interface RunGraphModel {
+  mode: 'run';
+  runId: string;
+  spine: WorkflowSpine;
+  nodes: RunNodeState[];
+  stop: StopModel;
+  /** The degraded continuity edges the run's FROZEN bindings imply — so the arc never implies an edge the manifest made fresh. */
+  degradedEdges: DegradedEdge[];
+  /** Context interventions (compaction / cutoff / salvage / reset) — run/voice-level: a ContextEvent carries no phase, so it is never a per-phase flag. */
+  interventions: ContextEvent[];
+  /** The while-away ledgers, for the footer summary (auto-approvals also drive gate outcomes; retries also drive per-phase drift). */
+  ledgers: { autoApprovals: StatusModel['autoApprovals']; awayRetries: StatusModel['awayRetries'] };
+}
+
+/**
+ * The render-ready graph model — one discriminated shape per view. The blueprint
+ * overlay adds config-resolved default bindings, degraded edges, and live
+ * checkpoints; the run overlay adds live position over the frozen workflow.
+ */
+export type GraphModel = BlueprintGraphModel | RunGraphModel;
 
 /**
  * The blueprint overlay: the structural spine plus the config-resolved default
@@ -203,7 +252,7 @@ export function blueprintModel(
   workflow: CompiledWorkflow,
   source: WorkflowSource | undefined,
   resolved: { bindings: VoiceBindings; degradedEdges: DegradedEdge[] },
-): GraphModel {
+): BlueprintGraphModel {
   const spine = structuralSpine(workflow);
   const consultant = Boolean(resolved.bindings.consultant);
   const checkpoints: PhaseCheckpoint[] = spine.phases.flatMap((node) => {
@@ -216,5 +265,118 @@ export function blueprintModel(
     bindings: allBindings(resolved.bindings).map(({ address, binding }) => ({ address, label: formatBinding(binding) })),
     degradedEdges: resolved.degradedEdges,
     checkpoints,
+  };
+}
+
+/** The phase a live run is currently at, or undefined when the position carries none (done / abandoned) — the cursor for done/current/future. */
+function cursorPhaseOf(position: RunPosition): PhaseName | undefined {
+  switch (position.kind) {
+    case 'running':
+    case 'interactive':
+    case 'gate':
+    case 'flag':
+    case 'crashed':
+      return position.phase;
+    case 'done':
+    case 'abandoned':
+      return undefined;
+  }
+}
+
+/**
+ * The phase-attributed drift for one phase — all state-derived, no log read: a
+ * snippet tag the phase's arc doesn't own (`sentSnippets` vs `phaseSnippetsFor`,
+ * plus the always-legal anytime helpers), rounds past cap, an auto-retry in the
+ * phase, and a steer currently staged during it. The trace's ordering drift is a
+ * separate computation over the log timeline — deliberately not shared.
+ */
+function driftForPhase(
+  workflow: CompiledWorkflow,
+  phase: PhaseName,
+  state: RunState,
+  status: StatusModel,
+  opts: { consultant: boolean; gateless?: boolean },
+): DriftFlag[] {
+  const flags: DriftFlag[] = [];
+  const allowed = new Set<string>([...phaseSnippetsFor(workflow, phase, opts), ...ANYTIME_SNIPPETS]);
+  const sent = state.sentSnippets?.[phase];
+  if (sent) {
+    for (const [voice, tags] of Object.entries(sent) as Array<[VoiceAddress, string[] | undefined]>) {
+      for (const tag of tags ?? []) if (!allowed.has(tag)) flags.push({ kind: 'unexpected-tag', tag, voice });
+    }
+  }
+  const round = status.rounds.find((r) => r.phase === phase);
+  if (round && round.used > round.cap) flags.push({ kind: 'rounds-past-cap', used: round.used, cap: round.cap });
+  for (const r of state.autoRetries ?? []) if (r.phase === phase) flags.push({ kind: 'auto-retry', errorClass: r.errorClass, attempt: r.attempt });
+  // Pending-only, by design: a steer CURRENTLY staged during this phase (delivered
+  // steers are consumed and belong to the trace's both-directory history, not here).
+  for (const s of status.pendingSteers) if (s.stagedDuring === phase) flags.push({ kind: 'steer-staged', stagedAt: s.stagedAt });
+  return flags;
+}
+
+/**
+ * The run overlay: the frozen workflow's structural spine with live position and
+ * outcomes overlaid. It renders OVER the pinned `StatusModel` (the concierge
+ * contract) plus the raw `state`/`position` for the signals StatusModel doesn't
+ * carry (snippet drift, high decisions, frozen-binding degradation) — it never
+ * forks a second run-state model. `status` must be built with the run's pending
+ * steers so the steer-drift signal is populated.
+ */
+export function runGraphModel(
+  workflow: CompiledWorkflow,
+  status: StatusModel,
+  state: RunState,
+  position: RunPosition,
+): RunGraphModel {
+  const spine = structuralSpine(workflow);
+  const phaseNames = spine.phases.map((p) => p.name);
+  const cursor = cursorPhaseOf(position);
+  const cursorIdx = cursor ? phaseNames.indexOf(cursor) : -1;
+  const roundsByPhase = new Map(status.rounds.map((r) => [r.phase, r]));
+  const autoApprovedPhases = new Set(
+    (state.autoApprovals ?? [])
+      .map((a) => phaseOfGateState(workflow, a.gate))
+      .filter((p): p is PhaseName => p !== undefined),
+  );
+  const opts = { consultant: Boolean(state.bindings.consultant), gateless: state.gateless === true };
+
+  const nodes: RunNodeState[] = spine.phases.map((node, idx) => {
+    const nodeStatus: RunNodeState['status'] =
+      position.kind === 'done'
+        ? 'done'
+        : cursorIdx === -1
+          ? state.phaseStarted[node.name]
+            ? 'done' // abandoned: no cursor — a started phase was at least reached
+            : 'future'
+          : idx < cursorIdx
+            ? 'done'
+            : idx === cursorIdx
+              ? 'current'
+              : 'future';
+    const attended = state.gatesAt === undefined || state.gatesAt.includes(node.name);
+    const heldHigh = (state.phaseSummaries[node.name]?.humanDecisions ?? []).some((d) => d.severity === 'high');
+    const round = roundsByPhase.get(node.name);
+    return {
+      phase: node.name,
+      status: nodeStatus,
+      gate: {
+        posture: attended ? 'attended' : 'pre-authorized',
+        ...(nodeStatus === 'done' ? { outcome: autoApprovedPhases.has(node.name) ? 'auto-crossed' : 'crossed' } : {}),
+        ...(heldHigh ? { heldHigh: true as const } : {}),
+      },
+      ...(round ? { rounds: { used: round.used, cap: round.cap } } : {}),
+      drift: driftForPhase(workflow, node.name, state, status, opts),
+    };
+  });
+
+  return {
+    mode: 'run',
+    runId: state.runId,
+    spine,
+    nodes,
+    stop: status.stop,
+    degradedEdges: degradedEdgesFor(state.bindings, workflow),
+    interventions: status.contextEvents,
+    ledgers: { autoApprovals: status.autoApprovals, awayRetries: status.awayRetries },
   };
 }
