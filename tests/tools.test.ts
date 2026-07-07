@@ -39,7 +39,7 @@ import { contextSafetyPercent, createRun, loadRunState, markPendingTurn, recordC
 import { listPendingSteers, stageSteer } from '../src/run/steers.ts';
 import type { RunState } from '../src/run/store.ts';
 import { defaultBindingsFor } from '../src/voices/bindings.ts';
-import { DeferredWorker, FakeWorker, SyncThrowWorker, consultantBindingsFor, test } from './helpers/fixtures.ts';
+import { DeferredWorker, FakeWorker, SyncThrowWorker, test } from './helpers/fixtures.ts';
 import { claudeApiRetry, claudeToolUse, claudeUserToolResult, codexExecCommand, jsonl, plantClaudeTranscript, plantCodexRollout } from './helpers/transcripts.ts';
 
 /**
@@ -2064,17 +2064,15 @@ describe('send_prompt enum visibility (consultant only when bound)', () => {
 });
 
 describe('orchestratorSystemPrompt (the bound-only identity clause)', () => {
-  test('unbound: byte-for-byte the base prompt — no consultant at identity altitude', ({ run }) => {
+  // The clause's exact bytes are parity pins (pins/system-prompt/*.txt); here
+  // only the relational guarantees parity cannot state: unbound IS the
+  // constant, bound APPENDS to it.
+  test('unbound is byte-for-byte the base prompt; bound appends the consultant clause', ({ run, consultantRun }) => {
     expect.soft(orchestratorSystemPrompt(run)).toBe(ORCHESTRATOR_SYSTEM_PROMPT);
     expect.soft(orchestratorSystemPrompt(run).toLowerCase()).not.toContain('consultant');
-  });
-
-  test('bound: appends the consultant clause, naming it additive and ephemeral', ({ consultantRun }) => {
-    const prompt = orchestratorSystemPrompt(consultantRun);
-    expect.soft(prompt.startsWith(ORCHESTRATOR_SYSTEM_PROMPT)).toBe(true); // base preserved, clause appended
-    expect.soft(prompt).toContain('## The consultant');
-    expect.soft(prompt.toLowerCase()).toContain('ephemeral');
-    expect.soft(prompt.toLowerCase()).toContain('additive, never substitutive');
+    const bound = orchestratorSystemPrompt(consultantRun);
+    expect.soft(bound.startsWith(ORCHESTRATOR_SYSTEM_PROMPT)).toBe(true); // base preserved, clause appended
+    expect.soft(bound.toLowerCase()).toContain('consultant');
   });
 });
 
@@ -2135,32 +2133,22 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
   // Finding 3: the consultant is a PRIMARY numbered step when bound (a model
   // executing the list can't skip it), not an appended note after a step that
   // says "two". So the bound brief's analysis/synthesis steps change shape.
-  test('the frame brief makes the consultant a primary send step when bound — three sends, not an appended note', ({ run, consultantRun }) => {
+  // The briefs' exact bytes are parity pins (pins/briefs/*.txt). Here: the
+  // bound/unbound presence flips, the snippet-key and derived-path tokens, and
+  // the ORDERING invariants — the relational claims parity's independent
+  // fixtures cannot state.
+  test('the frame brief makes the consultant a primary send step when bound; unbound is clean', ({ run, consultantRun }) => {
     const bound = buildPhaseBrief(consultantRun, 'frame');
-    // The build-analysts share one fan-out send; the consultant is a separate
-    // send (its own consultant-frame body), and compare-notes still anonymizes.
-    expect.soft(bound).toContain('one fan-out call');
-    expect.soft(bound).toContain('consultant-frame');
-    expect.soft(bound).toContain('separate send');
-    expect.soft(bound).toContain('anonymized peers');
+    expect.soft(bound).toContain('consultant-frame'); // its own send, not a fan-out member
 
     const unbound = buildPhaseBrief(run, 'frame');
     expect.soft(unbound.toLowerCase()).not.toContain('consultant');
-    // Unbound: the fan-out to the two build-analysts, no consultant send.
-    expect.soft(unbound).toContain('one fan-out call');
-    expect.soft(unbound).toContain('["architect", "analyst"]');
+    expect.soft(unbound).toContain('["architect", "analyst"]'); // the fan-out pair, consultant-free
   });
 
-  test('the RIR research brief takes the same conditional shape', ({ shortRun, shortConsultantRun }) => {
-    const bound = buildPhaseBrief(shortConsultantRun, 'research');
-    expect.soft(bound).toContain('one fan-out call');
-    expect.soft(bound).toContain('consultant-frame'); // research maps to the frame checkpoint mode
-    expect.soft(bound).toContain('separate send');
-    expect.soft(bound).toContain('anonymized peers');
-
-    const unbound = buildPhaseBrief(shortRun, 'research');
-    expect.soft(unbound.toLowerCase()).not.toContain('consultant');
-    expect.soft(unbound).toContain('one fan-out call');
+  test('the short research brief takes the same conditional shape', ({ shortRun, shortConsultantRun }) => {
+    expect.soft(buildPhaseBrief(shortConsultantRun, 'research')).toContain('consultant-frame'); // research maps to the frame checkpoint mode
+    expect.soft(buildPhaseBrief(shortRun, 'research').toLowerCase()).not.toContain('consultant');
   });
 
   test('the spec brief gains the bet-audit step (folding severity into human_decisions) when bound; unbound is clean', ({
@@ -2171,7 +2159,6 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
     expect.soft(bound).toContain('Consultant checkpoint');
     expect.soft(bound).toContain('consultant-spec');
     expect.soft(bound).toContain('human_decisions');
-    expect.soft(bound).toContain('never re-grade');
     expect.soft(buildPhaseBrief(run, 'spec').toLowerCase()).not.toContain('consultant');
   });
 
@@ -2179,27 +2166,23 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
     run,
     consultantRun,
   }) => {
-    // Bound + a frozen contract on state → the verify step points at the contract,
-    // names consultant-verify, and routes a failed assertion to a high.
     consultantRun.acceptanceContract = { path: 'docs/specs/x.acceptance.md', commit: 'abc123' };
     const frozen = buildPhaseBrief(consultantRun, 'implement');
     expect.soft(frozen).toContain('Consultant checkpoint');
     expect.soft(frozen).toContain('consultant-verify');
     expect.soft(frozen).toContain('docs/specs/x.acceptance.md');
-    expect.soft(frozen).toContain('high human_decision');
+    expect.soft(frozen).toContain('human_decision'); // a failed assertion escalates through the hold
     expect.soft(frozen).not.toContain('consultant-impl'); // Full's impl verifies, it does not re-run the open-ended audit
 
-    // Bound + no frozen contract → a noted skip, never silent, never a fallback audit.
+    // Bound + no frozen contract → still a named checkpoint (a noted skip, never silent).
     delete consultantRun.acceptanceContract;
-    const unfrozen = buildPhaseBrief(consultantRun, 'implement');
-    expect.soft(unfrozen).toContain('Consultant checkpoint');
-    expect.soft(unfrozen).toContain('no frozen acceptance contract');
+    expect.soft(buildPhaseBrief(consultantRun, 'implement')).toContain('Consultant checkpoint');
 
     // Unbound → byte-for-byte clean.
     expect.soft(buildPhaseBrief(run, 'implement').toLowerCase()).not.toContain('consultant');
   });
 
-  test('the plan brief AUTHORS the contract when bound (write-not-commit, spec-only, missing→high); unbound is clean', ({
+  test('the plan brief AUTHORS the contract when bound, and the author step sits between spec commit and plan prompt', ({
     run,
     consultantRun,
   }) => {
@@ -2209,11 +2192,8 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
     mkdirSync(join(consultantRun.cwd, 'docs/specs'), { recursive: true });
     writeFileSync(join(consultantRun.cwd, 'docs/specs/x.md'), '# spec\n');
     const bound = buildPhaseBrief(consultantRun, 'plan');
-    expect.soft(bound).toContain('Consultant checkpoint');
     expect.soft(bound).toContain('consultant-contract');
     expect.soft(bound).toContain('docs/specs/x.acceptance.md'); // the derived target path
-    expect.soft(bound).toContain('blind to the plan and the code'); // spec-only independence
-    expect.soft(bound).toContain('NOT commit'); // the consultant writes, never commits
     expect.soft(bound).toContain('human_decision'); // missing-contract → high
 
     // Finding 4 (blindness): the author dispatch must come AFTER the spec commit but
@@ -2234,15 +2214,12 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
     blueprintRun,
     blueprintConsultantRun,
   }) => {
-    // The design arc authors after the loop converges (the runs-last pattern),
-    // seeded with the converged doc — the inverse of full's early placement.
+    // blueprint authors after the loop converges (the runs-last pattern), seeded
+    // with the converged doc — the inverse of full's early placement.
     // Draft flow (no specPath yet): the target path is described by convention.
     const bound = buildPhaseBrief(blueprintConsultantRun, 'design');
-    expect.soft(bound).toContain('Consultant checkpoint');
     expect.soft(bound).toContain('consultant-contract');
-    expect.soft(bound).toContain('run this LAST');
     expect.soft(bound).toContain('.acceptance.md'); // the naming convention, path unknown pre-draft
-    expect.soft(bound).toContain('NOT commit');
     expect.soft(bound).toContain('human_decision');
     const reviewLoopAt = bound.indexOf('review-design');
     const authorAt = bound.indexOf('author the acceptance contract');
@@ -2261,14 +2238,14 @@ describe('consultant checkpoint brief injection (orchestrator-only, additive)', 
     expect.soft(buildPhaseBrief(blueprintRun, 'design').toLowerCase()).not.toContain('consultant');
   });
 
-  test('the design implement brief VERIFIES the frozen contract when bound + frozen (full’s registry-driven tail)', ({
+  test('the blueprint implement brief VERIFIES the frozen contract when bound + frozen (full’s registry-driven tail)', ({
     blueprintConsultantRun,
   }) => {
     blueprintConsultantRun.acceptanceContract = { path: 'docs/specs/d.acceptance.md', commit: 'abc123' };
     const frozen = buildPhaseBrief(blueprintConsultantRun, 'implement');
     expect.soft(frozen).toContain('consultant-verify');
     expect.soft(frozen).toContain('docs/specs/d.acceptance.md');
-    expect.soft(frozen).toContain('high human_decision');
+    expect.soft(frozen).toContain('human_decision');
   });
 });
 
@@ -2296,7 +2273,6 @@ describe('acceptance contract at the tool altitude (get_task + list_snippets)', 
 
     expect.soft(brief).toContain('consultant-contract');
     expect.soft(brief).toContain('docs/specs/x.acceptance.md'); // the derived target
-    expect.soft(brief).toContain('NOT commit'); // write-not-commit
   });
 
   test('bound: get_task for impl VERIFIES the frozen contract through the tool', async ({ consultantRun }) => {
@@ -2308,7 +2284,7 @@ describe('acceptance contract at the tool altitude (get_task + list_snippets)', 
 
     expect.soft(brief).toContain('consultant-verify');
     expect.soft(brief).toContain('docs/specs/x.acceptance.md'); // the frozen ref
-    expect.soft(brief).toContain('high human_decision'); // a failed assertion holds the crossing
+    expect.soft(brief).toContain('human_decision'); // a failed assertion holds the crossing
   });
 
   test('bound: list_snippets surfaces the contract checkpoint snippet in its owning phase', async ({ consultantRun }) => {
@@ -2322,35 +2298,31 @@ describe('acceptance contract at the tool altitude (get_task + list_snippets)', 
 
 // Guarantee 1, the arc that DEFERRED the contract: a consultant-bound RIR run must
 // not see contract/verify at any tool surface — the feature does not leak into rir.
-describe('RIR + consultant: the contract feature does not leak into the deferred arc', () => {
-  const shortConsultantRun = (projectDir: string): RunState =>
-    createRun({ cwd: projectDir, workflow: 'short', bindings: consultantBindingsFor('short'), framing: 'f' });
-
-  test('orchestratorSystemPrompt is byte-for-byte the BASE consultant clause — no contract/verify text', ({ projectDir }) => {
-    const prompt = orchestratorSystemPrompt(shortConsultantRun(projectDir));
+describe('short + consultant: the contract feature does not leak into the deferring workflow', () => {
+  test('orchestratorSystemPrompt is byte-for-byte the BASE consultant clause — no contract/verify text', ({
+    shortConsultantRun,
+    consultantRun,
+  }) => {
+    const prompt = orchestratorSystemPrompt(shortConsultantRun);
     // The base clause, not the full-only contract addendum — byte-for-byte.
     expect.soft(prompt).toBe(`${ORCHESTRATOR_SYSTEM_PROMPT}\n\n${CONSULTANT_IDENTITY_CLAUSE}`);
     expect.soft(prompt.toLowerCase()).not.toContain('acceptance contract');
-    expect.soft(prompt.toLowerCase()).not.toContain('execute-to-observe');
-    // Contrast: a bound FULL run DOES gain the addendum (proves it is arc-scoped, not absent).
-    const full = orchestratorSystemPrompt(
-      createRun({ cwd: projectDir, workflow: 'full', bindings: consultantBindingsFor('full'), framing: 'f' }),
-    );
-    expect.soft(full.toLowerCase()).toContain('acceptance contract');
+    // Contrast: a bound FULL run DOES gain the addendum (proves it is workflow-scoped, not absent).
+    expect.soft(orchestratorSystemPrompt(consultantRun).toLowerCase()).toContain('acceptance contract');
   });
 
-  test('list_snippets (phase view and all=true) names no contract/verify snippet, but keeps RIR’s own', async ({
-    projectDir,
+  test('list_snippets (phase view and all=true) names no contract/verify snippet, but keeps short’s own', async ({
+    shortConsultantRun,
   }) => {
     const consultant = new FakeWorker('claude');
     for (const view of [{}, { all: true }] as const) {
-      const lib = text(await harness(shortConsultantRun(projectDir), { phase: 'research', consultant }).call('list_snippets', view));
+      const lib = text(await harness(shortConsultantRun, { phase: 'research', consultant }).call('list_snippets', view));
       expect.soft(lib, JSON.stringify(view)).not.toContain('consultant-contract');
       expect.soft(lib, JSON.stringify(view)).not.toContain('consultant-verify');
-      expect.soft(lib, JSON.stringify(view)).not.toContain('consultant-spec'); // also Full-only — per-arc honesty
+      expect.soft(lib, JSON.stringify(view)).not.toContain('consultant-spec'); // also Full-only — per-workflow honesty
     }
-    // all=true still exposes the consultant snippets RIR's own checkpoints reach.
-    const all = text(await harness(shortConsultantRun(projectDir), { phase: 'research', consultant }).call('list_snippets', { all: true }));
+    // all=true still exposes the consultant snippets short's own checkpoints reach.
+    const all = text(await harness(shortConsultantRun, { phase: 'research', consultant }).call('list_snippets', { all: true }));
     expect.soft(all).toContain('consultant-frame');
     expect.soft(all).toContain('consultant-impl');
   });

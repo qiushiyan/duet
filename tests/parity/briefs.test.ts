@@ -32,6 +32,7 @@ const CASES: Array<{ name: string; phase: PhaseName; opts: ParityRunOpts }> = [
     phase: 'spec',
     opts: { warmSessions: true, gatesAt: [], autoApprovals: ['directionGate'] },
   },
+  { name: 'full-spec.draft-consultant', phase: 'spec', opts: { warmSessions: true, consultant: true } },
   { name: 'full-spec.review', phase: 'spec', opts: { spec: true } },
   { name: 'full-spec.review-consultant', phase: 'spec', opts: { spec: true, consultant: true } },
   {

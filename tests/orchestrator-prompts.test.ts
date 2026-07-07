@@ -77,18 +77,19 @@ describe('the approval clause narrates from the ledger, not the posture', () => 
     run.gatesAt = ['frame', 'spec']; // the overnight posture — plan pre-authorized
 
     // Held-then-approved: no ledger entry for the plan gate → the human decided it.
-    expect.soft(buildPhaseBrief(run, 'implement')).toContain('The human approved the plan');
+    expect.soft(buildPhaseBrief(run, 'implement')).toContain('human approved');
+    expect.soft(buildPhaseBrief(run, 'implement')).not.toContain('auto-crossed');
 
     // The same posture with the crossing in the ledger → honest auto-cross narration.
     run.autoApprovals = [{ gate: 'planApprovalGate', at: '2026-07-01T00:00:00.000Z' }];
-    expect.soft(buildPhaseBrief(run, 'implement')).toContain('pre-authorized at run start and auto-crossed');
+    expect.soft(buildPhaseBrief(run, 'implement')).toContain('auto-crossed');
   });
 
   test('an attended gate always narrates the human approval, ledger or not', ({ projectDir }) => {
     const run = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), framing: 'x' });
     run.gatesAt = ['frame', 'spec', 'plan'];
     run.autoApprovals = [{ gate: 'directionGate', at: '2026-07-01T00:00:00.000Z' }];
-    expect(buildPhaseBrief(run, 'implement')).toContain('The human approved the plan');
+    expect(buildPhaseBrief(run, 'implement')).toContain('human approved');
   });
 });
 
@@ -104,7 +105,6 @@ describe('verify self-heal (universal, when a contract is frozen)', () => {
     expect.soft(brief).toContain('self-heal'); // the universal loop
     expect.soft(brief).toContain('builder first'); // route failures to the implementer, not the human
     expect.soft(brief).toContain('re-verify'); // a fresh, independent re-check
-    expect.soft(brief).toContain('still fails after'); // only a stuck assertion holds the gate
   });
 
   test('the self-heal loop is identical gateless or not (the backstop is universal)', ({ consultantRun }) => {
