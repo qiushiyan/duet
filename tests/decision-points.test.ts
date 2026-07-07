@@ -8,7 +8,7 @@ const at = (m: number) => `2026-07-07T10:${String(m).padStart(2, '0')}:00.000Z`;
 describe('decisionPoints', () => {
   test('discovers attended, auto-crossed, held-high, and question stops with stable keys', ({ run }) => {
     run.gatesAt = ['frame', 'spec'];
-    run.autoApprovals = [{ gate: 'plan', at: at(25) }];
+    run.autoApprovals = [{ gate: 'planApprovalGate', at: at(25) }];
     run.phaseSummaries.frame = { summary: 'direction approved', artifacts: [] };
     run.phaseSummaries.spec = { summary: 'spec packet final', artifacts: ['docs/spec.md'] };
     run.phaseSummaries.plan = { summary: 'plan packet', artifacts: ['docs/plan.md'] };
@@ -130,7 +130,7 @@ describe('decisionPoints', () => {
 
   test('missing logs fail soft while state-sourced gate points remain visible', ({ run }) => {
     run.gatesAt = [];
-    run.autoApprovals = [{ gate: 'plan', at: at(5) }];
+    run.autoApprovals = [{ gate: 'planApprovalGate', at: at(5) }];
     run.phaseSummaries.plan = { summary: 'plan packet', artifacts: [] };
     run.phaseSummaries.implement = {
       summary: 'held packet',
@@ -151,7 +151,7 @@ describe('decisionPoints', () => {
 describe('gradeMatrix', () => {
   test('derives confusion-matrix counts from point polarity and verdict, with missed stops as FN', ({ run }) => {
     run.gatesAt = [];
-    run.autoApprovals = [{ gate: 'plan', at: at(5) }];
+    run.autoApprovals = [{ gate: 'planApprovalGate', at: at(5) }];
     run.phaseSummaries.plan = { summary: 'plan packet', artifacts: [] };
     const points = decisionPoints(run, [line(at(0), '◀ harness prompt (phase=spec)'), line(at(1), 'advance_phase (spec)')].join('\n')).points;
 

@@ -336,7 +336,7 @@ describe('buildStatsModel — the fs composer over real appendVoiceLog output', 
     appendVoiceLog(run, 'orchestrator', 'ask_human queued', 'Should this stop?');
     appendVoiceLog(run, 'orchestrator', 'advance_phase (spec)', 'ok');
     run.gatesAt = [];
-    run.autoApprovals = [{ gate: 'plan', at: '2026-07-07T11:00:00.000Z' }];
+    run.autoApprovals = [{ gate: 'planApprovalGate', at: '2026-07-07T11:00:00.000Z' }];
     run.phaseSummaries.plan = { summary: 'plan packet', artifacts: [] };
     run.phaseSummaries.implement = {
       summary: 'held packet',

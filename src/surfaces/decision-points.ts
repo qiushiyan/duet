@@ -1,6 +1,6 @@
 import { gateAttended, highDecisionsAt } from '../run/store.ts';
 import type { Grade, HumanDecision, RunState } from '../run/store.ts';
-import { gatePhasesOf } from '../registry/workflows.ts';
+import { gatePhasesOf, phaseOfGateState } from '../registry/workflows.ts';
 import type { GatePhase, PhaseName } from '../registry/workflows.ts';
 import { workflowFor } from '../run/workflow.ts';
 import { VOICE_LOG_TIMESTAMP_PATTERN } from '../run/voice-log.ts';
@@ -187,12 +187,11 @@ function gatePoint(state: RunState, phase: GatePhase, disposition: GateDispositi
   };
 }
 
-function eventTimeForGate(state: RunState, phase: GatePhase, logGate: GateLog | undefined): number | undefined {
+function eventTimeForGate(autoAt: string | undefined, logGate: GateLog | undefined): number | undefined {
   const logged = logGate?.closes.at(-1)?.atMs;
   if (logged !== undefined) return logged;
-  const auto = state.autoApprovals?.find((a) => a.gate === phase)?.at;
-  if (!auto) return undefined;
-  const atMs = Date.parse(auto);
+  if (!autoAt) return undefined;
+  const atMs = Date.parse(autoAt);
   return Number.isNaN(atMs) ? undefined : atMs;
 }
 
@@ -211,7 +210,16 @@ export function decisionPoints(state: RunState, orchestratorLog: string | undefi
 
   const byPhase = phaseOrder(state);
   const pointsWithOrder: Array<{ point: DecisionPoint; atMs?: number; phaseIndex: number; logIndex: number }> = [];
-  const autoPhases = new Set((state.autoApprovals ?? []).map((a) => a.gate).filter((gate): gate is GatePhase => gateSet.has(gate)));
+  // `autoApprovals` ledgers the machine gate-STATE name (`shipGate` — the
+  // lifecycle writes `machineState`), never the gate's phase; resolve through
+  // the registry exactly as the graph run view does, or every auto-crossing
+  // reads as an attended stop and the matrix loses its did-not-stop column.
+  const autoApprovalAt = new Map<GatePhase, string>();
+  for (const entry of state.autoApprovals ?? []) {
+    const phase = phaseOfGateState(wf, entry.gate);
+    if (phase !== undefined && !autoApprovalAt.has(phase)) autoApprovalAt.set(phase, entry.at);
+  }
+  const autoPhases = new Set(autoApprovalAt.keys());
 
   for (const phase of gates) {
     const logGate = logGates.get(phase);
@@ -227,7 +235,7 @@ export function decisionPoints(state: RunState, orchestratorLog: string | undefi
     const rejectionCount = disposition === 'attended' || disposition === 'held-high' ? Math.max(0, (logGate?.closes.length ?? 1) - 1) : 0;
     pointsWithOrder.push({
       point: gatePoint(state, phase, disposition, rejectionCount),
-      atMs: eventTimeForGate(state, phase, logGate),
+      atMs: eventTimeForGate(autoApprovalAt.get(phase), logGate),
       phaseIndex: byPhase.get(phase) ?? Number.MAX_SAFE_INTEGER,
       logIndex: logGate?.closes[0]?.index ?? Number.MAX_SAFE_INTEGER,
     });
