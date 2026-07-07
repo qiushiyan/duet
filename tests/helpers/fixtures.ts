@@ -124,14 +124,18 @@ export interface Fixtures {
   interactiveRun: RunState;
   /** A framing-only run with a consultant bound (the opt-in second reviewer). */
   consultantRun: RunState;
-  /** A framing-only run on the rir arc (for arc-scoped brief/render tests). */
+  /** A framing-only run on the short workflow (for workflow-scoped brief/render tests). */
   shortRun: RunState;
-  /** A consultant-bound run on the rir arc (for arc-scoped brief/render tests). */
+  /** A consultant-bound run on the short workflow (for workflow-scoped brief/render tests). */
   shortConsultantRun: RunState;
-  /** A framing-only run on the design arc (for arc-scoped brief/render tests). */
+  /** A framing-only run on the blueprint workflow (for workflow-scoped brief/render tests). */
   blueprintRun: RunState;
-  /** A consultant-bound run on the design arc (for arc-scoped brief/render tests). */
+  /** A consultant-bound run on the blueprint workflow (for workflow-scoped brief/render tests). */
   blueprintConsultantRun: RunState;
+  /** A framing-only run on the relay workflow (for workflow-scoped brief/render tests). */
+  relayRun: RunState;
+  /** A consultant-bound run on the relay workflow (for workflow-scoped brief/render tests). */
+  relayConsultantRun: RunState;
 }
 
 export const test = base.extend<Fixtures>({
@@ -163,5 +167,11 @@ export const test = base.extend<Fixtures>({
   },
   blueprintConsultantRun: async ({ projectDir }, use) => {
     await use(createRun({ cwd: projectDir, bindings: consultantBindingsFor('blueprint'), workflow: 'blueprint', framing: 'test framing' }));
+  },
+  relayRun: async ({ projectDir }, use) => {
+    await use(createRun({ cwd: projectDir, bindings: defaultBindingsFor('relay'), workflow: 'relay', framing: 'test framing' }));
+  },
+  relayConsultantRun: async ({ projectDir }, use) => {
+    await use(createRun({ cwd: projectDir, bindings: consultantBindingsFor('relay'), workflow: 'relay', framing: 'test framing' }));
   },
 });

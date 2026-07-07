@@ -89,8 +89,8 @@ describe('served library pins — flat', () => {
 });
 
 // The phase-scoped view is what list_snippets actually serves mid-run: current
-// phase's templates + anytime helpers in full, other phases indexed in arc
-// order. One pin per structurally distinct case.
+// phase's templates + anytime helpers in full, other phases indexed in
+// workflow order. One pin per structurally distinct case.
 describe('served library pins — phase-scoped', () => {
   const CASES: Array<{ name: string; phase: PhaseName; workflow: WorkflowName; consultant?: boolean; gateless?: boolean }> = [
     { name: 'full-spec.unbound', phase: 'spec', workflow: 'full' },

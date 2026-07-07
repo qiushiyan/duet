@@ -12,7 +12,7 @@ import type { RunState } from '../../src/run/store.ts';
  * session: each phase (re-)entry records the phase name and sends back the next
  * scripted phase.* event. Same statechart, same handlers — the seam is
  * machine.provide, exactly how the real driver (a callback actor that sendBacks
- * the phase's terminal event) is plugged in. Defaults to the Full arc.
+ * the phase's terminal event) is plugged in. Defaults to the full workflow.
  */
 export function scriptedMachine(
   script: PhaseEvent[],

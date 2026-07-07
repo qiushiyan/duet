@@ -15,7 +15,7 @@ import type { ParityRunOpts } from './matrix.ts';
  * refactor is wrong, not the pin.
  *
  * Case naming: `<workflow>-<phase>.<variant>`; the variant names the branch the
- * case exists to hold (default = the arc's materialized posture, fresh run).
+ * case exists to hold (default = the workflow's materialized posture, fresh run).
  */
 
 const CASES: Array<{ name: string; phase: PhaseName; opts: ParityRunOpts }> = [
@@ -102,7 +102,7 @@ const CASES: Array<{ name: string; phase: PhaseName; opts: ParityRunOpts }> = [
     opts: { spec: true, warmSessions: true, gatesAt: ['frame', 'spec', 'plan', 'implement', 'finish'] },
   },
 
-  // ---- design: the one-doc arc (frame pre-authorized by default) ----
+  // ---- blueprint: the one-doc workflow (frame pre-authorized by default) ----
   { name: 'blueprint-frame.default', phase: 'frame', opts: { workflow: 'blueprint' } },
   { name: 'blueprint-design.draft', phase: 'design', opts: { workflow: 'blueprint', warmSessions: true } },
   {
@@ -142,7 +142,7 @@ const CASES: Array<{ name: string; phase: PhaseName; opts: ParityRunOpts }> = [
   },
   { name: 'blueprint-finish.default', phase: 'finish', opts: { workflow: 'blueprint', spec: true, warmSessions: true } },
 
-  // ---- relay: the fixer arc (design's shape; writing reviewer owns the tails) ----
+  // ---- relay: the fixer workflow (blueprint's shape; the writing judge owns the tails) ----
   { name: 'relay-frame.default', phase: 'frame', opts: { workflow: 'relay' } },
   { name: 'relay-design.review', phase: 'design', opts: { workflow: 'relay', spec: true } },
   {
@@ -163,7 +163,7 @@ const CASES: Array<{ name: string; phase: PhaseName; opts: ParityRunOpts }> = [
   },
   { name: 'relay-finish.default', phase: 'finish', opts: { workflow: 'relay', spec: true, warmSessions: true } },
 
-  // ---- rir: the lighter arc (attend-all by default; one writable round) ----
+  // ---- short: the lighter workflow (attend-all by default; one writable round) ----
   { name: 'short-research.default', phase: 'research', opts: { workflow: 'short' } },
   { name: 'short-research.consultant', phase: 'research', opts: { workflow: 'short', consultant: true } },
   { name: 'short-implement.default', phase: 'implement', opts: { workflow: 'short', warmSessions: true } },

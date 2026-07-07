@@ -2,7 +2,7 @@ import { describe, expect } from 'vitest';
 import { buildPhaseBrief } from '../src/orchestrator/briefs.ts';
 import { defaultBindingsFor } from '../src/voices/bindings.ts';
 import { createRun } from '../src/run/store.ts';
-import { consultantBindingsFor, test } from './helpers/fixtures.ts';
+import { test } from './helpers/fixtures.ts';
 
 // A gateless run drops only the consultant's HOLDING bet audit (spec/implement)
 // from the phase briefs; its non-holding generative framing read and the
@@ -36,11 +36,10 @@ describe('gateless drops the consultant bet-audit in the phase briefs, keeping f
     expect.soft(gateless).toContain('acceptance contract'); // and it still runs
   });
 
-  test('rir implement: gateless drops the open-ended bet audit', ({ projectDir }) => {
-    const rir = createRun({ cwd: projectDir, bindings: consultantBindingsFor('short'), workflow: 'short', framing: 'x' });
-    expect.soft(buildPhaseBrief(rir, 'implement')).toContain('bet audit');
-    rir.gateless = true;
-    expect.soft(buildPhaseBrief(rir, 'implement')).not.toContain('bet audit');
+  test('short implement: gateless drops the open-ended bet audit', ({ shortConsultantRun }) => {
+    expect.soft(buildPhaseBrief(shortConsultantRun, 'implement')).toContain('bet audit');
+    shortConsultantRun.gateless = true;
+    expect.soft(buildPhaseBrief(shortConsultantRun, 'implement')).not.toContain('bet audit');
   });
 });
 
@@ -59,10 +58,9 @@ describe('the scratch guardrail keeps a worker out of the live run state', () =>
     expect.soft(brief).not.toContain('delete them before handoff'); // and the cleanup step that triggered the rm
   });
 
-  test('rir implement: same guardrail and per-run scratch path', ({ projectDir }) => {
-    const rir = createRun({ cwd: projectDir, bindings: defaultBindingsFor('short'), workflow: 'short', framing: 'x' });
-    const brief = buildPhaseBrief(rir, 'implement');
-    expect.soft(brief).toContain(`.duet/runs/${rir.runId}/scratch/`);
+  test('short implement: same guardrail and per-run scratch path', ({ shortRun }) => {
+    const brief = buildPhaseBrief(shortRun, 'implement');
+    expect.soft(brief).toContain(`.duet/runs/${shortRun.runId}/scratch/`);
     expect.soft(brief).toContain('never delete .duet/');
     expect.soft(brief).not.toContain('delete them before handoff');
   });

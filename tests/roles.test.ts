@@ -12,8 +12,6 @@ import {
   voicesFor,
   writeAuthorityFor,
 } from '../src/voices/policy.ts';
-import { defaultBindingsFor } from '../src/voices/bindings.ts';
-import { createRun } from '../src/run/store.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**
@@ -33,10 +31,9 @@ describe('voice policy helpers', () => {
     expect.soft(phaseAddressesFor(consultantRun, 'implement')).toEqual(['builder', 'critic', 'consultant']);
   });
 
-  test('phaseAddressesFor on relay: delivery pairs the builder with the judge', ({ projectDir }) => {
-    const relay = createRun({ cwd: projectDir, bindings: defaultBindingsFor('relay'), workflow: 'relay', framing: 'x' });
-    expect.soft(phaseAddressesFor(relay, 'design')).toEqual(['architect', 'analyst']);
-    expect.soft(phaseAddressesFor(relay, 'implement')).toEqual(['builder', 'judge']);
+  test('phaseAddressesFor on relay: delivery pairs the builder with the judge', ({ relayRun }) => {
+    expect.soft(phaseAddressesFor(relayRun, 'design')).toEqual(['architect', 'analyst']);
+    expect.soft(phaseAddressesFor(relayRun, 'implement')).toEqual(['builder', 'judge']);
   });
 
   test('voicesFor: the orchestrator leads, every stage\'s duties follow in run order, never dropped by the consultant', ({
@@ -99,21 +96,20 @@ describe('voice policy helpers', () => {
     expect.soft(writeAuthorityFor(consultantRun, 'implement', 'consultant', 'consultant-verify')).toBe(false);
   });
 
-  test('writeAuthorityFor on relay: the judge writes action-scoped, never phase-blanket', ({ projectDir }) => {
-    const relay = createRun({ cwd: projectDir, bindings: defaultBindingsFor('relay'), workflow: 'relay', framing: 'x' });
+  test('writeAuthorityFor on relay: the judge writes action-scoped, never phase-blanket', ({ relayRun }) => {
     // The judge's grant: review-and-fix, and the checker-owned tails.
-    expect.soft(writeAuthorityFor(relay, 'implement', 'judge', 'review-and-fix')).toBe(true);
-    expect.soft(writeAuthorityFor(relay, 'implement', 'judge', 'reconcile-docs')).toBe(true); // buildTailOwner
-    expect.soft(writeAuthorityFor(relay, 'implement', 'judge', 'ceo-summary')).toBe(true); // buildTailOwner
-    expect.soft(writeAuthorityFor(relay, 'finish', 'judge', 'pr-description')).toBe(true); // finishOwner
+    expect.soft(writeAuthorityFor(relayRun, 'implement', 'judge', 'review-and-fix')).toBe(true);
+    expect.soft(writeAuthorityFor(relayRun, 'implement', 'judge', 'reconcile-docs')).toBe(true); // buildTailOwner
+    expect.soft(writeAuthorityFor(relayRun, 'implement', 'judge', 'ceo-summary')).toBe(true); // buildTailOwner
+    expect.soft(writeAuthorityFor(relayRun, 'finish', 'judge', 'pr-description')).toBe(true); // finishOwner
     // Action-scoped, never a blanket: mid-build the builder is the sole writer,
     // so a midpoint turn under the fixer posture stays guidance-only — two
     // interleaved writers would wreck the builder's model of its own tree.
-    expect.soft(writeAuthorityFor(relay, 'implement', 'judge', 'review-midpoint')).toBe(false);
-    expect.soft(writeAuthorityFor(relay, 'implement', 'judge', 'custom')).toBe(false);
+    expect.soft(writeAuthorityFor(relayRun, 'implement', 'judge', 'review-midpoint')).toBe(false);
+    expect.soft(writeAuthorityFor(relayRun, 'implement', 'judge', 'custom')).toBe(false);
     // And never in the planning stage — relay's analyst is critique-only pre-handoff.
-    expect.soft(writeAuthorityFor(relay, 'design', 'analyst', 'review-design')).toBe(false);
-    expect.soft(writeAuthorityFor(relay, 'frame', 'analyst', 'think-holistic')).toBe(false);
+    expect.soft(writeAuthorityFor(relayRun, 'design', 'analyst', 'review-design')).toBe(false);
+    expect.soft(writeAuthorityFor(relayRun, 'frame', 'analyst', 'think-holistic')).toBe(false);
   });
 
   test('sessionKeyFor: a duty names its own stage, so the slot key needs no phase', () => {
@@ -164,15 +160,14 @@ describe('voice policy helpers', () => {
     expect.soft(sessionIdFor(run, 'builder')).toBe('build-era');
   });
 
-  test('sessionIdFor: relay declares no edges — the whole delivery is born fresh', ({ projectDir }) => {
-    const relay = createRun({ cwd: projectDir, workflow: 'relay', bindings: defaultBindingsFor('relay'), framing: 'x' });
-    relay.sessions = {
+  test('sessionIdFor: relay declares no edges — the whole delivery is born fresh', ({ relayRun }) => {
+    relayRun.sessions = {
       'planning.architect': { provider: 'claude', id: 'arch-1' },
       'planning.analyst': { provider: 'codex', id: 'ana-1' },
     };
-    expect.soft(sessionIdFor(relay, 'builder')).toBeUndefined(); // fresh by design
-    expect.soft(sessionIdFor(relay, 'judge')).toBeUndefined(); // fresh by design
-    expect.soft(sessionIdFor(relay, 'architect')).toBe('arch-1'); // planning untouched
+    expect.soft(sessionIdFor(relayRun, 'builder')).toBeUndefined(); // fresh by design
+    expect.soft(sessionIdFor(relayRun, 'judge')).toBeUndefined(); // fresh by design
+    expect.soft(sessionIdFor(relayRun, 'architect')).toBe('arch-1'); // planning untouched
   });
 
   test('sessionSlotsToReset: a duty riding a live edge clears the planning slot too, or the walk resurrects the session', ({ run }) => {
