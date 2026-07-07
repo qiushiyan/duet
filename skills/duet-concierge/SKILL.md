@@ -75,7 +75,7 @@ Gotchas worth knowing before they bite:
 | `stop.kind` | The run is… | What you do |
 |---|---|---|
 | `running` | mid-phase, orchestrator live | nothing is owed; relay any human guidance via `duet steer` |
-| `gate` | waiting on a decision | present `stop.packet.summary`, then `stop.commands.approve` / `.reject` on their word — "approve, but tweak X" is one command: `duet continue <run-id> --approve "<their tweak, verbatim>"`. Check `stop.packet.humanDecisions` first — empty or all-`low` is safe to relay an approve; any `high` is a real product decision: hold and put it to the human |
+| `gate` | waiting on a decision | present `stop.packet.summary`, then `stop.commands.approve` / `.reject` on their word — "approve, but tweak X" is one command: `duet continue <run-id> --approve "<their tweak, verbatim>"`; several adjustments carry best as a *numbered* rider — suggest the numbering, wording still theirs: the run folds a numbered rider in item-by-item and echoes compliance at the next stop. Check `stop.packet.humanDecisions` first — empty or all-`low` is safe to relay an approve; any `high` is a real product decision: hold and put it to the human |
 | `flag` | paused on a queued question | present `stop.question` + `stop.context` whole; `--answer` with their words. `stop.cause` says `human` (a real question for them), `infra` (an environment failure — say so; `duet doctor` shows what broke), or `budget` (a cost cap was hit — resumable: tell them to raise the budget or resume, not an outage) |
 | `crashed` | a phase died mid-flight (infrastructure, not content) | tell the human; on their go-ahead run `stop.command` — it re-enters from the transcripts |
 | `done` | complete | report the summary — it leads with the PR link (every workflow opens a PR) |

@@ -2,7 +2,7 @@
 The human approved the direction at the Direction gate. Draft the design doc, then run its review loop to the design gate. This run produces ONE committed design document between the framing and the build — product goals, behaviors, and non-goals on top; module boundaries, seams, an architecture sketch, and test standards below; there is no separate spec or plan.
 
 The shape of the phase:
-1. Decide where the design doc lives — the framing names the project's spec/design location. If it doesn't, ask_human for one before drafting.
+1. Decide where the design doc lives — the framing names the project's spec/design location. When it doesn't, have the architect follow the project's own documentation conventions — a documentation-standards doc, an existing dated-specs directory — rather than inventing a new top-level path; ask_human only when the project shows no convention to follow.
 2. Send the architect a write-design prompt carrying the approved direction; it writes the design doc and reports the path and content.
 3. Run the review loop: review-design to the analyst (point it at the file's path as well as the content), update-design to the architect, -again variants for round 2. The review is section-scoped — product sections at product altitude, technical sections at design altitude; the lens is in the template, keep it intact. The backstop cap is 2 review rounds — this run type premises fast convergence, so one round is the norm and the cap should never bind.
 
