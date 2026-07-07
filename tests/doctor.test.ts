@@ -6,7 +6,7 @@ import type { DoctorModel, VoiceHealthRow } from '../src/surfaces/doctor.ts';
 import { runDirOf, saveRunState } from '../src/run/store.ts';
 import { test } from './helpers/fixtures.ts';
 import { localStamp } from '../src/view/timefmt.ts';
-import { claudeApiError, claudeUserToolResult, jsonl, plantClaudeTranscript, plantCodexRollout } from './helpers/transcripts.ts';
+import { claudeApiError, claudeApiRetry, claudeAssistantText, claudeUserToolResult, jsonl, plantClaudeTranscript, plantCodexRollout } from './helpers/transcripts.ts';
 
 const NOW = Date.parse('2026-06-20T12:00:00.000Z');
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
@@ -72,6 +72,55 @@ describe('buildDoctorModel — per-voice verdicts', () => {
     const model = await buildDoctorModel(run, { now: NOW, home, fetch: okFetch });
     expect.soft(rowOf(model, 'architect').inFlight).toBe(true);
     expect.soft(rowOf(model, 'architect').verdict).toBe('working');
+  });
+
+  test('an api_retry at/after the turn start (live driver) reads retrying', async ({ run, projectDir }) => {
+    const home = join(projectDir, 'home');
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-1' } };
+    run.activeTurns = { architect: { tag: 'start-plan', startedAt: ago(60 * SEC) } };
+    saveRunState(run);
+    setDriver(run, process.pid);
+    // The SDK retry event lands inside THIS turn (after startedAt), so the
+    // worker's retriesSince anchor counts it — retrying outranks working.
+    plantClaudeTranscript(home, 'impl-1', jsonl(
+      claudeAssistantText('thinking', { ts: ago(30 * SEC) }),
+      claudeApiRetry({ ts: ago(5 * SEC) }),
+    ));
+
+    const model = await buildDoctorModel(run, { now: NOW, home, fetch: okFetch });
+    expect.soft(rowOf(model, 'architect').verdict).toBe('retrying');
+    expect.soft(rowOf(model, 'architect').retries).toBe(1);
+    expect.soft(renderDoctor(model)).toMatch(/architect.*retrying/); // the verdict reaches the voice's row
+  });
+
+  test('an in-flight turn quiet past 1m but under 30m reads long-inference', async ({ run, projectDir }) => {
+    const home = join(projectDir, 'home');
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-1' } };
+    run.activeTurns = { architect: { tag: 'start-plan', startedAt: ago(13 * MIN) } };
+    saveRunState(run);
+    setDriver(run, process.pid);
+    plantClaudeTranscript(home, 'impl-1', jsonl(claudeUserToolResult({ ts: ago(12 * MIN) })));
+
+    const model = await buildDoctorModel(run, { now: NOW, home, fetch: okFetch });
+    expect.soft(rowOf(model, 'architect').inFlight).toBe(true);
+    expect.soft(rowOf(model, 'architect').verdict).toBe('long-inference');
+    expect.soft(renderDoctor(model)).toMatch(/architect.*long-inference/);
+  });
+
+  test('an in-flight turn quiet past 30m under a LIVE driver reads silent/stuck', async ({ run, projectDir }) => {
+    // The live-driver counterpart of the dead-driver reconcile below: the same
+    // 40m-quiet hint is a real stuck turn when the driver holding it is alive.
+    const home = join(projectDir, 'home');
+    run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-1' } };
+    run.activeTurns = { architect: { tag: 'start-plan', startedAt: ago(41 * MIN) } };
+    saveRunState(run);
+    setDriver(run, process.pid);
+    plantClaudeTranscript(home, 'impl-1', jsonl(claudeUserToolResult({ ts: ago(40 * MIN) })));
+
+    const model = await buildDoctorModel(run, { now: NOW, home, fetch: okFetch });
+    expect.soft(rowOf(model, 'architect').inFlight).toBe(true);
+    expect.soft(rowOf(model, 'architect').verdict).toBe('silent/stuck');
+    expect.soft(renderDoctor(model)).toMatch(/architect.*silent\/stuck/);
   });
 
   test('stale activeTurns under a DEAD driver is reconciled to idle, never long-inference', async ({ run, projectDir }) => {
@@ -149,7 +198,7 @@ describe('renderDoctor', () => {
     expect.soft(text).toContain('orchestrator');
     expect.soft(text).toContain('architect');
     expect.soft(text).toContain('analyst');
-    expect.soft(text).toContain('network:');
+    expect.soft(text).toMatch(/api\.anthropic\.com.*reachable/); // the connectivity fact, not its label
     expect.soft(text).toMatch(/idle|working|crashed|retrying|long-inference|silent\/stuck/);
   });
 
@@ -161,7 +210,7 @@ describe('renderDoctor', () => {
     plantClaudeTranscript(home, 'impl-1', jsonl(claudeApiError('API Error: 500 Internal server error', { ts: errTs })));
     const text = renderDoctor(await buildDoctorModel(run, { now: NOW, home, fetch: okFetch }));
 
-    expect.soft(text).toContain(`⛔ ${localStamp(errTs)}`); // local, not the raw UTC slice
+    expect.soft(text).toContain(localStamp(errTs)); // local, not the raw UTC slice
     expect.soft(text).not.toContain(errTs);
   });
 });
