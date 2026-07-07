@@ -44,6 +44,7 @@ import type {
 } from '../registry/workflows.ts';
 import { allBindings, degradedEdgesFor, formatBinding } from '../voices/bindings.ts';
 import type { BindAddress, DegradedEdge, VoiceBindings } from '../voices/bindings.ts';
+import { gateAttended } from '../run/store.ts';
 import type { ContextEvent, RunState, WorkflowSource } from '../run/store.ts';
 import type { RunPosition } from '../run/position.ts';
 import type { VoiceAddress } from '../voices/providers/types.ts';
@@ -339,21 +340,28 @@ export function runGraphModel(
       .filter((p): p is PhaseName => p !== undefined),
   );
   const opts = { consultant: Boolean(state.bindings.consultant), gateless: state.gateless === true };
+  // Abandoned runs carry no cursor. A phase is "crossed" ONLY with PROOF: a
+  // strictly-later phase started (reaching phase K means every prior gate crossed
+  // — sequential), or its gate is in autoApprovals. `phaseStarted[node]` alone is
+  // NOT proof — it means the entry prompt was sent, not that the gate crossed —
+  // so the furthest-reached phase (and after) renders future/no-outcome, never
+  // claiming an uncrossed gate crossed (the acceptance-contract honesty invariant).
+  const maxStartedIdx = Math.max(-1, ...phaseNames.map((n, i) => (state.phaseStarted[n] ? i : -1)));
 
   const nodes: RunNodeState[] = spine.phases.map((node, idx) => {
     const nodeStatus: RunNodeState['status'] =
       position.kind === 'done'
         ? 'done'
         : cursorIdx === -1
-          ? state.phaseStarted[node.name]
-            ? 'done' // abandoned: no cursor — a started phase was at least reached
+          ? idx < maxStartedIdx || autoApprovedPhases.has(node.name)
+            ? 'done' // abandoned: a later phase started (⇒ this gate crossed), or it auto-crossed
             : 'future'
           : idx < cursorIdx
             ? 'done'
             : idx === cursorIdx
               ? 'current'
               : 'future';
-    const attended = state.gatesAt === undefined || state.gatesAt.includes(node.name);
+    const attended = gateAttended(state, node.name);
     const heldHigh = (state.phaseSummaries[node.name]?.humanDecisions ?? []).some((d) => d.severity === 'high');
     const round = roundsByPhase.get(node.name);
     return {
