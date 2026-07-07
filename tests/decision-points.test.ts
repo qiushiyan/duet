@@ -118,6 +118,16 @@ describe('decisionPoints', () => {
     expect.soft(decisionPoints(state, second).points.map((p) => p.key)).toEqual(['question:implement:0', 'question:implement:1']);
   });
 
+  test('a question that cannot be attributed to a phase is omitted with a note, never a silent drop', ({ run }) => {
+    run.gatesAt = [];
+    // An interactive-arc ask with no surrounding phase window and no following
+    // advance to borrow a phase from — unphaseable.
+    const discovery = decisionPoints(run, [line(at(0), 'ask_human queued'), 'Orphan question with no phase?'].join('\n'));
+
+    expect.soft(discovery.points).toEqual([]);
+    expect.soft(discovery.notes.join('\n')).toContain('could not be attributed to a phase');
+  });
+
   test('missing logs fail soft while state-sourced gate points remain visible', ({ run }) => {
     run.gatesAt = [];
     run.autoApprovals = [{ gate: 'plan', at: at(5) }];

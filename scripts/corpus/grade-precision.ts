@@ -42,21 +42,30 @@ function add(groups: Map<string, Agg>, group: string, key: string, cellName: 'tp
   groups.set(id, agg);
 }
 
-function rows(): { rows: Row[]; skippedUnloadable: number; skippedForeign: number } {
+function rows(): { rows: Row[]; skippedUnloadable: number; skippedForeign: number; skippedOrphans: number; notes: string[] } {
   const opts = parseCorpusCliArgs(process.argv.slice(2));
   const summary = loadCorpusRecords({ ...(opts.corpusDir ? { corpusDir: opts.corpusDir } : {}), sweepRoots: opts.sweepRoots });
   if (!opts.json) printLoadSummary(summary);
   const groups = new Map<string, Agg>();
+  const notes = new Set<string>();
+  let skippedOrphans = 0;
 
   for (const record of summary.records) {
     if (!record.state.grades?.length) continue;
     const discovery = decisionPoints(record.state, readLog(record, 'orchestrator'));
+    for (const note of discovery.notes) notes.add(note);
     const byKey = new Map<string, DecisionPoint>(discovery.points.map((point) => [point.key, point]));
     for (const grade of record.state.grades) {
       const missed = grade.key.startsWith('missed:');
       const point = byKey.get(grade.key);
       const cellName = missed ? 'fn' : point ? cell(point, grade) : undefined;
-      if (!cellName) continue;
+      // A non-missed verdict whose point no longer resolves (a pruned log, a
+      // renamed phase) is skipped so the rates never count a cell we can't
+      // place — but counted and surfaced, never silently dropped.
+      if (!cellName) {
+        if (!missed) skippedOrphans += 1;
+        continue;
+      }
       const phase = missed ? (grade.key.split(':')[1] ?? 'unknown') : point!.phase;
       const kind = missed ? 'missed' : point!.kind;
       for (const [group, key] of [
@@ -85,6 +94,8 @@ function rows(): { rows: Row[]; skippedUnloadable: number; skippedForeign: numbe
       .sort((a, b) => a.group.localeCompare(b.group) || b.graded - a.graded || a.key.localeCompare(b.key)),
     skippedUnloadable: summary.skippedUnloadable,
     skippedForeign: summary.skippedForeign,
+    skippedOrphans,
+    notes: [...notes],
   };
 }
 
@@ -102,7 +113,6 @@ function main(): void {
   console.log('\ndecision grade precision');
   if (result.rows.length === 0) {
     console.log('  none');
-    return;
   }
   for (const row of result.rows) {
     console.log(
@@ -110,6 +120,13 @@ function main(): void {
         ` graded=${String(row.graded).padStart(3)} TP=${row.tp} FP=${row.fp} TN=${row.tn} FN=${row.fn} missed=${row.missed} over=${pct(row.overFlagRate)} under=${pct(row.underFlagRate)}`,
     );
   }
+  // Surface the same degradation notes the readers do (a missing log shrinks a
+  // record's point set) and any orphaned verdicts, so an aggregate is never a
+  // rosy silent one.
+  if (result.skippedOrphans > 0) {
+    console.log(`\nnote: ${result.skippedOrphans} verdict(s) skipped — their decision point no longer resolves (a pruned log or renamed phase) and they are not missed stops.`);
+  }
+  for (const note of result.notes) console.log(`note: ${note}`);
 }
 
 try {

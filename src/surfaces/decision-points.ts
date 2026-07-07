@@ -113,10 +113,10 @@ function parseAnswer(body: string): string | undefined {
   }
 }
 
-function parseLog(log: string | undefined, gatePhases: ReadonlySet<string>): { gates: Map<GatePhase, GateLog>; questions: ResolvedQuestionLog[] } {
+function parseLog(log: string | undefined, gatePhases: ReadonlySet<string>): { gates: Map<GatePhase, GateLog>; questions: ResolvedQuestionLog[]; droppedQuestions: number } {
   const gates = new Map<GatePhase, GateLog>();
   const questions: QuestionLog[] = [];
-  if (log === undefined) return { gates, questions: [] };
+  if (log === undefined) return { gates, questions: [], droppedQuestions: 0 };
 
   const blocks = parseBlocks(log);
   let currentPhase: PhaseName | undefined;
@@ -162,7 +162,8 @@ function parseLog(log: string | undefined, gatePhases: ReadonlySet<string>): { g
     }
   }
 
-  return { gates, questions: questions.filter((q): q is ResolvedQuestionLog => q.phase !== undefined) };
+  const resolved = questions.filter((q): q is ResolvedQuestionLog => q.phase !== undefined);
+  return { gates, questions: resolved, droppedQuestions: questions.length - resolved.length };
 }
 
 function phaseOrder(state: RunState): Map<string, number> {
@@ -199,10 +200,13 @@ export function decisionPoints(state: RunState, orchestratorLog: string | undefi
   const wf = workflowFor(state);
   const gates = gatePhasesOf(wf);
   const gateSet = new Set<string>(gates);
-  const { gates: logGates, questions } = parseLog(orchestratorLog, gateSet);
+  const { gates: logGates, questions, droppedQuestions } = parseLog(orchestratorLog, gateSet);
   const notes: string[] = [];
   if (orchestratorLog === undefined) {
     notes.push('orchestrator log missing — attended gates and queued questions could not be reconstructed; state-sourced auto-crossed and held-high gates are still shown.');
+  }
+  if (droppedQuestions > 0) {
+    notes.push(`${droppedQuestions} queued question(s) could not be attributed to a phase (no surrounding phase window or following advance) — omitted from the point set.`);
   }
 
   const byPhase = phaseOrder(state);

@@ -62,11 +62,20 @@ function existingGrade(state: RunState, key: string): Grade | undefined {
 
 function pointLine(point: DecisionPoint, grade: Grade | undefined): string {
   const verdict = grade ? ` [${grade.verdict}${grade.note ? `; note: ${grade.note}` : ''}]` : '';
-  if (point.kind === 'question') return `${point.key}  ${point.phase}  question  ${point.context.question}${verdict}`;
+  if (point.kind === 'question') {
+    const answer = point.context.answer ? `  → answered: ${point.context.answer}` : '';
+    return `${point.key}  ${point.phase}  question  ${point.context.question}${answer}${verdict}`;
+  }
   const stop = point.polarity === 'stopped' ? 'stopped' : 'did not stop';
   const summary = point.context.summary ? `  ${point.context.summary}` : '';
+  // The disposition-specific hold finding: what made the human own this crossing
+  // (the design keeps the three dispositions "distinct in context"). Named
+  // inline so a held-high point is judgeable — "was that high worth stopping?" —
+  // without a separate --list --json read.
+  const highs = point.context.humanDecisions.filter((d) => d.severity === 'high');
+  const findings = highs.length > 0 ? `  ⚑ ${highs.map((d) => d.title).join('; ')}` : '';
   const rejected = point.context.rejectionCount > 0 ? `  rejected ${point.context.rejectionCount}x before approval` : '';
-  return `${point.key}  ${point.phase}  gate:${point.disposition}  ${stop}${summary}${rejected}${verdict}`;
+  return `${point.key}  ${point.phase}  gate:${point.disposition}  ${stop}${summary}${findings}${rejected}${verdict}`;
 }
 
 function renderList(state: RunState, points: DecisionPoint[], notes: string[], json: boolean): string {
@@ -113,13 +122,34 @@ async function defaultAsk(prompt: string): Promise<string> {
   }
 }
 
-async function runInteractiveWalkthrough(state: RunState, points: DecisionPoint[], io: Required<Pick<GradeCommandIo, 'ask' | 'now'>>): Promise<string> {
+/** The plain verdict question, phrased by polarity (design §"The walkthrough"). */
+function verdictPrompt(point: DecisionPoint): string {
+  return point.polarity === 'stopped' ? 'was stopping here right?' : 'should this have stopped you?';
+}
+
+async function runInteractiveWalkthrough(
+  state: RunState,
+  points: DecisionPoint[],
+  notes: string[],
+  io: Required<Pick<GradeCommandIo, 'ask' | 'now'>>,
+): Promise<string> {
   const lines = [`grading ${state.runId}`];
+  // Coverage notes lead the ritual so the human knows the point set was shrunk
+  // (a missing log, dropped questions) BEFORE grading — the walkthrough must
+  // not present a partial set as if it were complete (design §Test standards,
+  // "a shrunken point set with an empty notes is the bug this guards").
+  for (const note of notes) lines.push(`note: ${note}`);
+  // Consumed once, on the first prompt shown (a point, or the missed-stop prompt
+  // when there are no points), so it reaches the interactive human live rather
+  // than only in the trailing transcript.
+  let preamble = notes.length > 0 ? `${notes.map((n) => `note: ${n}`).join('\n')}\n\n` : '';
   for (const point of points) {
-    lines.push(pointLine(point, existingGrade(state, point.key)));
-    const answer = (await io.ask(`${point.key} right/wrong/skip? `)).trim().toLowerCase();
+    const context = pointLine(point, existingGrade(state, point.key));
+    lines.push(context);
+    const answer = (await io.ask(`${preamble}${context}\n  ${verdictPrompt(point)} right/wrong/skip: `)).trim().toLowerCase();
+    preamble = '';
     if (answer !== 'right' && answer !== 'wrong') continue;
-    const note = (await io.ask(`note for ${point.key} (blank ok): `)).trim();
+    const note = (await io.ask(`  note for ${point.key} (blank ok): `)).trim();
     upsertGrade(state, {
       key: point.key,
       verdict: answer,
@@ -128,7 +158,8 @@ async function runInteractiveWalkthrough(state: RunState, points: DecisionPoint[
     });
   }
   for (;;) {
-    const missed = (await io.ask('missed stop <phase>:<id>=<description> (blank to finish): ')).trim();
+    const missed = (await io.ask(`${preamble}missed stop <phase>:<id>=<description> (blank to finish): `)).trim();
+    preamble = '';
     if (!missed) break;
     const parsed = parseMissed(missed, state);
     if (typeof parsed === 'string') {
@@ -201,16 +232,19 @@ export async function gradeCommand(
 
   const isTTY = io.isTTY ?? Boolean(process.stdin.isTTY);
   const now = io.now ?? (() => new Date());
+  // Coverage notes ride every write path, not just --list — a scripted or
+  // interactive grader must see a shrunken point set, never a rosy silent one.
+  const noteBlock = discovery.notes.length > 0 ? `${discovery.notes.map((n) => `note: ${n}`).join('\n')}\n` : '';
   if (hasWrites) {
     const error = applyNonTtyWrites(state, discovery.points, opts, now());
     if (error) return { ok: false, error };
     const warning = runId && position.kind !== 'done' ? `warning: run ${state.runId} is ${position.kind}; later stops may not be in the record yet.\n` : '';
-    return { ok: true, output: `${warning}grades recorded for ${state.runId}` };
+    return { ok: true, output: `${warning}${noteBlock}grades recorded for ${state.runId}` };
   }
   if (!isTTY) {
     return { ok: false, error: 'non-interactive grading needs --list, --set <key>=right|wrong, or --missed <phase>:<id>=<description>' };
   }
   const warning = runId && position.kind !== 'done' ? `warning: run ${state.runId} is ${position.kind}; later stops may not be in the record yet.\n` : '';
-  const output = await runInteractiveWalkthrough(state, discovery.points, { ask: io.ask ?? defaultAsk, now });
+  const output = await runInteractiveWalkthrough(state, discovery.points, discovery.notes, { ask: io.ask ?? defaultAsk, now });
   return { ok: true, output: `${warning}${output}` };
 }
