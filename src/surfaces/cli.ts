@@ -37,6 +37,7 @@ import { DUTIES, entryOf, handoffWatchLabel, stagesOf, workflowHasConsultantBack
 import { getEffectiveSnippet, loadEffectiveSnippets, runtimeLibraryContext } from '../orchestrator/library.ts';
 import type { EffectiveSnippet } from '../orchestrator/library.ts';
 import { buildBrief, buildStatusModel, formatGatePosture, renderBrief, renderStatus, steerRefusal } from './status.ts';
+import { buildFramingsModel, readArchivedFraming, renderFramingsList } from './framings.ts';
 import { openTmuxView } from './view/tmux.ts';
 import { formatWorkflowSource, resolveWorkflowSource } from './workflow-source.ts';
 import { buildWorkflowListModel, initWorkflowDefinition, renderWorkflowCheck, renderWorkflowInit, renderWorkflowList } from './workflows.ts';
@@ -1194,6 +1195,32 @@ program
     // A recognized-but-refused run is reported, never hidden: each reason
     // already carries the run id and the manual-resume pointer.
     for (const u of unloadable) console.log(u.reason);
+  });
+
+// The framings browser — the per-run read surface over the corpus archive
+// (docs/corpus-runbook.md) merged with this project's local runs. Read-only
+// and fail-soft: the corpus is never required, and an unconfigured one
+// degrades to the local list with a note.
+const framingsCmd = program
+  .command('framings')
+  .description(
+    "Browse archived run framings: the corpus archive (which outlives merged worktrees) merged with this project's local runs, deduped by runId — this repo's records by default.",
+  )
+  .option('--all', "list every known record, not just this repo's")
+  .option('--json', 'emit the framings model (raw UTC timestamps, unshortened paths) for automation')
+  .action((opts: { all?: boolean; json?: boolean }) => {
+    const model = buildFramingsModel(process.cwd(), { ...(opts.all ? { all: true } : {}) });
+    console.log(opts.json ? JSON.stringify(model, null, 2) : renderFramingsList(model));
+  });
+
+framingsCmd
+  .command('show <runId>')
+  .description("Print a run's archived framing.md verbatim — plain text, no color, for piping and reference.")
+  .action((runId: string) => {
+    const result = readArchivedFraming(process.cwd(), runId);
+    if ('error' in result) fail(result.error);
+    // Verbatim bytes: write, never console.log (which would append a newline).
+    process.stdout.write(result.content);
   });
 
 // Read-only inspector for the effective snippet library (shipped base + the user

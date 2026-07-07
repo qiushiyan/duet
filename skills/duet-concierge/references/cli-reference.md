@@ -36,6 +36,8 @@ The verbs and flags the concierge uses, and the `status --json` schema it reads.
 | `duet grade [run-id] --list [--json]` | Read-only decision grading preview: reconstructed gate/question decision points, stable keys, existing grades, and discovery notes. Safe to relay as context; records nothing. |
 | `duet grade [run-id] --set <key=right|wrong> --note <key=text> --missed <phase:id=text>` | Record human verdicts for reconstructed decision points, optional notes, and human-declared missed stops. This is a write/decision surface — never pre-approved for the concierge; use only when the human explicitly asks you to record these exact grades. |
 | `duet runs` | List the project's runs, newest first. |
+| `duet framings [--all] [--json]` | Browse archived run framings: the opt-in corpus archive (which outlives merged worktrees) merged with the project's local runs, deduped by runId — this repo's records by default, `--all` for every record. Read-only and fail-soft: with no corpus configured it lists local runs and says so. |
+| `duet framings show <run-id>` | Print a run's archived `framing.md` verbatim (plain text, for piping and reference). |
 | `duet workflows` | List shipped, project, and user workflow definitions before starting a run; collisions are shown separately and the command does not import or compile external definition files. |
 | `duet workflows --json` | Machine-readable workflow discovery rows: each name is `available` or `collision`, with its source layers and paths. |
 | `duet workflows check <name>` | Resolve and compile one workflow definition without starting a run, then print its phases, stages, default gates, continuity declaration, and acceptance-contract placement. Loader/compiler errors surface directly. |
