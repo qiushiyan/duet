@@ -29,10 +29,15 @@ export interface CapturedTerminal {
   readonly body: string;
 }
 
+export interface CapturedRefusedSendPrompt extends CapturedSendPrompt {
+  readonly reason: string;
+}
+
 export type CapturedToolEvent = CapturedSendPrompt | CapturedTerminal;
 
 export interface ReplayHostCapture {
   readonly events: CapturedToolEvent[];
+  readonly refusedSends: CapturedRefusedSendPrompt[];
   readonly notes: string[];
 }
 
@@ -45,7 +50,7 @@ export interface ReplayHostOptions {
 }
 
 export function makeReplayHost(options: ReplayHostOptions): { host: PhaseHost; capture: ReplayHostCapture } {
-  const capture: ReplayHostCapture = { events: [], notes: [] };
+  const capture: ReplayHostCapture = { events: [], refusedSends: [], notes: [] };
   return {
     capture,
     host: {
@@ -82,6 +87,8 @@ export function makeReplayHost(options: ReplayHostOptions): { host: PhaseHost; c
 
 export function replayOrchestratorOptions(state: RunState, budget: ReturnType<typeof budgetFor>, providerHome: string): Options {
   mkdirSync(providerHome, { recursive: true });
+  const claudeHome = join(providerHome, '.claude');
+  mkdirSync(claudeHome, { recursive: true });
   const options = buildOrchestratorOptions(state, budget);
   delete (options as Options & { resume?: string }).resume;
   return {
@@ -94,6 +101,8 @@ export function replayOrchestratorOptions(state: RunState, budget: ReturnType<ty
       XDG_DATA_HOME: join(providerHome, '.local', 'share'),
       XDG_STATE_HOME: join(providerHome, '.local', 'state'),
       XDG_CACHE_HOME: join(providerHome, '.cache'),
+      CLAUDE_CONFIG_DIR: claudeHome,
+      CLAUDE_HOME: claudeHome,
     },
   };
 }
@@ -125,8 +134,16 @@ function wrapTools(tools: readonly KernelTool<any>[], recordedBrief: string, cap
         ...tool,
         handler: async (args, extra) => {
           const duty = Array.isArray(args.duty) ? args.duty.map(String) : [String(args.duty)];
-          capture.events.push({ kind: 'send_prompt', duty, tag: String(args.tag), body: String(args.body) });
-          return tool.handler(args, extra);
+          const event = { kind: 'send_prompt' as const, duty, tag: String(args.tag), body: String(args.body) };
+          const result = await tool.handler(args, extra);
+          if (result.isError) {
+            const reason = toolText(result);
+            capture.refusedSends.push({ ...event, reason });
+            capture.notes.push(`send_prompt returned a tool error and was excluded from aligned replay sends: ${duty.join('+')} tag=${event.tag}`);
+            return result;
+          }
+          capture.events.push(event);
+          return result;
         },
       };
     }
@@ -151,10 +168,7 @@ function wrapTools(tools: readonly KernelTool<any>[], recordedBrief: string, cap
     if (tool.name === 'list_snippets') {
       return {
         ...tool,
-        handler: async (args, extra) => {
-          capture.notes.push('list_snippets served from current snippet library; raw historical tool result is not recorded');
-          return tool.handler(args, extra);
-        },
+        handler: async (args, extra) => tool.handler(args, extra),
       };
     }
     return tool;
@@ -205,4 +219,8 @@ async function streamReplayTurn(
 
 function textResult(text: string): CallToolResult {
   return { content: [{ type: 'text', text }] };
+}
+
+function toolText(result: CallToolResult): string {
+  return result.content.map((block) => ('text' in block ? block.text : '')).join('\n');
 }

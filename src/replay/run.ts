@@ -64,6 +64,7 @@ export function prepareReplayPhase(input: PrepareReplayPhaseInput): PreparedRepl
   const recordedBrief = recordedBriefFor(trace, input.phase);
   const reconstructionNotes = [
     'phase-entry state synthesized from terminal state.json',
+    'raw historical list_snippets tool output is not recorded; replay serves the current snippet library if list_snippets is called',
     ...trace.notes,
     ...midPhaseSteerNotes(trace, input.phase),
     ...(recordedBrief ? [] : [`recorded phase brief for ${input.phase} was missing; replay prompt is empty`]),

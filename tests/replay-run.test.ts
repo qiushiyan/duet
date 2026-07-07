@@ -56,10 +56,18 @@ describe('replay phase kernel', () => {
     const outDir = mkdtempSync(join(tmpdir(), 'duet-replay-'));
     const providerStoreRoot = mkdtempSync(join(tmpdir(), 'duet-provider-store-'));
     const previousHome = process.env.HOME;
+    const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    const previousClaudeHome = process.env.CLAUDE_HOME;
     try {
       process.env.HOME = providerStoreRoot;
+      process.env.CLAUDE_CONFIG_DIR = join(providerStoreRoot, 'claude-config-sentinel');
+      process.env.CLAUDE_HOME = join(providerStoreRoot, 'claude-home-sentinel');
       mkdirSync(join(providerStoreRoot, '.claude'), { recursive: true });
+      mkdirSync(process.env.CLAUDE_CONFIG_DIR, { recursive: true });
+      mkdirSync(process.env.CLAUDE_HOME, { recursive: true });
       writeFileSync(join(providerStoreRoot, '.claude', 'sentinel.jsonl'), 'do not touch\n');
+      writeFileSync(join(process.env.CLAUDE_CONFIG_DIR, 'sentinel.jsonl'), 'do not touch\n');
+      writeFileSync(join(process.env.CLAUDE_HOME, 'sentinel.jsonl'), 'do not touch\n');
       const recordDir = runDirOf(blueprintRun.cwd, blueprintRun.runId);
       blueprintRun.orchestratorSessionId = 'archived-orchestrator-session';
       blueprintRun.rounds.design = 1;
@@ -75,10 +83,12 @@ describe('replay phase kernel', () => {
       );
       const beforeRecord = snapshotTree(recordDir);
       const beforeProviderStore = snapshotTree(providerStoreRoot);
-      const seen: { prompt?: string; home?: string; resume?: string; cwd?: string } = {};
+      const seen: { prompt?: string; home?: string; claudeConfigDir?: string; claudeHome?: string; resume?: string; cwd?: string } = {};
       const runTurn: RunOrchestratorTurn = async function* (ctx) {
         seen.prompt = ctx.prompt;
         seen.home = ctx.options.env?.HOME;
+        seen.claudeConfigDir = ctx.options.env?.CLAUDE_CONFIG_DIR;
+        seen.claudeHome = ctx.options.env?.CLAUDE_HOME;
         seen.resume = (ctx.options as { resume?: string }).resume;
         seen.cwd = ctx.options.cwd;
         const task = ctx.tools.find((tool) => tool.name === 'get_task');
@@ -106,11 +116,15 @@ describe('replay phase kernel', () => {
       expect.soft(seen.prompt).toBe('RECORDED BRIEF');
       expect.soft(seen.cwd).toBe(join(outDir, 'workspace'));
       expect.soft(seen.home).toBe(join(outDir, 'provider-home'));
+      expect.soft(seen.claudeConfigDir).toBe(join(outDir, 'provider-home', '.claude'));
+      expect.soft(seen.claudeHome).toBe(join(outDir, 'provider-home', '.claude'));
       expect.soft(seen.resume).toBeUndefined();
       expect.soft(result.outcome).toEqual({ type: 'phase.advance' });
       expect.soft(existsSync(result.textReportPath)).toBe(true);
       expect.soft(existsSync(result.jsonReportPath)).toBe(true);
-      expect.soft(readFileSync(result.textReportPath, 'utf8')).toContain('list_snippets served from current snippet library');
+      expect
+        .soft(readFileSync(result.textReportPath, 'utf8'))
+        .toContain('raw historical list_snippets tool output is not recorded; replay serves the current snippet library if list_snippets is called');
       expect.soft(result.report.freshRuns[0]?.diff.sends[0]?.adaptation).toMatchObject({
         originalBody: 'old review body',
         freshBody: 'fresh review body',
@@ -119,6 +133,10 @@ describe('replay phase kernel', () => {
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
+      if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+      if (previousClaudeHome === undefined) delete process.env.CLAUDE_HOME;
+      else process.env.CLAUDE_HOME = previousClaudeHome;
       rmSync(outDir, { recursive: true, force: true });
       rmSync(providerStoreRoot, { recursive: true, force: true });
     }

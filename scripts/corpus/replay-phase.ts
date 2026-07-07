@@ -159,6 +159,7 @@ function usage(): string {
     'usage: replay-phase --record <run-id> --phase <phase> --out <dir> [--corpus <dir>] [--dry-run] [--json] [--yes]',
     '',
     '--yes is required for a live replay because it spends real orchestrator tokens.',
+    '--dry-run does not invoke the SDK, but it does write the isolated replay workspace under --out.',
   ].join('\n');
 }
 

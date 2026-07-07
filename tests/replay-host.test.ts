@@ -9,7 +9,7 @@ import { makeReplayHost } from '../src/replay/host.ts';
 import { parseProtocolTrace } from '../src/replay/record.ts';
 import { rewindPhaseState } from '../src/replay/phase-state.ts';
 import { SCRIPT_EXHAUSTED_TEXT, scriptedWorkersForTrace } from '../src/replay/scripted-worker.ts';
-import { loadRunState } from '../src/run/store.ts';
+import { loadRunState, saveRunState } from '../src/run/store.ts';
 import { workflowFor } from '../src/run/workflow.ts';
 import { test } from './helpers/fixtures.ts';
 
@@ -72,10 +72,12 @@ describe('makeReplayHost', () => {
         replayRunId: 'replay-design',
       });
       const scripted = scriptedWorkersForTrace(rewound.state, trace, 'design');
-      const seen: { prompt?: string; home?: string; resume?: string } = {};
+      const seen: { prompt?: string; home?: string; claudeConfigDir?: string; claudeHome?: string; resume?: string } = {};
       const runTurn: RunOrchestratorTurn = async function* (ctx) {
         seen.prompt = ctx.prompt;
         seen.home = ctx.options.env?.HOME;
+        seen.claudeConfigDir = ctx.options.env?.CLAUDE_CONFIG_DIR;
+        seen.claudeHome = ctx.options.env?.CLAUDE_HOME;
         seen.resume = (ctx.options as { resume?: string }).resume;
         const task = ctx.tools.find((tool) => tool.name === 'get_task');
         const send = ctx.tools.find((tool) => tool.name === 'send_prompt');
@@ -100,12 +102,60 @@ describe('makeReplayHost', () => {
 
       expect.soft(seen.prompt).toBe('RECORDED BRIEF');
       expect.soft(seen.home).toBe(join(outDir, 'provider-home'));
+      expect.soft(seen.claudeConfigDir).toBe(join(outDir, 'provider-home', '.claude'));
+      expect.soft(seen.claudeHome).toBe(join(outDir, 'provider-home', '.claude'));
       expect.soft(seen.resume).toBeUndefined();
       expect.soft(capture.events).toEqual([
         { kind: 'send_prompt', duty: ['analyst'], tag: 'review-design', body: 'fresh review body' },
         { kind: 'terminal', verb: 'advance_phase', body: 'fresh summary' },
       ]);
       expect.soft(loadRunState(rewound.state.cwd, rewound.state.runId).terminalMarker).toEqual({ phase: 'design', kind: 'advance' });
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+
+  test('keeps rail-refused send_prompt attempts out of aligned capture events', async ({ blueprintRun }) => {
+    const outDir = mkdtempSync(join(tmpdir(), 'duet-replay-'));
+    try {
+      const trace = parseProtocolTrace({
+        orchestratorLog: [entry(0, '◀ harness prompt (phase=design)', 'RECORDED BRIEF')].join(''),
+        workerLogs: [],
+      });
+      const rewound = rewindPhaseState({
+        recordState: blueprintRun,
+        workflow: workflowFor(blueprintRun),
+        phase: 'design',
+        outputDir: outDir,
+        trace,
+        replayRunId: 'replay-design',
+      });
+      rewound.state.rounds.design = 99;
+      saveRunState(rewound.state);
+      const scripted = scriptedWorkersForTrace(rewound.state, trace, 'design');
+      const runTurn: RunOrchestratorTurn = async function* (ctx) {
+        const send = ctx.tools.find((tool) => tool.name === 'send_prompt');
+        const ask = ctx.tools.find((tool) => tool.name === 'ask_human');
+        if (!send || !ask) throw new Error('missing replay tool');
+        const refused = await send.handler({ duty: 'analyst', tag: 'review-design', body: 'review anyway' }, {});
+        expect.soft(refused.isError).toBe(true);
+        await ask.handler({ question: 'review cap hit' }, {});
+        yield success();
+      };
+      const { host, capture } = makeReplayHost({
+        providers: scripted.providers,
+        recordedBrief: 'RECORDED BRIEF',
+        outputDir: outDir,
+        runTurn,
+      });
+
+      await expect(runHostedPhase({ cwd: rewound.state.cwd, runId: rewound.state.runId, phase: 'design' }, host)).resolves.toEqual({
+        type: 'phase.flag',
+      });
+
+      expect.soft(capture.events).toEqual([{ kind: 'terminal', verb: 'ask_human', body: 'review cap hit' }]);
+      expect.soft(capture.refusedSends).toMatchObject([{ duty: ['analyst'], tag: 'review-design', body: 'review anyway' }]);
+      expect.soft(capture.notes[0]).toContain('send_prompt returned a tool error and was excluded from aligned replay sends');
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }
