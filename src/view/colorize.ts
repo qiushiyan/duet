@@ -35,7 +35,8 @@ export const VOICE_TMUX_COLOR: Record<Voice, string> = {
   consultant: 'magenta',
 };
 
-const VOICE_PAINT: Record<Voice, (s: string) => string> = {
+/** One painter per voice — the lane hues (maker blue, checker yellow), reused by every view-time surface (log colorizer, `duet graph`). */
+export const VOICE_PAINT: Record<Voice, (s: string) => string> = {
   orchestrator: pc.cyan,
   architect: pc.blue,
   builder: pc.blue,

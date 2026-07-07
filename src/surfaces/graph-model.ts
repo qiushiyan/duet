@@ -29,12 +29,14 @@ import {
   stagesOf,
 } from '../registry/workflows.ts';
 import type {
+  ArtifactKind,
   CompiledWorkflow,
   ConsultantCheckpoint,
   Duty,
   GatePhase,
   PhaseName,
   PhaseSpec,
+  ReviewPosture,
   StageName,
 } from '../registry/workflows.ts';
 import { allBindings, formatBinding } from '../voices/bindings.ts';
@@ -46,6 +48,10 @@ export interface PhaseNode {
   name: PhaseName;
   /** The phase's block identity (the workflow vocabulary), for the block summary. */
   block: PhaseSpec['semantics']['block'];
+  /** The doc-loop's artifact (`doc-loop` blocks only) — the block summary's distinguishing knob. */
+  artifactKind?: ArtifactKind;
+  /** The build's review posture (`build` blocks only) — the block summary's distinguishing knob. */
+  reviewPosture?: ReviewPosture;
   stage: StageName;
   gate: {
     /** The compact gate label — the heading's leading "<X>" token. */
@@ -89,6 +95,20 @@ export interface WorkflowSpine {
   defaultPosture: GatePhase[] | undefined;
 }
 
+/** The human-facing block summary for a phase node — `doc-loop (spec)` / `build (critique)` / `frame` / `finish`. The one place both the graph and `workflows check` derive it, from the model. */
+export function blockSummary(node: PhaseNode): string {
+  switch (node.block) {
+    case 'frame':
+      return 'frame';
+    case 'doc-loop':
+      return `doc-loop (${node.artifactKind})`;
+    case 'build':
+      return `build (${node.reviewPosture})`;
+    case 'finish':
+      return 'finish';
+  }
+}
+
 /** A stage's maker+checker duties, resolved once (the phase and stage nodes share it). */
 function dutyPairOf(workflow: CompiledWorkflow, stage: StageName): { maker: Duty; checker: Duty } {
   const spec = stagesOf(workflow).find((s) => s.name === stage)!;
@@ -112,6 +132,8 @@ export function structuralSpine(workflow: CompiledWorkflow): WorkflowSpine {
     return {
       name: p.name,
       block: p.semantics.block,
+      ...(p.semantics.block === 'doc-loop' ? { artifactKind: p.semantics.artifactKind } : {}),
+      ...(p.semantics.block === 'build' ? { reviewPosture: p.semantics.reviewPosture } : {}),
       stage,
       gate: { label: gateLabelOf(p), state: p.gate.state },
       duties: dutyPairOf(workflow, stage),

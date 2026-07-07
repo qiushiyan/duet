@@ -1,0 +1,151 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect } from 'vitest';
+import { WORKFLOWS } from '../src/registry/workflows.ts';
+import { defaultBindingsFor } from '../src/voices/bindings.ts';
+import { blueprintModel } from '../src/surfaces/graph-model.ts';
+import { buildBlueprintModel, renderGraph, renderGraphJson, renderGraphMermaid } from '../src/surfaces/graph.ts';
+import { consultantBindingsFor, test } from './helpers/fixtures.ts';
+
+/**
+ * Render tests assert on the rendered strings (a render concern), and pin the
+ * additive `--json` schema by key snapshot. picocolors self-disables off-TTY, so
+ * the ANSI render is plain text under test — assert substrings freely.
+ */
+
+const shipped = { layer: 'shipped' as const };
+
+function blueprint(workflow: keyof typeof WORKFLOWS, consultant = false) {
+  const bindings = consultant ? consultantBindingsFor(workflow) : defaultBindingsFor(workflow);
+  return blueprintModel(WORKFLOWS[workflow], shipped, { bindings, degradedEdges: [] });
+}
+
+describe('renderGraph — the blueprint ANSI pipeline', () => {
+  test('draws the phases in order with block, gate label, and posture', () => {
+    const out = renderGraph(blueprint('full'));
+    expect(out).toContain('blueprint · full');
+    // Phases appear in order in the pipeline section (search after its header so
+    // the display-name line "Full (spec → plan …)" can't false-match).
+    const pipeline = out.slice(out.indexOf('\npipeline'));
+    const frameAt = pipeline.indexOf('frame ');
+    const specAt = pipeline.indexOf('spec ');
+    const implAt = pipeline.indexOf('implement ');
+    expect(frameAt).toBeGreaterThanOrEqual(0);
+    expect(specAt).toBeGreaterThan(frameAt);
+    expect(implAt).toBeGreaterThan(specAt);
+    expect(out).toContain('doc-loop (spec)');
+    expect(out).toContain('build (critique)');
+    // Default posture: frame/spec attended, later gates auto (pre-authorized).
+    expect(out).toContain('default attended gates · frame, spec');
+  });
+
+  test('labels bindings as defaults and names the config location (the honesty line)', () => {
+    const out = renderGraph(blueprint('full'));
+    expect(out).toContain('bindings — defaults, resolved against ~/.config/duet/config.toml (a run re-resolves and freezes at creation)');
+    // The config-resolved default rows.
+    expect(out).toMatch(/architect\s+claude:claude-opus-4-8/);
+    expect(out).toMatch(/analyst\s+codex/);
+  });
+
+  test('renders live consultant checkpoints by kind when a consultant is bound', () => {
+    const out = renderGraph(blueprint('full', true));
+    expect(out).toContain('consultant: generative'); // frame
+    expect(out).toContain('consultant: bet-audit'); // specGate
+    expect(out).toContain('consultant: backstop'); // contract / verify
+    // The internal name never renders.
+    expect(out).not.toContain('challenge');
+  });
+
+  test('omits checkpoint annotations entirely when no consultant is bound', () => {
+    const out = renderGraph(blueprint('full', false));
+    expect(out).not.toContain('consultant:');
+  });
+
+  test('shows declared continuity edges, and degraded edges when bindings cross providers', () => {
+    const fresh = renderGraph(blueprint('full'));
+    expect(fresh).toContain('continues builder←architect, critic←analyst');
+    expect(fresh).not.toContain('degraded edges:');
+
+    const crossed = defaultBindingsFor('full');
+    const model = blueprintModel(
+      WORKFLOWS.full,
+      shipped,
+      {
+        bindings: { ...crossed, duties: { ...crossed.duties, builder: { provider: 'codex' } } },
+        degradedEdges: [{ into: 'builder', from: 'architect', reason: 'claude → codex' }],
+      },
+    );
+    const out = renderGraph(model);
+    expect(out).toContain('degraded edges: builder←architect (claude → codex)');
+  });
+});
+
+describe('renderGraphMermaid — the static blueprint flowchart', () => {
+  test('emits a plain-text flowchart of the spine, gates chained', () => {
+    const out = renderGraphMermaid(blueprint('short'));
+    expect(out.startsWith('flowchart TD')).toBe(true);
+    expect(out).toContain('research["research: frame"]');
+    expect(out).toContain('research --> research_gate');
+    expect(out).toContain('research_gate --> implement');
+    // No control/ESC characters in the docs artifact (a static, plain-text diagram).
+    // eslint-disable-next-line no-control-regex
+    expect(/[\u0000-\u001f]/.test(out.replace(/\n/g, ""))).toBe(false);
+  });
+});
+
+describe('renderGraphJson — the additive pinned schema', () => {
+  test('blueprint --json carries the settled top-level keys, raw', () => {
+    const model = blueprint('full', true);
+    const json = JSON.parse(renderGraphJson(model));
+    expect(Object.keys(json).sort()).toEqual(['bindings', 'checkpoints', 'degradedEdges', 'mode', 'spine']);
+    expect(json.mode).toBe('blueprint');
+    expect(Object.keys(json.spine).sort()).toEqual(['defaultPosture', 'displayName', 'name', 'phases', 'source', 'stages']);
+    // A phase node's keys (roundCap present on a review-loop phase).
+    const spec = json.spine.phases.find((p: { name: string }) => p.name === 'spec');
+    expect(Object.keys(spec).sort()).toEqual(['artifactKind', 'block', 'consultantCheckpoint', 'duties', 'gate', 'name', 'reviewLoop', 'roundCap', 'stage']);
+    // A checkpoint row carries the render-facing kind.
+    const checkpoint = json.checkpoints.find((c: { phase: string }) => c.phase === 'spec');
+    expect(checkpoint).toMatchObject({ phase: 'spec', mode: 'specGate', kind: 'bet-audit', live: true });
+  });
+});
+
+describe('buildBlueprintModel — read-only resolve + config-resolved bindings', () => {
+  test('resolves a shipped workflow with default bindings and no consultant', async ({ projectDir }) => {
+    const model = await buildBlueprintModel(projectDir, 'full', { configPath: join(projectDir, 'no-such-config.toml') });
+    expect(model.mode).toBe('blueprint');
+    expect(model.spine.name).toBe('full');
+    expect(model.bindings.some((b) => b.address === 'consultant')).toBe(false);
+  });
+
+  test('a config [duties.builder] override shows in the resolved bindings', async ({ projectDir }) => {
+    const configPath = join(projectDir, 'config.toml');
+    writeFileSync(configPath, '[duties.builder]\nprovider = "codex"\n');
+    const model = await buildBlueprintModel(projectDir, 'full', { configPath });
+    const builder = model.bindings.find((b) => b.address === 'builder');
+    expect(builder?.label).toBe('codex');
+    // Crossing the builder to codex degrades the builder←architect continuity edge.
+    expect(model.degradedEdges.some((e) => e.into === 'builder')).toBe(true);
+  });
+
+  test('a config [consultant] binding lights up the live checkpoints', async ({ projectDir }) => {
+    const configPath = join(projectDir, 'config.toml');
+    writeFileSync(configPath, '[consultant]\nprovider = "claude"\n');
+    const model = await buildBlueprintModel(projectDir, 'full', { configPath });
+    expect(model.bindings.some((b) => b.address === 'consultant')).toBe(true);
+    expect(model.checkpoints.some((c) => c.live)).toBe(true);
+  });
+
+  test('resolves a project-composed workflow read-only (no provisioning side effects)', async ({ projectDir }) => {
+    const dir = join(projectDir, '.duet', 'workflows');
+    mkdirSync(dir, { recursive: true });
+    const sdk = join(process.cwd(), 'src', 'workflows.ts');
+    writeFileSync(
+      join(dir, 'tiny.ts'),
+      `import { build, defineWorkflow, finish, frame } from ${JSON.stringify(sdk)};\n` +
+        `export default defineWorkflow({ name: 'tiny', title: 'Tiny', presets: { afk: [] }, phases: [frame(), build({ review: 'writable', audit: true }), finish()] });\n`,
+    );
+    const model = await buildBlueprintModel(projectDir, 'tiny', { configPath: join(projectDir, 'none.toml') });
+    expect(model.spine.name).toBe('tiny');
+    expect(model.spine.source).toMatchObject({ layer: 'project' });
+  });
+});

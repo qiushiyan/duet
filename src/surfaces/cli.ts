@@ -29,6 +29,7 @@ import { machineFor } from '../run/machine.ts';
 import { serveKernelStdio, serveRunScopedKernelStdio } from '../orchestrator/hosts/mcp-server.ts';
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
 import { buildStatsModel, renderStats } from './stats.ts';
+import { buildBlueprintModel, renderGraph, renderGraphJson, renderGraphMermaid } from './graph.ts';
 import { runOrchestrate } from '../orchestrator/hosts/orchestrate.ts';
 import { DUTIES, entryOf, handoffWatchLabel, stagesOf, workflowHasConsultantBackstop } from '../registry/workflows.ts';
 import { getEffectiveSnippet, loadEffectiveSnippets, runtimeLibraryContext } from '../orchestrator/library.ts';
@@ -1126,6 +1127,32 @@ program
     const state = resolveRun(cwd, runId, 'no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
     const model = buildStatsModel(state);
     console.log(opts.json ? JSON.stringify(model, null, 2) : renderStats(model));
+  });
+
+program
+  .command('graph')
+  .description(
+    'Draw a workflow or a run: `--workflow <name>` renders the blueprint (the compiled pipeline before any run — phases, gates, default postures, config-resolved bindings, consultant checkpoints); `[runId]` renders the live run arc. Read-only, render-on-demand. ANSI by default, or --json / --mermaid (blueprint only).',
+  )
+  .argument('[runId]', 'run id for the run view (defaults to the latest run in this project)')
+  .option('--workflow <name>', 'render the blueprint for a workflow definition instead of a run')
+  .option('--json', 'emit the GraphModel for automation')
+  .option('--mermaid', 'emit a static Mermaid flowchart (blueprint only)')
+  .action(async (runId: string | undefined, opts: { workflow?: string; json?: boolean; mermaid?: boolean }) => {
+    const cwd = process.cwd();
+    if (opts.workflow) {
+      try {
+        const model = await buildBlueprintModel(cwd, opts.workflow);
+        console.log(opts.mermaid ? renderGraphMermaid(model) : opts.json ? renderGraphJson(model) : renderGraph(model));
+      } catch (err) {
+        fail(err instanceof Error ? err.message : String(err));
+      }
+      return;
+    }
+    if (opts.mermaid) fail('--mermaid is blueprint-only — pass --workflow <name>, or drop --mermaid for the run view.');
+    // The run view (duet graph [runId]) is wired in a later slice.
+    void runId;
+    fail('the run view (duet graph [runId]) is not wired yet — use duet graph --workflow <name> for the blueprint.');
   });
 
 program
