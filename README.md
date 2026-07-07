@@ -163,6 +163,7 @@ duet orchestrate               # reconnect the interactive orchestrator after a 
 duet logs                      # stream the orchestrator's narration inline
 duet view                      # tmux panes, one per voice (or pass --tmux to new/continue)
 duet runs                      # list runs in this project
+duet framings                  # browse archived run framings — corpus archive + this repo's runs; show <id> reprints one
 duet workflows                 # list/check/scaffold workflow definitions (before a run)
 ```
 
