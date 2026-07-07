@@ -9,6 +9,7 @@ import { runDirOf } from '../run/store.ts';
 import type { RunState, Voice } from '../run/store.ts';
 import { workflowFor } from '../run/workflow.ts';
 import { probeRunPosition } from '../run/position.ts';
+import type { RunPosition } from '../run/position.ts';
 import { listStagedSteersForTrace } from '../run/steers.ts';
 import type { VoiceAddress } from '../voices/providers/types.ts';
 import { formatDuration, localTime } from '../view/timefmt.ts';
@@ -36,8 +37,13 @@ import { formatDuration, localTime } from '../view/timefmt.ts';
 // The voice-log markers, anchored on the full ISO stamp `appendVoiceLog` writes
 // (src/run/store.ts) so a prompt body line can't masquerade as a header.
 const TS = String.raw`\[(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z)\]`;
-const PHASE_OPEN = new RegExp(`^${TS} ◀ harness prompt \\(phase=(\\w+)\\)`);
-const PHASE_CLOSE = new RegExp(`^${TS} advance_phase \\((\\w+)\\)`);
+// The phase name is captured up to the closing paren (`[^)]+`), not `\w+`: a
+// project-authored phase name may carry hyphens/spaces (`ship-it`, `open pr`) —
+// `define.ts` only rejects empty/duplicate names — and `\w+` would fail to match
+// it, orphaning the phase's windows in both stats and the trace. Matches how
+// TURN_START already captures a hyphenated tag.
+const PHASE_OPEN = new RegExp(`^${TS} ◀ harness prompt \\(phase=([^)]+)\\)`);
+const PHASE_CLOSE = new RegExp(`^${TS} advance_phase \\(([^)]+)\\)`);
 const TURN_START = new RegExp(`^${TS} ◀ prompt \\(tag=([^,)]+)`);
 const TURN_END = new RegExp(`^${TS} (▶ response|◼ budget-control stop|✗ turn failed(?::\\s*(.*))?|⚠ .*aborted.*)`);
 const HEARTBEAT = new RegExp(`^${TS} ⏳ .*?(\\d+)m elapsed`);
@@ -555,6 +561,28 @@ export function detectOrderingDrift(
 }
 
 /**
+ * The phase whose window is genuinely OPEN (still running) at this position — the
+ * one the trace synthesizes an open current-phase window for. A `gate` position
+ * has already `advance_phase`d, so its window is CLOSED (synthesizing one would
+ * mark a precisely-windowed phase `inferred` and misattribute gate-wait events);
+ * `done`/`abandoned` carry no phase. Only running / interactive / crashed / flag
+ * (flag = parked mid-phase, not advanced) name a phase whose window never closed.
+ */
+export function openPhaseFor(position: RunPosition): PhaseName | undefined {
+  switch (position.kind) {
+    case 'running':
+    case 'interactive':
+    case 'crashed':
+    case 'flag':
+      return position.phase;
+    case 'gate':
+    case 'done':
+    case 'abandoned':
+      return undefined;
+  }
+}
+
+/**
  * The trace composer — the fs+state sibling of `buildStatsModel`. Reads the
  * orchestrator + worker logs (fail-soft), attributes turns and interventions to
  * phases through the shared cores, and detects ordering drift per phase. `now`
@@ -575,7 +603,7 @@ export function buildTraceModel(state: RunState, now: number): TraceModel {
   const workflow = workflowFor(state);
   const arcOrder = phasesOf(workflow).map((p) => p.name) as string[];
   const position = probeRunPosition(state);
-  const currentPhase = 'phase' in position ? position.phase : undefined;
+  const currentPhase = openPhaseFor(position);
   const runStartMs = Number.isNaN(Date.parse(state.createdAt)) ? 0 : Date.parse(state.createdAt);
   const notes: string[] = [];
 
