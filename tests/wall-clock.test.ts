@@ -1,6 +1,38 @@
 import { describe, expect, test, vi } from 'vitest';
-import { ContextDeadlineExceededError, WALL_CLOCK_TICK_MS, WallClockExceededError, runWithContextDeadline, runWithWallClockDeadline } from '../src/voices/providers/wall-clock.ts';
+import { ContextDeadlineExceededError, WALL_CLOCK_DRAIN_GRACE_MS, WALL_CLOCK_TICK_MS, WallClockExceededError, runWithContextDeadline, runWithWallClockDeadline } from '../src/voices/providers/wall-clock.ts';
+import { ClaudeWorker } from '../src/voices/providers/claude.ts';
+import { CodexWorker } from '../src/voices/providers/codex.ts';
 import { FakeWorker } from './helpers/fixtures.ts';
+
+// execa is the provider's true external boundary (mock allowed there) — mocked
+// so the S3 claude wiring test can hand runTurn a hanging subprocess and drive
+// its wall-clock wrap with fake timers.
+const mockExeca = vi.hoisted(() => vi.fn());
+vi.mock('execa', () => ({ execa: mockExeca }));
+
+// The codex SDK is the codex provider's true external boundary — mocked so the
+// S3 integration test can hand runTurn a hanging stream and drive its wall-clock
+// wrap with fake timers (there is no other CodexWorker test, so the whole-file
+// mock is inert elsewhere; the pure codex helpers don't touch the client).
+const codexRunStreamed = vi.hoisted(() => vi.fn());
+const codexConstructedOptions = vi.hoisted((): unknown[] => []);
+const codexStartThreadOptions = vi.hoisted(() => vi.fn());
+const codexResumeThreadOptions = vi.hoisted(() => vi.fn());
+vi.mock('@openai/codex-sdk', () => ({
+  Codex: class {
+    constructor(options?: unknown) {
+      codexConstructedOptions.push(options);
+    }
+    startThread(options?: unknown) {
+      codexStartThreadOptions(options);
+      return { id: 'codex-thread', runStreamed: codexRunStreamed };
+    }
+    resumeThread(id: string, options?: unknown) {
+      codexResumeThreadOptions(id, options);
+      return { id: 'codex-thread', runStreamed: codexRunStreamed };
+    }
+  },
+}));
 
 /**
  * A deterministic clock + scheduler: `now` is a mutable value the test advances
@@ -281,5 +313,57 @@ describe('runWithContextDeadline (the window-fill sibling of the wall-clock back
     expect.soft(err.kind).toBe('context-deadline');
     expect.soft(err.message).toContain('context-window cap');
     expect.soft(err.message).toContain('870000');
+  });
+});
+
+describe('the wall-clock backstop is wired into runTurn (S3 — the load-bearing regression guard)', () => {
+  // Two reviewers flagged that runWithWallClockDeadline is thoroughly unit-tested
+  // but NOTHING proved runTurn actually routes through it at the effective cap —
+  // so deleting the wrap or passing a wrong capMs would leave the suite green
+  // while silently reintroducing the 7447 machine-sleep regression this branch
+  // exists to prevent. These pin the wiring per provider: the turn is aborted at
+  // the cap, and NOT one tick before it (which also pins that capMs is the
+  // effective per-turn cap, not a shorter default). Real execa/stream are the
+  // mocked boundary; fake timers drive Date.now + the deadline's re-check ticks.
+  const cap = 90 * 60_000;
+
+  test('claude: runTurn kills the execa child at the effective cap, not before', async () => {
+    vi.useFakeTimers();
+    try {
+      const kill = vi.fn();
+      const hanging = Object.assign(new Promise<never>(() => {}), { kill }); // a subprocess that never settles
+      mockExeca.mockReturnValueOnce(hanging);
+      const promise = new ClaudeWorker({ model: 'claude-opus-4-8' }).runTurn({ prompt: 'build it', cwd: '/x', timeoutMs: cap });
+      const rejects = expect(promise).rejects.toThrow(); // no accepted transcript ⇒ recovers to an infra error
+      await vi.advanceTimersByTimeAsync(cap - WALL_CLOCK_TICK_MS);
+      expect.soft(kill).not.toHaveBeenCalled(); // the cap is honored — not a shorter default
+      await vi.advanceTimersByTimeAsync(2 * WALL_CLOCK_TICK_MS);
+      expect.soft(kill).toHaveBeenCalledTimes(1); // the wrap fired at the cap, exactly once
+      await vi.advanceTimersByTimeAsync(WALL_CLOCK_DRAIN_GRACE_MS); // let the bounded drain settle the turn
+      await rejects;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('codex: runTurn aborts the runStreamed signal at the effective cap, not before', async () => {
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | undefined;
+      codexRunStreamed.mockImplementation((_prompt: string, opts: { signal: AbortSignal }) => {
+        signal = opts.signal;
+        return new Promise(() => {}); // hang — never emits thread.started, never resolves
+      });
+      const promise = new CodexWorker({ timeoutMs: cap }).runTurn({ prompt: 'build it', cwd: '/x' });
+      const rejects = expect(promise).rejects.toBeInstanceOf(WallClockExceededError); // never accepted ⇒ re-thrown
+      await vi.advanceTimersByTimeAsync(cap - WALL_CLOCK_TICK_MS);
+      expect.soft(signal?.aborted).toBe(false); // the deadline has not fired before the cap
+      await vi.advanceTimersByTimeAsync(2 * WALL_CLOCK_TICK_MS);
+      expect.soft(signal?.aborted).toBe(true); // the wall-clock deadline aborted the stream at the cap
+      await vi.advanceTimersByTimeAsync(WALL_CLOCK_DRAIN_GRACE_MS); // let the bounded drain settle the turn
+      await rejects;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
