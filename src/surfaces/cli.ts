@@ -30,6 +30,7 @@ import { serveKernelStdio, serveRunScopedKernelStdio } from '../orchestrator/hos
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
 import { buildStatsModel, renderStats } from './stats.ts';
 import { buildBlueprintModel, renderGraph, renderGraphJson, renderGraphMermaid } from './graph.ts';
+import { blueprintModel } from './graph-model.ts';
 import { runOrchestrate } from '../orchestrator/hosts/orchestrate.ts';
 import { DUTIES, entryOf, handoffWatchLabel, stagesOf, workflowHasConsultantBackstop } from '../registry/workflows.ts';
 import { getEffectiveSnippet, loadEffectiveSnippets, runtimeLibraryContext } from '../orchestrator/library.ts';
@@ -1226,8 +1227,13 @@ workflowsCmd
   .description('Resolve and compile one workflow definition without starting a run.')
   .action(async (name: string) => {
     try {
-      const resolved = await resolveWorkflowSource(process.cwd(), name);
-      console.log(renderWorkflowCheck(resolved.workflow, resolved.source, process.cwd()));
+      const cwd = process.cwd();
+      // `check` provisions the editor scaffolding (the author is working the
+      // file) — unlike `duet graph --workflow`, which resolves read-only.
+      const resolved = await resolveWorkflowSource(cwd, name);
+      const config = resolveRunConfig({ workflow: resolved.workflow });
+      const model = blueprintModel(resolved.workflow, resolved.source, { bindings: config.bindings, degradedEdges: config.degradedEdges });
+      console.log(renderWorkflowCheck(model, cwd));
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
     }
