@@ -37,6 +37,8 @@ Data arrives by three paths: **append-through** during the run (voice logs, note
 dir = "~/duet-corpus"   # presence enables the mirror; use an absolute or ~ path
 ```
 
+One trap to check by hand: the mirror is fail-soft in every direction, so a configured `[corpus] dir` whose directory doesn't exist means every run **silently skips mirroring** — create the directory and confirm the first run's record lands **(observed: exactly this silent-off state, caught 2026-07-07)**.
+
 Then adopt whatever still exists on disk (idempotent; never modifies source run dirs):
 
 ```bash
