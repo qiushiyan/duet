@@ -10,6 +10,13 @@ import type { RunState, Voice } from '../run/store.ts';
 import { workflowFor } from '../run/workflow.ts';
 import type { VoiceAddress } from '../voices/providers/types.ts';
 import { formatDuration } from '../view/timefmt.ts';
+import {
+  HEARTBEAT_LINE,
+  PHASE_CLOSE_LINE,
+  PHASE_OPEN_LINE,
+  TURN_END_LINE,
+  TURN_START_LINE,
+} from '../run/voice-log.ts';
 
 /**
  * `duet stats` — effort per phase, derived at VIEW TIME from the voice logs (the
@@ -30,15 +37,6 @@ import { formatDuration } from '../view/timefmt.ts';
  * never a thrown command. The parse core is pure (operates on log strings) so it
  * is testable without the filesystem; `buildStatsModel` is the thin fs composer.
  */
-
-// The voice-log markers, anchored on the full ISO stamp `appendVoiceLog` writes
-// (src/run/store.ts) so a prompt body line can't masquerade as a header.
-const TS = String.raw`\[(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z)\]`;
-const PHASE_OPEN = new RegExp(`^${TS} ◀ harness prompt \\(phase=(\\w+)\\)`);
-const PHASE_CLOSE = new RegExp(`^${TS} advance_phase \\((\\w+)\\)`);
-const TURN_START = new RegExp(`^${TS} ◀ prompt \\(tag=([^,)]+)`);
-const TURN_END = new RegExp(`^${TS} (▶ response|◼ budget-control stop|✗ turn failed(?::\\s*(.*))?|⚠ .*aborted.*)`);
-const HEARTBEAT = new RegExp(`^${TS} ⏳ .*?(\\d+)m elapsed`);
 
 export interface PhaseWindow {
   phase: string;
@@ -103,7 +101,7 @@ export function parsePhaseWindows(log: string, runStartMs = 0): { windows: Phase
   // such window, so its elapsed span is honest, not epoch-anchored.
   let lastCloseMs: number | undefined;
   for (const line of log.split('\n')) {
-    const open = PHASE_OPEN.exec(line);
+    const open = PHASE_OPEN_LINE.exec(line);
     if (open) {
       sawOpen = true;
       const ms = Date.parse(open[1]!);
@@ -112,7 +110,7 @@ export function parsePhaseWindows(log: string, runStartMs = 0): { windows: Phase
       if (!Number.isNaN(ms) && !openByPhase.has(open[2]!)) openByPhase.set(open[2]!, ms);
       continue;
     }
-    const close = PHASE_CLOSE.exec(line);
+    const close = PHASE_CLOSE_LINE.exec(line);
     if (close) {
       const phase = close[2]!;
       const ms = Date.parse(close[1]!);
@@ -162,7 +160,7 @@ export function parseVoiceLogTurns(voice: string, log: string): { turns: ParsedT
   let pending: { tag: string; startMs: number } | undefined;
   let dangling = 0;
   for (const line of log.split('\n')) {
-    const start = TURN_START.exec(line);
+    const start = TURN_START_LINE.exec(line);
     if (start) {
       // A new prompt with a prior turn still open means that turn never logged a
       // terminal line (the log ended mid-turn) — count it as dangling, not dropped.
@@ -171,7 +169,7 @@ export function parseVoiceLogTurns(voice: string, log: string): { turns: ParsedT
       pending = Number.isNaN(ms) ? undefined : { tag: start[2]!, startMs: ms };
       continue;
     }
-    const end = TURN_END.exec(line);
+    const end = TURN_END_LINE.exec(line);
     if (end && pending) {
       const ms = Date.parse(end[1]!);
       if (!Number.isNaN(ms) && ms >= pending.startMs) {
@@ -248,7 +246,7 @@ export interface Heartbeat {
 export function parseHeartbeats(log: string): Heartbeat[] {
   const heartbeats: Heartbeat[] = [];
   for (const line of log.split('\n')) {
-    const match = HEARTBEAT.exec(line);
+    const match = HEARTBEAT_LINE.exec(line);
     if (!match) continue;
     const atMs = Date.parse(match[1]!);
     const elapsedMinutes = Number(match[2]);
