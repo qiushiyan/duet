@@ -15,7 +15,12 @@ export const PHASE_OPEN_HEADER = /^◀ harness prompt \(phase=(\w+)\)$/;
 export const PHASE_CLOSE_HEADER = /^advance_phase \((\w+)\)$/;
 export const WORKER_PROMPT_HEADER = /^◀ prompt \(tag=([^,)]+)(?:, from orchestrator)?\)$/;
 export const WORKER_RESPONSE_HEADER = /^▶ response \(session ([^)]+)\)(?: · context (\d+)%)?$/;
+export const WORKER_BUDGET_HEADER = /^◼ budget-control stop(?::\s*(.*))?$/;
+export const WORKER_FAILED_HEADER = /^✗ turn failed(?::\s*(.*))?$/;
+export const WORKER_ABORTED_HEADER = /^⚠ (.*aborted.*)$/;
 export const ASK_HUMAN_HEADER = /^ask_human queued$/;
+export const HUMAN_STEER_DELIVERED_HEADER = /^human steer delivered \(staged ([^)]+)\)$/;
+export const HUMAN_STEER_CARRIED_HEADER = /^human steer carried forward \(staged ([^)]+)\)$/;
 
 export interface VoiceLogBlock {
   readonly stamp: string;
