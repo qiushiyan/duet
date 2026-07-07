@@ -69,10 +69,25 @@ export function listPendingSteers(state: RunState): Steer[] {
  * and the already-delivered audit trail (`steers/delivered/`), in staging order.
  * The trace's history reader: unlike `listPendingSteers` (staging only), a "what
  * happened" timeline must include a steer that was already consumed. Fail-soft
- * (a missing dir / unparseable file is skipped, never thrown) and tolerant of a
- * mid-scan delivery rename: a file that moves between the two dirs while we read
- * appears once (deduped by filename) or neither (skipped on ENOENT), never twice.
+ * (a missing dir, an unparseable file, or valid JSON of the WRONG SHAPE is
+ * skipped, never thrown) and tolerant of a mid-scan delivery rename: a file that
+ * moves between the two dirs while we read appears once (deduped by filename) or
+ * neither (skipped on ENOENT), never twice. Shape validation matters because the
+ * trace derives `Date.parse(stagedAt)` and renders it — a `NaN` stamp would throw
+ * at render; a malformed steer is dropped here instead. Scoped to this reader:
+ * `listPendingSteers` (the live delivery path) is deliberately left untouched.
  */
+function isValidSteerBody(body: unknown): body is Omit<Steer, 'file'> {
+  if (typeof body !== 'object' || body === null) return false;
+  const b = body as Record<string, unknown>;
+  return (
+    typeof b.text === 'string' &&
+    typeof b.stagedAt === 'string' &&
+    !Number.isNaN(Date.parse(b.stagedAt)) &&
+    (b.stagedDuring === undefined || typeof b.stagedDuring === 'string')
+  );
+}
+
 export function listStagedSteersForTrace(state: RunState): Steer[] {
   const dir = steersDir(state);
   const steers: Steer[] = [];
@@ -90,7 +105,8 @@ export function listStagedSteersForTrace(state: RunState): Steer[] {
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith('.json') || seen.has(entry.name)) continue;
       try {
-        const body = JSON.parse(readFileSync(join(scanDir, entry.name), 'utf8')) as Omit<Steer, 'file'>;
+        const body: unknown = JSON.parse(readFileSync(join(scanDir, entry.name), 'utf8'));
+        if (!isValidSteerBody(body)) continue; // valid JSON, wrong shape — skip (a NaN stamp would throw at render)
         steers.push({ file: entry.name, ...body });
         seen.add(entry.name);
       } catch {
