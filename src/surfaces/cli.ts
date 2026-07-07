@@ -28,7 +28,7 @@ import type { HumanEvent } from './lifecycle.ts';
 import { machineFor } from '../run/machine.ts';
 import { serveKernelStdio, serveRunScopedKernelStdio } from '../orchestrator/hosts/mcp-server.ts';
 import { buildDoctorModel, renderDoctor } from './doctor.ts';
-import { buildStatsModel, renderStats } from './stats.ts';
+import { buildStatsModel, buildTraceModel, renderStats, renderTrace } from './stats.ts';
 import { buildBlueprintModel, buildRunGraphModel, renderGraph, renderGraphJson, renderGraphMermaid } from './graph.ts';
 import { blueprintModel } from './graph-model.ts';
 import { runOrchestrate } from '../orchestrator/hosts/orchestrate.ts';
@@ -1122,10 +1122,16 @@ program
     'Effort per phase, derived from the voice logs at view time: each phase’s elapsed window and the worker-turn time inside it, plus a per-tag breakdown. Read-only and fail-soft — a missing or interactive-only log degrades to a note. Distinct from status (which never reads logs).',
   )
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
-  .option('--json', 'emit the StatsModel for automation')
-  .action((runId: string | undefined, opts: { json?: boolean }) => {
+  .option('--json', 'emit the StatsModel (or the TraceModel with --trace) for automation')
+  .option('--trace', 'emit the interleaved execution timeline (per-phase turn sequence + interventions + ordering drift) instead of the aggregate')
+  .action((runId: string | undefined, opts: { json?: boolean; trace?: boolean }) => {
     const cwd = process.cwd();
     const state = resolveRun(cwd, runId, 'no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
+    if (opts.trace) {
+      const trace = buildTraceModel(state, Date.now());
+      console.log(opts.json ? JSON.stringify(trace, null, 2) : renderTrace(trace));
+      return;
+    }
     const model = buildStatsModel(state);
     console.log(opts.json ? JSON.stringify(model, null, 2) : renderStats(model));
   });

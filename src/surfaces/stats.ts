@@ -2,14 +2,16 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEFAULT_CLAUDE_MODEL, voiceBindingFor } from '../voices/bindings.ts';
 import type { VoiceBindings } from '../voices/bindings.ts';
-import { makerDutyOf, phasesOf, stageOf } from '../registry/workflows.ts';
-import type { PhaseName, WorkflowRef } from '../registry/workflows.ts';
-import { sessionKeyFor, voicesFor } from '../voices/policy.ts';
+import { DUTIES, makerDutyOf, phasesOf, stageOf, stageOfDutyLane } from '../registry/workflows.ts';
+import type { Duty, PhaseName, WorkflowRef } from '../registry/workflows.ts';
+import { countsReviewRound, sessionKeyFor, voicesFor } from '../voices/policy.ts';
 import { runDirOf } from '../run/store.ts';
 import type { RunState, Voice } from '../run/store.ts';
 import { workflowFor } from '../run/workflow.ts';
+import { probeRunPosition } from '../run/position.ts';
+import { listStagedSteersForTrace } from '../run/steers.ts';
 import type { VoiceAddress } from '../voices/providers/types.ts';
-import { formatDuration } from '../view/timefmt.ts';
+import { formatDuration, localTime } from '../view/timefmt.ts';
 
 /**
  * `duet stats` — effort per phase, derived at VIEW TIME from the voice logs (the
@@ -93,7 +95,20 @@ export interface StatsModel {
 /** Parse the orchestrator log into phase windows. `sawOpen` distinguishes "no
  *  headless phases" (an interactive run) from "no log"; `inferred` counts the
  *  windows synthesized from a bare gate crossing (below). */
-export function parsePhaseWindows(log: string, runStartMs = 0): { windows: PhaseWindow[]; sawOpen: boolean; inferred: number } {
+export function parsePhaseWindows(
+  log: string,
+  runStartMs = 0,
+  /**
+   * When set, ALSO emit the OPEN window for the still-running current phase (no
+   * `advance_phase` closes it yet), so a live trace attributes its turns instead
+   * of orphaning them. Its start is real for a headless phase (the recorded
+   * `◀`-open), inferred for an interactive one (`lastClose ?? runStartMs`, exactly
+   * as closed interactive windows infer); its end is the injected `now` (tests
+   * pass a fixed clock — no wall-clock read here). The aggregate `stats` path
+   * omits this, so its behavior is byte-for-byte unchanged.
+   */
+  open?: { now: number; currentPhase: string },
+): { windows: PhaseWindow[]; sawOpen: boolean; inferred: number } {
   const windows: PhaseWindow[] = [];
   const openByPhase = new Map<string, number>();
   let sawOpen = false;
@@ -136,6 +151,20 @@ export function parsePhaseWindows(log: string, runStartMs = 0): { windows: Phase
         openByPhase.delete(phase); // a later re-entry opens a fresh window
         lastCloseMs = ms;
       }
+    }
+  }
+  // The open current-phase window (P1b): the phase that never logged a close. Its
+  // start is the recorded headless open when present (real), else inferred from
+  // the last close / run start (an interactively-orchestrated phase logs no entry
+  // header). End = the injected now. Emitted last, so a turn attributes to an
+  // earlier closed window first (the shared phaseForTurn rule).
+  if (open) {
+    const headlessStart = openByPhase.get(open.currentPhase);
+    const wasInferred = headlessStart === undefined;
+    const startMs = headlessStart ?? lastCloseMs ?? runStartMs;
+    if (open.now >= startMs) {
+      windows.push({ phase: open.currentPhase, startMs, endMs: open.now, ...(wasInferred ? { inferred: true } : {}) });
+      if (wasInferred) inferred++;
     }
   }
   return { windows, sawOpen, inferred };
@@ -431,6 +460,213 @@ export function renderStats(model: StatsModel): string {
     for (const t of model.tags) {
       lines.push(`  ${t.tag.padEnd(26)} ${formatDuration(t.totalMs)} (${t.turns})`);
     }
+  }
+  for (const note of model.notes) lines.push(`\nnote: ${note}`);
+  return lines.join('\n');
+}
+
+/**
+ * `duet stats --trace` — the interleaved execution timeline. A third KIND of
+ * thing from the aggregate stats model (a log timeline, not a structural
+ * projection), so it lives here (stats owns the log format) rather than as a
+ * third GraphModel mode. It reuses the existing parse cores — no new graph-owned
+ * regexes — and adds three things over them: the open current-phase window (so a
+ * live trace never drops its most-relevant phase), interventions overlaid at
+ * their timestamps, and a conservative ordering-drift heuristic.
+ */
+
+export interface TraceTurn {
+  voice: string;
+  tag: string;
+  startMs: number;
+  endMs: number;
+  status: TurnStatus;
+}
+
+/** A non-turn event on the timeline — a context intervention, an auto-retry, or a staged steer. */
+export interface TraceEvent {
+  kind: string;
+  atMs: number;
+  at: string;
+  voice?: string;
+  detail?: string;
+}
+
+/** Two consecutive checker review-family turns in a phase with no maker turn between them — the ordering bug the feature targets. */
+export interface OrderingFlag {
+  phase: string;
+  first: { voice: string; tag: string; atMs: number };
+  second: { voice: string; tag: string; atMs: number };
+}
+
+export interface TracePhase {
+  phase: string;
+  /** The phase window was inferred (interactively orchestrated / open current phase) — its elapsed span is approximate. */
+  inferredWindow: boolean;
+  turns: TraceTurn[];
+  interventions: TraceEvent[];
+  drift: OrderingFlag[];
+}
+
+export interface TraceModel {
+  runId: string;
+  phases: TracePhase[];
+  notes: string[];
+}
+
+/** Whether a turn's voice is a MAKER duty — the ordering rule's "a real maker response". Guarded: the consultant and any non-duty voice are not makers (stageOfDutyLane takes a Duty). */
+function isMakerTurn(voice: string): boolean {
+  if (voice === 'consultant' || !DUTIES.includes(voice as Duty)) return false;
+  return stageOfDutyLane(voice as Duty) === 'maker';
+}
+
+/**
+ * The ordering-drift rule (P2b), stated narrowly: flag two consecutive checker
+ * review-family turns in the same phase with NO maker turn started between them.
+ * Review-family is `countsReviewRound` (catalog-driven, consultant-safe — never
+ * `tag.startsWith('review')`); a consultant turn between two reviews is NOT a
+ * maker interleave, so drift still fires. Anything broader (a full expected
+ * partial-order) is the deferred choreography validator, out of scope.
+ */
+export function detectOrderingDrift(
+  phase: string,
+  turns: readonly { voice: string; tag: string; startMs: number }[],
+): OrderingFlag[] {
+  const sorted = [...turns].sort((a, b) => a.startMs - b.startMs);
+  const flags: OrderingFlag[] = [];
+  let lastReview: { voice: string; tag: string; startMs: number } | undefined;
+  let makerSince = false;
+  for (const t of sorted) {
+    if (countsReviewRound(t.voice as VoiceAddress, t.tag)) {
+      if (lastReview && !makerSince) {
+        flags.push({
+          phase,
+          first: { voice: lastReview.voice, tag: lastReview.tag, atMs: lastReview.startMs },
+          second: { voice: t.voice, tag: t.tag, atMs: t.startMs },
+        });
+      }
+      lastReview = t;
+      makerSince = false;
+    } else if (isMakerTurn(t.voice)) {
+      makerSince = true;
+    }
+  }
+  return flags;
+}
+
+/**
+ * The trace composer — the fs+state sibling of `buildStatsModel`. Reads the
+ * orchestrator + worker logs (fail-soft), attributes turns and interventions to
+ * phases through the shared cores, and detects ordering drift per phase. `now`
+ * is INJECTED (the CLI passes `Date.now()`, tests a fixed clock) so the open
+ * current-phase window — and thus the JSON — is deterministic.
+ */
+export function buildTraceModel(state: RunState, now: number): TraceModel {
+  const dir = runDirOf(state.cwd, state.runId);
+  const read = (voice: Voice): string | undefined => {
+    const path = join(dir, `${voice}.log`);
+    if (!existsSync(path)) return undefined;
+    try {
+      return readFileSync(path, 'utf8');
+    } catch {
+      return undefined;
+    }
+  };
+  const workflow = workflowFor(state);
+  const arcOrder = phasesOf(workflow).map((p) => p.name) as string[];
+  const position = probeRunPosition(state);
+  const currentPhase = 'phase' in position ? position.phase : undefined;
+  const runStartMs = Number.isNaN(Date.parse(state.createdAt)) ? 0 : Date.parse(state.createdAt);
+  const notes: string[] = [];
+
+  const orchLog = read('orchestrator');
+  const { windows, inferred } = orchLog !== undefined
+    ? parsePhaseWindows(orchLog, runStartMs, currentPhase ? { now, currentPhase } : undefined)
+    : { windows: [] as PhaseWindow[], inferred: 0 };
+  if (orchLog === undefined) notes.push('no orchestrator log yet — phase windows unavailable.');
+  if (inferred > 0) {
+    notes.push(`${inferred} phase window(s) inferred (interactively orchestrated or still-open phases log no closing header) — those elapsed spans are approximate.`);
+  }
+  const inferredPhases = new Set(windows.filter((w) => w.inferred).map((w) => w.phase));
+
+  const hasSession = (voice: VoiceAddress): boolean =>
+    Boolean(voice === 'consultant' ? state.sessions['consultant'] : state.sessions[sessionKeyFor(voice)]);
+  const turns: ParsedTurn[] = [];
+  for (const voice of voicesFor(state).filter((v): v is VoiceAddress => v !== 'orchestrator')) {
+    const log = read(voice);
+    if (log === undefined) {
+      if (hasSession(voice)) notes.push(`${voice} log missing — its turns aren't shown.`);
+      continue;
+    }
+    turns.push(...parseVoiceLogTurns(voice, log).turns);
+  }
+
+  const byPhase = new Map<string, TracePhase>();
+  const ensure = (phase: string): TracePhase => {
+    let tp = byPhase.get(phase);
+    if (!tp) {
+      tp = { phase, inferredWindow: inferredPhases.has(phase), turns: [], interventions: [], drift: [] };
+      byPhase.set(phase, tp);
+    }
+    return tp;
+  };
+
+  let unattributed = 0;
+  for (const t of turns) {
+    const phase = phaseForTurn(windows, t.startMs);
+    if (!phase) {
+      unattributed++;
+      continue;
+    }
+    ensure(phase).turns.push({ voice: t.voice, tag: t.tag, startMs: t.startMs, endMs: t.endMs, status: t.status });
+  }
+  if (unattributed > 0) notes.push(`${unattributed} worker turn(s) fell outside any phase window — omitted from the timeline.`);
+
+  // Interventions overlaid at their recorded timestamps. Context events attribute
+  // to a phase by WINDOW (the one honest place, because here windows exist);
+  // auto-retries already carry their phase; steers render at STAGING time (both
+  // dirs, so an already-delivered steer isn't lost), labeled — not delivery time.
+  for (const e of state.contextEvents ?? []) {
+    const phase = phaseForTurn(windows, Date.parse(e.at));
+    if (phase) ensure(phase).interventions.push({ kind: e.kind, atMs: Date.parse(e.at), at: e.at, voice: e.voice });
+  }
+  for (const r of state.autoRetries ?? []) {
+    ensure(r.phase).interventions.push({ kind: 'auto-retry', atMs: Date.parse(r.at), at: r.at, detail: `${r.errorClass} (attempt ${r.attempt})` });
+  }
+  for (const s of listStagedSteersForTrace(state)) {
+    if (s.stagedDuring) ensure(s.stagedDuring).interventions.push({ kind: 'steer-staged', atMs: Date.parse(s.stagedAt), at: s.stagedAt, detail: s.text });
+  }
+
+  for (const tp of byPhase.values()) {
+    tp.turns.sort((a, b) => a.startMs - b.startMs);
+    tp.interventions.sort((a, b) => a.atMs - b.atMs);
+    tp.drift = detectOrderingDrift(tp.phase, tp.turns);
+  }
+
+  const seen = [...byPhase.keys()];
+  const ordered = [...arcOrder.filter((p) => byPhase.has(p)), ...seen.filter((p) => !arcOrder.includes(p))];
+  return { runId: state.runId, phases: ordered.map((p) => byPhase.get(p)!), notes };
+}
+
+/** The human render — per phase, the interleaved turn/intervention timeline in chronological order, then any ordering drift. */
+export function renderTrace(model: TraceModel): string {
+  const stamp = (ms: number): string => localTime(new Date(ms).toISOString());
+  const lines: string[] = [`\n━━━ duet trace ${model.runId} ━━━`];
+  if (model.phases.length === 0) lines.push('no phase activity recorded yet.');
+  for (const p of model.phases) {
+    lines.push(`\n${p.phase}${p.inferredWindow ? '  (window inferred — elapsed approximate)' : ''}`);
+    const items = [
+      ...p.turns.map((t) => ({
+        atMs: t.startMs,
+        line: `  ${stamp(t.startMs)}  ${t.voice} · ${t.tag} (${formatDuration(t.endMs - t.startMs)}${t.status !== 'ok' ? `, ${t.status}` : ''})`,
+      })),
+      ...p.interventions.map((e) => ({
+        atMs: e.atMs,
+        line: `  ${stamp(e.atMs)}  ⋯ ${e.kind}${e.voice ? ` ${e.voice}` : ''}${e.detail ? `: ${e.detail}` : ''}`,
+      })),
+    ].sort((a, b) => a.atMs - b.atMs);
+    for (const it of items) lines.push(it.line);
+    for (const d of p.drift) lines.push(`  ⚠ ordering drift: ${d.first.tag} then ${d.second.tag} with no maker turn between`);
   }
   for (const note of model.notes) lines.push(`\nnote: ${note}`);
   return lines.join('\n');

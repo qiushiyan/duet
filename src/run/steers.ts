@@ -65,6 +65,43 @@ export function listPendingSteers(state: RunState): Steer[] {
 }
 
 /**
+ * Every staged steer this run has seen — BOTH the undelivered ones (`steers/`)
+ * and the already-delivered audit trail (`steers/delivered/`), in staging order.
+ * The trace's history reader: unlike `listPendingSteers` (staging only), a "what
+ * happened" timeline must include a steer that was already consumed. Fail-soft
+ * (a missing dir / unparseable file is skipped, never thrown) and tolerant of a
+ * mid-scan delivery rename: a file that moves between the two dirs while we read
+ * appears once (deduped by filename) or neither (skipped on ENOENT), never twice.
+ */
+export function listStagedSteersForTrace(state: RunState): Steer[] {
+  const dir = steersDir(state);
+  const steers: Steer[] = [];
+  const seen = new Set<string>();
+  // Staging first, then delivered — a file that renamed staging→delivered mid-scan
+  // is missed in staging (ENOENT on read) and picked up in the delivered pass.
+  for (const scanDir of [dir, join(dir, 'delivered')]) {
+    if (!existsSync(scanDir)) continue;
+    let entries: import('node:fs').Dirent[];
+    try {
+      entries = readdirSync(scanDir, { withFileTypes: true });
+    } catch {
+      continue; // the dir vanished between existsSync and readdir — skip, don't throw
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.json') || seen.has(entry.name)) continue;
+      try {
+        const body = JSON.parse(readFileSync(join(scanDir, entry.name), 'utf8')) as Omit<Steer, 'file'>;
+        steers.push({ file: entry.name, ...body });
+        seen.add(entry.name);
+      } catch {
+        // Half-written, foreign, or moved mid-scan — skip rather than break the trace.
+      }
+    }
+  }
+  return steers.sort((a, b) => a.file.localeCompare(b.file));
+}
+
+/**
  * Consume delivered steers: rename into steers/delivered/ (kept, not deleted —
  * the audit trail). ENOENT is swallowed: the orchestrator may issue tool
  * calls in parallel, and a steer the other drain already moved is delivered,
