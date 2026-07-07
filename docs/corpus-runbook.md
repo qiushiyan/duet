@@ -65,7 +65,7 @@ The metric glossary and its caveats — span/busy/orchGap definitions, wall-cloc
 
 ## Evaluating a change
 
-Until replay lands, evaluation is cohort comparison over the archive plus judgment over transcripts. The recipe:
+Replay answers one-phase policy questions; broader evaluation is still cohort comparison over the archive plus judgment over transcripts. The recipe:
 
 1. **Pin the boundary.** The commit (and date) the prompt / snippet / workflow change shipped. Records carry `createdAt` and `corpus.json` carries the duet version, so the cohort split is mechanical.
 2. **Build the cohorts.** Filter records by workflow, bindings, and date (`state.json` has all three). Like-for-like matters more than volume — a full run on Opus tells you little about a relay change.
@@ -75,9 +75,26 @@ Until replay lands, evaluation is cohort comparison over the archive plus judgme
 
 Standing caveats: the corpus is small — read medians and maxima, not tight percentiles; durations are wall-clock, so cross-check a giant turn against the heartbeat cadence before calling it slow; and several open calibration questions (`open-questions.md`: triage precision, context bands, the consultant's value) name exactly which of these signals would settle them — check whether your cohort read moves one.
 
-## Replay — designed, unbuilt
+## Replay
 
-The active direction (`future-directions.md` §Active): re-run a recorded phase's orchestrator against scripted workers — the `WorkerProvider` seam is injectable by design — and diff the routing choices against the original: snippets picked, adaptations, triage calls, terminal calls. The record already carries everything the first slice needs (the full phase brief arrives as the logged harness prompt; every prompt body, tag, response, and terminal call is in the voice logs). First slice: one recorded phase, diff snippet tags and terminal calls; scoring comes later. Until then, the cohort recipe above is the measuring instrument — don't wait for replay to start collecting.
+Replay is the corpus tool for probing orchestrator policy under recorded worker stimuli. It re-runs one recorded phase's orchestrator against scripted workers reconstructed from the record, then writes a per-phase diff report: snippet tags and adaptation differences, terminal calls (`advance_phase` vs `ask_human` and their content), and loop shape (rounds, fan-outs, ordering). The report is evidence for a human reader, not a score; judging whether a divergence is better or worse stays outside the tool.
+
+Run it from the repo:
+
+```bash
+node scripts/corpus/replay-phase.ts \
+  --corpus ~/duet-corpus \
+  --record <run-id> \
+  --phase <phase> \
+  --out <out-dir> \
+  --yes
+```
+
+`--yes` is the cost gate: a live replay spends real orchestrator tokens, so the command refuses to drive the SDK unless the spend is explicit. `--dry-run` stops after record parsing and phase-entry reconstruction; it still writes the isolated replay workspace under `--out`, but it does not start the SDK and needs no provider auth.
+
+The replay contract is **honest reconstruction**. The record supplies the logged phase brief, worker prompt bodies and tags, responses, steers that reached the harness, terminal calls, and the frozen workflow shape. Replay serves those where the record carries them; when it cannot, the report names the gap. Two gaps are expected in this slice: historical raw `list_snippets` tool output was not logged, so live replay serves the current snippet library if the orchestrator calls it; and phase-entry state is synthesized from terminal `state.json`, with phase-produced and downstream-produced fields cleared or noted.
+
+Records are read-only instruments. Replay writes only under `--out`: its synthesized workspace, provider home, text report, and JSON report live there, never inside the corpus record or a live run dir. The shipped pipeline is verified by fake-turn tests and by dry-run reconstruction against a real corpus record. Live driven replay currently requires API-key, Bedrock, or Vertex auth. With OAuth Claude Code auth, the A1 isolation preserves the real provider store by redirecting session writes under `--out`, but that isolated config fails closed on authentication; the human ship gate still owns the auth-vs-isolation scope call.
 
 ## Era notes
 
