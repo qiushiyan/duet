@@ -1,5 +1,5 @@
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -54,7 +54,12 @@ describe('replay phase kernel', () => {
 
   test('fake-turn replay writes reports under the output dir and leaves the record unchanged', async ({ blueprintRun }) => {
     const outDir = mkdtempSync(join(tmpdir(), 'duet-replay-'));
+    const providerStoreRoot = mkdtempSync(join(tmpdir(), 'duet-provider-store-'));
+    const previousHome = process.env.HOME;
     try {
+      process.env.HOME = providerStoreRoot;
+      mkdirSync(join(providerStoreRoot, '.claude'), { recursive: true });
+      writeFileSync(join(providerStoreRoot, '.claude', 'sentinel.jsonl'), 'do not touch\n');
       const recordDir = runDirOf(blueprintRun.cwd, blueprintRun.runId);
       blueprintRun.orchestratorSessionId = 'archived-orchestrator-session';
       blueprintRun.rounds.design = 1;
@@ -69,6 +74,7 @@ describe('replay phase kernel', () => {
         [entry(1, '◀ prompt (tag=review-design, from orchestrator)', 'old review body'), entry(2, '▶ response (session analyst-1)', 'recorded review')].join(''),
       );
       const beforeRecord = snapshotTree(recordDir);
+      const beforeProviderStore = snapshotTree(providerStoreRoot);
       const seen: { prompt?: string; home?: string; resume?: string; cwd?: string } = {};
       const runTurn: RunOrchestratorTurn = async function* (ctx) {
         seen.prompt = ctx.prompt;
@@ -96,6 +102,7 @@ describe('replay phase kernel', () => {
       });
 
       expect.soft(snapshotTree(recordDir)).toEqual(beforeRecord);
+      expect.soft(snapshotTree(providerStoreRoot)).toEqual(beforeProviderStore);
       expect.soft(seen.prompt).toBe('RECORDED BRIEF');
       expect.soft(seen.cwd).toBe(join(outDir, 'workspace'));
       expect.soft(seen.home).toBe(join(outDir, 'provider-home'));
@@ -110,7 +117,10 @@ describe('replay phase kernel', () => {
       });
       expect.soft(loadRunState(join(outDir, 'workspace'), 'fake-replay').orchestratorSessionId).toBe('fresh-replay-session');
     } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
       rmSync(outDir, { recursive: true, force: true });
+      rmSync(providerStoreRoot, { recursive: true, force: true });
     }
   });
 });
