@@ -16,6 +16,7 @@ import {
   budgetFor,
   clearContextUsage,
   consumeHumanInput,
+  contextEventReading,
   contextPercent,
   contextSafetyPercent,
   createRun,
@@ -30,9 +31,11 @@ import {
   loadRunState,
   loadRunStateFromDir,
   markTurnActive,
+  recordContextEvent,
   recordContextUsage,
   recordPhaseLabel,
   runDirOf,
+  sampleContextUsage,
   saveMachineSnapshot,
   saveRunState,
   scratchDirOf,
@@ -84,6 +87,65 @@ describe('context readings — last honest reading + high-water since compact', 
     expect.soft(run.contextUsage?.architect).toBeUndefined();
     expect.soft(existsSync(sidecar)).toBe(false);
     expect.soft(contextSafetyPercent(run, 'architect')).toBeUndefined();
+  });
+});
+
+describe('sampleContextUsage — the mid-turn sampler writes through the mutate funnel', () => {
+  test('persists the reading itself — disk and the sampler\'s own copy both carry it', ({ projectDir, run }) => {
+    sampleContextUsage(run, 'architect', { usedTokens: 400_000, windowTokens: 1_000_000 });
+    expect.soft(run.contextUsage?.architect?.usedTokens).toBe(400_000);
+    const disk = loadRunState(projectDir, run.runId);
+    expect.soft(disk.contextUsage?.architect?.usedTokens).toBe(400_000);
+    expect.soft(contextSafetyPercent(disk, 'architect')).toBe(40);
+  });
+
+  test('a sample from a dispatch-time snapshot preserves a concurrent sibling write', ({ projectDir, run }) => {
+    const snapshot = loadRunState(projectDir, run.runId); // held for the whole worker turn
+    markTurnActive(run, 'analyst', 'rev-tag'); // a concurrent dispatch persisted since
+    sampleContextUsage(snapshot, 'architect', { usedTokens: 250_000, windowTokens: 1_000_000 });
+    const disk = loadRunState(projectDir, run.runId);
+    expect.soft(disk.activeTurns?.analyst?.tag).toBe('rev-tag'); // not reverted by the stale snapshot
+    expect.soft(disk.contextUsage?.architect?.usedTokens).toBe(250_000);
+  });
+
+  test('a lower sample from a stale copy cannot relax a higher persisted reading — the mark re-derives against disk', ({ projectDir, run }) => {
+    const snapshot = loadRunState(projectDir, run.runId); // captured before any reading existed
+    recordContextUsage(run, 'architect', { usedTokens: 500_000, windowTokens: 1_000_000 });
+    saveRunState(run); // a settle persisted a higher reading meanwhile
+    sampleContextUsage(snapshot, 'architect', { usedTokens: 300_000, windowTokens: 1_000_000 });
+    const disk = loadRunState(projectDir, run.runId);
+    expect.soft(disk.contextUsage?.architect?.usedTokens).toBe(300_000); // display: the last honest reading
+    expect.soft(disk.contextUsage?.architect?.highWaterTokens).toBe(500_000); // safety: judged against disk's own previous reading
+    expect.soft(contextSafetyPercent(disk, 'architect')).toBe(50);
+  });
+});
+
+describe('the contextEvents ledger — interventions stamped with their pre-fill', () => {
+  test('contextEventReading derives the safety token form — the high-water, not the relaxed display reading', ({ run }) => {
+    recordContextUsage(run, 'architect', { usedTokens: 500_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 300_000, windowTokens: 1_000_000 });
+    expect(contextEventReading(run, 'architect')).toEqual({ preTokens: 500_000, windowTokens: 1_000_000 });
+  });
+
+  test('contextEventReading is empty with no reading — an event never carries a guessed number', ({ run }) => {
+    expect(contextEventReading(run, 'architect')).toEqual({});
+  });
+
+  test('recordContextEvent appends with the pre-intervention snapshot and round-trips; capture happens before the clear', ({ projectDir, run }) => {
+    recordContextUsage(run, 'architect', { usedTokens: 850_000, windowTokens: 1_000_000 });
+    recordContextEvent(run, { kind: 'compact', voice: 'architect', ...contextEventReading(run, 'architect') });
+    clearContextUsage(run, 'architect'); // the intervention clears the reading — the ledger entry keeps it
+    recordContextEvent(run, { kind: 'session-reset', voice: 'architect', ...contextEventReading(run, 'architect') });
+    saveRunState(run); // the caller owns the save, like every handler-side mutation
+
+    const disk = loadRunState(projectDir, run.runId);
+    expect.soft(disk.contextEvents).toHaveLength(2);
+    expect.soft(disk.contextEvents?.[0]).toMatchObject({ kind: 'compact', voice: 'architect', preTokens: 850_000, windowTokens: 1_000_000 });
+    expect.soft(disk.contextEvents?.[0]?.at).toMatch(/^\d{4}-\d{2}-\d{2}T/); // stamped at append
+    // A post-clear event carries no guessed numbers.
+    expect.soft(disk.contextEvents?.[1]?.kind).toBe('session-reset');
+    expect.soft(disk.contextEvents?.[1]?.preTokens).toBeUndefined();
+    expect.soft(disk.contextEvents?.[1]?.windowTokens).toBeUndefined();
   });
 });
 
