@@ -64,6 +64,7 @@ const CASES: Array<{ name: string; phase: PhaseName; opts: ParityRunOpts }> = [
     opts: { spec: true, warmSessions: true, gatesAt: ['frame', 'spec', 'plan', 'implement', 'finish'] },
   },
   { name: 'full-implement.codex', phase: 'implement', opts: { spec: true, warmSessions: true, codexImplementer: true } },
+  { name: 'full-implement.degraded', phase: 'implement', opts: { spec: true, warmSessions: true, degradedBuilder: true } },
   {
     name: 'full-implement.consultant-no-contract',
     phase: 'implement',
