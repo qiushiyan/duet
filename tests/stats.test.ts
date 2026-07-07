@@ -12,6 +12,7 @@ import {
 import { phasesOf } from '../src/registry/workflows.ts';
 import { formatDuration } from '../src/view/timefmt.ts';
 import { appendVoiceLog } from '../src/run/store.ts';
+import { upsertGrade } from '../src/run/store.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**
@@ -318,5 +319,39 @@ describe('buildStatsModel — the fs composer over real appendVoiceLog output', 
     const byPhase = Object.fromEntries(buildStatsModel(run).phases.map((p) => [p.phase, p.makerModel]));
     expect.soft(byPhase['plan']).toBe('codex');
     expect.soft(byPhase['implement']).toBe('gpt-5.5@high');
+  });
+
+  test('omits the grades section until the additive ledger exists', ({ run }) => {
+    appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=spec)', 'brief');
+    appendVoiceLog(run, 'orchestrator', 'advance_phase (spec)', 'ok');
+
+    const model = buildStatsModel(run);
+
+    expect.soft(model.grades).toBeUndefined();
+    expect.soft(renderStats(model)).not.toContain('\ngrades:');
+  });
+
+  test('renders grade coverage and confusion-matrix counts once grades exist', ({ run }) => {
+    appendVoiceLog(run, 'orchestrator', '◀ harness prompt (phase=spec)', 'brief');
+    appendVoiceLog(run, 'orchestrator', 'ask_human queued', 'Should this stop?');
+    appendVoiceLog(run, 'orchestrator', 'advance_phase (spec)', 'ok');
+    run.gatesAt = [];
+    run.autoApprovals = [{ gate: 'plan', at: '2026-07-07T11:00:00.000Z' }];
+    run.phaseSummaries.plan = { summary: 'plan packet', artifacts: [] };
+    run.phaseSummaries.implement = {
+      summary: 'held packet',
+      artifacts: [],
+      humanDecisions: [{ title: 'contract failed', severity: 'high' }],
+    };
+    upsertGrade(run, { key: 'gate:implement:0', verdict: 'wrong', gradedAt: '2026-07-07T11:01:00.000Z' });
+    upsertGrade(run, { key: 'gate:plan:0', verdict: 'wrong', gradedAt: '2026-07-07T11:02:00.000Z' });
+    upsertGrade(run, { key: 'missed:implement:auth', verdict: 'wrong', note: 'missed auth stop', gradedAt: '2026-07-07T11:03:00.000Z' });
+
+    const model = buildStatsModel(run);
+    const out = renderStats(model);
+
+    expect.soft(model.grades).toMatchObject({ graded: 3, total: 3, fp: 1, fn: 2, missed: 1 });
+    expect.soft(out).toContain('grades:');
+    expect.soft(out).toContain('TP 0 · FP 1 · TN 0 · FN 2');
   });
 });

@@ -10,6 +10,7 @@ import type { RunState, Voice } from '../run/store.ts';
 import { workflowFor } from '../run/workflow.ts';
 import type { VoiceAddress } from '../voices/providers/types.ts';
 import { formatDuration } from '../view/timefmt.ts';
+import { decisionPoints, gradeMatrix } from './decision-points.ts';
 
 /**
  * `duet stats` — effort per phase, derived at VIEW TIME from the voice logs (the
@@ -89,6 +90,19 @@ export interface StatsModel {
   totalWindowMs: number;
   /** Fail-soft degradation notes (missing log, interactive run, unattributed turns). */
   notes: string[];
+  grades?: GradeStats;
+}
+
+export interface GradeStats {
+  graded: number;
+  total: number;
+  missed: number;
+  tp: number;
+  fp: number;
+  tn: number;
+  fn: number;
+  stopPrecision?: number;
+  passPrecision?: number;
 }
 
 /** Parse the orchestrator log into phase windows. `sawOpen` distinguishes "no
@@ -403,14 +417,28 @@ export function buildStatsModel(state: RunState): StatsModel {
   // than force the labeler to resolve a phase its workflow doesn't own.
   const ownPhases = new Set<string>(phaseOrder);
   const runStartMs = Date.parse(state.createdAt);
-  return buildStats(
+  const orchestratorLog = read('orchestrator');
+  const model = buildStats(
     state.runId,
-    read('orchestrator'),
+    orchestratorLog,
     workers,
     phaseOrder,
     (phase) => (ownPhases.has(phase) ? makerModelLabel(state.bindings, workflow, phase as PhaseName) : undefined),
     Number.isNaN(runStartMs) ? 0 : runStartMs,
   );
+  if (state.grades !== undefined) {
+    const discovery = decisionPoints(state, orchestratorLog);
+    const matrix = gradeMatrix(discovery.points, state.grades);
+    const stopped = matrix.tp + matrix.fp;
+    const didNotStop = matrix.tn + matrix.fn;
+    model.grades = {
+      ...matrix,
+      ...(stopped > 0 ? { stopPrecision: matrix.tp / stopped } : {}),
+      ...(didNotStop > 0 ? { passPrecision: matrix.tn / didNotStop } : {}),
+    };
+    model.notes.push(...discovery.notes.map((note) => `grades: ${note}`));
+  }
+  return model;
 }
 
 /** The human one-screen render — a phase table, a tag breakdown, and any notes. */
@@ -432,6 +460,14 @@ export function renderStats(model: StatsModel): string {
     for (const t of model.tags) {
       lines.push(`  ${t.tag.padEnd(26)} ${formatDuration(t.totalMs)} (${t.turns})`);
     }
+  }
+  if (model.grades) {
+    const precision = model.grades.stopPrecision === undefined ? '—' : `${Math.round(model.grades.stopPrecision * 100)}%`;
+    const passPrecision = model.grades.passPrecision === undefined ? '—' : `${Math.round(model.grades.passPrecision * 100)}%`;
+    lines.push('\ngrades:');
+    lines.push(`  coverage ${model.grades.graded}/${model.grades.total} · missed ${model.grades.missed}`);
+    lines.push(`  TP ${model.grades.tp} · FP ${model.grades.fp} · TN ${model.grades.tn} · FN ${model.grades.fn}`);
+    lines.push(`  stop precision ${precision} · pass precision ${passPrecision}`);
   }
   for (const note of model.notes) lines.push(`\nnote: ${note}`);
   return lines.join('\n');
