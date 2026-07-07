@@ -568,15 +568,26 @@ past the spine interface into the private join helpers — the model is the test
   *not* a full interleaving — which is why the ordering heuristic lives in `stats --trace` over the
   log timeline, not over `sentSnippets`. The two drift computations are deliberately separate.
 
-## Open questions (for the human, not the build)
+## Blueprint exposure — settled
 
-- **Blueprint exposure emphasis.** Both `duet graph --workflow` and the enriched `duet workflows
-  check` render the blueprint spine. This design ships both (per the ratified adjustments). If one
-  should be the canonical entry and the other a thin alias, that is a naming call over one model —
-  flagged, not silently resolved.
-- **Run-view drift flags in `status` too?** They are state-derived and cheap. This design puts them
-  in the run graph only (keeping `status` untouched). If a future concierge/remote need wants them in
-  `status --json`, that is an additive follow-up — named here, out of scope now.
-- **Steer delivery-time precision.** v1 renders steers at staging time (labeled, lossless from state).
-  True delivery / carry-forward time lives only in orchestrator-log lines; surfacing it would add a
-  stats-owned `parseTraceEvents` over those events — an additive follow-up, out of scope now.
+`duet graph` is the canonical visualization entry (the README verb for "see a workflow or a run");
+`duet workflows check <name>` keeps its authoring-check role, now enriched over the *same* spine. Both
+are real commands — neither is a thin alias — and both render the blueprint projection, so the shared
+spine (not a duplicated join) is what keeps them from drifting.
+
+## Named follow-ups (out of scope here)
+
+- **Run-view drift flags in `status --json`.** State-derived and cheap, but this ships them in the run
+  graph only (`status` untouched). If a future concierge/remote need wants them in the pinned status
+  model, that is an additive follow-up — **not** in this release.
+- **Steer delivery-time precision.** The trace renders steers at their **staging** time (labeled,
+  lossless from state); true delivery / carry-forward time lives only in orchestrator-log lines, and
+  surfacing it would add a stats-owned `parseTraceEvents` over those non-turn events — an additive
+  follow-up, **not built** here.
+- **Pre-existing `NaN`-stamp gap on the live steer path (not this feature's, flagged not fixed).**
+  `listStagedSteersForTrace` now validates a steer's body shape before use, so a malformed steer can't
+  crash the trace render. Its sibling `listPendingSteers` — which feeds the *live delivery* read path
+  and `status`'s steer rendering — does **not** validate shape, so a malformed-but-parseable steer
+  (missing/non-string `stagedAt`) could still surface a `NaN` stamp there. Left untouched deliberately:
+  hardening the delivery path is "a change to how runs execute," a separate pre-existing concern, not
+  this read-only feature's to make.
