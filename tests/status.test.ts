@@ -152,6 +152,14 @@ describe('steerRefusal (the steer channel gate)', () => {
 });
 
 describe('buildStatusModel (the one derivation both renderers and --json consume)', () => {
+  test('absent grades are invisible to status text and JSON', ({ run }) => {
+    const model = buildStatusModel(run, { kind: 'crashed', phase: 'frame' }, []);
+
+    expect.soft('grades' in run).toBe(false);
+    expect.soft(JSON.stringify(model)).not.toContain('grades');
+    expect.soft(renderStatus(model)).not.toContain('grade');
+  });
+
   test('discriminates the stop across all five kinds, each carrying its acting command', ({ run }) => {
     run.pendingQuestion = { question: 'migrate?', context: 'slice 3' };
     run.phaseSummaries.spec = { summary: 'spec summary', artifacts: ['docs/spec.md'] };

@@ -7,8 +7,9 @@ const at = (m: number) => `2026-07-07T10:${String(m).padStart(2, '0')}:00.000Z`;
 
 describe('decisionPoints', () => {
   test('discovers attended, auto-crossed, held-high, and question stops with stable keys', ({ run }) => {
-    run.gatesAt = ['spec'];
+    run.gatesAt = ['frame', 'spec'];
     run.autoApprovals = [{ gate: 'plan', at: at(25) }];
+    run.phaseSummaries.frame = { summary: 'direction approved', artifacts: [] };
     run.phaseSummaries.spec = { summary: 'spec packet final', artifacts: ['docs/spec.md'] };
     run.phaseSummaries.plan = { summary: 'plan packet', artifacts: ['docs/plan.md'] };
     run.phaseSummaries.implement = {
@@ -18,7 +19,11 @@ describe('decisionPoints', () => {
     };
 
     const log = [
-      line(at(0), '◀ harness prompt (phase=spec)'),
+      line(at(0), '◀ harness prompt (phase=frame)'),
+      line(at(1), 'advance_phase (frame)'),
+      'direction approved',
+      '',
+      line(at(2), '◀ harness prompt (phase=spec)'),
       line(at(5), 'advance_phase (spec)'),
       'spec packet rejected once',
       '',
@@ -42,11 +47,16 @@ describe('decisionPoints', () => {
 
     expect.soft(discovery.notes).toEqual([]);
     expect.soft(discovery.points.map((p) => [p.key, p.kind, p.phase, p.polarity])).toEqual([
+      ['gate:frame:0', 'gate', 'frame', 'stopped'],
       ['gate:spec:0', 'gate', 'spec', 'stopped'],
       ['question:implement:0', 'question', 'implement', 'stopped'],
       ['gate:implement:0', 'gate', 'implement', 'stopped'],
       ['gate:plan:0', 'gate', 'plan', 'did-not-stop'],
     ]);
+    expect.soft(discovery.points.find((p) => p.key === 'gate:frame:0')).toMatchObject({
+      disposition: 'attended',
+      context: { rejectionCount: 0, summary: 'direction approved' },
+    });
     expect.soft(discovery.points.find((p) => p.key === 'gate:spec:0')).toMatchObject({
       disposition: 'attended',
       context: { rejectionCount: 1, summary: 'spec packet final' },
