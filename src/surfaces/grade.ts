@@ -157,9 +157,14 @@ async function runInteractiveWalkthrough(
       gradedAt: io.now().toISOString(),
     });
   }
+  // The missed-stop lead — the half of the signal a generous pass skips: shown
+  // once, before the first missed prompt, with the question that surfaces an FN.
+  let missedLead =
+    "any stop that SHOULD have happened but didn't? Check the run's autonomous calls against the triage rules — a merge target chosen, an environment step assumed, scope quietly absorbed. All-right with no missed stops teaches the calibration nothing.\n";
   for (;;) {
-    const missed = (await io.ask(`${preamble}missed stop <phase>:<id>=<description> (blank to finish): `)).trim();
+    const missed = (await io.ask(`${preamble}${missedLead}missed stop <phase>:<id>=<description> (blank to finish): `)).trim();
     preamble = '';
+    missedLead = '';
     if (!missed) break;
     const parsed = parseMissed(missed, state);
     if (typeof parsed === 'string') {

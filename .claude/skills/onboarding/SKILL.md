@@ -24,7 +24,7 @@ Map `$ARGUMENTS` to a focus. The `engineering.md` module map is the source of tr
 | statechart, machine, workflows, stages, phases, gates, duties, workflow vocabulary, knobs, continuity edges, relay / judge, lifecycle, driver, crash / resume, resilience, watchdog, timeout, afk | `harness`   |
 | providers, workers, voices, bindings, claude, codex, transport, interactive, pane | `providers` |
 | prompts, tools, snippets, briefs, orchestrator prompt, tool results, errors | `prompts`   |
-| framing, manifest, templates, CLI, status, run store, steers, persistence, health, doctor, supervision, corpus, telemetry, stats, eval, replay | `surface`   |
+| framing, manifest, templates, CLI, status, run store, steers, persistence, health, doctor, supervision, corpus, telemetry, stats, eval, replay, grade, graph, framings | `surface`   |
 | design, product, scope, what-to-build, gate policy, direction         | `design`    |
 
 Ambiguous (no confident match, or several)? Ask one short clarifying question first. Empty `$ARGUMENTS` → step 4.
@@ -46,7 +46,7 @@ Open your focus's design doc(s), then its code through the `engineering.md` modu
 - **`harness`** (statechart & run loop) — `automation-design.md` §"Phases and gates" + §"Invocation and lifecycle"; anchor on `src/registry/workflows.ts` (the shipped standard library), `src/registry/define.ts` (the workflow SDK compiler), and `src/run/machine.ts`. For the AFK resilience window (timeouts, the forced watchdog, the two recovery planes), read `engineering.md` §"AFK resilience" + `automation-design.md` §"Resilience for the AFK window" (the wall-clock backstop is `src/voices/providers/wall-clock.ts`).
 - **`providers`** (worker seam & transports) — `docs/interactive-transport.md`; anchor on `src/voices/providers/types.ts` (the `WorkerProvider` contract).
 - **`prompts`** (agent prompts, tools, snippets) — `docs/prompting-and-tool-design.md` (read first); anchor on `src/orchestrator/tools.ts` and the block-named `snippets/` files.
-- **`surface`** (CLI, framing, status, persistence) — anchor on `src/run/store.ts` and `src/surfaces/status.ts`; `src/surfaces/cli.ts` wires the commands. For the corpus / evaluation, read `docs/corpus-runbook.md` first; anchor on `src/run/corpus.ts` and `scripts/corpus/lib.ts`.
+- **`surface`** (CLI, framing, status, persistence) — anchor on `src/run/store.ts` and `src/surfaces/status.ts`; `src/surfaces/cli.ts` wires the commands. For the corpus / evaluation loop, read `docs/corpus-runbook.md` first; anchor on `src/run/corpus.ts`, `src/surfaces/decision-points.ts` + `grade.ts` (the grading ritual), `src/replay/` (the replay kernel), and `scripts/corpus/lib.ts`. The visualization surfaces are `src/surfaces/graph-model.ts` + `graph.ts`; the framings browser is `src/surfaces/framings.ts` over the `run/repo.ts` identity stamp.
 - **`design`** (direction & rationale) — `automation-design.md`, then `future-directions.md` (check before proposing a direction) and `open-questions.md` (what's still open).
 
 For a tight cross-cutting question, dispatch one `Explore` subagent with a single extraction question (e.g. "how does a pending steer reach a live driver?") — file refs only, no source pasting. Read the files yourself for a careful audit.
