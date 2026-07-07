@@ -92,18 +92,9 @@ export interface WorkerTurnTrace {
   readonly terminal?: WorkerResponseEvent | WorkerTerminalEvent;
 }
 
-export interface FanoutTrace {
-  readonly id: string;
-  readonly promptEventOrders: readonly number[];
-  readonly voices: readonly string[];
-  readonly tag: string;
-  readonly body: string;
-}
-
 export interface ProtocolTrace {
   readonly events: readonly ProtocolEvent[];
   readonly workerTurns: readonly WorkerTurnTrace[];
-  readonly fanouts: readonly FanoutTrace[];
   readonly notes: readonly string[];
 }
 
@@ -275,7 +266,6 @@ export function parseProtocolTrace(input: ProtocolTraceInput): ProtocolTrace {
   return {
     events: withFanouts,
     workerTurns: pairWorkerTurns(withFanouts, notes),
-    fanouts: buildFanouts(withFanouts),
     notes,
   };
 }
@@ -336,23 +326,6 @@ function assignFanouts(events: readonly ProtocolEvent[], notes: string[]): Proto
     const fanoutId = fanoutByOrder.get(event.order);
     return fanoutId ? { ...event, fanoutId } : event;
   });
-}
-
-function buildFanouts(events: readonly ProtocolEvent[]): FanoutTrace[] {
-  const groups = new Map<string, WorkerPromptEvent[]>();
-  for (const event of events) {
-    if (event.kind !== 'worker_prompt' || !event.fanoutId) continue;
-    const group = groups.get(event.fanoutId) ?? [];
-    group.push(event);
-    groups.set(event.fanoutId, group);
-  }
-  return [...groups.entries()].map(([id, prompts]) => ({
-    id,
-    promptEventOrders: prompts.map((p) => p.order),
-    voices: prompts.map((p) => p.voice),
-    tag: prompts[0]?.tag ?? '',
-    body: prompts[0]?.body ?? '',
-  }));
 }
 
 function pairWorkerTurns(events: readonly ProtocolEvent[], notes: string[]): WorkerTurnTrace[] {

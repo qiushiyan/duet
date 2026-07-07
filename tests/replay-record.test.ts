@@ -76,15 +76,6 @@ describe('parseProtocolTrace', () => {
       ],
     });
 
-    expect.soft(trace.fanouts).toEqual([
-      {
-        id: 'fanout-1',
-        promptEventOrders: [1, 2],
-        voices: ['architect', 'analyst'],
-        tag: 'think-holistic',
-        body,
-      },
-    ]);
     const prompts = trace.events.filter((event) => event.kind === 'worker_prompt');
     expect.soft(prompts.map((event) => event.fanoutId)).toEqual(['fanout-1', 'fanout-1']);
     expect.soft(trace.notes).toContain('fanout fanout-1 inferred by 10ms proximity for tag think-holistic; original log stamps differed');
