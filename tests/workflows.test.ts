@@ -12,6 +12,8 @@ import {
   renderWorkflowList,
 } from '../src/surfaces/workflows.ts';
 import { blueprintModel } from '../src/surfaces/graph-model.ts';
+import { build, compileWorkflow, defineWorkflow, doc, finish, frame } from '../src/workflows.ts';
+import { WORKFLOWS } from '../src/registry/workflows.ts';
 import { test } from './helpers/fixtures.ts';
 import { defaultBindingsFor } from '../src/voices/bindings.ts';
 import type { ResolvedWorkflowSource } from '../src/surfaces/workflow-source.ts';
@@ -168,34 +170,27 @@ describe('duet workflows check', () => {
   });
 
   test('surfaces resolver and compiler failures without a command-specific wrapper', async ({ projectDir }) => {
+    // The error prose itself is owned by workflow-source.test.ts (resolver) and
+    // the compiler; the CLI delta pinned here is only that `workflows check`
+    // exits 1 and surfaces the error UNWRAPPED (no added prefix) — one
+    // identifying token per failure case.
     writeProjectWorkflow(projectDir, 'full');
-    let result = await checkCli(projectDir, 'full');
-    expect.soft(result.exitCode).toBe(1);
-    expect.soft(result.stderr).toContain('workflow "full" is defined in multiple layers');
-    expect.soft(result.stderr).not.toContain('workflows check failed');
-
-    result = await checkCli(projectDir, 'missing');
-    expect.soft(result.exitCode).toBe(1);
-    expect.soft(result.stderr).toContain('workflow "missing" was not found');
-    expect.soft(result.stderr).not.toContain('workflows check failed');
-
     writeProjectWorkflow(projectDir, 'mismatch', workflowFile('other-name'));
-    result = await checkCli(projectDir, 'mismatch');
-    expect.soft(result.exitCode).toBe(1);
-    expect.soft(result.stderr).toContain('exports workflow "other-name" but was loaded as "mismatch"');
-    expect.soft(result.stderr).not.toContain('workflows check failed');
-
     writeProjectWorkflow(projectDir, 'bad-world', workflowFile('bad-world', "phases: [frame(), doc('design'), build({ review: 'writable' }), finish()],"));
-    result = await checkCli(projectDir, 'bad-world');
-    expect.soft(result.exitCode).toBe(1);
-    expect.soft(result.stderr).toContain('no writable build prose world is declared');
-    expect.soft(result.stderr).not.toContain('workflows check failed');
-
     writeProjectWorkflow(projectDir, 'import-throws', "throw new Error('top-level boom');");
-    result = await checkCli(projectDir, 'import-throws');
-    expect.soft(result.exitCode).toBe(1);
-    expect.soft(result.stderr).toContain('could not be imported (top-level boom)');
-    expect.soft(result.stderr).not.toContain('workflows check failed');
+    const cases: Array<[name: string, token: string]> = [
+      ['full', 'multiple layers'],
+      ['missing', 'was not found'],
+      ['mismatch', 'loaded as "mismatch"'],
+      ['bad-world', 'writable build prose world'],
+      ['import-throws', 'top-level boom'],
+    ];
+    for (const [name, token] of cases) {
+      const result = await checkCli(projectDir, name);
+      expect.soft(result.exitCode, name).toBe(1);
+      expect.soft(result.stderr, name).toContain(token);
+      expect.soft(result.stderr, name).not.toContain('workflows check failed');
+    }
   });
 });
 
@@ -239,4 +234,32 @@ describe('duet workflows init', () => {
     expect.soft(checked.exitCode).toBe(0);
     expect.soft(checked.stdout).toContain('workflow  starter-flow — starter-flow workflow');
   });
+});
+
+describe('workflow SDK rebuild pins — blueprint and short', () => {
+  // skill.test.ts pins the full and relay rebuilds byte-identical to the
+  // registry rows (the duet-frame reference's executable workflow-ts examples);
+  // blueprint and short have no reference example, so their
+  // SDK-rebuild-equals-registry pins live here.
+  const rebuilds = {
+    blueprint: defineWorkflow({
+      name: 'blueprint',
+      title: 'Blueprint (frame → design doc → implement → ship → PR)',
+      attend: ['design'],
+      presets: { afk: [] },
+      phases: [frame(), doc('design', { contract: true }), build({ review: 'critique' }), finish()],
+    }),
+    short: defineWorkflow({
+      name: 'short',
+      title: 'Short (research → implement → ship → PR)',
+      presets: { afk: [] },
+      phases: [frame({ name: 'research' }), build({ review: 'writable', audit: true }), finish()],
+    }),
+  };
+
+  for (const name of ['blueprint', 'short'] as const) {
+    test(`${name} compiles byte-identical to the shipped registry row`, () => {
+      expect(JSON.stringify(compileWorkflow(rebuilds[name]), null, 2)).toBe(JSON.stringify(WORKFLOWS[name], null, 2));
+    });
+  }
 });
