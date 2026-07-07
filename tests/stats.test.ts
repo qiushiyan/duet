@@ -350,7 +350,13 @@ describe('buildStatsModel — the fs composer over real appendVoiceLog output', 
     const model = buildStatsModel(run);
     const out = renderStats(model);
 
-    expect.soft(model.grades).toMatchObject({ graded: 3, total: 3, fp: 1, fn: 2, missed: 1 });
+    // total = 4 discovered points (auto-crossed plan, held implement, the spec
+    // question, and spec's attended crossing from the log) + 1 missed entry.
+    // The pre-merge pin of total: 3 was pinning a circular-import bug (stats ⇄
+    // decision-points) that silently dropped log-sourced points under vitest's
+    // lazy cycle bindings — and crashed native ESM outright. The cycle is broken
+    // via run/voice-log.ts now, so log-sourced discovery works.
+    expect.soft(model.grades).toMatchObject({ graded: 3, total: 5, fp: 1, fn: 2, missed: 1 });
     expect.soft(out).toContain('grades:');
     expect.soft(out).toContain('TP 0 · FP 1 · TN 0 · FN 2');
   });

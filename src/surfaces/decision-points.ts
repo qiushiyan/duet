@@ -3,7 +3,7 @@ import type { Grade, HumanDecision, RunState } from '../run/store.ts';
 import { gatePhasesOf } from '../registry/workflows.ts';
 import type { GatePhase, PhaseName } from '../registry/workflows.ts';
 import { workflowFor } from '../run/workflow.ts';
-import { VOICE_LOG_TIMESTAMP_PATTERN } from './stats.ts';
+import { VOICE_LOG_TIMESTAMP_PATTERN } from '../run/voice-log.ts';
 
 export type GateDisposition = 'attended' | 'auto-crossed' | 'held-high';
 export type DecisionVerdict = Grade['verdict'];
