@@ -3,12 +3,9 @@ import { diffReplay } from '../src/replay/diff.ts';
 import type { CapturedToolEvent } from '../src/replay/host.ts';
 import { parseProtocolTrace } from '../src/replay/record.ts';
 import type { ScriptedWorkerCall } from '../src/replay/scripted-worker.ts';
+import { entry } from './helpers/replay.ts';
 
-const entry = (minute: number, header: string, body?: string): string =>
-  body === undefined
-    ? `[2026-07-07T10:${String(minute).padStart(2, '0')}:00.000Z] ${header}\n`
-    : `[2026-07-07T10:${String(minute).padStart(2, '0')}:00.000Z] ${header}\n${body}\n\n`;
-
+// Local by design (single consumer): a one-phase design trace in the shape diffReplay aligns against.
 function traceWith(workerLogs: Array<{ voice: string; tag: string; body: string }>, terminalBody = 'done') {
   return parseProtocolTrace({
     orchestratorLog: [entry(0, '◀ harness prompt (phase=design)', 'brief'), entry(50, 'advance_phase (design)', terminalBody)].join(''),
