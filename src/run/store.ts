@@ -19,6 +19,8 @@ import type { ContextUsage, VoiceAddress } from '../voices/providers/types.ts';
 import type { ErrorClass, RetryState } from '../voices/health.ts';
 import { WORKFLOW_FILE, workflowFor, workflowForRunDir, writeFrozenWorkflow } from './workflow.ts';
 import { allocateCorpusRecordDir, mirrorAppend, mirrorFile } from './corpus.ts';
+import { deriveRepoIdentity } from './repo.ts';
+import type { RepoIdentity } from './repo.ts';
 
 /**
  * Per-run working data under `.duet/runs/<run_id>/` in the target project —
@@ -123,6 +125,18 @@ export interface RunState {
   createdAt: string;
   /** Project root the run operates on (workers and orchestrator run here). */
   cwd: string;
+  /**
+   * The repository identity, derived fail-soft at `createRun` (src/run/repo.ts):
+   * `root` is the primary checkout path (for a run created in a linked worktree
+   * it names the MAIN checkout — the point), `remote` the origin URL when one
+   * exists. The durable group key for archived records: `cwd` names a worktree
+   * that dies at merge, while root/remote outlive it, so `duet framings` can
+   * scope the corpus to "this repo" after the creating worktree is a dead path.
+   * ADDITIVE and best-effort: any git failure leaves it absent (a git-less dir
+   * still creates runs), and no run mechanics read it — a grouping stamp, not
+   * an input.
+   */
+  repo?: RepoIdentity;
   /**
    * Path to the spec, relative to cwd. Set at creation on spec-entry runs;
    * on framing-only entry it's recorded when the spec phase advances
@@ -593,10 +607,14 @@ export function createRun(opts: {
   }
   const gatesAt = opts.gatesAt ?? defaultPosture(gatePhasesOf(workflowSpec), defaultPreAuthorizedOf(workflowSpec));
   const corpusDir = opts.corpusRoot ? allocateCorpusRecordDir(opts.corpusRoot, runId, opts.cwd) : undefined;
+  // The durable repo stamp (see RunState.repo) — fail-soft: a git failure
+  // leaves it absent and creation proceeds unchanged.
+  const repo = deriveRepoIdentity(opts.cwd);
   const state: RunState = {
     runId,
     createdAt: now.toISOString(),
     cwd: opts.cwd,
+    ...(repo ? { repo } : {}),
     workflow: wf,
     ...(opts.workflowSource ? { workflowSource: opts.workflowSource } : isShippedWorkflowName(wf) ? { workflowSource: { layer: 'shipped' as const } } : {}),
     ...(corpusDir ? { corpusDir } : {}),
