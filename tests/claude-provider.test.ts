@@ -1,8 +1,9 @@
 import { describe, expect, test, vi } from 'vitest';
 import { ClaudeWorker, claudeArgs, claudeExecaOptions, parseClaudeTurn, recoverClaudeFailure } from '../src/voices/providers/claude.ts';
-import { ContextDeadlineExceededError, WallClockExceededError } from '../src/voices/providers/wall-clock.ts';
+import { ContextDeadlineExceededError, WALL_CLOCK_DRAIN_GRACE_MS, WALL_CLOCK_TICK_MS, WallClockExceededError } from '../src/voices/providers/wall-clock.ts';
 import { classifyError } from '../src/voices/health.ts';
 import { BudgetCutoffError } from '../src/voices/providers/types.ts';
+import { jsonl, plantClaudeTranscript } from './helpers/transcripts.ts';
 
 // execa is the provider's true external boundary (mock allowed there). No test
 // in this file spawns the real `claude`, so a file-global mock is safe — it is
@@ -391,6 +392,101 @@ describe('ClaudeWorker.runTurn (failure recovery at the execa boundary)', () => 
     expect.soft(announced).toBe('sess-resumed');
     expect.soft(argv[argv.indexOf('--resume') + 1]).toBe('sess-resumed');
     expect.soft(argv).not.toContain('--session-id');
+  });
+});
+
+describe('the context deadline is wired into runTurn (the S3 sibling — the window-fill regression guard)', () => {
+  // The sibling of wall-clock.test.ts's S3 wiring guard: runWithContextDeadline
+  // is thoroughly unit-tested, but only THIS proves ClaudeWorker.runTurn actually
+  // wraps its turn in it — deleting that wrap in claude.ts would leave every
+  // other test green while reintroducing the regression class the wrap exists to
+  // prevent (a session fills mid-turn and the run wedges on "Prompt is too long"
+  // for hours). The sampler seam is the real one: the wrap re-reads this turn's
+  // transcript tail from disk each tick (readTranscriptTailForSession under
+  // $HOME — the fake home the global setup plants), so the test writes a real
+  // transcript rather than injecting a fake sampler the impl doesn't have.
+  const capTokens = 850_000;
+  const turnStart = new Date('2026-06-20T12:00:00.000Z');
+  // One record satisfies both tick-time reads: an assistant record with billed
+  // usage (the fill sampler's input) timestamped after the turn start (the
+  // accepted-abort proof recoverClaudeFailure demands before it settles a
+  // checkpoint instead of throwing infra).
+  const assistantAtFill = (totalTokens: number) => ({
+    type: 'assistant',
+    timestamp: '2026-06-20T12:00:01.000Z',
+    message: { content: [{ type: 'text', text: 'grinding on the keystone' }], usage: { input_tokens: totalTokens, output_tokens: 0 } },
+  });
+  const successStdout = (sessionId: string): string =>
+    JSON.stringify([{ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: sessionId }]);
+
+  test('a high-fill tail cuts the hung turn at the first sampler tick — the context-exhausted checkpoint, not the wall-clock one', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(turnStart);
+      const sessionId = 'sess-ctx-wired-cut';
+      plantClaudeTranscript(process.env.HOME!, sessionId, jsonl(assistantAtFill(870_000)));
+      const kill = vi.fn();
+      const hanging = Object.assign(new Promise<never>(() => {}), { kill }); // a subprocess that never settles on its own
+      mockExeca.mockReturnValueOnce(hanging);
+      const promise = new ClaudeWorker({ model: 'claude-opus-4-8' }).runTurn({
+        prompt: 'build it',
+        cwd: '/x',
+        sessionId,
+        timeoutMs: 90 * 60_000, // the wall-clock cap is FAR away — only the context deadline can cut this early
+        contextCapTokens: capTokens,
+      });
+      // One sampler tick: the planted tail reads 870k ≥ the 850k cap → the wrap
+      // kills the child. HARD assert (not soft): with the wrap deleted, nothing
+      // cuts until the 90-min wall clock, and awaiting the turn would hang —
+      // fail here instead.
+      await vi.advanceTimersByTimeAsync(WALL_CLOCK_TICK_MS);
+      expect(kill).toHaveBeenCalledTimes(1);
+      // The cut drains (the resumable-checkpoint discipline), then recovery reads
+      // the same accepted transcript and settles the turn.
+      await vi.advanceTimersByTimeAsync(WALL_CLOCK_DRAIN_GRACE_MS);
+      const turn = await promise;
+      expect.soft(turn.aborted).toBe(true);
+      expect.soft(turn.contextExhausted).toBe(true); // the window ran out, not time — compact-then-resume, never a bare resume
+      expect.soft(turn.sessionId).toBe(sessionId);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a low-fill tail never cuts: the same ticks pass and the turn completes normally', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(turnStart);
+      const sessionId = 'sess-ctx-wired-low';
+      plantClaudeTranscript(process.env.HOME!, sessionId, jsonl(assistantAtFill(100_000))); // well under the cap
+      const kill = vi.fn();
+      let finishChild!: (v: { stdout: string }) => void;
+      const child = Object.assign(
+        new Promise<{ stdout: string }>((r) => {
+          finishChild = r;
+        }),
+        { kill },
+      );
+      mockExeca.mockReturnValueOnce(child);
+      const promise = new ClaudeWorker({ model: 'claude-opus-4-8' }).runTurn({
+        prompt: 'build it',
+        cwd: '/x',
+        sessionId,
+        timeoutMs: 90 * 60_000,
+        contextCapTokens: capTokens,
+      });
+      // Two sampler ticks below the limit — the deadline is armed but must not fire.
+      await vi.advanceTimersByTimeAsync(2 * WALL_CLOCK_TICK_MS);
+      expect.soft(kill).not.toHaveBeenCalled();
+      // The turn then finishes on its own, untouched by the armed deadline.
+      finishChild({ stdout: successStdout(sessionId) });
+      const turn = await promise;
+      expect.soft(turn.text).toBe('ok');
+      expect.soft(turn.aborted).toBeUndefined();
+      expect.soft(turn.contextExhausted).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
