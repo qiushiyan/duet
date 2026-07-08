@@ -83,7 +83,7 @@ Sketches stay small — the shape, not the build:
     exportReport(report, { format: "csv" })
     (one deep entry point — not exportCsv / exportPdf / exportXlsx each exported)
 
-Shape all three with a deep-module mindset: small surfaces concentrating complexity behind them, the domain's states and data carved so wrong ones are hard to express, seams few and narrow rather than many and chatty. Mark them as the *envisioned* shape, not a contract — the build may drift for stated reasons when the code teaches better, never silently.
+Shape each view with a deep-module mindset: small surfaces concentrating complexity behind them, the domain's states and data carved so wrong ones are hard to express, seams few and narrow rather than many and chatty. Mark them as the *envisioned* shape, not a contract — the build may drift for stated reasons when the code teaches better, never silently.
 
 **Design it twice before you commit.** Your first interface idea is rarely your best, and the shape you settle here is the shape that gets built. Per `design-it-twice.md`:
 - Sketch three shapes *different in kind*, each following one constraint further than feels comfortable: **minimal** (one to three entry points, maximum leverage each) · **flexible** (many use cases, room to extend) · **common case** (the default caller's path trivial, even at the rare one's expense) · **ports and adapters** (when a dependency crosses a seam you don't own).
