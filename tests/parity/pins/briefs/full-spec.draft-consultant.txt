@@ -1,0 +1,23 @@
+<task>
+The human approved the direction at the Direction gate. Draft the spec, then run its review loop to the commit-spec gate.
+
+The shape of the phase:
+1. Decide where the spec file lives — the framing names the project's spec location. If it doesn't, ask_human for one before drafting.
+2. Send the architect a write-spec prompt carrying the approved direction; it writes the spec file and reports the path and content.
+3. Run the review loop: review-spec to the analyst (point it at the file's path as well as the content), update-spec to the architect, -again variants for later rounds. The backstop cap is 3 review rounds; converge well before it.
+4. When converged, call advance_phase with the summary and with spec_path set to the spec file's repo-relative path — the harness records it for the later phases.
+
+Consultant checkpoint (the consultant is bound for this run): before you advance, run its bet audit. Send the consultant a consultant-spec prompt — a fresh, ephemeral, read-only session, so curate what it sees rather than pointing it at the run's history: the settled spec and the decisions it must treat as by-design — not the review-loop traffic. Fold its raw findings into your advance_phase summary, and echo each finding's consultant-assigned severity into advance_phase's human_decisions — record them, never re-grade (you do triage, not opinion). "The bet is sound — ship" is a first-class outcome; a documented tradeoff is by-design, not a finding.
+
+Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
+
+## Spec phase examples
+
+This phase's call is reading each analyst point at spec altitude — intentionally-deferred detail, or a real gap. Apply that distinction, not the point's wording.
+<example name="deferred detail is not a spec gap">
+The analyst notes the spec doesn't list the specific test cases or the exact line-level edits. At spec altitude those are intentionally deferred to the plan, not gaps — don't route them to the architect as required spec changes; note they are plan-stage and move on.
+</example>
+<example name="a real spec gap">
+The analyst notes the spec never says what happens when the input is empty — a behavior the feature must define. That is a spec-altitude gap: route it to the architect to resolve in the spec, because the plan and the code will both build on the answer.
+</example>
+</task>

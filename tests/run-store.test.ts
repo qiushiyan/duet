@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect } from 'vitest';
 import type { Snapshot } from 'xstate';
 import { build, compileWorkflow, defineWorkflow, finish, frame } from '../src/workflows.ts';
+import type { CompiledWorkflow } from '../src/workflows.ts';
 import { defaultBindingsFor } from '../src/voices/bindings.ts';
 import { claudeArgs } from '../src/voices/providers/claude.ts';
 import { allocateCorpusRecordDir } from '../src/run/corpus.ts';
@@ -15,6 +16,7 @@ import {
   budgetFor,
   clearContextUsage,
   consumeHumanInput,
+  contextEventReading,
   contextPercent,
   contextSafetyPercent,
   createRun,
@@ -29,9 +31,11 @@ import {
   loadRunState,
   loadRunStateFromDir,
   markTurnActive,
+  recordContextEvent,
   recordContextUsage,
   recordPhaseLabel,
   runDirOf,
+  sampleContextUsage,
   saveMachineSnapshot,
   saveRunState,
   scratchDirOf,
@@ -83,6 +87,65 @@ describe('context readings — last honest reading + high-water since compact', 
     expect.soft(run.contextUsage?.architect).toBeUndefined();
     expect.soft(existsSync(sidecar)).toBe(false);
     expect.soft(contextSafetyPercent(run, 'architect')).toBeUndefined();
+  });
+});
+
+describe('sampleContextUsage — the mid-turn sampler writes through the mutate funnel', () => {
+  test('persists the reading itself — disk and the sampler\'s own copy both carry it', ({ projectDir, run }) => {
+    sampleContextUsage(run, 'architect', { usedTokens: 400_000, windowTokens: 1_000_000 });
+    expect.soft(run.contextUsage?.architect?.usedTokens).toBe(400_000);
+    const disk = loadRunState(projectDir, run.runId);
+    expect.soft(disk.contextUsage?.architect?.usedTokens).toBe(400_000);
+    expect.soft(contextSafetyPercent(disk, 'architect')).toBe(40);
+  });
+
+  test('a sample from a dispatch-time snapshot preserves a concurrent sibling write', ({ projectDir, run }) => {
+    const snapshot = loadRunState(projectDir, run.runId); // held for the whole worker turn
+    markTurnActive(run, 'analyst', 'rev-tag'); // a concurrent dispatch persisted since
+    sampleContextUsage(snapshot, 'architect', { usedTokens: 250_000, windowTokens: 1_000_000 });
+    const disk = loadRunState(projectDir, run.runId);
+    expect.soft(disk.activeTurns?.analyst?.tag).toBe('rev-tag'); // not reverted by the stale snapshot
+    expect.soft(disk.contextUsage?.architect?.usedTokens).toBe(250_000);
+  });
+
+  test('a lower sample from a stale copy cannot relax a higher persisted reading — the mark re-derives against disk', ({ projectDir, run }) => {
+    const snapshot = loadRunState(projectDir, run.runId); // captured before any reading existed
+    recordContextUsage(run, 'architect', { usedTokens: 500_000, windowTokens: 1_000_000 });
+    saveRunState(run); // a settle persisted a higher reading meanwhile
+    sampleContextUsage(snapshot, 'architect', { usedTokens: 300_000, windowTokens: 1_000_000 });
+    const disk = loadRunState(projectDir, run.runId);
+    expect.soft(disk.contextUsage?.architect?.usedTokens).toBe(300_000); // display: the last honest reading
+    expect.soft(disk.contextUsage?.architect?.highWaterTokens).toBe(500_000); // safety: judged against disk's own previous reading
+    expect.soft(contextSafetyPercent(disk, 'architect')).toBe(50);
+  });
+});
+
+describe('the contextEvents ledger — interventions stamped with their pre-fill', () => {
+  test('contextEventReading derives the safety token form — the high-water, not the relaxed display reading', ({ run }) => {
+    recordContextUsage(run, 'architect', { usedTokens: 500_000, windowTokens: 1_000_000 });
+    recordContextUsage(run, 'architect', { usedTokens: 300_000, windowTokens: 1_000_000 });
+    expect(contextEventReading(run, 'architect')).toEqual({ preTokens: 500_000, windowTokens: 1_000_000 });
+  });
+
+  test('contextEventReading is empty with no reading — an event never carries a guessed number', ({ run }) => {
+    expect(contextEventReading(run, 'architect')).toEqual({});
+  });
+
+  test('recordContextEvent appends with the pre-intervention snapshot and round-trips; capture happens before the clear', ({ projectDir, run }) => {
+    recordContextUsage(run, 'architect', { usedTokens: 850_000, windowTokens: 1_000_000 });
+    recordContextEvent(run, { kind: 'compact', voice: 'architect', ...contextEventReading(run, 'architect') });
+    clearContextUsage(run, 'architect'); // the intervention clears the reading — the ledger entry keeps it
+    recordContextEvent(run, { kind: 'session-reset', voice: 'architect', ...contextEventReading(run, 'architect') });
+    saveRunState(run); // the caller owns the save, like every handler-side mutation
+
+    const disk = loadRunState(projectDir, run.runId);
+    expect.soft(disk.contextEvents).toHaveLength(2);
+    expect.soft(disk.contextEvents?.[0]).toMatchObject({ kind: 'compact', voice: 'architect', preTokens: 850_000, windowTokens: 1_000_000 });
+    expect.soft(disk.contextEvents?.[0]?.at).toMatch(/^\d{4}-\d{2}-\d{2}T/); // stamped at append
+    // A post-clear event carries no guessed numbers.
+    expect.soft(disk.contextEvents?.[1]?.kind).toBe('session-reset');
+    expect.soft(disk.contextEvents?.[1]?.preTokens).toBeUndefined();
+    expect.soft(disk.contextEvents?.[1]?.windowTokens).toBeUndefined();
   });
 });
 
@@ -242,29 +305,86 @@ describe('run creation', () => {
     );
   });
 
-  test('createRun without gatesAt leaves it absent when defaultPreAuthorized is empty (short — legacy attend-all)', ({
-    projectDir,
-  }) => {
-    // short ships defaultPreAuthorized: [] → defaultPosture returns undefined →
-    // gatesAt stays absent (attend-all). (full now materializes the overnight
-    // posture ['frame','spec'] — see the default-posture test below.)
-    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('short'), workflow: 'short' });
-    expect.soft(created.gatesAt).toBeUndefined();
-    expect.soft(loadRunState(projectDir, created.runId).gatesAt).toBeUndefined();
-  });
+  // gatesAt materialization — one behavior × {absent, explicit-[], explicit-list}.
+  // Absent defers to the workflow's default posture (full materializes overnight;
+  // short's empty defaultPreAuthorized keeps it absent = the legacy attend-all);
+  // an explicit list — including the first-class [] attend-none — always wins,
+  // and gates_at is the complete attend set, not a delta.
+  type GatesAtCase = {
+    name: string;
+    workflow: string;
+    gatesAt?: string[];
+    persisted: string[] | undefined;
+    attended: Array<[phase: string, attends: boolean]>;
+  };
+  const GATES_AT_CASES: GatesAtCase[] = [
+    {
+      name: "absent on full ⇒ materializes the overnight posture ['frame','spec'] — plan, Ship, and Open-PR auto-cross (D)",
+      workflow: 'full',
+      persisted: ['frame', 'spec'],
+      attended: [
+        ['frame', true],
+        ['spec', true],
+        ['plan', false],
+        ['implement', false],
+        ['finish', false],
+      ],
+    },
+    {
+      name: 'absent on short (empty defaultPreAuthorized) ⇒ stays absent — the legacy attend-all, byte-for-byte',
+      workflow: 'short',
+      persisted: undefined,
+      attended: [
+        ['research', true],
+        ['implement', true],
+        ['finish', true],
+      ],
+    },
+    {
+      name: 'explicit [] ⇒ persisted as first-class attend-none (bare duet afk relies on it), never coerced to absent',
+      workflow: 'full',
+      gatesAt: [],
+      persisted: [],
+      attended: [
+        ['frame', false],
+        ['finish', false],
+      ],
+    },
+    {
+      name: "explicit ['frame','spec'] ⇒ persisted unchanged — materialization never overrides an explicit list",
+      workflow: 'full',
+      gatesAt: ['frame', 'spec'],
+      persisted: ['frame', 'spec'],
+      attended: [
+        ['frame', true],
+        ['plan', false],
+      ],
+    },
+    {
+      name: "explicit ['finish'] ⇒ attends only the post-open review stop (opt back in); everything earlier auto-crosses",
+      workflow: 'full',
+      gatesAt: ['finish'],
+      persisted: ['finish'],
+      attended: [
+        ['finish', true],
+        ['frame', false],
+        ['spec', false],
+      ],
+    },
+  ];
 
-  test('createRun persists an explicit gatesAt unchanged (materialization does not override it)', ({ projectDir }) => {
-    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), gatesAt: ['frame', 'spec'] });
-    expect.soft(created.gatesAt).toEqual(['frame', 'spec']);
-    expect.soft(loadRunState(projectDir, created.runId).gatesAt).toEqual(['frame', 'spec']);
-  });
-
-  test('createRun persists an explicit empty gatesAt ([]) as first-class attend-none (bare duet afk relies on it)', ({
-    projectDir,
-  }) => {
-    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), gatesAt: [] });
-    expect.soft(created.gatesAt).toEqual([]); // not coerced to absent — [] is a real "attend none" posture
-    expect.soft(loadRunState(projectDir, created.runId).gatesAt).toEqual([]);
+  test.for(GATES_AT_CASES)('createRun gatesAt: $name', (c, { expect, projectDir }) => {
+    const created = createRun({
+      cwd: projectDir,
+      workflow: c.workflow,
+      bindings: defaultBindingsFor(c.workflow),
+      ...(c.gatesAt === undefined ? {} : { gatesAt: c.gatesAt }),
+    });
+    expect.soft(created.gatesAt).toEqual(c.persisted);
+    expect.soft(loadRunState(projectDir, created.runId).gatesAt).toEqual(c.persisted);
+    for (const [phase, attends] of c.attended) {
+      expect.soft(gateAttended(created, phase), `gateAttended(${phase})`).toBe(attends);
+    }
   });
 
   test('createRun persists the gateless flag present-only (default-off byte-for-byte)', ({ projectDir }) => {
@@ -277,33 +397,59 @@ describe('run creation', () => {
     expect.soft('gateless' in loadRunState(projectDir, plain.runId)).toBe(false);
   });
 
-  test('createRun materializes the default retry budget (3), nullish so 0 stays 0 and N stays N (S6)', ({ projectDir }) => {
-    // Default-on for NEW runs, via materialization (the gatesAt discipline). An
-    // absent opt ⇒ DEFAULT_RETRY_INFRA; an explicit 0 ⇒ 0 (off); an explicit N ⇒ N.
-    const dflt = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full') });
-    expect.soft(dflt.retryInfra).toBe(DEFAULT_RETRY_INFRA);
-    expect.soft(loadRunState(projectDir, dflt.runId).retryInfra).toBe(3);
+  // retryInfra materialization (S6) — one behavior × {absent, explicit-0, explicit-N}.
+  // Default-on for NEW runs via materialization (the gatesAt discipline), and
+  // nullish (not truthy) so the explicit opt-out survives.
+  const RETRY_INFRA_CASES: Array<{ name: string; retryInfra: number | undefined; expected: number }> = [
+    {
+      name: 'absent ⇒ materialized to the default retry budget (DEFAULT_RETRY_INFRA = 3) — default-on for NEW runs',
+      retryInfra: undefined,
+      expected: DEFAULT_RETRY_INFRA,
+    },
+    { name: 'explicit 0 ⇒ stays 0 (off) — nullish, not truthy, so the opt-out survives', retryInfra: 0, expected: 0 },
+    { name: 'explicit 5 ⇒ stays 5 — materialization never overrides an explicit N', retryInfra: 5, expected: 5 },
+  ];
 
-    const off = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), retryInfra: 0 });
-    expect.soft(off.retryInfra).toBe(0); // nullish, not truthy — the explicit opt-out survives
-
-    const five = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), retryInfra: 5 });
-    expect.soft(five.retryInfra).toBe(5);
+  test.for(RETRY_INFRA_CASES)('createRun retryInfra: $name', (c, { expect, projectDir }) => {
+    const created = createRun({
+      cwd: projectDir,
+      bindings: defaultBindingsFor('full'),
+      ...(c.retryInfra === undefined ? {} : { retryInfra: c.retryInfra }),
+    });
+    expect.soft(created.retryInfra).toBe(c.expected);
+    expect.soft(loadRunState(projectDir, created.runId).retryInfra).toBe(c.expected);
   });
 
-  test('createRun freezes the resolved budget; a later budgetFor reads it back (scaled)', ({ projectDir }) => {
-    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), budget: 2 });
-    expect.soft(created.budget).toBe(2);
+  // Worker-budget materialization — one behavior × {absent, explicit-N}. Off ≡
+  // absent (never 0): the key is omitted byte-for-byte and budgetFor reads off.
+  const BUDGET_CASES: Array<{
+    name: string;
+    budget: number | undefined;
+    implementCaps: { worker: number | undefined; orchestrator: number | undefined };
+  }> = [
+    {
+      name: 'absent ⇒ OFF byte-for-byte — no budget key persisted; budgetFor reads both caps undefined',
+      budget: undefined,
+      implementCaps: { worker: undefined, orchestrator: undefined },
+    },
+    {
+      name: 'explicit 2 ⇒ frozen on state; a later budgetFor reads it back scaled (×2 the registry profile)',
+      budget: 2,
+      implementCaps: { worker: 50, orchestrator: 60 },
+    },
+  ];
+
+  test.for(BUDGET_CASES)('createRun budget: $name', (c, { expect, projectDir }) => {
+    const created = createRun({
+      cwd: projectDir,
+      bindings: defaultBindingsFor('full'),
+      ...(c.budget === undefined ? {} : { budget: c.budget }),
+    });
+    expect.soft(created.budget).toBe(c.budget);
     const reloaded = loadRunState(projectDir, created.runId);
-    expect.soft(reloaded.budget).toBe(2);
-    expect.soft(budgetFor(reloaded, 'implement')).toEqual({ worker: 50, orchestrator: 60 });
-  });
-
-  test('createRun omits budget when off (absent) ⇒ budgetFor reads off', ({ projectDir }) => {
-    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full') });
-    expect.soft(created.budget).toBeUndefined();
-    expect.soft('budget' in loadRunState(projectDir, created.runId)).toBe(false);
-    expect.soft(budgetFor(created, 'implement')).toEqual({ worker: undefined, orchestrator: undefined });
+    expect.soft(reloaded.budget).toBe(c.budget);
+    expect.soft('budget' in reloaded).toBe(c.budget !== undefined);
+    expect.soft(budgetFor(reloaded, 'implement')).toEqual(c.implementCaps);
   });
 
   test('createRun omits corpusDir without config (default-off byte-for-byte)', ({ projectDir }) => {
@@ -340,42 +486,143 @@ describe('run creation', () => {
     expect(allocateCorpusRecordDir(root, '20260706-1200-abcd', projectDir)).toBe(join(root, '20260706-1200-abcd-2'));
   });
 
-  test('createRun freezes shipped workflows into workflow.json', ({ projectDir }) => {
-    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('blueprint'), workflow: 'blueprint' });
-    const frozen = JSON.parse(readFileSync(workflowPath(projectDir, created.runId), 'utf8'));
+  // Workflow freeze-then-reload — one parameterized behavior across shipped and
+  // non-shipped names: createRun freezes the resolved workflow into workflow.json
+  // beside state.json, persists the identity on state (materialized at create,
+  // not defaulted at read time), and a reload resolves the frozen artifact
+  // through workflowFor.
+  const INSTANT = compileWorkflow(
+    defineWorkflow({
+      name: 'instant',
+      title: 'Instant (think → build → PR)',
+      presets: { afk: [] },
+      phases: [frame({ name: 'think' }), build({ review: 'writable', audit: true }), finish()],
+    }),
+  );
+  type WorkflowFreezeCase = {
+    name: string;
+    /** createRun's workflow opt; absent exercises the materialized-full default. */
+    workflow?: string;
+    /** A compiled non-shipped spec — freezing it legitimizes the non-shipped name. */
+    spec?: CompiledWorkflow;
+    frozenName: string;
+    displayName: RegExp;
+    phases: string[];
+  };
+  const WORKFLOW_FREEZE_CASES: WorkflowFreezeCase[] = [
+    {
+      name: 'absent workflow ⇒ full, materialized at create',
+      frozenName: 'full',
+      displayName: /Full/,
+      phases: ['frame', 'spec', 'plan', 'implement', 'finish'],
+    },
+    {
+      name: 'explicit full',
+      workflow: 'full',
+      frozenName: 'full',
+      displayName: /Full/,
+      phases: ['frame', 'spec', 'plan', 'implement', 'finish'],
+    },
+    {
+      name: 'blueprint',
+      workflow: 'blueprint',
+      frozenName: 'blueprint',
+      displayName: /Blueprint/,
+      phases: ['frame', 'design', 'implement', 'finish'],
+    },
+    {
+      name: 'short',
+      workflow: 'short',
+      frozenName: 'short',
+      displayName: /Short/,
+      phases: ['research', 'implement', 'finish'],
+    },
+    {
+      name: 'a frozen custom spec legitimizes a non-shipped name',
+      workflow: 'instant',
+      spec: INSTANT,
+      frozenName: 'instant',
+      displayName: /^Instant \(think → build → PR\)$/,
+      phases: ['think', 'implement', 'finish'],
+    },
+  ];
 
-    expect.soft(frozen.name).toBe('blueprint');
-    expect.soft(frozen.displayName).toBe('Blueprint (frame → design doc → implement → ship → PR)');
-    expect.soft(workflowFor(created).phases.map((p) => p.name)).toEqual(['frame', 'design', 'implement', 'finish']);
+  test.for(WORKFLOW_FREEZE_CASES)('createRun freezes the workflow, a reload reads it back: $name', (c, { expect, projectDir }) => {
+    const created = createRun({
+      cwd: projectDir,
+      bindings: defaultBindingsFor(c.spec ?? c.workflow ?? 'full'),
+      ...(c.workflow === undefined ? {} : { workflow: c.workflow }),
+      ...(c.spec === undefined ? {} : { workflowSpec: c.spec }),
+    });
+
+    // Frozen beside state.json at creation — later processes read this artifact.
+    const frozen = JSON.parse(readFileSync(workflowPath(projectDir, created.runId), 'utf8'));
+    expect.soft(frozen.name).toBe(c.frozenName);
+    expect.soft(frozen.displayName).toMatch(c.displayName);
+
+    // The identity is persisted on state (not defaulted at read time) …
+    const onDisk = JSON.parse(readFileSync(join(runDirOf(projectDir, created.runId), 'state.json'), 'utf8'));
+    expect.soft(onDisk.workflow).toBe(c.frozenName);
+
+    // … and a reload resolves the same workflow through workflowFor.
+    const reloaded = loadRunState(projectDir, created.runId);
+    expect.soft(reloaded.workflow).toBe(c.frozenName);
+    const workflow = workflowFor(reloaded);
+    expect.soft(workflow.name).toBe(c.frozenName);
+    expect.soft(workflow.displayName).toMatch(c.displayName);
+    expect.soft(workflow.phases.map((p) => p.name)).toEqual(c.phases);
+    expect(() => machineFor(workflow)).not.toThrow(); // the frozen spec drives a real machine
   });
 
   test('a pre-feature shipped run with no workflow.json falls back to the shipped registry row', ({ projectDir }) => {
     const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full') });
     rmSync(workflowPath(projectDir, created.runId), { force: true });
 
-    expect.soft(workflowFor(loadRunState(projectDir, created.runId)).displayName).toBe('Full (spec → plan → implement → ship → PR)');
+    expect.soft(workflowFor(loadRunState(projectDir, created.runId)).displayName).toMatch(/Full/);
   });
 
-  test('a frozen custom workflow legitimizes a non-shipped workflow name', ({ projectDir }) => {
-    const custom = compileWorkflow(
+  test('a state file with no workflow field (remodel-era or hand-written) materializes full at the load boundary', ({ projectDir, run }) => {
+    delete (run as { workflow?: string }).workflow;
+    saveRunState(run);
+    expect(loadRunState(projectDir, run.runId).workflow).toBe('full');
+  });
+
+  test('workflow-file mismatch is rejected at the load boundary', ({ projectDir, run }) => {
+    const state = JSON.parse(readFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), 'utf8'));
+    state.workflow = 'custom-short';
+    writeFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), JSON.stringify(state, null, 2));
+    expect(() => loadRunState(projectDir, run.runId)).toThrow(/state names workflow "custom-short" but workflow\.json names "full"/);
+  });
+
+  test('a project-composed workflow record loads from the corpus after its source dir is gone', ({ projectDir }) => {
+    const workflow = compileWorkflow(
       defineWorkflow({
-        name: 'instant',
-        title: 'Instant (think → build → PR)',
+        name: 'custom-short',
+        title: 'Custom Short',
         presets: { afk: [] },
-        phases: [frame({ name: 'think' }), build({ review: 'writable', audit: true }), finish()],
+        phases: [frame({ name: 'research' }), build({ review: 'writable', audit: true }), finish()],
       }),
     );
+    const corpusRoot = join(projectDir, 'corpus');
     const created = createRun({
       cwd: projectDir,
-      workflow: custom.name,
-      workflowSpec: custom,
-      bindings: defaultBindingsFor(custom),
+      workflow: workflow.name,
+      workflowSpec: workflow,
+      bindings: defaultBindingsFor(workflow),
+      framing: 'f',
+      corpusRoot,
     });
+    const record = created.corpusDir!;
+    expect.soft(existsSync(join(record, 'workflow.json'))).toBe(true);
 
-    const reloaded = loadRunState(projectDir, created.runId);
-    expect.soft(reloaded.workflow).toBe('instant');
-    expect.soft(workflowFor(reloaded).displayName).toBe('Instant (think → build → PR)');
-    expect.soft(workflowFor(reloaded).phases.map((p) => p.name)).toEqual(['think', 'implement', 'finish']);
+    // Simulate the worktree being cleaned up — the whole reason the corpus exists.
+    rmSync(runDirOf(projectDir, created.runId), { recursive: true, force: true });
+
+    // The record still loads, resolving its non-shipped workflow from the record
+    // dir it was handed — NOT the deleted state.cwd/.duet/runs path.
+    const loaded = loadRunStateFromDir(record);
+    expect.soft(loaded.workflow).toBe('custom-short');
+    expect.soft(workflowForRunDir(loaded, record).displayName).toBe('Custom Short');
   });
 
   test('budgetFor reads per-phase caps from the frozen workflow, not the live registry row', ({ projectDir }) => {
@@ -501,25 +748,9 @@ describe('gate attendance', () => {
     expect.soft(gateAttended(run, 'finish')).toBe(true); // attended because explicitly listed
   });
 
-  test('a new Full run materializes the overnight posture — plan, Ship, and the Open-PR gate auto-cross by default (D)', ({ projectDir }) => {
-    // A new default Full run materializes gatesAt = ['frame','spec']: plan, impl
-    // (Ship), and finish (Open-PR) are all pre-authorized.
-    const fresh = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full') });
-    expect.soft(fresh.gatesAt).toEqual(['frame', 'spec']);
-    expect.soft(gateAttended(fresh, 'plan')).toBe(false);
-    expect.soft(gateAttended(fresh, 'implement')).toBe(false);
-    expect.soft(gateAttended(fresh, 'finish')).toBe(false);
-
-    // Listing finish restores the post-open review stop (opt-in).
-    const attended = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), gatesAt: ['finish'] });
-    expect.soft(gateAttended(attended, 'finish')).toBe(true);
-
-    // A legacy run (absent gatesAt, predating the change) still attends every
-    // gate — the overnight default never reaches an in-flight legacy run.
-    const legacy = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full') });
-    delete legacy.gatesAt;
-    expect.soft(gateAttended(legacy, 'finish')).toBe(true);
-  });
+  // A new run's materialized postures (full's overnight default, the ['finish']
+  // opt-in, short's absent attend-all) live in the createRun gatesAt table under
+  // 'run creation'; the absent-gatesAt legacy attend-all is the first test above.
 });
 
 describe('highDecisionsAt — the severity-hold resolver', () => {
@@ -594,88 +825,6 @@ describe('budgetFor — the opt-in knob', () => {
     const cap = budgetFor(run, 'implement').worker; // off → undefined
     expect.soft(cap).toBeUndefined();
     expect.soft(claudeArgs({ sessionId: 's', resume: false }, { model: 'claude-opus-4-8', maxBudgetUsd: cap })).not.toContain('--max-budget-usd');
-  });
-});
-
-describe('workflow identity', () => {
-  test('a created run materializes the full workflow by default — persisted, not defaulted at read time', ({ projectDir, run }) => {
-    expect.soft(run.workflow).toBe('full');
-    const onDisk = readFileSync(join(projectDir, '.duet', 'runs', run.runId, 'state.json'), 'utf8');
-    expect(JSON.parse(onDisk).workflow).toBe('full');
-  });
-
-  test('a state file with no workflow field (remodel-era or hand-written) materializes full at the load boundary', ({ projectDir, run }) => {
-    delete (run as { workflow?: string }).workflow;
-    saveRunState(run);
-    expect(loadRunState(projectDir, run.runId).workflow).toBe('full');
-  });
-
-  test('createRun persists an explicit workflow', ({ projectDir }) => {
-    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), workflow: 'full', framing: 'f' });
-    expect(created.workflow).toBe('full');
-    expect(loadRunState(projectDir, created.runId).workflow).toBe('full');
-  });
-
-  test('createRun freezes the resolved shipped workflow beside state.json', ({ projectDir }) => {
-    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('short'), workflow: 'short', framing: 'f' });
-    const frozen = JSON.parse(readFileSync(workflowPath(projectDir, created.runId), 'utf8'));
-    expect.soft(frozen.name).toBe('short');
-    expect.soft(frozen.displayName).toMatch(/Short/);
-    expect(workflowFor(loadRunState(projectDir, created.runId)).name).toBe('short');
-  });
-
-  test('loadRunState accepts an external workflow identity when workflow.json carries the spec', ({ projectDir }) => {
-    const workflow = compileWorkflow(
-      defineWorkflow({
-        name: 'custom-short',
-        title: 'Custom Short',
-        presets: { afk: [] },
-        phases: [frame({ name: 'research' }), build({ review: 'writable', audit: true }), finish()],
-      }),
-    );
-    const created = createRun({ cwd: projectDir, workflow: workflow.name, workflowSpec: workflow, bindings: defaultBindingsFor(workflow), framing: 'f' });
-    const loaded = loadRunState(projectDir, created.runId);
-    expect.soft(loaded.workflow).toBe('custom-short');
-    expect.soft(workflowFor(loaded).displayName).toBe('Custom Short');
-    expect(() => machineFor(workflowFor(loaded))).not.toThrow();
-  });
-
-  test('a project-composed workflow record loads from the corpus after its source dir is gone', ({ projectDir }) => {
-    const workflow = compileWorkflow(
-      defineWorkflow({
-        name: 'custom-short',
-        title: 'Custom Short',
-        presets: { afk: [] },
-        phases: [frame({ name: 'research' }), build({ review: 'writable', audit: true }), finish()],
-      }),
-    );
-    const corpusRoot = join(projectDir, 'corpus');
-    const created = createRun({
-      cwd: projectDir,
-      workflow: workflow.name,
-      workflowSpec: workflow,
-      bindings: defaultBindingsFor(workflow),
-      framing: 'f',
-      corpusRoot,
-    });
-    const record = created.corpusDir!;
-    expect.soft(existsSync(join(record, 'workflow.json'))).toBe(true);
-
-    // Simulate the worktree being cleaned up — the whole reason the corpus exists.
-    rmSync(runDirOf(projectDir, created.runId), { recursive: true, force: true });
-
-    // The record still loads, resolving its non-shipped workflow from the record
-    // dir it was handed — NOT the deleted state.cwd/.duet/runs path.
-    const loaded = loadRunStateFromDir(record);
-    expect.soft(loaded.workflow).toBe('custom-short');
-    expect.soft(workflowForRunDir(loaded, record).displayName).toBe('Custom Short');
-  });
-
-  test('workflow-file mismatch is rejected at the load boundary', ({ projectDir, run }) => {
-    const state = JSON.parse(readFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), 'utf8'));
-    state.workflow = 'custom-short';
-    writeFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), JSON.stringify(state, null, 2));
-    expect(() => loadRunState(projectDir, run.runId)).toThrow(/state names workflow "custom-short" but workflow\.json names "full"/);
   });
 });
 

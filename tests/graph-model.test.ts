@@ -24,6 +24,10 @@ describe('structuralSpine — the shared structural projection', () => {
     expect(spine.name).toBe('full');
     expect(spine.phases.map((p) => p.name)).toEqual(['frame', 'spec', 'plan', 'implement', 'finish']);
     expect(spine.phases.map((p) => p.block)).toEqual(['frame', 'doc-loop', 'doc-loop', 'build', 'finish']);
+    // The block's distinguishing knob rides the node — what the render
+    // summarizes as "doc-loop (spec)" / "build (critique)".
+    expect(phase(spine, 'spec').artifactKind).toBe('spec');
+    expect(phase(spine, 'implement').reviewPosture).toBe('critique');
     // Every phase carries a gate with a compact label (the "<LABEL>" token) and a machine state name.
     for (const p of spine.phases) {
       expect(p.gate.label.length).toBeGreaterThan(0);

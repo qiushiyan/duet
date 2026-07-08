@@ -21,62 +21,17 @@ function blueprint(workflow: keyof typeof WORKFLOWS, consultant = false) {
 }
 
 describe('renderGraph — the blueprint ANSI pipeline', () => {
-  test('draws the phases in order with block, gate label, and posture', () => {
+  // The structural facts (phase order, block/knob labels, default posture,
+  // binding rows, checkpoint kinds, continuity/degraded edges) are pinned on
+  // the MODEL in graph-model.test.ts; the render owns only that it draws the
+  // sections over that model.
+  test('renders the pipeline and bindings sections from the model', () => {
     const out = renderGraph(blueprint('full'));
-    expect(out).toContain('blueprint · full');
-    // Phases appear in order in the pipeline section (search after its header so
-    // the display-name line "Full (spec → plan …)" can't false-match).
-    const pipeline = out.slice(out.indexOf('\npipeline'));
-    const frameAt = pipeline.indexOf('frame ');
-    const specAt = pipeline.indexOf('spec ');
-    const implAt = pipeline.indexOf('implement ');
-    expect(frameAt).toBeGreaterThanOrEqual(0);
-    expect(specAt).toBeGreaterThan(frameAt);
-    expect(implAt).toBeGreaterThan(specAt);
-    expect(out).toContain('doc-loop (spec)');
-    expect(out).toContain('build (critique)');
-    // Default posture: frame/spec attended, later gates auto (pre-authorized).
-    expect(out).toContain('default attended gates · frame, spec');
-  });
-
-  test('labels bindings as defaults and names the config location (the honesty line)', () => {
-    const out = renderGraph(blueprint('full'));
-    expect(out).toContain('bindings — defaults, resolved against ~/.config/duet/config.toml (a run re-resolves and freezes at creation)');
-    // The config-resolved default rows.
-    expect(out).toMatch(/architect\s+claude:claude-opus-4-8/);
-    expect(out).toMatch(/analyst\s+codex/);
-  });
-
-  test('renders live consultant checkpoints by kind when a consultant is bound', () => {
-    const out = renderGraph(blueprint('full', true));
-    expect(out).toContain('consultant: generative'); // frame
-    expect(out).toContain('consultant: bet-audit'); // specGate
-    expect(out).toContain('consultant: backstop'); // contract / verify
-    // The internal name never renders.
-    expect(out).not.toContain('challenge');
-  });
-
-  test('omits checkpoint annotations entirely when no consultant is bound', () => {
-    const out = renderGraph(blueprint('full', false));
-    expect(out).not.toContain('consultant:');
-  });
-
-  test('shows declared continuity edges, and degraded edges when bindings cross providers', () => {
-    const fresh = renderGraph(blueprint('full'));
-    expect(fresh).toContain('continues builder←architect, critic←analyst');
-    expect(fresh).not.toContain('degraded edges:');
-
-    const crossed = defaultBindingsFor('full');
-    const model = blueprintModel(
-      WORKFLOWS.full,
-      shipped,
-      {
-        bindings: { ...crossed, duties: { ...crossed.duties, builder: { provider: 'codex' } } },
-        degradedEdges: [{ into: 'builder', from: 'architect', reason: 'claude → codex' }],
-      },
-    );
-    const out = renderGraph(model);
-    expect(out).toContain('degraded edges: builder←architect (claude → codex)');
+    expect(out.length).toBeGreaterThan(0);
+    expect(out).toContain('pipeline');
+    expect(out).toContain('spec'); // a phase row made it into the pipeline
+    expect(out).toContain('bindings');
+    expect(out).toContain('architect'); // a duty binding row
   });
 });
 

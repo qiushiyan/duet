@@ -167,14 +167,22 @@ describe('the run view is read-only and its JSON is additive', () => {
     expect(json.mode).toBe('run');
   });
 
-  test('the ANSI run render shows the arc, cursor glyphs, and the stop line', ({ run }) => {
+  test('the ANSI run render shows the arc — every phase named, the current marked distinctly from a done one — and the stop line', ({ run }) => {
     run.autoApprovals = [{ gate: 'directionGate', at: '2026-07-07T10:00:00.000Z' }];
     const status = buildStatusModel(run, { kind: 'gate', phase: 'spec' }, []);
     const out = renderGraph(runGraphModel(workflowFor(run), status, run, { kind: 'gate', phase: 'spec' }));
     expect(out).toContain(`run · ${run.runId}`);
-    expect(out).toContain('✓ frame'); // done
-    expect(out).toContain('▸ spec'); // current
-    expect(out).toContain('auto-crossed');
-    expect(out).toContain('stop ·');
+    // The exact status glyphs/spacing are a render choice (module-private), so
+    // pin structure instead: each phase gets an arc line with a leading status
+    // marker, and the done phase's marker differs from the current phase's.
+    const marker = (phase: string): string => {
+      const line = out.split('\n').find((l) => new RegExp(`^\\s*\\S+ ${phase}\\b`).test(l));
+      if (!line) throw new Error(`no arc line for phase ${phase}`);
+      return line.trimStart().split(' ')[0]!;
+    };
+    for (const p of workflowFor(run).phases) expect(marker(p.name)).toBeTruthy();
+    expect(marker('frame')).not.toBe(marker('spec')); // done vs current, visibly distinct
+    expect(out).toContain('auto-crossed'); // frame's ledgered outcome rides its line
+    expect(out).toMatch(/^stop\b/m); // the stop line closes the render
   });
 });

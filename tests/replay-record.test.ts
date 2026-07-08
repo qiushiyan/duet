@@ -1,9 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { parseProtocolTrace } from '../src/replay/record.ts';
-
-const stamp = (minute: number, ms = 0): string => `2026-07-07T10:${String(minute).padStart(2, '0')}:00.${String(ms).padStart(3, '0')}Z`;
-const entry = (minute: number, header: string, body?: string, ms = 0): string =>
-  body === undefined ? `[${stamp(minute, ms)}] ${header}\n` : `[${stamp(minute, ms)}] ${header}\n${body}\n\n`;
+import { entry } from './helpers/replay.ts';
 
 describe('parseProtocolTrace', () => {
   test('extracts phase briefs, worker prompts and responses, terminals, and ordering', () => {

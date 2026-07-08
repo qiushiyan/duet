@@ -31,14 +31,15 @@ describe('workflow-neutral status surfaces (RIR)', () => {
   test('describeStop completion claims the PR for both arcs now (rir opens one too)', ({ projectDir }) => {
     const rir = shortRun(projectDir);
     const full = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), workflow: 'full', framing: 'x' });
-    expect.soft(describeStop(rir, true)).toBe('run complete — the PR is open');
-    expect.soft(describeStop(full, true)).toBe('run complete — the PR is open');
+    // Both arcs claim the PR — the load-bearing token, not the full sentence.
+    expect.soft(describeStop(rir, true)).toContain('PR is open');
+    expect.soft(describeStop(full, true)).toContain('PR is open');
   });
 
   test('the model carries the workflow and scopes rounds to the RIR arc', ({ projectDir }) => {
     const model = buildStatusModel(shortRun(projectDir), { kind: 'gate', phase: 'implement' }, []);
     expect.soft(model.workflow).toBe('short');
-    expect.soft(model.workflowDisplayName).toBe('Short (research → implement → ship → PR)');
+    expect.soft(model.workflowDisplayName).toContain('Short'); // the shipped title's token, not its full arc spelling
     // Only RIR phases appear in rounds — no Full phases leak in.
     expect.soft(model.rounds.map((r) => r.phase)).toEqual(['implement']);
   });
@@ -54,12 +55,12 @@ describe('workflow-neutral status surfaces (RIR)', () => {
     expect.soft(text).toContain('run complete');
     expect.soft(text).toContain('the PR is open'); // rir opens a (real) PR now too
     expect.soft(text).not.toContain('spec:'); // RIR still has no spec phase
-    expect.soft(text).toContain('workflow: Short (research → implement → ship → PR)');
+    expect.soft(text).toContain('workflow: Short'); // the workflow line names the arc; the title spelling is data, not contract
   });
 
   test('the brief headline reports the open PR on completion', ({ projectDir }) => {
     const brief = buildBrief(buildStatusModel(shortRun(projectDir), { kind: 'done' }, []));
-    expect(brief.headline).toBe('run complete — the PR is open');
+    expect(brief.headline).toContain('PR is open'); // the claim, not the sentence
   });
 
   test('a frozen custom workflow renders from workflowDetail without a shipped name lookup', ({ projectDir }) => {
@@ -76,8 +77,8 @@ describe('workflow-neutral status surfaces (RIR)', () => {
 
     const model = buildStatusModel(run, { kind: 'done' }, []);
     expect.soft(model.workflow).toBe('instant-status');
-    expect.soft(model.workflowDisplayName).toBe('Instant Status (think → build → PR)');
-    expect.soft(model.workflowDetail.completionLine).toBe('run complete — the PR is open');
+    expect.soft(model.workflowDisplayName).toBe('Instant Status (think → build → PR)'); // round-trips the title this test defined
+    expect.soft(model.workflowDetail.completionLine).toContain('PR is open'); // the PR-opening arc's claim, not the sentence
     expect.soft(renderStatus(model)).toContain('workflow: Instant Status (think → build → PR)');
   });
 
@@ -92,7 +93,7 @@ describe('workflow-neutral status surfaces (RIR)', () => {
     // from absent (= attend every gate). A future change must not drop it.
     expect.soft(model.gatesAt).toEqual([]);
     const text = renderStatus(model);
-    expect.soft(text).toContain('gates:    attending none — all gates pre-authorized');
+    expect.soft(text).toContain('attending none'); // the load-bearing token — the label/suffix copy may rewrap
     // No empty `attending  — …` join leaks through.
     expect.soft(text).not.toContain('attending  —');
   });
@@ -286,21 +287,21 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     // Pre-authorized (impl not in gatesAt): the high is precisely why it stopped.
     run.gatesAt = ['spec'];
     const preAuth = renderStatus(buildStatusModel(run, { kind: 'gate', phase: 'implement' }, []));
-    expect.soft(preAuth).toContain('decisions for you:');
+    expect.soft(preAuth).toContain('decisions'); // the section's identifying keyword
     expect.soft(preAuth).toContain('● data retention window'); // the structured decision, in the PRIMARY view
-    expect.soft(preAuth).toContain('pre-authorized, but a high decision held it');
+    expect.soft(preAuth).toContain('held'); // the pre-authorized-but-held signal, not the sentence
 
     // Attended (impl in gatesAt): the high is the human's call at a live gate.
     run.gatesAt = ['implement'];
     const attended = renderStatus(buildStatusModel(run, { kind: 'gate', phase: 'implement' }, []));
-    expect.soft(attended).toContain('a high decision is yours to make');
-    expect.soft(attended).not.toContain('pre-authorized, but a high');
+    expect.soft(attended).toContain('yours to make'); // attended copy, discriminated from the pre-auth hold
+    expect.soft(attended).not.toContain('held');
 
     // A low-only packet renders the decision but no high-hold line.
     run.phaseSummaries.implement = { summary: 's', artifacts: [], humanDecisions: [{ title: 'minor', severity: 'low' }] };
     const low = renderStatus(buildStatusModel(run, { kind: 'gate', phase: 'implement' }, []));
     expect.soft(low).toContain('○ minor');
-    expect.soft(low).not.toContain('held it for you');
+    expect.soft(low).not.toContain('held');
     expect.soft(low).not.toContain('yours to make');
   });
 
@@ -321,8 +322,9 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     expect.soft(brief.humanDecisions).toEqual([{ title: 'keep the flag default-off?', severity: 'high' }]);
     expect.soft(brief.pendingSteers).toBe(1);
     expect.soft(brief.nextCommand).toContain('--approve');
-    // The lean human render flags the high decision as a hold signal.
-    expect.soft(renderBrief(brief)).toContain('hold — a high decision');
+    // The lean human render flags the high decision as a hold signal (tokens, not the sentence).
+    expect.soft(renderBrief(brief)).toContain('hold');
+    expect.soft(renderBrief(brief)).toContain('high');
   });
 
   test('the brief of a flag stop has no humanDecisions and a question headline', ({ run }) => {
@@ -375,8 +377,10 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
       { duty: 'analyst', tag: 'review-spec', status: 'ready', startedAt: 't2' },
     ]);
     const out = renderStatus(model);
-    expect.soft(out).toContain('architect (write-spec): running in the background');
-    expect.soft(out).toContain('analyst (review-spec): ready — collect with check_turns');
+    // Per-turn tokens: the duty+tag listing, and the ready turn naming its collector.
+    expect.soft(out).toContain('architect (write-spec)');
+    expect.soft(out).toContain('analyst (review-spec)');
+    expect.soft(out).toContain('check_turns');
 
     // The lean --brief path surfaces them too (review finding 2): narrowed to
     // role/tag/status (startedAt dropped), with a concise role/status render —
@@ -386,7 +390,10 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
       { duty: 'architect', tag: 'write-spec', status: 'running' },
       { duty: 'analyst', tag: 'review-spec', status: 'ready' },
     ]);
-    expect.soft(renderBrief(brief)).toContain('pending turns: architect running · analyst ready');
+    // The duty→status pairings are the facts; the separator/label join is decoration.
+    expect.soft(renderBrief(brief)).toContain('pending turns');
+    expect.soft(renderBrief(brief)).toContain('architect running');
+    expect.soft(renderBrief(brief)).toContain('analyst ready');
   });
 
   test('pendingTurns is absent when no turn is in flight, in both the full model and the brief (additive — omitted, not empty)', ({
@@ -471,9 +478,9 @@ describe('renderStatus', () => {
     run.pendingQuestion = { question: 'migrate now?', context: 'schema change in slice 3' };
     const out = render(run, { kind: 'flag', phase: 'implement' });
 
-    expect.soft(out).toContain('QUEUED QUESTION for you:');
+    expect.soft(out).toContain('QUEUED QUESTION'); // the section's identifying keyword
     expect.soft(out).toContain('migrate now?');
-    expect.soft(out).toContain('context: schema change in slice 3');
+    expect.soft(out).toContain('schema change in slice 3');
     expect.soft(out).toContain(`duet continue ${run.runId} --answer`);
     expect.soft(out).not.toContain('decide with:');
   });
@@ -496,11 +503,14 @@ describe('renderStatus', () => {
     run.phaseSummaries.frame = { summary: 'Direction: invert the scope\nmore detail', artifacts: [] };
     const out = render(run, { kind: 'gate', phase: 'implement' });
 
-    expect.soft(out).toContain('while you were away — gates auto-approved (pre-authorized):');
+    expect.soft(out).toContain('while you were away'); // the section header's keyword
+    expect.soft(out).toContain('auto-approved');
     // The stamp is localized to the human's zone (the stored field stays UTC) —
     // derive the expected local form so the assertion is timezone-robust.
-    expect.soft(out).toContain(`✓ directionGate  ${localStamp('2026-06-12T03:14:00.000Z')}  Direction: invert the scope`);
-    expect.soft(out).toContain('gates:    attending implement, finish — other gates pre-authorized');
+    expect.soft(out).toContain(localStamp('2026-06-12T03:14:00.000Z'));
+    expect.soft(out).toContain('directionGate');
+    expect.soft(out).toContain('Direction: invert the scope'); // the packet headline
+    expect.soft(out).toContain('attending implement, finish'); // the attended list; the suffix copy may rewrap
   });
 
   test('S6: the while-you-were-away section lists infra auto-retries with a per-class tally, and the brief projects them', ({ run }) => {
@@ -511,12 +521,18 @@ describe('renderStatus', () => {
       { phase: 'implement', errorClass: 'server', attempt: 1, at: '2026-06-12T03:15:00.000Z' },
     ];
     const out = render(run, { kind: 'gate', phase: 'implement' });
-    expect.soft(out).toContain('while you were away — infra auto-retries: 3 (network ×2, server ×1):');
-    expect.soft(out).toContain(`↻ implement network (attempt 1)  ${localStamp('2026-06-12T03:14:00.000Z')}`);
+    // The header's load-bearing tokens: the section keyword, the count, the per-class tally.
+    expect.soft(out).toContain('while you were away');
+    expect.soft(out).toContain('auto-retries: 3');
+    expect.soft(out).toContain('network ×2');
+    expect.soft(out).toContain('server ×1');
+    expect.soft(out).toContain('attempt 1');
+    expect.soft(out).toContain(localStamp('2026-06-12T03:14:00.000Z')); // localized, never raw UTC
 
     // The lean brief (what the concierge reads remotely) projects the per-class tally.
     const brief = renderBrief(buildBrief(buildStatusModel(run, { kind: 'gate', phase: 'implement' }, [])));
-    expect.soft(brief).toContain('auto-retried: network ×2, server ×1');
+    expect.soft(brief).toContain('network ×2');
+    expect.soft(brief).toContain('server ×1');
   });
 
   test('the while-you-were-away section lists context interventions with a per-kind tally, and the brief projects them', ({ run }) => {
@@ -526,11 +542,18 @@ describe('renderStatus', () => {
       { kind: 'salvage-compact', voice: 'builder', at: '2026-07-02T03:55:00.000Z', preTokens: 900_000, windowTokens: 1_000_000 },
     ];
     const out = render(run, { kind: 'gate', phase: 'implement' });
-    expect.soft(out).toContain('while you were away — context interventions: 2 (cutoff ×1, salvage-compact ×1):');
-    expect.soft(out).toContain(`◔ builder cutoff at 87%  ${localStamp('2026-07-02T03:50:00.000Z')}`);
+    // The header's load-bearing tokens: the section keyword, the count, the per-kind tally.
+    expect.soft(out).toContain('while you were away');
+    expect.soft(out).toContain('context interventions: 2');
+    expect.soft(out).toContain('cutoff ×1');
+    expect.soft(out).toContain('salvage-compact ×1');
+    expect.soft(out).toContain('builder'); // the intervened voice…
+    expect.soft(out).toContain('87%'); // …and its computed pre-fill percent (870k/1M)
+    expect.soft(out).toContain(localStamp('2026-07-02T03:50:00.000Z')); // localized, never raw UTC
 
     const brief = renderBrief(buildBrief(buildStatusModel(run, { kind: 'gate', phase: 'implement' }, [])));
-    expect.soft(brief).toContain('context: cutoff ×1, salvage-compact ×1');
+    expect.soft(brief).toContain('cutoff ×1');
+    expect.soft(brief).toContain('salvage-compact ×1');
   });
 
   test('a completed run shows the final summary and queued snippet proposals', ({ run }) => {
@@ -539,9 +562,11 @@ describe('renderStatus', () => {
     run.snippetProposals.push({ snippetKey: 'review-spec', proposedBody: 'b', rationale: 'missed X', at: 'now' });
     const out = render(run, { kind: 'done' });
 
-    expect.soft(out).toContain('run complete — the PR is open.');
+    expect.soft(out).toContain('run complete');
+    expect.soft(out).toContain('PR is open');
     expect.soft(out).toContain('PR: https://example.com/pr/7');
-    expect.soft(out).toContain('• review-spec — missed X');
+    expect.soft(out).toContain('review-spec'); // the proposal's key…
+    expect.soft(out).toContain('missed X'); // …and its rationale; the bullet join is decoration
     expect.soft(out).toContain('queued snippet proposals');
   });
 
@@ -550,7 +575,8 @@ describe('renderStatus', () => {
     run.rounds = { spec: 2, frame: 1 };
     const out = render(run, { kind: 'running', pid: 4242, phase: 'spec' });
 
-    expect.soft(out).toContain('phase:    running in the background (pid 4242)');
+    expect.soft(out).toContain('running'); // the live-driver signal…
+    expect.soft(out).toContain('4242'); // …and its pid
     expect.soft(out).toContain('frame 1/2');
     expect.soft(out).toContain('spec 2/3');
     expect.soft(out).toContain('plan 0/3');
@@ -563,9 +589,9 @@ describe('renderStatus', () => {
     expect.soft(render(run, { kind: 'running', pid: 1, phase: 'implement' })).not.toContain('cost unavailable');
 
     run.costs.claudeWorkersCostPartial = true;
-    expect
-      .soft(render(run, { kind: 'running', pid: 1, phase: 'implement' }))
-      .toContain('claude workers $0.00 known (+ interactive turns: cost unavailable)');
+    const partial = render(run, { kind: 'running', pid: 1, phase: 'implement' });
+    expect.soft(partial).toContain('claude workers $0.00'); // the known total…
+    expect.soft(partial).toContain('cost unavailable'); // …marked partial; the parenthetical is wording
   });
 
   test('the cost line marks the orchestrator total unavailable only when interactive-hosted', ({ run }) => {
@@ -573,9 +599,9 @@ describe('renderStatus', () => {
     expect.soft(render(run, { kind: 'interactive', phase: 'spec' })).not.toContain('subscription quota');
 
     run.costs.orchestratorCostPartial = true;
-    expect
-      .soft(render(run, { kind: 'interactive', phase: 'spec' }))
-      .toContain('orchestrator $0.00 known (interactive turns on the subscription quota: cost unavailable)');
+    const partial = render(run, { kind: 'interactive', phase: 'spec' });
+    expect.soft(partial).toContain('orchestrator $0.00'); // the known total…
+    expect.soft(partial).toContain('subscription quota'); // …attributed to the flat-quota host; the sentence is wording
   });
 
   test('context fill renders as plain percentages per voice', ({ run }) => {
@@ -585,7 +611,11 @@ describe('renderStatus', () => {
       builder: { usedTokens: 134_000, windowTokens: 200_000, at: 't2' },
     };
     const out = render(run, { kind: 'running', pid: 1, phase: 'implement' });
-    expect.soft(out).toContain('context:  orchestrator 42% (83k/200k) · builder 67% (134k/200k)');
+    // One token per fact: each voice→percent pairing and its k-counts; label spacing and the separator are decoration.
+    expect.soft(out).toContain('orchestrator 42%');
+    expect.soft(out).toContain('83k/200k');
+    expect.soft(out).toContain('builder 67%');
+    expect.soft(out).toContain('134k/200k');
 
     delete run.contextUsage;
     expect.soft(render(run, { kind: 'running', pid: 1, phase: 'implement' })).not.toContain('context:');
@@ -599,8 +629,9 @@ describe('renderStatus', () => {
       ]),
     );
 
-    expect.soft(out).toContain('staged steers awaiting delivery:');
-    expect.soft(out).toContain(`• ${localStamp('2026-06-12T10:30:00.000Z')}  drop the retry tests`);
+    expect.soft(out).toContain('staged steers'); // the section's identifying keyword
+    expect.soft(out).toContain(localStamp('2026-06-12T10:30:00.000Z')); // the localized stamp…
+    expect.soft(out).toContain('drop the retry tests'); // …and the steer text; the bullet join is decoration
     // The boundary: human text localizes, but the underlying field (and so
     // `status --json`) keeps raw UTC ISO — a machine consumer never sees local.
     expect.soft(out).not.toContain('2026-06-12T10:30:00.000Z');
@@ -611,16 +642,47 @@ describe('renderStatus', () => {
     run.machineState = 'planApprovalGate';
     const out = render(run, { kind: 'crashed', phase: 'implement' });
 
-    expect.soft(out).toContain('the implement phase stopped mid-flight');
-    expect.soft(out).toContain(`resume with:  duet continue ${run.runId}`);
+    expect.soft(out).toContain('implement phase'); // the crash notice names the phase…
+    expect.soft(out).toContain('mid-flight'); // …and its kind; the sentence is wording
+    expect.soft(out).toContain(`duet continue ${run.runId}`); // the resume command is contract
   });
 
   test('an interactive stop names the phase the interactive orchestrator session is driving', ({ run }) => {
     run.machineState = 'specLoop';
     const out = render(run, { kind: 'interactive', phase: 'spec' });
 
-    expect.soft(out).toContain('the interactive orchestrator is driving the spec phase');
+    expect.soft(out).toContain('interactive orchestrator'); // the driver's identity…
+    expect.soft(out).toContain('spec phase'); // …and the phase it is driving; the sentence is wording
     expect.soft(out).toContain('interactive orchestrator session');
+  });
+});
+
+describe('status at an abandoned / done stop', () => {
+  test('the abandoned stop model carries the revive and purge commands', ({ run }) => {
+    run.abandoned = { at: '2026-06-17T09:00:00.000Z' };
+    const model = buildStatusModel(run, { kind: 'abandoned' }, []);
+    expect.soft(model.stop).toMatchObject({
+      kind: 'abandoned',
+      at: '2026-06-17T09:00:00.000Z',
+      revive: `duet continue ${run.runId}`,
+      purge: `duet abandon ${run.runId} --purge`,
+    });
+    const text = renderStatus(model);
+    expect.soft(text).toContain('abandoned');
+    expect.soft(text).toContain(`duet continue ${run.runId}`);
+    expect.soft(text).toContain(`duet abandon ${run.runId} --purge`);
+  });
+
+  test('steering an abandoned run is refused toward revive/new', ({ run }) => {
+    const copy = steerRefusal('full', { kind: 'abandoned' }, run.runId);
+    expect.soft(copy).toContain('abandoned');
+    expect.soft(copy).toContain(`duet continue ${run.runId}`);
+  });
+
+  test('a done run points at GitHub merge and the purge cleanup', ({ run }) => {
+    const text = render(run, { kind: 'done' });
+    expect.soft(text).toContain('merge'); // the next manual action's keyword; the phrasing is wording
+    expect.soft(text).toContain(`duet abandon ${run.runId} --purge`); // the cleanup command is contract
   });
 });
 

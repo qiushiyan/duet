@@ -171,6 +171,7 @@ Read each one and adapt it to this change — they're the bar for a good plan, n
 - `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
 - `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, red-green-refactor, the anti-patterns
 - `{{lessons_dir}}/testing/mocking-and-fixtures.md` — mock only at boundaries; `test.extend` fixtures
+- `{{lessons_dir}}/testing/test-quality.md` — what earns a place in the suite; assert tokens and relations, not prose
 - `{{lessons_dir}}/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
 
 When the plan restructures an existing cluster or the interface is uncertain, also read `{{lessons_dir}}/codebase-design/deepening.md` and `{{lessons_dir}}/codebase-design/design-it-twice.md`.
@@ -215,6 +216,7 @@ I've drafted an implementation plan. Review with the same rigor as the spec.
 Background (skim as a lens, don't recite):
 - `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test
 - `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, when to mock
+- `{{lessons_dir}}/testing/test-quality.md` — the test-quality bar: the shapes to reject before they're written
 
 **Adapt; drop what doesn't fit our use case.**
 
@@ -284,6 +286,7 @@ Read each one and adapt it to this change — they're the bar for a good design,
 - `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
 - `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, the anti-patterns
 - `{{lessons_dir}}/testing/mocking-and-fixtures.md` — mock only at boundaries; `test.extend` fixtures
+- `{{lessons_dir}}/testing/test-quality.md` — what earns a place in the suite; assert tokens and relations, not prose
 - `{{lessons_dir}}/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
 
 When the design restructures an existing cluster or the interface is uncertain, also read `{{lessons_dir}}/codebase-design/deepening.md` and `{{lessons_dir}}/codebase-design/design-it-twice.md`.
@@ -318,6 +321,7 @@ I've drafted a design doc — the one design document for this change (it replac
 Background (skim as a lens, don't recite):
 - `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test
 - `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, when to mock
+- `{{lessons_dir}}/testing/test-quality.md` — the test-quality bar: the shapes to reject before they're written
 
 The doc runs top-down — product sections (goals, behaviors, non-goals) above technical sections (module boundaries, seams, architecture sketch, test standards) — and each tier reviews at its own altitude:
 
@@ -410,6 +414,7 @@ Read each one and adapt it to this change — they're the bar, not optional back
 - `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
 - `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, red-green-refactor, the anti-patterns
 - `{{lessons_dir}}/testing/mocking-and-fixtures.md` — mock only at boundaries; `test.extend` fixtures
+- `{{lessons_dir}}/testing/test-quality.md` — what earns a place in the suite; assert tokens and relations, not prose
 - `{{lessons_dir}}/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
 
 ## Before you write code
@@ -436,7 +441,7 @@ Where the design already settled a layer or dependency choice, follow it. Where 
 A dependency weighty enough to be an architecture decision in its own right is mine to weigh — flag it rather than committing the repo to it.
 
 ### Tests
-The design's test standards name the behaviors that must be tested and the strategy for each — the specific cases are yours. Write each test against **real** behavior as you build its slice, not a batch up front against imagined shapes — behavior through the public interface, covering the critical paths and complex logic, not every edge case (skip UI tests unless asked). Apply red-green-refactor inside a slice when design is uncertain or behavior is subtle; test and code together is fine otherwise. Run them as you go and keep them green.
+The design's test standards name the behaviors that must be tested and the strategy for each — the specific cases are yours. Write each test against **real** behavior as you build its slice, not a batch up front against imagined shapes — behavior through the public interface, covering the critical paths and complex logic, not every edge case (skip UI tests unless asked). Before adding one, find where that behavior is already covered and assert only what's new: a second test proving what another already proves fails twice for one bug, and drifts when only one is updated. Skip the test that can't fail for a real reason — one pinning wording no caller depends on, or restating a constant — because coverage is feedback, never the goal. Apply red-green-refactor inside a slice when design is uncertain or behavior is subtle; test and code together is fine otherwise. Run them as you go and keep them green.
 
 If the design turns out wrong or underspecified once you're in the code, **stop and flag it** rather than guessing your way past it.
 </snippet>
@@ -447,6 +452,7 @@ Build the change directly from the research decisions we settled — those decis
 Read each one and adapt it to this change — they're the bar, not optional background; don't go hunting them mid-build, and ask me for a path if one's missing.
 - `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
 - `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, mock only at boundaries, anti-patterns
+- `{{lessons_dir}}/testing/test-quality.md` — what earns a place in the suite; tokens and relations, not prose pins
 
 ## Before you write code
 - **Re-read the research decisions and the cross-review notes** — they settled the direction and the target shape; execute it, don't re-decide it.
@@ -472,7 +478,7 @@ Choosing what to build *on* is part of the work. When a slice needs non-trivial,
 A dependency weighty enough to be an architecture decision in its own right is mine to weigh — flag it rather than committing the repo to it.
 
 ### Tests
-Write each test against **real** behavior as you build its slice, not a batch up front against imagined shapes — behavior through the public interface, covering the critical paths and complex logic, not every edge case (skip UI tests unless asked). Apply red-green-refactor inside a slice when design is uncertain or behavior is subtle; test and code together is fine otherwise. Run them as you go and keep them green.
+Write each test against **real** behavior as you build its slice, not a batch up front against imagined shapes — behavior through the public interface, covering the critical paths and complex logic, not every edge case (skip UI tests unless asked). Before adding one, find where that behavior is already covered and assert only what's new: a second test proving what another already proves fails twice for one bug, and drifts when only one is updated. Skip the test that can't fail for a real reason — one pinning wording no caller depends on, or restating a constant — because coverage is feedback, never the goal. Apply red-green-refactor inside a slice when design is uncertain or behavior is subtle; test and code together is fine otherwise. Run them as you go and keep them green.
 
 If a decision turns out wrong or underspecified once you're in the code, **stop and flag it** rather than guessing your way past it.
 </snippet>
@@ -572,7 +578,7 @@ Code-review my implementation. **Read the actual code, not just commit messages.
 
 - **Correctness** — bugs, edge cases, failure modes.
 - **Solves the problem** — does the implementation actually solve the spec's problem, not just pass its own tests?
-- **Test quality** — right altitude (behavior, not internals), covers planned cases + obvious additions, survives plausible refactors, uses project patterns.
+- **Test quality** — right altitude (behavior, not internals), covers planned cases + obvious additions, survives plausible refactors, uses project patterns. Flag the tests that add churn without signal: tests of *shape* (signatures, data structures) that pass when behavior breaks, tests pinning wording or constants no caller depends on, and a second test re-proving what an existing one already owns. A test worth deleting is a finding, not a nit — coverage is feedback, never the goal.
 - **UX & performance** — user-facing impact, performance characteristics.
 - **Structural quality — be ambitious, not just local:**
     - **Code-judo:** is there a reframing that makes whole branches, helpers, modes, conditionals, or layers disappear entirely — not just rearranges them? Don't stop at "this could be a bit cleaner."
@@ -584,7 +590,7 @@ Code-review my implementation. **Read the actual code, not just commit messages.
 **Per issue:**
 - Severity: **critical** (blocks merge) / **moderate** (fix before merge) / **minor** (nice-to-have).
 - Concrete fix with file/function references and enough detail to act on.
-- No "this could be cleaner" without a concrete alternative.
+- No "this could be cleaner" without a concrete alternative, and no "add a test here" without the bug it would catch — asking for coverage is the cheapest finding to make and the one you pay for later, so check nothing already covers it.
 
 **Approval bar:** don't pass because it works. Structural regressions and missed code-judo opportunities are presumptive blockers — flag as **critical**, not minor.
 
@@ -652,12 +658,12 @@ There's no spec or plan here — the bar is the **research decisions we settled 
 **Evaluate:**
 - **Correctness** — bugs, edge cases, failure modes.
 - **Solves the problem** — does this achieve the goal behind the decisions, not just run?
-- **Test quality** — right altitude (behavior, not internals), covers the real cases, survives plausible refactors, uses project patterns. Flag the anti-patterns: tests of *shape* (signatures, data structures) that pass when behavior breaks, and over-testing — every edge case or internals instead of the critical paths.
+- **Test quality** — right altitude (behavior, not internals), covers the real cases, survives plausible refactors, uses project patterns. Flag the anti-patterns: tests of *shape* (signatures, data structures) that pass when behavior breaks, tests pinning wording or constants no caller depends on, a second test re-proving what an existing one already owns, and over-testing — every edge case or internals instead of the critical paths. Proposing a test's deletion is a legitimate fix; coverage is feedback, never the goal.
 - **UX & performance** — user-facing impact, performance characteristics.
 - **Structural quality — be ambitious, not just local:** look for a reframing that deletes whole branches/helpers/modes, not just rearranges them; apply the **deletion test** to new modules (does it concentrate complexity, or just move it?) and flag **shallow** ones — a thin pass-through wrapper, an interface nearly as complex as its implementation; push ad-hoc conditionals and special cases behind their own abstraction; flag casts/`any`/`unknown` papering over unclear invariants; keep logic in its canonical module rather than leaking across boundaries. If the build did preparatory refactoring, check it stayed **behavior-preserving and proportionate** — not a rewrite smuggled in alongside the change.
 - **Right-sizing — flag over-building, the likelier failure than under-building:** defensive branches for states that can't occur, fallbacks the invariants already rule out, speculative features or config beyond the decisions, or an abstraction pulled out too early. Prefer pushing a bad state to where it's *unrepresentable* (a type, constructor, or enum) or validation to a single boundary over more error handling — and don't reflexively ask for more handling; that reflex is the slop we're avoiding.
 
-**Per issue:** severity — **critical** (blocks ship) / **moderate** (fix before ship) / **minor** (nice-to-have); a concrete fix with file/function references; no "this could be cleaner" without a concrete alternative.
+**Per issue:** severity — **critical** (blocks ship) / **moderate** (fix before ship) / **minor** (nice-to-have); a concrete fix with file/function references; no "this could be cleaner" without a concrete alternative, and no "add a test here" without the bug it would catch — asking for coverage is the cheapest finding to make and the one you pay for later, so check nothing already covers it.
 
 **Approval bar:** don't pass because it works — structural regressions and missed reframings are presumptive blockers, flag them **critical**.
 
@@ -695,12 +701,12 @@ Code-review this implementation — and resolve what you find. You review with w
 **Lens — everything is fair game:**
 - **Correctness** — bugs, edge cases, failure modes.
 - **Solves the problem** — does this achieve the goal behind the design, not just run?
-- **Test quality** — right altitude (behavior, not internals), covers the real cases, survives plausible refactors, uses project patterns. Flag tests of *shape* that pass when behavior breaks, and over-testing of edge cases instead of the critical paths.
+- **Test quality** — right altitude (behavior, not internals), covers the real cases, survives plausible refactors, uses project patterns. Flag tests of *shape* that pass when behavior breaks, tests pinning wording or constants no caller depends on, a second test re-proving what an existing one already owns, and over-testing of edge cases instead of the critical paths. Deleting a low-quality test is a legitimate fix — make it, rather than keeping it for the coverage.
 - **Structural quality — be ambitious, not just local:** a reframing that deletes whole branches/helpers/modes beats rearranging them; apply the **deletion test** to new modules; flag **shallow** ones (a thin pass-through wrapper, an interface nearly as complex as its implementation); keep logic in its canonical module.
 - **Right-sizing — over-building is the likelier failure:** defensive branches for states that can't occur, fallbacks the invariants rule out, speculative config beyond the design, abstractions pulled out before the pattern is real.
 
 **Then resolve each finding yourself — this round is review-and-fix, not review-and-file:**
-1. **Assess validity honestly** — a finding you can't defend from the code or the doc isn't a finding.
+1. **Assess validity honestly** — a finding you can't defend from the code or the doc isn't a finding. A test you'd add is held to the same bar: name the bug it catches and check nothing already covers it, since writing one is the cheapest move here and the one the suite pays for later.
 2. **An ordinary valid issue: fix it directly**, and move the tests with the fix — add one for the corrected behavior, strengthen a weak one, delete what the fix makes obsolete. Keep the suite green; commit as you go.
 3. **Where the code is right and your instinct was wrong: leave it**, and say why in your report.
 
