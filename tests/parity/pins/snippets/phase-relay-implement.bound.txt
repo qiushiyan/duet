@@ -124,7 +124,7 @@ Code-review this implementation — and resolve what you find. You review with w
 - **Right-sizing — over-building is the likelier failure:** defensive branches for states that can't occur, fallbacks the invariants rule out, speculative config beyond the design, abstractions pulled out before the pattern is real.
 
 **Then resolve each finding yourself — this round is review-and-fix, not review-and-file:**
-1. **Assess validity honestly** — a finding you can't defend from the code or the doc isn't a finding.
+1. **Assess validity honestly** — a finding you can't defend from the code or the doc isn't a finding. A test you'd add is held to the same bar: name the bug it catches and check nothing already covers it, since writing one is the cheapest move here and the one the suite pays for later.
 2. **An ordinary valid issue: fix it directly**, and move the tests with the fix — add one for the corrected behavior, strengthen a weak one, delete what the fix makes obsolete. Keep the suite green; commit as you go.
 3. **Where the code is right and your instinct was wrong: leave it**, and say why in your report.
 

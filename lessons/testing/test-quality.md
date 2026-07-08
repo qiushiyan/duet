@@ -5,7 +5,7 @@ What earns a place in the suite, and what to do about what doesn't. [tdd-loop.md
 ## The bar
 
 - **Coverage is feedback, not the goal.** A test that cannot fail for a real reason is worse than no test: it costs maintenance, and it makes a green suite lie.
-- **Deleting a test is a legitimate outcome of a code review.** So is refusing to add one.
+- **Deleting a test is a legitimate outcome of a code review.** So is refusing to add one — review's own **additive bias** is what makes that hard.
 - **One owner per behaviour.** Before adding a test, find where that behaviour already lives. A second test may assert its own *delta* — never re-prove the original.
 - **Assert what a caller depends on.** Bytes of human-facing prose are rarely that; the structure carrying them is.
 - **If you can't make a test fail, it isn't testing anything.** Prove it by breaking the code it guards.
@@ -113,7 +113,19 @@ Then a new case is a row, and a changed rule touches one table instead of eight 
 
 Expect roughly a fifth of any redundancy list to dissolve under this check. That is the check working, not failing.
 
-## Reviewing tests in a PR
+## Reviewing tests: the additive bias
+
+The five shapes describe what a low-quality test looks like. **Additive bias** explains how one got in — and why review, the thing meant to catch it, is so often what asked for it.
+
+Requesting a test is the cheapest finding a reviewer can make. It is always defensible, it never reads as lazy, and it costs the reviewer nothing: the maintenance lands on whoever meets the suite next. Refusing a test, or asking for one to be removed, takes an argument. The incentives point one way, and a suite reviewed for long enough drifts the way the incentives point — toward *more* tests, not better ones. A missing test is visible today; a superfluous one bills the future.
+
+Hold a test you request to the bar any other finding must clear:
+
+- **Name the bug it would catch.** "Coverage of the error branch" is not a bug. If you can't state the failure the test would have caught, you're asking for reassurance.
+- **Find the twin first.** If an existing test already catches that bug, the finding is that the test is misfiled or unclear — not that one is missing.
+- **Let deletion be a finding.** A reviewer who can only add is half a reviewer. *"This test cannot fail; remove it"* is as legitimate as *"this branch is unhandled."*
+
+Then the per-test questions:
 
 - Would this test survive renaming an internal function? (No ⇒ shadow.)
 - Would it survive rewording a message no caller parses? (No ⇒ change detector.)
@@ -121,6 +133,7 @@ Expect roughly a fifth of any redundancy list to dissolve under this check. That
 - Can I state the bug it catches in one sentence?
 - Are near-identical tests a table wanting to happen?
 - Does a new test for *added* code assert anything the code doesn't literally say?
+- Am I asking for this test because it catches a bug, or because asking is cheap?
 
 ## Checklist per test
 
@@ -135,4 +148,4 @@ Expect roughly a fifth of any redundancy list to dissolve under this check. That
 
 ---
 
-> _Lesson · testing. Distilled from a whole-suite audit and consolidation pass (1400+ tests): every low-quality test that had to be removed, classified by why someone wrote it. The recurring cause was never laziness — it was writing a test without asking who already owns the behaviour._
+> _Lesson · testing. Distilled from a whole-suite audit and consolidation pass (1400+ tests): every low-quality test that had to be removed, classified by why someone wrote it. The recurring cause was never laziness — it was writing a test without asking who already owns the behaviour, or a reviewer asking for one because asking was cheap._

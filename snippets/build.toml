@@ -229,7 +229,7 @@ Code-review my implementation. **Read the actual code, not just commit messages.
 **Per issue:**
 - Severity: **critical** (blocks merge) / **moderate** (fix before merge) / **minor** (nice-to-have).
 - Concrete fix with file/function references and enough detail to act on.
-- No "this could be cleaner" without a concrete alternative.
+- No "this could be cleaner" without a concrete alternative, and no "add a test here" without the bug it would catch — asking for coverage is the cheapest finding to make and the one you pay for later, so check nothing already covers it.
 
 **Approval bar:** don't pass because it works. Structural regressions and missed code-judo opportunities are presumptive blockers — flag as **critical**, not minor.
 
@@ -312,7 +312,7 @@ There's no spec or plan here — the bar is the **research decisions we settled 
 - **Structural quality — be ambitious, not just local:** look for a reframing that deletes whole branches/helpers/modes, not just rearranges them; apply the **deletion test** to new modules (does it concentrate complexity, or just move it?) and flag **shallow** ones — a thin pass-through wrapper, an interface nearly as complex as its implementation; push ad-hoc conditionals and special cases behind their own abstraction; flag casts/`any`/`unknown` papering over unclear invariants; keep logic in its canonical module rather than leaking across boundaries. If the build did preparatory refactoring, check it stayed **behavior-preserving and proportionate** — not a rewrite smuggled in alongside the change.
 - **Right-sizing — flag over-building, the likelier failure than under-building:** defensive branches for states that can't occur, fallbacks the invariants already rule out, speculative features or config beyond the decisions, or an abstraction pulled out too early. Prefer pushing a bad state to where it's *unrepresentable* (a type, constructor, or enum) or validation to a single boundary over more error handling — and don't reflexively ask for more handling; that reflex is the slop we're avoiding.
 
-**Per issue:** severity — **critical** (blocks ship) / **moderate** (fix before ship) / **minor** (nice-to-have); a concrete fix with file/function references; no "this could be cleaner" without a concrete alternative.
+**Per issue:** severity — **critical** (blocks ship) / **moderate** (fix before ship) / **minor** (nice-to-have); a concrete fix with file/function references; no "this could be cleaner" without a concrete alternative, and no "add a test here" without the bug it would catch — asking for coverage is the cheapest finding to make and the one you pay for later, so check nothing already covers it.
 
 **Approval bar:** don't pass because it works — structural regressions and missed reframings are presumptive blockers, flag them **critical**.
 
@@ -359,7 +359,7 @@ Code-review this implementation — and resolve what you find. You review with w
 - **Right-sizing — over-building is the likelier failure:** defensive branches for states that can't occur, fallbacks the invariants rule out, speculative config beyond the design, abstractions pulled out before the pattern is real.
 
 **Then resolve each finding yourself — this round is review-and-fix, not review-and-file:**
-1. **Assess validity honestly** — a finding you can't defend from the code or the doc isn't a finding.
+1. **Assess validity honestly** — a finding you can't defend from the code or the doc isn't a finding. A test you'd add is held to the same bar: name the bug it catches and check nothing already covers it, since writing one is the cheapest move here and the one the suite pays for later.
 2. **An ordinary valid issue: fix it directly**, and move the tests with the fix — add one for the corrected behavior, strengthen a weak one, delete what the fix makes obsolete. Keep the suite green; commit as you go.
 3. **Where the code is right and your instinct was wrong: leave it**, and say why in your report.
 
