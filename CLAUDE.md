@@ -65,5 +65,5 @@ Cross-cutting rules; full reasoning in `docs/engineering.md` and `docs/open-ques
 ## Conventions
 
 - **Evidence-backed claims.** Workflow claims cite `examples/*.jsonl` turns or run logs; tag **(observed)** vs **(general)**.
-- **Tests are behavior-through-interface.** Fake only at the seams (`docs/engineering.md` §Seams); never mock our own modules.
+- **Tests are behavior-through-interface.** Fake only at the seams (`docs/engineering.md` §Seams); never mock our own modules. The bar is `lessons/testing/test-quality.md` (the five low-quality shapes; tokens and relations, never prose pins; mutation-check a wiring guard; a redundancy list is a hypothesis) — and **one owner per behavior**: before adding a test, find the behavior's owner in `docs/engineering.md` §"One owner per behavior" and assert only your delta there. Coverage is feedback, never the goal; removing a low-quality test is a legitimate outcome.
 - **Personal tool / augmentation** — the product goals above are conventions too.

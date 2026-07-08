@@ -20,7 +20,7 @@ Test-driven development with a red-green-refactor loop, built one vertical slice
 
 **Bad tests** are coupled to implementation. They mock internal collaborators, test private methods, or verify through external means (like querying a database directly instead of using the interface). The warning sign: your test breaks when you refactor, but behavior hasn't changed. If you rename an internal function and tests fail, those tests were testing implementation, not behavior.
 
-Concrete good/bad examples are in [vitest.md](vitest.md); what may and may not be mocked is in [mocking-and-fixtures.md](mocking-and-fixtures.md).
+Concrete good/bad examples are in [vitest.md](vitest.md); what may and may not be mocked is in [mocking-and-fixtures.md](mocking-and-fixtures.md). The named shapes bad tests take — change detector, tautology, shadow, echo, scaffolding test — plus how to delete them safely, are in [test-quality.md](test-quality.md).
 
 ## Anti-pattern: horizontal slices
 

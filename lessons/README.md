@@ -16,7 +16,9 @@ author's machine. They ship in the npm package (`package.json` `files` includes
   structural patterns: `deep-modules.md` (always), `deepening.md` (when
   restructuring), `design-it-twice.md` (when the interface is uncertain).
 - [`testing/`](testing/) — test discipline and tooling: `tdd-loop.md` (always),
-  `mocking-and-fixtures.md` (always), `vitest.md` (TS-Vitest projects only).
+  `mocking-and-fixtures.md` (always), `test-quality.md` (always — what earns a
+  place in the suite, and the shapes that don't), `vitest.md` (TS-Vitest
+  projects only).
 
 The snippets carry the reading **arc** (which files, in what order, with the
 conditional gates); these docs carry the **depth** behind each imperative. Each

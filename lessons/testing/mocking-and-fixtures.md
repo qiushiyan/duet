@@ -12,6 +12,7 @@ Where to mock, how to mock each kind of boundary, and how to inject dependencies
 - **Prefer SDK-style interfaces over generic fetchers** — each operation independently mockable, no conditional logic in the mock.
 - **To observe a boundary without faking it**, prefer `vi.spyOn` / spy mode over a full fake.
 - **Use `test.extend` fixtures as the DI mechanism**, not `beforeEach`/`afterEach` chains of shared mutable state.
+- **Fixture shapes come from the real writer, never the reader's assumption** — mirror what production actually writes; a hand-guessed shape pins your misreading into the suite.
 
 ## When to mock
 
@@ -247,6 +248,20 @@ This pattern keeps:
 - **Dependencies explicit** — `orderService` declares it needs `paymentClient`, Vitest wires it up
 
 Fixtures are lazy: if a test doesn't destructure `paymentClient`, it's never created. This keeps tests fast when they only need a subset of fixtures.
+
+## Fixture shapes come from the real writer
+
+A fixture is a claim about what production data looks like. Derive it from the **code that actually writes the data** (or capture a real sample), never from your reading of the code that consumes it — otherwise the suite encodes the same wrong assumption as the code under test, and both pass together.
+
+The failure mode this guards: a reader compares ledger entries against phase names, so the fixtures are written with phase names too — but the *writer* records machine-state names. Every test passes; every real record misclassifies. A green suite whose fixtures were guessed from the reader proves only that the code agrees with itself.
+
+Practical forms, strongest first:
+
+- **Round-trip through the real writer**: have the test call the production write path and assert on what the read path makes of it — the shape can never drift.
+- **Capture a real sample** (a recorded log line, an actual state file) and pin it as the fixture, with a comment naming its source.
+- If you must hand-write the shape, **cite the writer** (file and line of the code that produces it) in a comment, so the next editor checks the writer, not the reader.
+
+When a bug survives a green suite, check the fixtures first: if they were derived from the same assumption as the code, the tests were pinning the bug.
 
 ## Composing fixtures like deep modules
 

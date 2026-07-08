@@ -8,6 +8,7 @@ Build the change directly from the research decisions we settled — those decis
 Read each one and adapt it to this change — they're the bar, not optional background; don't go hunting them mid-build, and ask me for a path if one's missing.
 - `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
 - `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, mock only at boundaries, anti-patterns
+- `{{lessons_dir}}/testing/test-quality.md` — what earns a place in the suite; tokens and relations, not prose pins
 
 ## Before you write code
 - **Re-read the research decisions and the cross-review notes** — they settled the direction and the target shape; execute it, don't re-decide it.

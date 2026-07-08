@@ -171,6 +171,7 @@ Read each one and adapt it to this change — they're the bar for a good plan, n
 - `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
 - `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, red-green-refactor, the anti-patterns
 - `{{lessons_dir}}/testing/mocking-and-fixtures.md` — mock only at boundaries; `test.extend` fixtures
+- `{{lessons_dir}}/testing/test-quality.md` — what earns a place in the suite; assert tokens and relations, not prose
 - `{{lessons_dir}}/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
 
 When the plan restructures an existing cluster or the interface is uncertain, also read `{{lessons_dir}}/codebase-design/deepening.md` and `{{lessons_dir}}/codebase-design/design-it-twice.md`.
@@ -215,6 +216,7 @@ I've drafted an implementation plan. Review with the same rigor as the spec.
 Background (skim as a lens, don't recite):
 - `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test
 - `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, when to mock
+- `{{lessons_dir}}/testing/test-quality.md` — the test-quality bar: the shapes to reject before they're written
 
 **Adapt; drop what doesn't fit our use case.**
 
@@ -284,6 +286,7 @@ Read each one and adapt it to this change — they're the bar for a good design,
 - `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
 - `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, the anti-patterns
 - `{{lessons_dir}}/testing/mocking-and-fixtures.md` — mock only at boundaries; `test.extend` fixtures
+- `{{lessons_dir}}/testing/test-quality.md` — what earns a place in the suite; assert tokens and relations, not prose
 - `{{lessons_dir}}/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
 
 When the design restructures an existing cluster or the interface is uncertain, also read `{{lessons_dir}}/codebase-design/deepening.md` and `{{lessons_dir}}/codebase-design/design-it-twice.md`.
@@ -318,6 +321,7 @@ I've drafted a design doc — the one design document for this change (it replac
 Background (skim as a lens, don't recite):
 - `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test
 - `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, when to mock
+- `{{lessons_dir}}/testing/test-quality.md` — the test-quality bar: the shapes to reject before they're written
 
 The doc runs top-down — product sections (goals, behaviors, non-goals) above technical sections (module boundaries, seams, architecture sketch, test standards) — and each tier reviews at its own altitude:
 
@@ -410,6 +414,7 @@ Read each one and adapt it to this change — they're the bar, not optional back
 - `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
 - `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, red-green-refactor, the anti-patterns
 - `{{lessons_dir}}/testing/mocking-and-fixtures.md` — mock only at boundaries; `test.extend` fixtures
+- `{{lessons_dir}}/testing/test-quality.md` — what earns a place in the suite; assert tokens and relations, not prose
 - `{{lessons_dir}}/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
 
 ## Before you write code
@@ -447,6 +452,7 @@ Build the change directly from the research decisions we settled — those decis
 Read each one and adapt it to this change — they're the bar, not optional background; don't go hunting them mid-build, and ask me for a path if one's missing.
 - `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
 - `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, mock only at boundaries, anti-patterns
+- `{{lessons_dir}}/testing/test-quality.md` — what earns a place in the suite; tokens and relations, not prose pins
 
 ## Before you write code
 - **Re-read the research decisions and the cross-review notes** — they settled the direction and the target shape; execute it, don't re-decide it.
