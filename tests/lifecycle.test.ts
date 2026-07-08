@@ -1230,7 +1230,7 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
     // derives the path at crossing time and verifies the file there.
     const { state, contractPath } = await contractRun(projectDir, { workflow: 'blueprint', draftPath: null });
 
-    await freezeContractAt(state, 'design');
+    await freezeContractAt(state, 'spec');
 
     const head = await headOf(projectDir);
     expect.soft(state.acceptanceContract).toEqual({ path: contractPath, commit: head });

@@ -2,8 +2,6 @@
 
 Vitest-specific APIs, patterns, and gotchas for the TDD loop. **TS-Vitest projects only** — skip this doc for other stacks. The tool-agnostic discipline is in [tdd-loop.md](tdd-loop.md); the mocking/fixture strategy is in [mocking-and-fixtures.md](mocking-and-fixtures.md).
 
-> _Lesson · testing. Consolidates `tdd/vitest-patterns.md` + `tdd/tests.md` + the Vitest CLI/coverage notes from `tdd/SKILL.md` & `tdd/refactoring.md`. Upstream baseline: `.upstream/tdd/tests.md`._
-
 ## The bar
 
 - Loop on a single test with `vitest -t "name" --run`; keep `vitest` (watch mode) running for continuous feedback; `vitest --changed --run` runs only what your edits affect.
@@ -436,3 +434,7 @@ Prefer `expect.poll` for simpler polling assertions:
 ```typescript
 await expect.poll(() => getStatus()).toBe('ready')
 ```
+
+---
+
+> _Lesson · testing. Consolidates `tdd/vitest-patterns.md` + `tdd/tests.md` + the Vitest CLI/coverage notes from `tdd/SKILL.md` & `tdd/refactoring.md`. Upstream baseline: `.upstream/tdd/tests.md`._

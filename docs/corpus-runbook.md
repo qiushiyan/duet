@@ -12,6 +12,7 @@ The guarantees, in order of how much they bite:
 - **Fail-soft is absolute.** A corpus write never affects a run — any failure (missing dir, full disk, unavailable synced volume) drops silently. The local run dir stays the working truth; every live surface (`status`, `doctor`, takeover, tmux) reads only it.
 - **A record is an analysis archive, not a backup.** There is no restore path; live mechanics (`scratch/`, `driver.pid`, the interactive lease) are excluded.
 - **The destination freezes per run at creation** (`RunState.corpusDir`) — changing config never re-points a live run, and runs created before the key existed never mirror.
+- **A record outlives its worktree, not every vocabulary.** duet keeps no backward compatibility for retired vocabulary: a record whose frozen `workflow.json` speaks one is refused at the load boundary (`UnloadableRunError`, surfaced not skipped), never translated. Its transcripts and logs stay readable by hand; it simply leaves `stats`, `grade`, `graph`, and replay. **Runs created before 2026-07-08** froze a `design` document phase, retired when the spec and design artifacts unified — so the document-bearing cohort from that era (including the 2026-07-07 blueprint and relay series) is no longer machine-readable. Its findings live in `docs/researches/`. When a vocabulary retires, expect the analysis surfaces to lose that cohort and say so here, rather than growing a translation shim the next reader would have to trust.
 
 One archived record:
 

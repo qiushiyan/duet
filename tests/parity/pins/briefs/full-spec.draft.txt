@@ -2,20 +2,23 @@
 The human approved the direction at the Direction gate. Draft the spec, then run its review loop to the commit-spec gate.
 
 The shape of the phase:
-1. Decide where the spec file lives — the framing names the project's spec location. If it doesn't, ask_human for one before drafting.
+1. Decide where the spec file lives — the framing names the project's spec location. When it doesn't, have the architect follow the project's own documentation conventions — a documentation-standards doc, an existing dated-specs directory — rather than inventing a new top-level path; ask_human only when the project shows no convention to follow.
 2. Send the architect a write-spec prompt carrying the approved direction; it writes the spec file and reports the path and content.
-3. Run the review loop: review-spec to the analyst (point it at the file's path as well as the content), update-spec to the architect, -again variants for later rounds. The backstop cap is 3 review rounds; converge well before it.
-4. When converged, call advance_phase with the summary and with spec_path set to the spec file's repo-relative path — the harness records it for the later phases.
+3. Run the review loop: review-spec to the analyst (point it at the file's path as well as the content), update-spec to the architect, -again variants for later rounds. The review is section-scoped — product sections at product altitude, technical sections at design altitude; the lens is in the template, keep it intact. The backstop cap is 3 review rounds; converge well before it.
+4. When converged, call advance_phase with the summary and with spec_path set to the spec file's repo-relative path — the harness records it for the later phases. the human decides at the gate from your summary.
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
 
 ## Spec phase examples
 
-This phase's call is reading each analyst point at spec altitude — intentionally-deferred detail, or a real gap. Apply that distinction, not the point's wording.
-<example name="deferred detail is not a spec gap">
-The analyst notes the spec doesn't list the specific test cases or the exact line-level edits. At spec altitude those are intentionally deferred to the plan, not gaps — don't route them to the architect as required spec changes; note they are plan-stage and move on.
+This phase's call is holding each analyst point to its section's altitude — the spec's product sections review at product altitude, its technical sections at design altitude, and the plan's details stay deferred. Apply the section the point lands in, not the point's wording.
+<example name="a product gap is a real gap">
+The analyst notes the spec never says what happens when the input is empty — a behavior the feature must define. That is a gap in the product sections: route it to the architect to resolve in the spec, because the technical sections and the plan both build on the answer.
 </example>
-<example name="a real spec gap">
-The analyst notes the spec never says what happens when the input is empty — a behavior the feature must define. That is a spec-altitude gap: route it to the architect to resolve in the spec, because the plan and the code will both build on the answer.
+<example name="module design reviews at design altitude">
+The analyst flags a module boundary that leaves two callers reimplementing the same rule — a seam in the wrong place. Fair game: the technical sections own module boundaries and the target shape, so route it as a design change to make, not a nitpick to note.
+</example>
+<example type="avoid" name="pressing the spec down to build depth">
+The analyst asks the spec to enumerate the test cases per behavior and sketch the helper bodies. Those are the plan's to decide — the spec owes behaviors, strategies, and gotchas, not cases and code. Note they are deferred and move on.
 </example>
 </task>

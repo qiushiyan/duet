@@ -5,14 +5,13 @@ import {
   consultantCheckpointLive,
   consultantSnippetFor,
   contractAuthorPhaseOf,
-  entryOf,
   phaseSpec,
   phasesOf,
   priorPhaseOf,
 } from '../registry/workflows.ts';
 import type {
+  ArtifactKind,
   CritiqueBuildBriefWorld,
-  DocLoopBriefArtifact,
   FixerBuildBriefWorld,
   FrameBriefWorld,
   GatePhase,
@@ -226,15 +225,28 @@ The analyst's analysis favors a thin adapter; the architect's favors a deeper re
 Routing the analyst's critique to the architect as a verdict to comply with. compare-notes asks the architect to weigh both views and keep its own where it has reasons — a second opinion informs the synthesis, it does not overwrite the first; don't let the later voice win by default.
 </example>`;
 
-const SPEC_EXAMPLES = `## Spec phase examples
+/**
+ * The spec phase's worked examples. The spec runs top-down — product sections
+ * above technical sections — so the orchestrator's call is section-scoped, not
+ * one flat altitude. `deferredTo` names who owns the detail the spec defers, the
+ * one fact that varies: a workflow with a plan phase defers cases and fixtures to
+ * it, a plan-less workflow defers them to the build. A composer-computed noun,
+ * not a hedge — the rendered prompt still names exactly one downstream.
+ */
+function specExamples(deferredTo: 'plan' | 'build'): string {
+  return `## Spec phase examples
 
-This phase's call is reading each analyst point at spec altitude — intentionally-deferred detail, or a real gap. Apply that distinction, not the point's wording.
-<example name="deferred detail is not a spec gap">
-The analyst notes the spec doesn't list the specific test cases or the exact line-level edits. At spec altitude those are intentionally deferred to the plan, not gaps — don't route them to the architect as required spec changes; note they are plan-stage and move on.
+This phase's call is holding each analyst point to its section's altitude — the spec's product sections review at product altitude, its technical sections at design altitude, and the ${deferredTo}'s details stay deferred. Apply the section the point lands in, not the point's wording.
+<example name="a product gap is a real gap">
+The analyst notes the spec never says what happens when the input is empty — a behavior the feature must define. That is a gap in the product sections: route it to the architect to resolve in the spec, because the technical sections and the ${deferredTo} both build on the answer.
 </example>
-<example name="a real spec gap">
-The analyst notes the spec never says what happens when the input is empty — a behavior the feature must define. That is a spec-altitude gap: route it to the architect to resolve in the spec, because the plan and the code will both build on the answer.
+<example name="module design reviews at design altitude">
+The analyst flags a module boundary that leaves two callers reimplementing the same rule — a seam in the wrong place. Fair game: the technical sections own module boundaries and the target shape, so route it as a design change to make, not a nitpick to note.
+</example>
+<example type="avoid" name="pressing the spec down to build depth">
+The analyst asks the spec to enumerate the test cases per behavior and sketch the helper bodies. Those are the ${deferredTo}'s to decide — the spec owes behaviors, strategies, and gotchas, not cases and code. Note they are deferred and move on.
 </example>`;
+}
 
 const PLAN_EXAMPLES = `## Plan phase examples
 
@@ -259,27 +271,14 @@ A plan whose first slice defines a typed contract every later slice produces or 
 Driving a three-slice plan as "do slice 1, hold; slice 2 next turn" with no structural reason. A turn boundary forced by the budget or time cap is fine; a planned hold is not — it spends an orchestrator round-trip and a slow worker turn re-establishing the context the single pass would have kept.
 </example>`;
 
-const DESIGN_EXAMPLES = `## Design phase examples
+const IMPL_FROM_SPEC_EXAMPLES = `## Implementation phase examples
 
-This phase's call is holding each analyst point to its section's altitude — the doc's product sections review like a spec, its technical sections like a design, and the build's details stay deferred. Apply the section the point lands in, not the point's wording.
-<example name="a product gap is a real gap">
-The analyst notes the doc never says what happens when the input is empty — a behavior the feature must define. That is a gap in the product sections: route it to the architect to resolve in the doc, because the technical sections and the build both build on the answer.
-</example>
-<example name="module design reviews at design altitude">
-The analyst flags a module boundary that leaves two callers reimplementing the same rule — a seam in the wrong place. Fair game: the technical sections own module boundaries, so route it as a design change to make, not a nitpick to note.
-</example>
-<example type="avoid" name="pressing the doc down to build depth">
-The analyst asks the doc to enumerate the test cases per behavior and sketch the helper bodies. Those are the build's to decide — the doc owes behaviors, strategies, and gotchas, not cases and code. Pressing for them re-grows the extra review rounds this run type exists to delete; note they are deferred and move on.
-</example>`;
-
-const DESIGN_IMPL_EXAMPLES = `## Implementation phase examples
-
-This phase's call is sizing the build — one pass, or one midpoint. The design doc fixes the shape, not the slices, so apply the signal (structural dependency in what's being built), not a count you don't have.
+This phase's call is sizing the build — one pass, or one midpoint. The spec fixes the shape, not the slices, so apply the signal (structural dependency in what's being built), not a count you don't have.
 <example name="independent pieces → one pass">
-The design touches three modules — a helper, a route, a link — none depending on another's internals. One implement-design pass: the builder slices and commits as it goes, and a mid-review would protect nothing. Review once, at the handoff.
+The spec touches three modules — a helper, a route, a link — none depending on another's internals. One implement-spec pass: the builder slices and commits as it goes, and a mid-review would protect nothing. Review once, at the handoff.
 </example>
 <example name="foundation-first design → one midpoint">
-The design centers on a typed contract every later piece produces or consumes. Even a modest build warrants one checkpoint here — a wrong contract compounds through everything built on it. Have the builder pause after the foundational piece lands, then midpoint-status → review-midpoint → respond-midpoint; it folds the guidance into the rest and continues to the handoff. One pause, not per piece.
+The spec centers on a typed contract every later piece produces or consumes. Even a modest build warrants one checkpoint here — a wrong contract compounds through everything built on it. Have the builder pause after the foundational piece lands, then midpoint-status → review-midpoint → respond-midpoint; it folds the guidance into the rest and continues to the handoff. One pause, not per piece.
 </example>
 <example type="avoid" name="chunking a small build">
 Driving a small build as "do the first module, hold; the next module next turn" with no structural reason. A turn boundary forced by the budget or time cap is fine; a planned hold is not — it spends an orchestrator round-trip and a slow worker turn re-establishing the context the single pass would have kept.
@@ -427,20 +426,18 @@ Consultant checkpoint (the consultant is bound for this run): before you advance
 /**
  * The acceptance-contract AUTHOR injection, shared by every workflow that
  * authors a contract (contractAuthorPhaseOf — full's plan, blueprint's and
- * relay's design). The mechanical spine is workflow-invariant: the
+ * relay's spec). The mechanical spine is workflow-invariant: the
  * live-checkpoint gate, the path derived from the spec slot,
  * write-never-commit, the freeze at the gate crossing, the missing-contract
  * high, and the advance rail that enforces it. WHEN the dispatch happens and
- * WHAT seeds the consultant are the workflow's calls — full authors EARLY
- * (right after the spec commit, before any plan exists, blind to the
- * technical approach), the design-gate workflows author LATE (after the
- * design loop converges, seeded with the near-final doc, blind only to the
- * code) — so each workflow's phase brief passes its own placement prose.
- * Empty unless a consultant is bound. The contract's committed location
- * derives from the primary artifact's path: a literal path when the artifact
- * predates the brief (full's plan brief, a --spec design entry), the naming
- * convention when the artifact is written mid-phase (the design draft flow —
- * spec_path lands only at advance_phase, after the contract is authored).
+ * WHAT seeds the consultant are DERIVED from the author phase's `hasUpstreamDoc`
+ * (see the two placement records below), so a caller passes the placement rather
+ * than the brief choosing by workflow name. Empty unless a consultant is bound.
+ * The contract's committed location derives from the primary artifact's path: a
+ * literal path when the artifact predates the brief (full's plan brief, a --spec
+ * entry), the naming convention when the artifact is written mid-phase (the spec
+ * draft flow — spec_path lands only at advance_phase, after the contract is
+ * authored).
  */
 function consultantContractStep(state: RunState, placement: { when: string; seed: string }): string {
   const workflow = workflowFor(state);
@@ -499,19 +496,16 @@ Record a high human_decision (titled by the assertion) only for an assertion tha
 }
 
 function documentsBlock(state: RunState): string {
-  // The draft's tag names the workflow's own primary artifact (full:
-  // draft-spec; blueprint/relay: draft-design-doc), derived from the entry
-  // phase's label so the tag and the brief's prose can't disagree about what
-  // the document is.
-  const workflow = workflowFor(state);
-  const entryPhase = entryOf(workflow).specSkipsTo;
-  const draftName = entryPhase ? `draft-${phaseSpec(workflow, entryPhase).artifactLabel.replace(/\s+/g, '-')}` : 'draft-spec';
+  // Every workflow's entry document is a spec (validateRegistry: the first
+  // doc-loop is always the spec), so the draft's tag is a constant — the label
+  // indirection that once distinguished full's spec from blueprint's design doc
+  // has nothing left to distinguish.
   const docs = [
     state.framing
       ? `<document name="framing" description="the human's project briefing for this run">\n${state.framing}\n</document>`
       : '',
     state.specPath
-      ? `<document name="${draftName}" path="${state.specPath}">\n${readFileSync(join(state.cwd, state.specPath), 'utf8')}\n</document>`
+      ? `<document name="draft-spec" path="${state.specPath}">\n${readFileSync(join(state.cwd, state.specPath), 'utf8')}\n</document>`
       : '',
   ].filter(Boolean);
   return `<documents>\n${docs.join('\n')}\n</documents>`;
@@ -570,77 +564,139 @@ ${data.examples}
 }
 
 /**
- * The doc-loop block's per-artifact templates, keyed by artifactKind — the
- * fragment library at its maximal-fork end: each artifact's brief is its own
- * hand-written world (the single-world rule prefers forking over hedged
- * parameterization), sharing only the state-conditional helpers
- * (documentsBlock, approvalClause, attendancePosture, the consultant
- * injections). spec and design are ENTRY doc-loops (the workflow admits a
- * --spec draft entry, so each has a review variant for a provided draft — cold
- * session, documents + branch policy — and a draft variant from the approved
- * direction — warm session); plan is a FOLLOW-ON doc-loop building on the
- * committed spec, one shape. Which applies is registry topology
- * (entry.specSkipsTo), not a knob.
+ * The doc-loop block's per-artifact templates, keyed by artifactKind. Each
+ * artifact's brief is its own hand-written world (the single-world rule prefers
+ * forking over hedged parameterization), sharing only the state-conditional
+ * helpers (documentsBlock, approvalClause, attendancePosture, the consultant
+ * injections). The spec is the ENTRY doc-loop (the workflow admits a --spec draft
+ * entry, so it has a review variant for a provided draft — cold session,
+ * documents + branch policy — and a draft variant from the approved direction —
+ * warm session); plan is a FOLLOW-ON doc-loop building on the committed spec, one
+ * shape. Which applies is registry topology (entry.specSkipsTo), not a knob.
+ *
+ * `Record<ArtifactKind, …>` proves totality: a new artifact kind cannot ship
+ * without its prose world, which is why the doc-loop needs no BRIEF_WORLDS entry.
  */
 const DOC_BRIEFS = {
   spec: specDocBrief,
   plan: planDocBrief,
-  design: designDocBrief,
-} satisfies Record<DocLoopBriefArtifact, (state: RunState, spec: PhaseSpec) => string>;
+} satisfies Record<ArtifactKind, (state: RunState, spec: PhaseSpec, semantics: DocLoopSemantics) => string>;
 
-function renderDocLoopBrief(state: RunState, spec: PhaseSpec, semantics: Extract<PhaseSemantics, { block: 'doc-loop' }>): string {
-  return DOC_BRIEFS[semantics.artifactKind](state, spec);
+type DocLoopSemantics = Extract<PhaseSemantics, { block: 'doc-loop' }>;
+
+function renderDocLoopBrief(state: RunState, spec: PhaseSpec, semantics: DocLoopSemantics): string {
+  return DOC_BRIEFS[semantics.artifactKind](state, spec, semantics);
 }
 
-function specDocBrief(state: RunState, spec: PhaseSpec): string {
+/**
+ * The two worlds a spec doc-loop renders, selected by `isHandoffPhase` — whether
+ * a plan phase follows this spec or the build does. Dedicated fragments per
+ * value, never a conditional in the prose: full's spec hands off to a plan and
+ * its gate is a waypoint; blueprint's and relay's spec IS the whole design, and
+ * approving its gate starts the AFK build.
+ */
+interface SpecWorld {
+  /** The one-line description of what this run's spec is, appended to the task opening. */
+  role: string;
+  /** Who owns the detail the spec defers — folded into the examples and the review step. */
+  deferredTo: 'plan' | 'build';
+  /** What the advance_phase summary owes the human at the gate. */
+  advanceClause: string;
+}
+
+const SPEC_WORLDS: Record<'with-plan' | 'terminal', SpecWorld> = {
+  'with-plan': {
+    role: '',
+    deferredTo: 'plan',
+    advanceClause: 'the human decides at the gate from your summary.',
+  },
+  terminal: {
+    role: " This run's spec is its one committed document — product goals, behaviors, and non-goals on top; module boundaries, seams, the target shape, and test standards below. There is no separate plan phase, so the build works from this document alone.",
+    deferredTo: 'build',
+    advanceClause:
+      'Approving this gate hands the run off to AFK implementation, so the summary should give the human confidence the design is buildable end to end.',
+  },
+};
+
+function specWorldFor(semantics: DocLoopSemantics): SpecWorld {
+  return SPEC_WORLDS[semantics.isHandoffPhase ? 'terminal' : 'with-plan'];
+}
+
+function specDocBrief(state: RunState, spec: PhaseSpec, semantics: DocLoopSemantics): string {
   const roundCap = spec.roundCap;
-  if (!state.specPath) return specDraftBrief(state, roundCap);
+  if (!state.specPath) return specDraftBrief(state, spec, semantics);
   const workflow = workflowFor(state);
   const maker = makerDutyOf(workflow, 'planning');
   const checker = checkerDutyOf(workflow, 'planning');
+  const world = specWorldFor(semantics);
   return `${documentsBlock(state)}
 
 <task>
-Run the SPEC review loop on the draft spec above, then advance to the commit-spec gate.
-${branchPolicyParagraph(state)}${attendancePosture(state, 'spec')}
+Run the SPEC review loop on the draft spec above, then advance to the commit-spec gate.${world.role}
+${branchPolicyParagraph(state)}${attendancePosture(state, spec.name)}
 The shape of the loop:
 1. Read the snippet library (list_snippets) — the review-spec / update-spec snippets (and their -again variants for later rounds) are the templates for this loop.
-2. Send the ${checker} a review-spec prompt wrapping the current spec. The ${checker} can read the repo directly, so point it at ${state.specPath} and related code — name the path as well as quoting the content.
+2. Send the ${checker} a review-spec prompt wrapping the current spec. The ${checker} can read the repo directly, so point it at ${state.specPath} and related code — name the path as well as quoting the content. The review is section-scoped: product sections at product altitude, technical sections at design altitude — the lens is in the template; keep it intact.
 3. Route the ${checker}'s feedback to the ${maker} with an update-spec prompt. The ${maker} should apply accepted changes to ${state.specPath} directly (it has write access) and report what it changed versus rejected and why.
-4. Judge convergence. Run another round with the -again variants when substantive points remain open; stop when what's left is minor. The backstop cap for this phase is ${roundCap} review rounds — your judgment should converge well before it.
-5. When converged, call advance_phase with a summary of what the ${checker} flagged, what changed, and any rejections with their rationale — the human decides at the gate from your summary.${consultantAuditStep(state, 'spec', 'the settled spec and the decisions it must treat as by-design — not the review-loop traffic.')}
+4. Judge convergence. Run another round with the -again variants when substantive points remain open; stop when what's left is minor. The backstop cap for this phase is ${roundCap} review rounds — your judgment should converge well before it.${docLoopContractStep(state, spec, semantics)}
+5. When converged, call advance_phase with a summary of what the ${checker} flagged, what changed, and any rejections with their rationale — ${world.advanceClause}${docLoopAuditStep(state, spec)}
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
 
-${SPEC_EXAMPLES}
+${specExamples(world.deferredTo)}
 </task>`;
 }
 
-function specDraftBrief(state: RunState, roundCap: number): string {
+function specDraftBrief(state: RunState, spec: PhaseSpec, semantics: DocLoopSemantics): string {
   const workflow = workflowFor(state);
   const maker = makerDutyOf(workflow, 'planning');
   const checker = checkerDutyOf(workflow, 'planning');
+  const world = specWorldFor(semantics);
   return `<task>
 ${approvalClause(
     state,
-    'frame',
+    priorPhaseOf(workflow, spec.name),
     'The human approved the direction at the Direction gate.',
     'The Direction gate was pre-authorized at run start and auto-crossed — the synthesized direction stands approved as recorded in its packet.',
-  )} Draft the spec, then run its review loop to the commit-spec gate.
-${attendancePosture(state, 'spec')}
+  )} Draft the spec, then run its review loop to the commit-spec gate.${world.role}
+${attendancePosture(state, spec.name)}
 The shape of the phase:
-1. Decide where the spec file lives — the framing names the project's spec location. If it doesn't, ask_human for one before drafting.
+1. Decide where the spec file lives — the framing names the project's spec location. When it doesn't, have the ${maker} follow the project's own documentation conventions — a documentation-standards doc, an existing dated-specs directory — rather than inventing a new top-level path; ask_human only when the project shows no convention to follow.
 2. Send the ${maker} a write-spec prompt carrying the approved direction; it writes the spec file and reports the path and content.
-3. Run the review loop: review-spec to the ${checker} (point it at the file's path as well as the content), update-spec to the ${maker}, -again variants for later rounds. The backstop cap is ${roundCap} review rounds; converge well before it.
-4. When converged, call advance_phase with the summary and with spec_path set to the spec file's repo-relative path — the harness records it for the later phases.${consultantAuditStep(state, 'spec', 'the settled spec and the decisions it must treat as by-design — not the review-loop traffic.')}
+3. Run the review loop: review-spec to the ${checker} (point it at the file's path as well as the content), update-spec to the ${maker}, -again variants for later rounds. The review is section-scoped — product sections at product altitude, technical sections at design altitude; the lens is in the template, keep it intact. The backstop cap is ${spec.roundCap} review rounds; converge well before it.${docLoopContractStep(state, spec, semantics)}
+4. When converged, call advance_phase with the summary and with spec_path set to the spec file's repo-relative path — the harness records it for the later phases. ${world.advanceClause}${docLoopAuditStep(state, spec)}
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
 
-${SPEC_EXAMPLES}
+${specExamples(world.deferredTo)}
 </task>`;
 }
 
-function planDocBrief(state: RunState, spec: PhaseSpec): string {
+/**
+ * The two consultant injections a doc-loop phase may carry, each dispatched on the
+ * checkpoint the REGISTRY says the phase holds — never on which brief function we
+ * happen to be in. A spec phase carries the bet audit (full) or the contract
+ * author (blueprint, relay); a plan phase carries the contract author. At most one
+ * is ever non-empty, and both are empty with no consultant bound.
+ *
+ * They render at DIFFERENT anchors, which is why they are two functions rather
+ * than one dispatch: the contract's prose says "immediately before your
+ * advance_phase", so it rides the convergence step; the bet audit says "before you
+ * advance, run its bet audit", so it rides the advance step. Swapping them would
+ * put a step's instructions after the call they precede.
+ */
+function docLoopContractStep(state: RunState, spec: PhaseSpec, semantics: DocLoopSemantics): string {
+  if (spec.consultantCheckpoint !== 'contract') return '';
+  const placement = semantics.hasUpstreamDoc ? UPSTREAM_DOC_CONTRACT_PLACEMENT : CONVERGED_DOC_CONTRACT_PLACEMENT;
+  return consultantContractStep(state, placement(state));
+}
+
+function docLoopAuditStep(state: RunState, spec: PhaseSpec): string {
+  if (spec.consultantCheckpoint !== 'specGate') return '';
+  return consultantAuditStep(state, spec.name, 'the settled spec and the decisions it must treat as by-design — not the review-loop traffic.');
+}
+
+function planDocBrief(state: RunState, spec: PhaseSpec, semantics: DocLoopSemantics): string {
   const roundCap = spec.roundCap;
   const workflow = workflowFor(state);
   const maker = makerDutyOf(workflow, 'planning');
@@ -658,17 +714,14 @@ ${readFileSync(join(state.cwd, state.specPath), 'utf8')}
   return `${documents}<task>
 ${approvalClause(
     state,
-    'spec',
+    priorPhaseOf(workflow, spec.name),
     'The human approved the spec at the commit-spec gate.',
     'The commit-spec gate was pre-authorized at run start and auto-crossed — the spec stands approved as converged.',
   )} Run the PLAN phase:
-${attendancePosture(state, 'plan')}
-1. Have the ${maker} commit the approved spec file (${specRef}) with a conventional message, as its own commit.${consultantContractStep(state, {
-    when: 'do this NOW — immediately after the spec commit and BEFORE you draft or review the plan — so the consultant authors blind to the plan and the code; it runs concurrently, so do not wait for it before starting the plan loop.',
-    seed: `Seed it with the committed spec ONLY (${state.specPath}); never put any plan or implementation detail into its prompt — that blindness is what makes the contract independent.`,
-  })}
+${attendancePosture(state, spec.name)}
+1. Have the ${maker} commit the approved spec file (${specRef}) with a conventional message, as its own commit.${docLoopContractStep(state, spec, semantics)}
 2. Decide where the plan file lives: the framing names the project's plan location (path or directory convention). The plan must be a file in the repo — the build may compact a worker's context, and the plan file is what later turns re-anchor on. If the framing doesn't name a plan location, ask_human for one before drafting.
-3. Send the ${maker} a planning prompt based on the start-plan snippet. The ${maker} writes the plan to the file and reports it.
+3. Send the ${maker} a planning prompt based on the start-plan snippet. The ${maker} writes the plan to the file and reports it. The spec already settled the module shape, the seams, and the test standards, so the plan is the tactics it deferred — slices, sequencing, specific test cases, fixtures, line-level anchors.
 4. Run the plan review loop: review-plan to the ${checker} (point it at the plan file's path as well as the content), update-plan to the ${maker}, -again variants for later rounds. Plans are reviewable at a finer altitude than specs — test cases, fixtures, and line-level references are fair game; only full code bodies are deferred.
 5. The backstop cap for this phase is ${roundCap} review rounds; converge well before it.
 6. When converged, call advance_phase with a summary, listing the plan file among the artifacts. Implementation runs AFK after this gate, so the summary should give the human confidence the plan is workable end to end.
@@ -680,81 +733,36 @@ ${PLAN_EXAMPLES}
 }
 
 /**
- * The design-gate workflows' contract placement (blueprint, relay) — LATE:
- * full authors early (before any plan exists) to keep the consultant blind to
- * the technical approach, but these workflows have no product-only artifact to
- * seed from and no phase between their gate and the build, so the contract is
- * authored after the loop converges (the same runs-last pattern verify uses at
- * implement), giving up that one blindness. Kept: blind to the code (nothing
- * is built), the fresh session, and — because the design gate is the one
- * attended stop by default — a contract the human actually ratifies.
+ * Contract placement when a committed document already precedes this doc-loop
+ * (full's plan, seeded from the committed spec) — EARLY, so the consultant
+ * authors before this phase's own artifact exists and stays blind to it. The
+ * spec it seeds from is half-technical, so "blind to the technical approach" is
+ * not the claim; blind to the PLAN's tactics and to the code is.
  */
-const DESIGN_CONTRACT_PLACEMENT = {
-  when: 'run this LAST — after the design review loop has converged and the doc is final, immediately before your advance_phase — so the contract pins the exact design the human ratifies at the gate. Wait for its turn to settle before you advance.',
-  seed: 'Seed it with the converged design doc ONLY — the document (or its path), never the review-loop traffic or any build talk. It sees the settled design and no code (nothing is built yet), reading fresh in its own session; that independence is what makes the contract a check on the build rather than an echo of it.',
-};
+const UPSTREAM_DOC_CONTRACT_PLACEMENT = (state: RunState) => ({
+  when: 'do this NOW — immediately after the spec commit and BEFORE you draft or review the plan — so the consultant authors blind to the plan and the code; it runs concurrently, so do not wait for it before starting the plan loop.',
+  seed: `Seed it with the committed spec ONLY${state.specPath ? ` (${state.specPath})` : ''}; never put any plan or implementation detail into its prompt — that blindness is what makes the contract independent.`,
+});
 
 /**
- * The design artifact phase (blueprint, relay) — ONE committed design doc
- * between framing and the build, reviewed in one section-scoped loop, ratified
- * at the gate that is also the interactive→headless handoff. Two variants like
- * full's spec: a --spec entry reviews the provided draft (cold session —
- * documents + branch policy included); the post-frame path drafts from the
- * approved direction (warm session — the framing is already in context).
+ * Contract placement when this doc-loop's own artifact is the only document
+ * (blueprint, relay) — LATE: there is no upstream document to seed from and no
+ * phase between this gate and the build, so the contract is authored after the
+ * loop converges (the same runs-last pattern verify uses at implement). Kept:
+ * blind to the code (nothing is built), the fresh session, and — because this
+ * gate is the workflow's one attended stop by default — a contract the human
+ * actually ratifies.
  */
-function designDocBrief(state: RunState, spec: PhaseSpec): string {
-  const roundCap = spec.roundCap;
-  if (!state.specPath) return designDraftBrief(state, roundCap);
-  const workflow = workflowFor(state);
-  const maker = makerDutyOf(workflow, 'planning');
-  const checker = checkerDutyOf(workflow, 'planning');
-  return `${documentsBlock(state)}
-
-<task>
-Run the DESIGN review loop on the draft design doc above, then advance to the design gate. This run produces ONE committed design document between the framing and the build — product goals, behaviors, and non-goals on top; module boundaries, seams, an architecture sketch, and test standards below; there is no separate spec or plan.
-${branchPolicyParagraph(state)}${attendancePosture(state, 'design')}
-The shape of the loop:
-1. Read the snippet library (list_snippets) — the review-design / update-design snippets (and their -again variants for round 2) are the templates for this loop.
-2. Send the ${checker} a review-design prompt wrapping the current doc. The ${checker} can read the repo directly, so point it at ${state.specPath} and related code — name the path as well as quoting the content. The review is section-scoped: product sections at product altitude, technical sections at design altitude — the lens is in the template; keep it intact.
-3. Route the ${checker}'s feedback to the ${maker} with an update-design prompt. The ${maker} should apply accepted changes to ${state.specPath} directly (it has write access) and report what it changed versus rejected and why.
-4. Judge convergence. Run another round with the -again variants when substantive points remain open; stop when what's left is minor. The backstop cap for this phase is ${roundCap} review rounds — this run type premises fast convergence, so one round is the norm and the cap should never bind.${consultantContractStep(state, DESIGN_CONTRACT_PLACEMENT)}
-5. When converged, call advance_phase with a summary of what the ${checker} flagged, what changed, and any rejections with their rationale. Approving this gate hands the run off to AFK implementation, so the summary should give the human confidence the design is buildable end to end.
-
-Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
-
-${DESIGN_EXAMPLES}
-</task>`;
-}
-
-function designDraftBrief(state: RunState, roundCap: number): string {
-  const workflow = workflowFor(state);
-  const maker = makerDutyOf(workflow, 'planning');
-  const checker = checkerDutyOf(workflow, 'planning');
-  return `<task>
-${approvalClause(
-    state,
-    'frame',
-    'The human approved the direction at the Direction gate.',
-    'The Direction gate was pre-authorized at run start and auto-crossed — the synthesized direction stands approved as recorded in its packet.',
-  )} Draft the design doc, then run its review loop to the design gate. This run produces ONE committed design document between the framing and the build — product goals, behaviors, and non-goals on top; module boundaries, seams, an architecture sketch, and test standards below; there is no separate spec or plan.
-${attendancePosture(state, 'design')}
-The shape of the phase:
-1. Decide where the design doc lives — the framing names the project's spec/design location. When it doesn't, have the ${maker} follow the project's own documentation conventions — a documentation-standards doc, an existing dated-specs directory — rather than inventing a new top-level path; ask_human only when the project shows no convention to follow.
-2. Send the ${maker} a write-design prompt carrying the approved direction; it writes the design doc and reports the path and content.
-3. Run the review loop: review-design to the ${checker} (point it at the file's path as well as the content), update-design to the ${maker}, -again variants for round 2. The review is section-scoped — product sections at product altitude, technical sections at design altitude; the lens is in the template, keep it intact. The backstop cap is ${roundCap} review rounds — this run type premises fast convergence, so one round is the norm and the cap should never bind.${consultantContractStep(state, DESIGN_CONTRACT_PLACEMENT)}
-4. When converged, call advance_phase with the summary — what the ${checker} flagged, what changed, rejections with their rationale — and with spec_path set to the design doc's repo-relative path (the harness records it for the later phases). Approving this gate hands the run off to AFK implementation, so the summary should give the human confidence the design is buildable end to end.
-
-Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
-
-${DESIGN_EXAMPLES}
-</task>`;
-}
+const CONVERGED_DOC_CONTRACT_PLACEMENT = (_state: RunState) => ({
+  when: 'run this LAST — after the review loop has converged and the spec is final, immediately before your advance_phase — so the contract pins the exact design the human ratifies at the gate. Wait for its turn to settle before you advance.',
+  seed: 'Seed it with the converged spec ONLY — the document (or its path), never the review-loop traffic or any build talk. It sees the settled design and no code (nothing is built yet), reading fresh in its own session; that independence is what makes the contract a check on the build rather than an echo of it.',
+});
 
 /**
- * The AFK-build step builders shared by full's and blueprint's implement
- * briefs. Each takes the workflow's own anchor phrasing (what the run
- * committed — full: the spec and plan; blueprint: the one design doc) so the
- * prose stays accurate per workflow while the mechanics — when to compact, how
+ * The AFK-build step builders shared by both critique-posture implement
+ * briefs. Each takes the world's own anchor phrasing (what the run
+ * committed — full: the spec and plan; a plan-less workflow: the one spec) so the
+ * prose stays accurate per world while the mechanics — when to compact, how
  * to recover an aborted /compact, the scratch-dir and budget gotchas, the
  * midpoint judgment, the review tail — live once.
  */
@@ -849,7 +857,7 @@ interface CritiqueBuildData {
 }
 
 const CRITIQUE_BUILD_BRIEFS = {
-  impl: {
+  'impl-from-plan': {
     approvedAttended: 'The human approved the plan and walked away —',
     approvedPreauth: 'The plan-approval gate was pre-authorized at run start and auto-crossed; the human is away —',
     commitStep:
@@ -864,26 +872,26 @@ const CRITIQUE_BUILD_BRIEFS = {
     deviationsFrom: 'plan',
     examples: IMPL_EXAMPLES,
   },
-  // blueprint's build — full's discipline anchored on the ONE committed
-  // design doc: the doc is the authority for what and why, the implement-design
-  // snippet carries the how (the builder slices the work itself; the doc
-  // fixes shape and test standards, not build order). No "plan" vocabulary
-  // reaches a blueprint worker — the workflow has none.
-  'blueprint-impl': {
-    approvedAttended: 'The human approved the design doc and walked away —',
-    approvedPreauth: 'The design gate was pre-authorized at run start and auto-crossed; the human is away —',
+  // The plan-less critique build (blueprint's) — full's discipline anchored on
+  // the ONE committed spec: the spec is the authority for what and why, the
+  // implement-spec snippet carries the how (the builder slices the work itself;
+  // the spec fixes shape and test standards, not build order). No "plan"
+  // vocabulary reaches one of these workers — the workflow has none.
+  'impl-from-spec': {
+    approvedAttended: 'The human approved the spec and walked away —',
+    approvedPreauth: 'The commit-spec gate was pre-authorized at run start and auto-crossed; the human is away —',
     commitStep:
-      "Have the builder commit the approved design doc with a conventional message, as its own commit. Its session continues the one that wrote the doc and still holds it, so keep this prompt short — don't restate the design back to it.",
+      "Have the builder commit the approved spec with a conventional message, as its own commit. Its session continues the one that wrote it and still holds it, so keep this prompt short — don't restate the design back to it.",
     commitStepFresh:
-      "Have the builder commit the approved design doc with a conventional message, as its own commit. The builder starts this stage on a fresh session, so this first prompt reads cold: orient it — the project, the working branch, the design doc's path — before the ask; the doc, not any session's memory, is what it builds from.",
-    anchors: { journey: 'the whole planning stage (the framing analyses and the design review loop)', anchors: 'the committed design doc' },
+      "Have the builder commit the approved spec with a conventional message, as its own commit. The builder starts this stage on a fresh session, so this first prompt reads cold: orient it — the project, the working branch, the spec's path — before the ask; the document, not any session's memory, is what it builds from.",
+    anchors: { journey: 'the whole planning stage (the framing analyses and the spec review loop)', anchors: 'the committed spec' },
     buildStep:
-      "Drive the implementation as a single pass, not a piece-by-piece loop with reviews between. Send the builder an implement-design prompt: it builds the whole change from the committed design doc — the doc fixes the shape and the test standards; the slicing and sequencing are the builder's own, vertical slices with a commit per slice and that slice's tests per the doc's standards. A review or a deliberate hold between slices burns a slow worker turn re-covering ground the post-implementation review (step 6) covers anyway.",
+      "Drive the implementation as a single pass, not a piece-by-piece loop with reviews between. Send the builder an implement-spec prompt: it builds the whole change from the committed spec — the spec fixes the shape and the test standards; the slicing and sequencing are the builder's own, vertical slices with a commit per slice and that slice's tests per the spec's standards. A review or a deliberate hold between slices burns a slow worker turn re-covering ground the post-implementation review (step 6) covers anyway.",
     sizeSignal:
-      "the design fixes the shape, not a slice list, so read the size from the doc's scope and structural risk, and from how the builder slices the work as the build starts.",
-    reviewAnchors: 'the design doc',
-    deviationsFrom: 'design doc',
-    examples: DESIGN_IMPL_EXAMPLES,
+      "the spec fixes the shape, not a slice list, so read the size from its scope and structural risk, and from how the builder slices the work as the build starts.",
+    reviewAnchors: 'the spec',
+    deviationsFrom: 'spec',
+    examples: IMPL_FROM_SPEC_EXAMPLES,
   },
 } satisfies Record<CritiqueBuildBriefWorld, CritiqueBuildData>;
 
@@ -988,7 +996,7 @@ interface WritableBuildData {
 }
 
 const WRITABLE_BUILD_BRIEFS = {
-  'short-impl': {
+  'impl-direct': {
     approvedAttended: 'The human approved the direction and walked away —',
     approvedPreauth: 'The Direction gate was pre-authorized at run start and auto-crossed; the human is away —',
     auditSeedNote:
@@ -1012,19 +1020,19 @@ interface FixerBuildData {
 }
 
 const FIXER_BUILD_BRIEFS = {
-  'relay-impl': {
-    approvedAttended: 'The human approved the design doc and walked away —',
-    approvedPreauth: 'The design gate was pre-authorized at run start and auto-crossed; the human is away —',
+  'impl-fixer': {
+    approvedAttended: 'The human approved the spec and walked away —',
+    approvedPreauth: 'The commit-spec gate was pre-authorized at run start and auto-crossed; the human is away —',
     sizeSignal:
-      "the design fixes the shape, not a slice list, so read the size from the doc's scope and structural risk, and from how the builder slices the work as the build starts.",
+      "the spec fixes the shape, not a slice list, so read the size from its scope and structural risk, and from how the builder slices the work as the build starts.",
     examples: RELAY_IMPL_EXAMPLES,
   },
 } satisfies Record<FixerBuildBriefWorld, FixerBuildData>;
 
 /**
  * The fixer build — the plan-smart / build-cheap / judge-strong workflow's
- * AFK phase: the builder builds the whole change from the committed design
- * doc, then the judge reviews WITH write access — it fixes ordinary valid
+ * AFK phase: the builder builds the whole change from the committed spec,
+ * then the judge reviews WITH write access — it fixes ordinary valid
  * findings directly (one review-and-fix round), escalates substance to the
  * human, and owns the build tail (docs + CEO summary). There is no
  * critique-and-respond loop; the consultant's contract verify is the one
@@ -1054,15 +1062,15 @@ ${approvalClause(
     data.approvedPreauth,
   )} this is the AFK IMPLEMENTATION phase. You drive it end to end; ask_human still works but now queues the question and pauses the whole run until the human returns, so a flag is a real stop, not a quick check-in. Make each one self-contained, and let everything that can wait for the Ship gate wait.
 ${attendancePosture(state, spec.name)}
-The shape of the phase — the ${builder} builds from the committed design doc, then the ${judge} reviews with write access: it fixes what it finds and owns the docs and the summary; there is no critique-and-respond loop in this phase:
+The shape of the phase — the ${builder} builds from the committed spec, then the ${judge} reviews with write access: it fixes what it finds and owns the docs and the summary; there is no critique-and-respond loop in this phase:
 
-1. Have the ${builder} commit the approved design doc with a conventional message, as its own commit. Name the doc's committed path in this prompt and every later first prompt — the build seeds from the document, not from any session's memory of writing it, so a first prompt reads cold: orient it (the project, the doc's path, the working branch) before the task.
-2. Send the ${builder} an implement-design prompt: it builds the whole change from the committed design doc — the doc fixes the shape and the test standards; the slicing and sequencing are the ${builder}'s own, vertical slices with a commit per slice and that slice's tests per the doc's standards. Drive it as a single pass — a deliberate hold between slices burns a slow worker turn re-covering ground the review-and-fix round covers anyway. ${buildPassGuardrails(state.runId)}
+1. Have the ${builder} commit the approved spec with a conventional message, as its own commit. Name the spec's committed path in this prompt and every later first prompt — the build seeds from the document, not from any session's memory of writing it, so a first prompt reads cold: orient it (the project, the spec's path, the working branch) before the task.
+2. Send the ${builder} an implement-spec prompt: it builds the whole change from the committed spec — the spec fixes the shape and the test standards; the slicing and sequencing are the ${builder}'s own, vertical slices with a commit per slice and that slice's tests per the spec's standards. Drive it as a single pass — a deliberate hold between slices burns a slow worker turn re-covering ground the review-and-fix round covers anyway. ${buildPassGuardrails(state.runId)}
 3. ${midpointStep(data.sizeSignal, judge)} Mid-build the ${builder} is the sole writer: the ${judge}'s midpoint read is guidance the ${builder} folds in, never fixes the ${judge} applies itself — its write authority begins at the review-and-fix round, on the finished build.
 4. When all slices are in: implementation-handoff from the ${builder} — whoever wrote the code authors the map the ${judge} starts from.
-5. The review-and-fix round: send the ${judge} a review-and-fix prompt wrapping the handoff, pointing it at the design doc's committed path and the build's commits. This is the phase's one review round, and it is writable: the ${judge} assesses each finding, fixes the ordinary valid ones directly (fix commits, tests moved along), reports what it changed versus left as-is, and ESCALATES a product or design disagreement, intent it cannot reconstruct, or drift broad enough to mean re-deciding the direction — an escalation is yours to ask_human, never something to patch over. The backstop cap for this phase is ${spec.roundCap} review round; ${capFollowUp}.
+5. The review-and-fix round: send the ${judge} a review-and-fix prompt wrapping the handoff, pointing it at the spec's committed path and the build's commits. This is the phase's one review round, and it is writable: the ${judge} assesses each finding, fixes the ordinary valid ones directly (fix commits, tests moved along), reports what it changed versus left as-is, and ESCALATES a product or design disagreement, intent it cannot reconstruct, or drift broad enough to mean re-deciding the direction — an escalation is yours to ask_human, never something to patch over. The backstop cap for this phase is ${spec.roundCap} review round; ${capFollowUp}.
 6. When the round has settled, reconcile the docs with what shipped — send the ${judge} the reconcile-docs prompt (it owns the record it just judged). Your one decision is the doc method, by precedence: if the framing names a doc-update skill or document, name it in the prompt — relay the framing's path or skill faithfully and treat it as authoritative. If the framing names none, send the snippet's default unchanged. The ${judge} commits the docs; they ride the branch into the PR that FINISH opens. A doc-scope product call it surfaces is yours to ask_human.
-7. Last, after the docs are committed: send the ${judge} ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review-and-fix summary (fixes applied, push-backs, anything escalated), the docs reconciled, deviations from the design doc, and the test state. The human returns from hours away and decides to ship from this packet alone, so it must carry everything.${consultantVerifyStep(state)}
+7. Last, after the docs are committed: send the ${judge} ceo-summary. Then call advance_phase with a summary that leads with the CEO summary verbatim, followed by the review-and-fix summary (fixes applied, push-backs, anything escalated), the docs reconciled, deviations from the spec, and the test state. The human returns from hours away and decides to ship from this packet alone, so it must carry everything.${consultantVerifyStep(state)}
 
 Throughout: flag product, direction, and environment questions with ask_human (those are still the human's even when away); tactical questions bounce to the worker that raised them.
 

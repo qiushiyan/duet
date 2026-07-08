@@ -93,22 +93,39 @@ describe('buildPhaseBrief (the shared entry-prompt renderer — headless parity)
     expect(buildPhaseBrief(runOf(projectDir, workflow), phase).trim().length).toBeGreaterThan(0);
   });
 
-  test('the design-arc briefs anchor on the design doc — no plan vocabulary reaches a design-arc worker prompt', ({ projectDir }) => {
-    const design = runOf(projectDir, 'blueprint');
-    const designBrief = buildPhaseBrief(design, 'design');
-    expect.soft(designBrief).toContain('write-design');
-    expect.soft(designBrief).toContain('review-design');
-    // The design phase brief describes the one-document arc, never a plan step.
-    expect.soft(designBrief).not.toContain('start-plan');
-    const implBrief = buildPhaseBrief(design, 'implement');
-    // The build seeds from implement-design and commits the design doc — full's
-    // "commit the approved plan file" must not leak into this arc.
-    expect.soft(implBrief).toContain('implement-design');
-    expect.soft(implBrief).toContain('commit the approved design doc');
+  test('a plan-less workflow anchors on its one spec — no plan vocabulary reaches its worker prompts', ({ projectDir }) => {
+    const blueprint = runOf(projectDir, 'blueprint');
+    const specBrief = buildPhaseBrief(blueprint, 'spec');
+    expect.soft(specBrief).toContain('write-spec');
+    expect.soft(specBrief).toContain('review-spec');
+    // The spec brief describes the one-document workflow, never a plan step.
+    expect.soft(specBrief).not.toContain('start-plan');
+    // The terminal-spec world: this gate hands off to the build, and the details
+    // it defers belong to the build, not to a plan that does not exist.
+    expect.soft(specBrief).toMatch(/no separate plan/i);
+    expect.soft(specBrief, "the deferral noun must name this workflow's real downstream").not.toMatch(/deferred to the plan/i);
+
+    const implBrief = buildPhaseBrief(blueprint, 'implement');
+    // The build seeds from implement-spec and commits the spec — full's "commit
+    // the approved plan file" must not leak into this workflow.
+    expect.soft(implBrief).toContain('implement-spec');
+    expect.soft(implBrief).toContain('commit the approved spec');
     expect.soft(implBrief).not.toContain('plan file');
     // "implement the whole plan" is full's build step; "the whole planning
     // stage" (blueprint's compaction anchor) is stage vocabulary and fine.
     expect.soft(implBrief).not.toContain('implement the whole plan');
+  });
+
+  // The mirror world: full's spec is a waypoint, so its brief must not promise a
+  // hand-off it doesn't perform, and its deferred detail belongs to the plan.
+  test("full's spec brief is a waypoint — it defers to the plan and hands off to nothing", ({ projectDir }) => {
+    const specBrief = buildPhaseBrief(runOf(projectDir, 'full'), 'spec');
+    expect.soft(specBrief).toContain('write-spec');
+    expect.soft(specBrief, 'full still has a plan phase, so its spec gate hands off to nobody').not.toContain(
+      'approving hands off to AFK implementation',
+    );
+    expect.soft(specBrief).not.toMatch(/no separate plan/i);
+    expect.soft(specBrief, "the deferred detail is the plan's on full").toMatch(/plan's to decide/i);
   });
 
   test('a DEGRADED continuity edge adapts the build ritual — seed from the committed artifacts, never /compact a session the builder does not have', ({

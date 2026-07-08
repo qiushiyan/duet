@@ -1,445 +1,87 @@
 # Snippet reference
 
-Snippets are the prompt templates the orchestrator sends the workers — they *are* the workflow. This doc catalogs the ones you're most likely to override, **with their full bodies**, so you can see exactly what you're changing before you change it. For *how* overriding works — the two override files, precedence, fail-closed, the `duet snippets` inspector — see the README's [Customizing the snippets](../README.md#customizing-the-snippets).
+Snippets are the prompt templates the orchestrator sends the workers — they *are* the workflow. This doc is the **map**: which families exist, which ones repay an override, and the design principles a rewrite must not break.
 
-The `snippets/` directory at the repo root is the source of truth — block-named TOML files mirroring the workflow vocabulary (`frame.toml`, one per document kind, `build.toml`, `finish.toml`, `anytime.toml`, `consultant.toml`), merged into one library at load; the bodies below are reproduced for reading. For the **live** body on your install — with any user/project overrides already applied — run `duet snippets show <key>`. A `{{lessons_dir}}` token in a body is resolved to duet's vendored methodology lessons at serve time (the worker sees a real path, not the token). The trailing `---` / `$0` in the review snippets is the paste-point convention from the source schema: `$0` is where the accompanying material (a handoff report, review feedback) lands.
+**The bodies live in two places, and neither is here.** `snippets/` at the repo root is the source of truth — block-named TOML files mirroring the workflow vocabulary. To read a body as *your install* serves it, with any override already applied:
 
-## How snippets map to a workflow
+```console
+$ duet snippets              # every key, and the layer it resolves from
+$ duet snippets show <key>   # one full body
+```
 
-Each phase pulls a few snippets in the order the orchestrator reaches for them; the full protocol table (every snippet and the direction of each hand-off) is in [`workflow-model.md`](workflow-model.md). The ones that matter most when customizing are the **generative drafts** — they write the *first* artifact of a phase, so an override reshapes everything downstream — and the **review** snippets that set each critique's altitude. Each goes to a duty: the planning pair is the **architect** (makes) and the **analyst** (checks); the delivery pair is the **builder** (makes) and the **critic** (checks — on relay, the **judge**, which also fixes):
+Reproducing the bodies here would make a second source of truth that drifts from the first the next time a snippet is tuned — so it doesn't. For *how* overriding works — the two override files, precedence, fail-closed — see the README's [Customizing the snippets](../README.md#customizing-the-snippets).
 
-| Snippet | Workflow · phase | Duty it goes to | What it produces |
+Two conventions you'll meet in any body: a `{{lessons_dir}}` token resolves to duet's vendored methodology lessons at serve time (the worker sees a real path, never the token), and a trailing `---` / `$0` marks the paste point where accompanying material — a handoff report, review feedback — lands.
+
+## Families
+
+Blocks own their snippet families, so the library's shape is the workflow vocabulary's shape:
+
+```
+snippets/
+  frame.toml       the divergent opening — parallel analysis, then synthesis
+  doc-spec.toml    the spec loop: draft, review, update (+ the round-2 -again pair)
+  doc-plan.toml    the plan loop: the same shape, one altitude finer
+  build.toml       entry seeds, the midpoint checkpoint, each review posture's loop, the tails
+  finish.toml      the PR description, and the run's closing compaction
+  anytime.toml     cross-cutting helpers reachable in any phase
+  consultant.toml  the optional advisor's checkpoint prompts
+```
+
+A phase's snippet list is **derived** from its block and knobs, never hand-listed — so a workflow that composes `doc('spec')` gets the spec family automatically. `list_snippets` shows the orchestrator only the current phase's set plus the anytime helpers; `duet snippets` prints the whole inventory.
+
+## The snippets worth overriding
+
+Two kinds carry the most leverage. The **generative drafts** write the first artifact of a phase, so an override reshapes everything downstream. The **review lenses** set each critique's altitude — the discipline that stops a loop re-litigating what its artifact deliberately defers.
+
+| Snippet | Phase | Duty | What it produces |
 |---|---|---|---|
-| [`write-spec`](#write-spec) | full · spec | architect | the first spec draft |
-| [`start-plan`](#start-plan) | full · plan | architect | the implementation plan (vertical slices) |
-| [`write-design`](#the-blueprint-snippets) | blueprint/relay · design | architect | the design doc (product tier + technical tier) |
-| [`implement-design`](#the-blueprint-snippets) | blueprint/relay · implement | builder | code built from the committed design doc |
-| [`implement-direct`](#implement-direct) | short · implement | builder | code built straight from the research decisions |
-| [`reconcile-docs`](#reconcile-docs) | every workflow · implement | builder (relay: judge) | docs reconciled with what shipped, then committed |
-| [`review-spec`](#review-spec) | full · spec | analyst | spec critique (at spec altitude) |
-| [`review-plan`](#review-plan) | full · plan | analyst | plan critique |
-| [`review-design`](#the-blueprint-snippets) | blueprint/relay · design | analyst | design-doc critique (section-scoped altitude) |
-| [`review-implementation`](#review-implementation) | full · implement, blueprint · implement | critic | code review |
-| [`review-direct`](#review-direct) | short · implement | critic | code review (no spec/plan to measure against) |
-| [`review-and-fix`](#review-and-fix) | relay · implement | judge | code review with the findings fixed in place |
+| `write-spec` | spec (every document-bearing workflow) | architect | the spec draft — product tier on top; module shape, target shape, and test standards below |
+| `start-plan` | plan (full) | architect | the implementation plan: vertical slices, cases, fixtures, line anchors |
+| `implement-spec` | implement (blueprint, relay) | builder | code built from the committed spec, sliced by the builder |
+| `implement-direct` | implement (short) | builder | code built straight from the research decisions |
+| `reconcile-docs` | implement (every workflow) | builder · relay's judge | docs reconciled with what shipped, then committed |
+| `review-spec` | spec | analyst | spec critique, section-scoped: product tier at product altitude, technical tier at design altitude |
+| `review-plan` | plan | analyst | plan critique — cases, fixtures, and line anchors are fair game |
+| `review-implementation` | implement (full, blueprint) | critic | code review, then a reflect-and-respond round |
+| `review-direct` | implement (short) | critic | one writable round; the builder applies the fixes in place |
+| `review-and-fix` | implement (relay) | judge | the same lens, plus the authority to fix what it finds |
 
-full alone has no draft snippet for its implementation phase — the plan is the script, so the orchestrator composes the build prompt from it. The other workflows seed the build from a template because no plan exists there: `implement-design` on blueprint and relay (relay's builder reads it in a fresh delivery-stage session — the body assumes only the committed doc), `implement-direct` on short.
+full has no draft snippet for its build phase: the plan *is* the script, so the orchestrator composes the build prompt from it. Every other workflow seeds the build from a template, because no plan exists there.
+
+Each review snippet also ends with an **"Optional polish"** output contract — wording-level fixes batched as exact before → after replacements, or skipped when none qualify — so the author applies them without re-analyzing the document, and substantive findings stay findings.
+
+**An override changes prose, never behavior.** Round counting and write authority key on a snippet's *tag* through `ACTION_CATALOG` (a code map beside the registry), not on anything in the body — so rewriting `review-and-fix` cannot grant or revoke a duty's write access, and rewriting `review-spec` cannot change what counts as a review round.
 
 ## The mindset gradient — a design principle to preserve
 
-The library deliberately trades efficiency for the *mindset each phase needs*, and the gradient across a run is the architecture: **frame diverges** (`think-holistic` demands 2–3 genuinely different bets so they stress-test each other; `compare-notes` synthesizes two independent, anonymized analyses — Delphi-shaped, so neither author anchors the other), **doc loops converge** (round 2 is explicitly "about converging", and the altitude lenses stop a loop from re-diverging below its artifact's tier), and **the build executes** ("execute the design; don't re-decide it"). Several snippets carry named elicitation frameworks tuned to their task: the rabbit-holes hunt in `write-spec`/`write-design` (find what could quietly eat the build before committing the document), the deep-module mindset shaping `write-spec`'s target-shape section (the envisioned structure/API/wiring — the spec proposes the shape, the plan deepens it rather than redraws it), the pre-mortem in `review-plan`/`review-design` and `consultant-contract` (prospective hindsight surfaces risks forward reading misses), red-team-the-tests and definition-of-wrong in `consultant-contract`, answer-first (BLUF) structure in `ceo-summary`, and Chesterton's fence in `review-and-fix`. When revising a snippet, match its phase's mindset — an "optimization" that collapses the frame phase's exploration into one recommended answer, or re-opens divergence inside a converging round, is a regression even when it reads tighter.
+The library deliberately trades efficiency for the *mindset each phase needs*, and the gradient across a run is the architecture:
 
-Beyond the phase-bound snippets above, a handful of **cross-cutting anytime helpers** are reachable in any phase (classified `ANYTIME_SNIPPETS`, listed in full by `list_snippets`) — e.g. `reread-context` (reread the touched code before continuing), `recover-context` (the post-compact fresh-session re-anchor: an orchestrator-authored status overview + reread, prescribed when a `/compact` is killed and the worker's session is reset — see `docs/automation-design.md` §"Resilience for the AFK window"), and `compact-inflight` (the mid-work compaction: where the boundary compacts keep what the *next* stage consumes, this one keeps the in-flight state — for a caution-band pause that isn't a stage boundary, and the compact-then-resume recovery after a context cut). They are not customization targets, so they live in the shipped library (`snippets/anytime.toml`) rather than the curated table here.
-
----
-
-## The generative drafts
-
-These write the artifact a phase produces. They carry duet's strongest opinions (a leader-facing spec summary; TDD-shaped, vertical-slice planning; how docs get reconciled with what shipped), so they're where customization pays off most. The [worked example](#worked-example-overriding-start-plan-to-a-non-tdd-methodology) below overrides `start-plan`.
-
-### `write-spec`
-
-```text
-Now, write the spec to the location the framing's conventions name (where specs live is the project's call, not this template's). Ground problem and approach in actual code — read the relevant modules first if you haven't. **Tight prose beats exhaustive sections.**
-
-**Open with a leader-facing summary.** The spec's first section reports the change the way you'd report it to your leader:
-- What we're adding or fixing, in product terms — the feature, the bug, the problem it solves.
-- The approach we're taking, and the scope of the change.
-- The boundary once it lands: what's fixed, what isn't, and what's explicitly deferred (one-line why each).
-
-Technical detail earns a place here only as context that makes the problem or solution easier to grasp; someone who reads nothing else should still know what they're getting and not getting.
-
-**Structure the body around the flow of the change:**
-- **Distinguish current vs. desired** — what's preserved vs. what's changing.
-- **Name the coupling decision** — extension of an existing concept, or intentionally independent?
-- **Name the foundation decision (preparatory refactoring).** Is the existing code a base this extends cleanly, or a structure that blocks the design you actually want? If it blocks, scope a *bounded* reshaping as the opening move — sized to this feature, not a module rewrite — and name what you're deliberately leaving alone.
-- **Use implementation anchors** (modules, functions, files) attached to the flow — not the main narrative.
-
-A tree-style before/after often makes the change crisp — adapt the format (tree, prose, diagram) to what fits:
-
-  Current:
-    User submits form
-    └─ Validation runs
-       └─ Record saved
-          └─ Confirmation shown
-
-  Desired:
-    User submits form
-    └─ Validation runs
-       └─ Record saved
-          └─ Webhook fired
-          └─ Confirmation shown
-
-**When the change reshapes structure or grows a surface, give the target shape a dedicated section** — the envisioned end-state, in the same before → after register:
-- **File/module structure** — where the pieces live once this lands: a directory tree with one-line roles, each entry a domain concept (a state, a kind of data, a responsibility), not a layer of plumbing. The structure is the spec's domain model made visible.
-- **Public API or syntax** — what a caller writes once this exists: the exported functions, the config shape, the command line. The surface a user touches, never the bodies behind it.
-- **Integration wiring** — how the new piece connects to what exists: who calls it, what it replaces, which seams it plugs into.
-
-Sketches stay small — the shape, not the build:
-
-  Structure — after:
-    src/export/
-      index.ts    # the one entry: exportReport()
-      csv.ts      # CSV rendering — format quirks live here
-      pdf.ts      # PDF rendering
-
-  API — what a caller writes:
-    exportReport(report, { format: "csv" })
-    (one deep entry point — not exportCsv / exportPdf / exportXlsx each exported)
-
-Shape all three with a **deep-module mindset**: small surfaces concentrating complexity behind them, the domain's states and data carved so wrong ones are hard to express, seams few and narrow rather than many and chatty. The full methodology is planning-stage reading — the mindset costs nothing now, and the shape you propose is what the plan deepens rather than redraws. This section is the spec's highest-value handoff: the builder starts out holding your mental model of the ideal shape instead of reverse-engineering one. Include only the views where the change actually lives (a contained bug fix may need none; an SDK or structural refactor may earn all three), and mark them as the *envisioned* shape, not a contract — the build may drift for stated reasons when the code teaches better, never silently.
-
-**Be concrete, not vague.** Vague verbs — "improve", "enhance", "polish", "better", "optimize", "streamline" and friends — name a *direction*, not a *decision*; they quietly defer the real choice to implementation, which defeats the point of writing a spec. Say **what** changes: the specific behavior, state, or outcome that differs, and the rule or shape that produces it. E.g. "improve error handling" → "on a failed webhook, retry with backoff, then surface a dismissible banner instead of failing silently."
-
-The spec pins decisions, not mechanics. **Don't smuggle in later-stage details:**
-- **Skip** line-by-line edits, function renames, exact call-site changes — designed later. Code appears only as the target shape's surface sketches, never as implementation bodies.
-- **No** doc update plans — later.
-- **Testing:** name behaviors that matter at a high level; specific cases, fixtures, and mocking boundaries come later.
-- Phases are fine; **no precise commit order** — sequencing later.
-- **No time/effort estimates** ("2 days", "~3 hours") — describe the work itself.
-
-**Before you finish, hunt the rabbit holes** — walk the approach end to end looking for what could quietly eat the build: a technical unknown nobody has proven, a design problem the spec gestures at but doesn't solve, an interdependency that reads simpler than it is. Solve each here, cut it out of scope explicitly, or name it in the open questions — an unnamed hole resurfaces mid-build as a stall or a silent wrong turn.
-
-If you have remaining product questions or major technical uncertainty, interview me before you write.
+```
+frame diverges  →  doc loops converge  →  the build executes
 ```
 
-### `start-plan`
+- **Frame diverges.** `think-holistic` demands two or three genuinely different bets so they stress-test each other; `compare-notes` synthesizes two independent, anonymized analyses — Delphi-shaped, so neither author anchors the other.
+- **Doc loops converge.** Round 2 is explicitly "about converging", and the altitude lenses stop a loop re-diverging below its artifact's tier. The one divergent move inside a converging stage is deliberate and confined to a *drafting* turn: `write-spec` sketches three interfaces before committing to one, and the document records the winner, not the menu.
+- **The build executes** — "execute the design; don't re-decide it."
 
-```text
-Plan the implementation as vertical slices against the latest spec — reread the spec first.
+Several snippets carry named elicitation frameworks tuned to their task: the rabbit-holes hunt and design-it-twice in `write-spec` (find what could quietly eat the build; arrive at an interface rather than settling for the first one), the pre-mortem in `review-spec` / `review-plan` / `consultant-contract` (prospective hindsight surfaces risks that reading forward misses), red-team-the-tests and definition-of-wrong in `consultant-contract`, answer-first (BLUF) structure in `ceo-summary`, and Chesterton's fence in `review-and-fix`.
 
-## Read these first, then plan
-Read each one and adapt it to this change — they're the bar for a good plan, not optional background. If a path is missing, ask me rather than guessing.
-- `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
-- `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, red-green-refactor, the anti-patterns
-- `{{lessons_dir}}/testing/mocking-and-fixtures.md` — mock only at boundaries; `test.extend` fixtures
-- `{{lessons_dir}}/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
+When revising a snippet, match its phase's mindset. An "optimization" that collapses frame's exploration into one recommended answer, or re-opens divergence inside a converging round, is a regression even when it reads tighter.
 
-When the plan restructures an existing cluster or the interface is uncertain, also read `{{lessons_dir}}/codebase-design/deepening.md` and `{{lessons_dir}}/codebase-design/design-it-twice.md`.
+### What the reading list encodes
 
-## What you're producing
-A plan written **complementary to the spec**, not overlapping it. Don't re-summarize its goals or re-argue its approach — point to it, and spend the tokens on the tactics it deferred (answer its open questions here). The relay that earns its tokens is a load-bearing gotcha, invariant, or constraint **bolded in the exact slice that must honor it** — surfaced at the point of action, where rereading the spec wouldn't put it in front of you.
+The methodology snippets cite duet's vendored lessons, and **read depth is a decision, not a union**: read a lesson deeply where its decisions get made, skim its `## The bar` where they are only constrained. `write-spec` reads the design lessons closely — it commits the module structure, the interfaces, and the seams — and skims the testing bars, because it names *which* behaviors matter and what gets faked where, not how to write the tests. `start-plan` and the build seeds invert that. A snippet that cites everything has stopped deciding.
 
-Go detailed: name each slice, list specific test cases, sketch helpers and fixtures, cite line numbers for changes to existing code. **Don't pre-write full code bodies** — describe the tests and helpers; the code itself happens during the build.
+## Beyond the phase snippets
 
-## How to plan it
+**Anytime helpers** (`snippets/anytime.toml`) are reachable in any phase and shown in full by `list_snippets` — `reread-context` (reread the touched code before continuing), `recover-context` (the post-compact fresh-session re-anchor, prescribed when a `/compact` is killed and the worker's session resets — `automation-design.md` §"Resilience for the AFK window"), `compact-inflight` (the mid-work compaction: where the boundary compacts keep what the *next* stage consumes, this one keeps the in-flight state), and a handful of investigation aids. They aren't customization targets.
 
-### Slicing
-**Slice = one meaningful unit** — a subsystem or a cluster of related behaviors a reviewer can grasp as a single idea. Be ambitious: group a behavior with the wiring that serves it (an import, mounting a component) into one slice, not slices of their own. Lean larger; split only when two parts are genuinely unrelated or a slice grows too big to hold in your head. **Prefer slicings that delete a concept** — a branch, mode, or helper layer disappears — over ones that just spread it around.
-
-### Preparatory refactoring
-When the foundation blocks the design, reshape it first (Kent Beck: *make the change easy, then make the easy change*). If the spec named a blocking foundation — or you find one now — make the first slice or two a **behavior-preserving** reshaping, kept green by existing tests (or pinned with a characterization test first if that code isn't covered), before the feature slices land on it. Refactor only what the feature actually rests on; a prep slice that balloons into a module rewrite is the failure mode.
-
-### Right-size the code
-The default failure here is too much code, not too little — defensive branches for cases that can't occur, and abstractions invented before the pattern is real. Plan against it:
-- **Make a bad state impossible to construct, don't guard against it.** Reach for a type, a narrow constructor, or an enum an invalid value can't inhabit, over runtime guards repeated at every call site. Validate untrusted input once at the boundary so everything downstream can trust it (*parse, don't validate*); where a state genuinely can't be made unrepresentable, validate at that **one** boundary, not everywhere it's read. A real invariant violation should fail loudly — not get a fallback that hides the bug, or a local defense wherever it happened to surface.
-- **Prefer a little duplication over the wrong abstraction.** Plan a shared abstraction only when the pattern is real (around the third occurrence) and pulling it out *concentrates* complexity instead of just moving it (the deletion test) — un-abstracting later costs more than the duplication did.
-- **Plan only what the spec settled.** No speculative features, config knobs, or extensibility seams it didn't ask for — each is maintenance forever and earns its place only when something uses it.
-
-### Build on the right layer
-Choosing what to build *on* is part of the plan. When a slice needs non-trivial, well-understood mechanical logic — retries/backoff, concurrency limits, parsing, date/time math — decide deliberately between the platform's own primitives, a small specialized library, and writing it yourself. Hand-rolling a solved problem wastes effort; a new dependency is maintenance forever — plan the lightest option that genuinely fits, and record the call and why in the slice that needs it. Training data lags real releases, so ground the choice in what the stack offers *now*, not memory.
-- **Prefer current stable platform primitives when they cover the need** — runtimes keep absorbing what libraries used to own (in TypeScript, `Intl` handles most date/time and number formatting without `date-fns`; native `fetch`, `structuredClone`, and `AbortController` replaced their old library equivalents). Confirm what's stable now rather than reaching for a dependency from habit.
-- **Reach for a small, specialized library when it owns a genuinely tricky problem the platform doesn't** — retry/backoff and concurrency queues are the clear wins (e.g. `p-retry`, `p-queue`). Keep it specialized: a general-purpose giant pulled in for one function (Lodash for a `groupBy`) is its own cost, and a larger framework earns its place only for the genuinely complex state it's built for.
-- **When the plan adopts a dependency**, check the repo doesn't already depend on something that covers it, then **confirm its current API with Context7** and **web-search for best practices, pitfalls, the latest version, and breaking changes**, and match how nearby code already wires its dependencies.
-
-A dependency weighty enough to be an architecture decision in its own right is mine to weigh — flag it rather than committing the repo to it.
-
-### Tests
-**What to test:** observable behavior through public interfaces and the critical paths — not internals or every edge case. Skip UI tests unless asked; confirm with me if unclear. **Red-green-refactor is a tool, not a mandate:** reach for it inside a slice when design is uncertain or behavior is subtle and a failing test gives real signal; writing test and code together is fine otherwise. The discipline is **one slice per commit**, not keystroke order.
-
-## Constraints
-- Follow the settled spec and the project's conventions. Tweak small details if exploration warrants; pause before challenging major direction.
-- Skip doc updates — we'll do those after implementation.
-```
-
-### `implement-direct`
-
-short's only draft — it builds straight from the settled research decisions, since short has no spec or plan. Because there's no plan phase to apply it, this snippet carries the plan phase's high-value engineering signal inline — vertical slices, deep modules and the deletion test, preparatory refactoring, what-to-test calibration, and the build-on-the-right-layer (library-vs-platform) call — and cites the same two `{{lessons_dir}}` methodology roots as `start-plan` for depth. It leaves behind the plan-*document* mechanics (naming slices, listing test cases, line citations) that have no artifact here.
-
-```text
-Build the change directly from the research decisions we settled — those decisions are the spec here; there is no separate spec or plan document. This is small, well-understood work, so treat what follows as a lens scaled to the change, not ceremony — adapt it, drop what doesn't fit.
-
-## Read these first, then build
-Read each one and adapt it to this change — they're the bar, not optional background; don't go hunting them mid-build, and ask me for a path if one's missing.
-- `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
-- `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, mock only at boundaries, anti-patterns
-
-## Before you write code
-- **Re-read the research decisions and the cross-review notes** — they settled the direction and the target shape; execute it, don't re-decide it.
-- **Re-read the code you're about to touch** — trace the real data/control flow and the existing patterns, so the change fits what's already there.
-
-## How to build it
-
-### Slicing
-Build in **vertical slices** — one meaningful unit at a time (a behavior plus the wiring that belongs with it), each independently committable, one slice per commit. Lean larger; group related behavior rather than splitting mechanical steps into their own commits. **Prefer a shape that deletes a concept** — a branch, mode, or helper layer disappears — over one that just rearranges it. If the direction called for reshaping the foundation first (*make the change easy, then make the easy change*), do it as a **behavior-preserving** step kept green — pin uncovered code with a characterization test first — and keep it proportionate; a prep step that balloons into a rewrite is the failure mode.
-
-### Right-size the code
-The default failure here is too much code, not too little — defensive branches for cases that can't occur, and abstractions invented before the pattern is real. Build against it:
-- **Make a bad state impossible to construct, don't guard against it.** Reach for a type, a narrow constructor, or an enum an invalid value can't inhabit, over runtime guards repeated at every call site. Validate untrusted input once at the boundary so everything downstream can trust it (*parse, don't validate*); where a state genuinely can't be made unrepresentable, validate at that **one** boundary. Let a real invariant violation fail loudly — not a fallback that hides the bug, or a local defense wherever it happened to surface.
-- **Prefer a little duplication over the wrong abstraction.** Pull out a shared abstraction only when the pattern is real (around the third occurrence) and doing so *concentrates* complexity instead of just moving it (the deletion test).
-- **Build only what the decisions settled** — no speculative features, config knobs, or extensibility seams nobody asked for; each is maintenance forever.
-
-### Build on the right layer
-Choosing what to build *on* is part of the work. When a slice needs non-trivial, well-understood mechanical logic — retries/backoff, concurrency limits, parsing, date/time math — decide deliberately between the platform's own primitives, a small specialized library, and writing it yourself. Hand-rolling a solved problem wastes effort; a new dependency is maintenance forever — take the lightest option that genuinely fits. Training data lags real releases, so ground the choice in what the stack offers *now*, not memory.
-- **Prefer current stable platform primitives when they cover the need** — runtimes keep absorbing what libraries used to own (in TypeScript, `Intl` handles most date/time and number formatting without `date-fns`; native `fetch`, `structuredClone`, and `AbortController` replaced their old library equivalents). Confirm what's stable now rather than reaching for a dependency from habit.
-- **Reach for a small, specialized library when it owns a genuinely tricky problem the platform doesn't** — retry/backoff and concurrency queues are the clear wins (e.g. `p-retry`, `p-queue`). Keep it specialized: a general-purpose giant pulled in for one function (Lodash for a `groupBy`) is its own cost, and a larger framework earns its place only for the genuinely complex state it's built for.
-- **When you adopt one**, check the repo doesn't already depend on something that covers it, then **confirm its current API with Context7** and **web-search for best practices, pitfalls, the latest version, and breaking changes**, and match how nearby code already wires its dependencies.
-
-A dependency weighty enough to be an architecture decision in its own right is mine to weigh — flag it rather than committing the repo to it.
-
-### Tests
-Write each test against **real** behavior as you build its slice, not a batch up front against imagined shapes — behavior through the public interface, covering the critical paths and complex logic, not every edge case (skip UI tests unless asked). Apply red-green-refactor inside a slice when design is uncertain or behavior is subtle; test and code together is fine otherwise. Run them as you go and keep them green.
-
-If a decision turns out wrong or underspecified once you're in the code, **stop and flag it** rather than guessing your way past it.
-```
-
-### `reconcile-docs`
-
-Runs at the tail of `implement` in every workflow — the docs step, the last thing before the Ship gate, so docs are reviewed with the code and then ride the branch into the PR that `finish` opens. The body is an invariant contract (commit directly — no docs gate; hold the one product boundary back to the human — deleting a documented concept, rewriting a load-bearing design claim, pruning a superseded doc) wrapped around a **method chosen by precedence**: a doc-update skill or document the framing names (the orchestrator relays it, authoritative — it outranks discovery, so a run's explicit choice is never overridden by a generic find), else the project's own doc-update skill (under `.claude/`/`.agents/`) when one exists, else a consolidate-don't-patch default pitched for a senior engineer. The orchestrator can't reach the filesystem, so it only relays a named method; the duty it goes to — the builder, or relay's judge — locates and follows it. Self-contained — it names no vendored skill of its own. Override it to change how a project reconciles docs.
-
-```text
-The docs ship with this change — they ride the branch (and the PR, where there is one) into the shippable record. Reconcile them with what actually shipped, in one pass.
-
-**How to write the update — in order of precedence:**
-1. If this prompt names a doc-update skill or a document to follow, that is the method: read it and follow it — it's this project's authoritative guide for the rest of this update.
-2. Otherwise, look for the project's own doc-update skill (under `.claude/` or `.agents/`) and follow it if one exists.
-3. If there's no project method, reconcile by hand: **consolidate, don't patch** — fold the change into the existing prose so a senior engineer still gets the mental model, not a changelog; stay at the docs' own altitude (the *what* and *why*, never an implementation play-by-play); derive the impact from the code, and leave what still reads true (no manufactured churn).
-
-**Commit the doc changes directly**, on top of the implementation — no approval step.
-
-**One boundary stays mine:** a genuine product or design call — deleting a documented concept, rewriting a load-bearing design claim, pruning a doc the work superseded — flag it and leave it, don't decide it.
-
-**Report what you touched** when done — the docs changed, a one-line impact each, and anything you flagged for me.
-```
-
----
-
-## The blueprint snippets
-
-Blueprint's design phase runs on one document (relay shares its shape), so its snippets merge what full splits. Three keys matter (the `update-design` / `-again` variants mirror their spec/plan siblings):
-
-- **`write-design`** — the workflow's generative draft, reproduced below. It merges `write-spec`'s product tier (leader-facing summary, goals, behaviors, non-goals) with `start-plan`'s technical discipline (module boundaries, seams, an architecture sketch, test standards; the same `{{lessons_dir}}` citations) — and defers what the build owns: code bodies, per-case test enumeration, fixtures, commit order. Override it to reshape the whole workflow, the way overriding `write-spec` or `start-plan` reshapes full.
-- **`review-design`** — the section-scoped lens: product sections review at spec altitude (a missing behavior is a gap; module design pressed there is below altitude), technical sections at design altitude (boundaries, seams, and test strategy are fair game; demanding case enumeration or code re-grows the rounds the workflow deletes). Ends with a pre-mortem pass (assume the cold build off this doc failed — write the cause, make it a finding) and carries the same "Optional polish" output contract as the other review snippets.
-- **`implement-design`** — the build seed, `implement-direct`'s sibling: it anchors on the committed design doc as the authority for *what and why* and carries the same build discipline for *how* (vertical slices of the builder's own choosing, right-sizing, layer choices, tests per the doc's standards).
-
-### `write-design`
-
-```text
-Now, write the design doc to the location the framing's conventions name (where design docs live is the project's call, not this template's). This one document carries the whole design — the build executes from it, and a human reads it later to understand the change — so **tight prose beats exhaustive sections**, and every section earns its place.
-
-## Read these first, then design
-Read each one and adapt it to this change — they're the bar for a good design, not optional background. If a path is missing, ask me rather than guessing.
-- `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test, illegal states
-- `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, the anti-patterns
-- `{{lessons_dir}}/testing/mocking-and-fixtures.md` — mock only at boundaries; `test.extend` fixtures
-- `{{lessons_dir}}/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
-
-When the design restructures an existing cluster or the interface is uncertain, also read `{{lessons_dir}}/codebase-design/deepening.md` and `{{lessons_dir}}/codebase-design/design-it-twice.md`.
-
-Ground problem and approach in actual code — read the relevant modules first if you haven't.
-
-## The document's shape
-The doc runs top-down, product to technical, each tier at its own altitude.
-
-**Product sections first — what and why.** Open with a leader-facing summary: what we're adding or fixing in product terms, the approach and its scope, and the boundary once it lands — what's fixed, what isn't, what's explicitly deferred (one-line why each). Then the goals, the user-facing behaviors, and the non-goals; distinguish current vs. desired — what's preserved vs. what's changing (a tree-style before/after often makes it crisp). Someone who reads only these sections should still know what they're getting and not getting.
-
-**Technical sections below — the shape of the build:**
-- **Module boundaries and seams:** which modules own the change, the interface each presents, and the coupling decision — an extension of an existing concept, or intentionally independent. Design deep modules: small interfaces, complexity concentrated behind them (the deletion test). A before/after directory tree or a caller-facing API sketch often makes the boundary crisp.
-- **The foundation decision (preparatory refactoring):** is the existing code a base this extends cleanly, or a structure that blocks the design? If it blocks, scope a *bounded* reshaping as the opening move — sized to this feature, not a module rewrite — and name what you're deliberately leaving alone.
-- **An architecture sketch:** how data and control flow through the changed system, in prose or a diagram — enough that the build starts oriented — with implementation anchors (modules, functions, files) attached to the flow, not as the main narrative.
-- **Test standards:** the behaviors that must be tested, and for each the strategy — through which interface, what gets faked at which boundary — plus the gotchas worth flagging. Name *what to test and how to think about testing it*.
-
-**Be concrete where you decide.** Vague verbs — "improve", "enhance", "polish", "streamline" — name a *direction*, not a *decision*; they quietly defer the real choice to the build. Say **what** changes: the specific behavior, state, or outcome that differs, and the rule or shape that produces it.
-
-## What the build decides later
-Leave these out — they're the build's to decide, and pinning them now would commit the design to details the code hasn't taught us yet: full code bodies, per-case test enumeration and fixtures, line-level edit plans, doc-update plans, and commit order. The design owes the *what* and the *shape*; the build owns the cases and the sequence.
-
-**Do not include any time/effort estimates** ("2 days", "~3 hours") — describe the work itself.
-
-**Before you finish, hunt the rabbit holes** — walk the approach end to end looking for what could quietly eat the build: a technical unknown nobody has proven, a design problem the doc gestures at but doesn't solve, an interdependency that reads simpler than it is. For each one: solve it here, cut it out of scope explicitly, or name it in the open questions. An unnamed hole doesn't disappear — it resurfaces mid-build, where the builder has only this document to resolve it with.
-
-If you have remaining product questions or major technical uncertainty, interview me before you write.
-```
-
----
-
-## The review snippets
-
-Each review snippet gives the checking duty a deliberate **altitude lens** — what to critique and what to leave alone at that artifact's altitude. Overriding one changes how hard, and at what level of detail, your checker pushes. Each also ends with an **"Optional polish"** output contract: wording-level fixes are batched as exact before → after replacements (or skipped when none qualify), so the author applies them without re-analyzing the document — substantive findings stay findings.
-
-### `review-spec`
-
-```text
-I've drafted a spec. Review critically — verify problem statements and intended solutions against the actual code.
-
-The spec is intentionally high-level: problem, UX goal, conceptual approach, non-goals, open questions. It IS moderately technical (can name modules, functions, composition patterns) but **defers line-level details, test design, doc plans, and commit order** — those come later.
-
-**Altitude lens:**
-- Vagueness on implementation details (signatures, helper internals, specific test cases) → **intentional, don't ask for more**.
-- Vagueness on concepts the spec should answer (data flow, ordering, failure modes, scope, edge cases, current vs. desired distinction, coupling to existing concepts) → **bug, flag it**.
-- Technical content the spec DOES propose (names, placement, composition, boundaries — including a target-shape section's envisioned file structure, public API, or wiring) → **fair game**; hold it to surface altitude (interfaces and placement, not bodies) and propose a better shape where this one is awkward or shallow.
-
-**Push hard on:**
-- Are we solving the right problem? Is the UX goal right?
-- Does the conceptual approach hold up: data flow, state, ordering, failure modes, performance, backward compat, migrations?
-- Spec ↔ code mismatches.
-- Cleaner alternative approaches.
-- **Foundation & preparatory refactoring:** is the feature being bolted onto a structure that can't hold it (a missing prep step), or is a proposed cleanup disproportionate to the feature (scope creep)? Flag either.
-- Non-goals + open questions: anything in-scope that should defer? Anything missing from the uncertainty list?
-
-**Per point:**
-- Agree → add technical suggestions, caveats, or risks worth flagging.
-- Disagree → give reasons and a concrete alternative. If architectural, say so and propose the structural fix.
-
-Weigh technical merit and UX goals together. **Challenge assumptions and propose alternatives** — don't default to politeness. Don't say "not specific enough" without naming the unanswered concept.
-
-**End with an "Optional polish" section**, separate from the findings above: wording-level fixes where you can supply the exact replacement and the meaning doesn't change. Write each as location plus replacement (before → after), ready to apply verbatim. If an imprecision changes behavior, scope, or a testable claim, it's a finding, not polish; if you can't write the exact replacement, it isn't polish either — raise it as a finding or drop it. When nothing qualifies, say so in a line rather than manufacturing items. Delivered as concerns, wording points cost the author a reread of the whole document; delivered as ready replacements, they cost nothing.
-
----
-
-$0
-```
-
-### `review-plan`
-
-```text
-I've drafted an implementation plan. Review with the same rigor as the spec.
-
-Background (skim as a lens, don't recite):
-- `{{lessons_dir}}/codebase-design/deep-modules.md` — deep modules, seams, the deletion test
-- `{{lessons_dir}}/testing/tdd-loop.md` — vertical slices, behavior-focused tests, when to mock
-
-**Adapt; drop what doesn't fit our use case.**
-
-**Altitude lens:**
-- Vagueness on full code bodies (test implementations, function bodies) → **intentional, don't ask for them**.
-- Vagueness on anything else — slice boundaries, sequencing, specific test cases, helper internals, fixture shape, line-level placement, module shape, integration seams, what the spec left open → **bug, flag it**.
-- Technical content the plan DOES propose — slice choice, test cases, helper design, names, composition, deep-module shape → **fair game; propose better if a slice is wrong, a test case missing, a helper awkward, sequencing off, a module shallow, or the design over-built**.
-
-**Per point:**
-- Agree → add technical suggestions, caveats, or risks worth flagging.
-- Disagree → give reasons and a concrete alternative. If architectural, say so and propose the structural fix.
-
-Challenge sequencing, scope, choice of vertical slices, **whether the plan deletes complexity or just rearranges it**, **whether the resulting modules are deep or shallow**, and **whether any preparatory-refactoring slice is proportionate to the feature, not quietly a rewrite** — not just surface details.
-
-**Watch for over-building** — the plan's likelier failure is too much code, not too little: defensive handling for states it could make unrepresentable, fallbacks for cases that can't occur, speculative features or config the spec didn't ask for, or a shared abstraction pulled out too early. Flag these the way you'd flag a missing case. And steer the other way when you catch yourself wanting *more* — prefer pushing a bad state to where it's unrepresentable, or validation to a single boundary, over adding error handling at every call site.
-
-**Run a pre-mortem before you write up findings.** It's a month from now: the build off this plan stalled, or shipped subtly wrong — no crash, no failing test. Write down the two or three most plausible causes, then check whether the plan already defends against each; any it doesn't becomes a finding. Looking back from an assumed failure surfaces risks that reading forward misses.
-
-The right plan should feel inevitable. Don't default to politeness.
-
-**End with an "Optional polish" section**, separate from the findings above: wording-level fixes where you can supply the exact replacement and the meaning doesn't change. Write each as location plus replacement (before → after), ready to apply verbatim. If an imprecision changes behavior, scope, or a testable claim, it's a finding, not polish; if you can't write the exact replacement, it isn't polish either — raise it as a finding or drop it. When nothing qualifies, say so in a line rather than manufacturing items. Delivered as concerns, wording points cost the author a reread of the whole document; delivered as ready replacements, they cost nothing.
-
----
-
-$0
-```
-
-### `review-implementation`
-
-```text
-Code-review my implementation. **Read the actual code, not just commit messages.**
-
-**Lens:**
-- Implementation is fair game across the board — correctness, structure, test quality, performance, readability, edge cases, pattern consistency.
-- Plan ↔ code mismatches → flag silent deviations (missing planned tests, missing helpers, scope creep).
-- Spec/plan are settled — **don't relitigate approved decisions**. If a fundamental issue only surfaces from the code, say so explicitly; don't smuggle it in as a "small fix."
-
-**Evaluate:**
-
-- **Correctness** — bugs, edge cases, failure modes.
-- **Solves the problem** — does the implementation actually solve the spec's problem, not just pass its own tests?
-- **Test quality** — right altitude (behavior, not internals), covers planned cases + obvious additions, survives plausible refactors, uses project patterns.
-- **UX & performance** — user-facing impact, performance characteristics.
-- **Structural quality — be ambitious, not just local:**
-    - **Code-judo:** is there a reframing that makes whole branches, helpers, modes, conditionals, or layers disappear entirely — not just rearranges them? Don't stop at "this could be a bit cleaner."
-    - **Spaghetti growth:** ad-hoc conditionals or special cases bolted into unrelated flows = design problem, not a stylistic nit. Push the logic behind its own abstraction.
-    - **Thin abstractions:** pass-through wrappers, identity helpers, abstractions that add indirection without buying clarity — flag them.
-    - **Boundary cleanliness:** casts, `any`, `unknown`, optionality papering over unclear invariants — push for an explicit contract.
-    - **Canonical layer:** is the logic in the right module/package, or leaking across boundaries? Prefer existing canonical helpers over near-duplicates.
-
-**Per issue:**
-- Severity: **critical** (blocks merge) / **moderate** (fix before merge) / **minor** (nice-to-have).
-- Concrete fix with file/function references and enough detail to act on.
-- No "this could be cleaner" without a concrete alternative.
-
-**Approval bar:** don't pass because it works. Structural regressions and missed code-judo opportunities are presumptive blockers — flag as **critical**, not minor.
-
-Implementation report below — treat it as a starting point: the implementer's pointers to reduce your overhead, not the boundary of your review. Review the whole feature against its actual goal, and actively look for what the report leaves out; if you only check what the implementer surfaced, it isn't an independent review.
-
----
-
-$0
-```
-
-### `review-direct`
-
-short's counterpart to `review-implementation` — the bar is the settled research decisions, not a spec or plan document.
-
-```text
-Code-review this implementation. **Read the actual code, not just commit messages.**
-
-There's no spec or plan for this arc — the bar is the **research decisions we settled and the actual goal behind them.** Review against those, not a document.
-
-**Lens:**
-- Everything is fair game — correctness, structure, test quality, performance, readability, edge cases, pattern consistency.
-- Decisions ↔ code mismatches → flag where the build drifted from what we agreed. If a decision turns out wrong now that it's real code, say so explicitly; don't smuggle it in as a "small fix."
-
-**Evaluate:**
-- **Correctness** — bugs, edge cases, failure modes.
-- **Solves the problem** — does this achieve the goal behind the decisions, not just run?
-- **Test quality** — right altitude (behavior, not internals), covers the real cases, survives plausible refactors, uses project patterns. Flag the anti-patterns: tests of *shape* (signatures, data structures) that pass when behavior breaks, and over-testing — every edge case or internals instead of the critical paths.
-- **UX & performance** — user-facing impact, performance characteristics.
-- **Structural quality — be ambitious, not just local:** look for a reframing that deletes whole branches/helpers/modes, not just rearranges them; apply the **deletion test** to new modules (does it concentrate complexity, or just move it?) and flag **shallow** ones — a thin pass-through wrapper, an interface nearly as complex as its implementation; push ad-hoc conditionals and special cases behind their own abstraction; flag casts/`any`/`unknown` papering over unclear invariants; keep logic in its canonical module rather than leaking across boundaries. If the build did preparatory refactoring, check it stayed **behavior-preserving and proportionate** — not a rewrite smuggled in alongside the change.
-
-**Per issue:** severity — **critical** (blocks ship) / **moderate** (fix before ship) / **minor** (nice-to-have); a concrete fix with file/function references; no "this could be cleaner" without a concrete alternative.
-
-**Approval bar:** don't pass because it works — structural regressions and missed reframings are presumptive blockers, flag them **critical**.
-
-Implementation handoff below — a starting map, not the boundary of your review. Review the whole change against its actual goal, and actively look for what the handoff leaves out; if you only check what was surfaced, it isn't an independent review.
-
----
-
-$0
-```
-
-### `review-and-fix`
-
-Relay's one review round, sent to the judge — the only shipped snippet whose reader has **write access**. It carries `review-direct`'s full lens plus the resolve-it-yourself discipline (assess validity → fix ordinary issues directly, tests moving with the fix → leave what was right), and the **escalation valve**: a product or design disagreement, unreconstructable intent, or broad drift escalates to the human instead of being patched over — a direct fix must never hide a pivot. Override it to change how hard relay's judge pushes, or where its fix-vs-escalate line sits.
-
-```text
-Code-review this implementation — and resolve what you find. You review with write access: you didn't write this code, but you own getting it ship-ready. The bar is the committed design doc — its product sections carry the goal and the boundaries, its technical sections the module shapes, seams, and test standards the build was to honor. Review against the doc's intent, not a redesign of your own.
-
-**First, understand what the builder did.** Read the actual code and commits, not just the handoff below. Where something looks wrong, work out what the builder was doing before judging it (Chesterton's fence: don't tear down what you don't yet know the purpose of) — an approach that reads oddly from outside often encodes a constraint you haven't hit yet, and where it is genuinely wrong, knowing the intent is what lets you fix it without breaking what the intent got right.
-
-**Lens — everything is fair game:**
-- **Correctness** — bugs, edge cases, failure modes.
-- **Solves the problem** — does this achieve the goal behind the design, not just run?
-- **Test quality** — right altitude (behavior, not internals), covers the real cases, survives plausible refactors, uses project patterns. Flag tests of *shape* that pass when behavior breaks, and over-testing of edge cases instead of the critical paths.
-- **Structural quality — be ambitious, not just local:** a reframing that deletes whole branches/helpers/modes beats rearranging them; apply the **deletion test** to new modules; flag **shallow** ones (a thin pass-through wrapper, an interface nearly as complex as its implementation); keep logic in its canonical module.
-- **Right-sizing — over-building is the likelier failure:** defensive branches for states that can't occur, fallbacks the invariants rule out, speculative config beyond the design, abstractions pulled out before the pattern is real.
-
-**Then resolve each finding yourself — this round is review-and-fix, not review-and-file:**
-1. **Assess validity honestly** — a finding you can't defend from the code or the doc isn't a finding.
-2. **An ordinary valid issue: fix it directly**, and move the tests with the fix — add one for the corrected behavior, strengthen a weak one, delete what the fix makes obsolete. Keep the suite green; commit as you go.
-3. **Where the code is right and your instinct was wrong: leave it**, and say why in your report.
-
-**Escalate instead of fixing when a finding changes the substance:** a product or design disagreement (the doc said X, and X now looks wrong in the real code), intent you cannot reconstruct from the code and commits, or drift so broad that fixing it means re-deciding the build's direction. Fixing those directly would hide a pivot inside a review — flag them and leave that thread unresolved. Direct fixing is the default for ordinary issues, not a license to re-decide the work.
-
-**Report when done:** the fixes you applied and the points you left as-is, each grounded in the actual commits, plus anything you escalated. This report travels into the summary the human decides to ship from, so it must reflect the final state of the code, not a plan for it.
-
-The builder's handoff:
-
----
-
-$0
-```
-
----
+**Consultant prompts** (`snippets/consultant.toml`) are enabled only when a consultant is bound, and a run sees only the checkpoints its own workflow fires (`automation-design.md` §"Consultant checkpoints"). An unbound run's snippet surface reads byte-for-byte as if they didn't ship.
 
 ## Worked example: overriding `start-plan` to a non-TDD methodology
 
-duet's shipped `start-plan` ([above](#start-plan)) plans the work as **test-first vertical slices** and cites duet's vendored design and testing lessons. Suppose you don't work that way — you'd rather build a **walking skeleton** first (a thin end-to-end path through every layer, stubs allowed), then flesh it out slice by slice, verifying by *running the system* rather than test-first. That's a whole-snippet override.
+duet's shipped `start-plan` plans the work as **test-first vertical slices** and cites duet's vendored design and testing lessons (`duet snippets show start-plan` to read it). Suppose you don't work that way — you'd rather build a **walking skeleton** first (a thin end-to-end path through every layer, stubs allowed), then flesh it out slice by slice, verifying by *running the system* rather than test-first. That's a whole-snippet override.
 
 Drop this into your **user** override file, `~/.config/duet/snippets.toml` — a personal methodology preference applies across every project. (Put the identical block in a repo's `.duet/snippets.toml` instead to scope it to that one project — e.g. a repo that genuinely isn't test-first.)
 
@@ -476,7 +118,7 @@ start-plan        user
 $ duet snippets show start-plan      # prints the effective (overridden) body
 ```
 
-If you mistype the key (say `start_plan`), the next `list_snippets`/`duet snippets` fails closed, naming the file and the bad key — an override can only *replace* an existing snippet, never add one.
+If you mistype the key (say `start_plan`), the next `list_snippets` / `duet snippets` fails closed, naming the file and the bad key — an override can only *replace* an existing snippet, never add one.
 
 ## Before you override: the safety-coupled snippets
 

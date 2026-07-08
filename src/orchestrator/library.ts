@@ -110,7 +110,6 @@ const SNIPPET_FILES = [
   'frame.toml',
   'doc-spec.toml',
   'doc-plan.toml',
-  'doc-design.toml',
   'build.toml',
   'finish.toml',
   'anytime.toml',

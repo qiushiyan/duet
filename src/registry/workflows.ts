@@ -29,9 +29,11 @@
  *   full:   frame → Direction → spec → Commit-spec → plan → Plan-approval
  *           (walk away) → implement (AFK; build → review → reconcile docs) → Ship
  *           → finish (open the PR) → Open-PR → done
- *   blueprint: frame → Direction → design → Design (walk away) → implement
+ *   blueprint: frame → Direction → spec → Commit-spec (walk away) → implement
  *           (AFK; build → review → reconcile docs) → Ship → finish (open the PR)
- *           → Open-PR → done — one committed design doc replaces spec + plan
+ *           → Open-PR → done — full minus the plan phase; the spec is the design
+ *   relay:  blueprint's shape with a fresh, criss-crossed delivery: the judge
+ *           fixes findings in place and owns the docs + PR tails
  *   short:    research → Direction (walk away) → implement (AFK; build → review →
  *           reconcile docs) → Ship → finish (open the PR) → Open-PR → done
  *
@@ -66,7 +68,6 @@ export type {
   CompiledWorkflow,
   ConsultantCheckpoint,
   CritiqueBuildBriefWorld,
-  DocLoopBriefArtifact,
   Duty,
   EntrySeed,
   ExamplesKey,
@@ -101,19 +102,21 @@ const SHIPPED_WORKFLOW_DEFINITIONS = {
       finish(),
     ],
   }),
+  // blueprint is full minus the plan phase: one committed spec carries the whole
+  // design, and its `rounds: 2` cap is the fast-convergence premise made a rail.
   blueprint: defineWorkflow({
     name: 'blueprint',
-    title: 'Blueprint (frame → design doc → implement → ship → PR)',
-    attend: ['design'],
+    title: 'Blueprint (frame → spec → implement → ship → PR)',
+    attend: ['spec'],
     presets: { afk: [] },
-    phases: [frame(), doc('design', { contract: true }), build({ review: 'critique' }), finish()],
+    phases: [frame(), doc('spec', { rounds: 2, contract: true }), build({ review: 'critique' }), finish()],
   }),
   relay: defineWorkflow({
     name: 'relay',
-    title: 'Relay (frame → design doc → fresh build → judge review-and-fix → PR)',
-    attend: ['design'],
+    title: 'Relay (frame → spec → fresh build → judge review-and-fix → PR)',
+    attend: ['spec'],
     presets: { afk: [] },
-    phases: [frame(), doc('design', { contract: true }), build({ review: 'fixer' }), finish()],
+    phases: [frame(), doc('spec', { rounds: 2, contract: true }), build({ review: 'fixer' }), finish()],
   }),
   short: defineWorkflow({
     name: 'short',
@@ -580,11 +583,12 @@ export function consultantSnippetFor(workflow: WorkflowRef, phase: PhaseName): s
 
 /**
  * The phase in a workflow whose consultant checkpoint AUTHORS the acceptance
- * contract (`contract` mode) — Full's `plan`; `undefined` for an arc with no
- * contract loop (short). The freeze step reads this to recognize "this gate is the
- * contract's freeze gate", so the gate→freeze coupling stays registry-derived
- * (never a hardcoded `=== 'plan'`), and an arc that authors no contract freezes
- * none. Derived, since exactly one phase carries the mode (or none).
+ * contract (`contract` mode) — full's `plan`, blueprint's and relay's `spec`;
+ * `undefined` for a workflow with no contract loop (short). The freeze step reads
+ * this to recognize "this gate is the contract's freeze gate", so the gate→freeze
+ * coupling stays registry-derived (never a hardcoded `=== 'plan'`), and a workflow
+ * that authors no contract freezes none. Derived, since exactly one phase carries
+ * the mode (or none).
  */
 export function contractAuthorPhaseOf(workflow: WorkflowRef): PhaseName | undefined {
   return phasesOf(workflow).find((p) => p.consultantCheckpoint === 'contract')?.name;

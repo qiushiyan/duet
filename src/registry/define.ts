@@ -104,9 +104,10 @@ export function doc(artifact: ArtifactKind, options: DocOptions = {}): PhaseExpr
   if (options.audit && artifact !== 'spec') {
     throw new Error(`doc("${artifact}", { audit: true }) has no shipped consultant audit prose — audit is only declared for the spec doc-loop`);
   }
-  if (options.contract && artifact === 'spec') {
-    throw new Error(`doc("spec", { contract: true }) has no shipped contract-author prose — contract is only declared for plan or design doc-loops`);
-  }
+  // `contract` is legal on EITHER artifact, and the difference is the contract's
+  // seed placement, not its legality: a doc with an upstream committed document
+  // authors early from it (full's plan), one without authors late from its own
+  // converged draft (blueprint/relay's spec). compileWorkflow derives which.
   return {
     block: 'doc',
     artifact,
@@ -160,6 +161,22 @@ export function compileWorkflow(definition: WorkflowDefinition): CompiledWorkflo
     }
   }
 
+  // Documents are ordered: the first is the spec, every later one a plan. Caught
+  // here, at the authoring surface, so the SDK error names the fix rather than
+  // letting validateRegistry report it against the compiled shape.
+  const docPhases = phases.filter((p) => p.expr.block === 'doc');
+  docPhases.forEach((p, i) => {
+    if (p.expr.block !== 'doc') return;
+    const expected: ArtifactKind = i === 0 ? 'spec' : 'plan';
+    if (p.expr.artifact !== expected) {
+      throw new Error(
+        i === 0
+          ? `workflow "${definition.name}" opens with doc("${p.expr.artifact}") — a workflow's first document is always doc("spec"); a plan rereads a settled spec that would not exist`
+          : `workflow "${definition.name}" declares doc("${p.expr.artifact}") after another document — only the first document is a spec; every later one is doc("plan")`,
+      );
+    }
+  });
+
   const contractPhases = phases.filter((p) => p.expr.block === 'doc' && p.expr.contract);
   if (contractPhases.length > 1) {
     throw new Error(
@@ -194,6 +211,12 @@ export function compileWorkflow(definition: WorkflowDefinition): CompiledWorkflo
         finishOwner,
         hasDocLoopAfter: hasDocLoopAfter(phases, phase.index, buildPhase.index),
         isFirstPlanningFrame: isFirstPlanningFrame(phases, phase.index, buildPhase.index),
+        hasUpstreamDoc: phases.slice(0, phase.index).some((p) => p.expr.block === 'doc'),
+        // Planning's last phase — the gate that hands an interactive run to the
+        // headless driver. One derivation, read by both the frame and doc gates
+        // (it was hand-encoded twice: `frameGate(docLoopFollows)` and the design
+        // gate's literal hint).
+        isHandoffPhase: phase.index === buildPhase.index - 1,
       }),
     ),
     stages: stagesFor(phases, buildPhase.index, buildSemantics.reviewPosture),
@@ -216,6 +239,8 @@ function compilePhase(
     finishOwner: TailOwner;
     hasDocLoopAfter: boolean;
     isFirstPlanningFrame: boolean;
+    hasUpstreamDoc: boolean;
+    isHandoffPhase: boolean;
   },
 ): WorkflowSpecInput['phases'][number] {
   switch (phase.expr.block) {
@@ -223,7 +248,7 @@ function compilePhase(
       return {
         name: phase.name,
         semantics: { block: 'frame', examplesKey: context.hasDocLoopAfter ? 'frame' : 'research' },
-        gate: frameGate(context.hasDocLoopAfter),
+        gate: frameGate(context.isHandoffPhase),
         artifactLabel: 'direction analysis',
         reviewLoop: false,
         roundCap: 2,
@@ -236,11 +261,16 @@ function compilePhase(
       const checkpoint = docCheckpointFor(phase.expr);
       return {
         name: phase.name,
-        semantics: { block: 'doc-loop', artifactKind: phase.expr.artifact, examplesKey: phase.expr.artifact },
-        gate: docGate(phase.expr.artifact),
-        artifactLabel: phase.expr.artifact === 'design' ? 'design doc' : phase.expr.artifact,
+        semantics: {
+          block: 'doc-loop',
+          artifactKind: phase.expr.artifact,
+          hasUpstreamDoc: context.hasUpstreamDoc,
+          isHandoffPhase: context.isHandoffPhase,
+        },
+        gate: docGate(phase.expr.artifact, context.isHandoffPhase),
+        artifactLabel: phase.expr.artifact,
         reviewLoop: true,
-        roundCap: phase.expr.rounds ?? defaultDocRounds(phase.expr.artifact),
+        roundCap: phase.expr.rounds ?? DEFAULT_DOC_ROUNDS,
         orchestratorBudgetUsd: 15,
         workerBudgetUsd: 10,
         workerTurnTimeoutMs: thirtyMinutes(),
@@ -345,9 +375,9 @@ function entrySeedFor(
   deliveryFresh: boolean,
 ): EntrySeed {
   if (!deliveryFresh && upstreamArtifact === 'plan') return 'compact-for-impl';
-  if (!deliveryFresh && upstreamArtifact === 'design') return 'implement-design';
+  if (!deliveryFresh && upstreamArtifact === 'spec') return 'implement-spec';
   if (!deliveryFresh && upstreamArtifact === undefined) return 'implement-direct';
-  if (deliveryFresh && upstreamArtifact === 'design') return 'fresh-seed';
+  if (deliveryFresh && upstreamArtifact === 'spec') return 'fresh-seed';
   throw new Error(
     `workflow "${workflowName}" build "${phaseNameForError}" has ${upstreamArtifact ?? 'none'} + ${deliveryFresh ? 'fresh' : 'continuing'} delivery, but no prose world exists for that combination (and therefore no entry-seed ritual can be derived)`,
   );
@@ -359,10 +389,10 @@ function buildExamplesKeyFor(
   reviewPosture: ReviewPosture,
   upstreamArtifact: ArtifactKind | undefined,
 ): Extract<PhaseSemantics, { block: 'build' }>['examplesKey'] {
-  if (reviewPosture === 'critique' && upstreamArtifact === 'plan') return 'impl';
-  if (reviewPosture === 'critique' && upstreamArtifact === 'design') return 'blueprint-impl';
-  if (reviewPosture === 'writable' && upstreamArtifact === undefined) return 'short-impl';
-  if (reviewPosture === 'fixer' && upstreamArtifact === 'design') return 'relay-impl';
+  if (reviewPosture === 'critique' && upstreamArtifact === 'plan') return 'impl-from-plan';
+  if (reviewPosture === 'critique' && upstreamArtifact === 'spec') return 'impl-from-spec';
+  if (reviewPosture === 'writable' && upstreamArtifact === undefined) return 'impl-direct';
+  if (reviewPosture === 'fixer' && upstreamArtifact === 'spec') return 'impl-fixer';
   const valid = BRIEF_WORLDS.build[reviewPosture].join(', ');
   throw new Error(
     `workflow "${workflowName}" build "${phaseNameForError}" has review "${reviewPosture}" after upstream ${upstreamArtifact ?? 'none'}, but no ${reviewPosture} build prose world is declared for that upstream artifact — valid ${reviewPosture} worlds: ${valid}`,
@@ -446,29 +476,38 @@ function isFirstPlanningFrame(phases: readonly NormalizedPhase[], index: number,
   return phases.find((p) => p.index < buildIndex && p.expr.block === 'frame')?.index === index;
 }
 
-function defaultDocRounds(artifact: ArtifactKind): number {
-  return artifact === 'design' ? 2 : 3;
+/** Every doc-loop's backstop cap; a workflow that converges faster says so with `rounds`. */
+const DEFAULT_DOC_ROUNDS = 3;
+
+/**
+ * The hand-off-to-AFK hint, shared by every planning phase that ends the stage.
+ * The lead clause is the derivation (`isHandoffPhase`); the tail names which
+ * document the run is actually building from, which the block knows and the
+ * derivation does not.
+ */
+function handoffHint(tail: string): string {
+  return `(approving hands off to AFK implementation — ${tail})`;
 }
 
-function frameGate(docLoopFollows: boolean): WorkflowSpecInput['phases'][number]['gate'] {
+function frameGate(isHandoffPhase: boolean): WorkflowSpecInput['phases'][number]['gate'] {
   return {
     state: 'directionGate',
     heading: 'DIRECTION gate — the synthesized direction',
     ready: 'Direction gate — synthesized direction ready',
-    hint: docLoopFollows
-      ? null
-      : '(approving hands off to AFK implementation — these decisions are the spec; there is no separate spec or plan)',
+    hint: isHandoffPhase ? handoffHint('these decisions are the spec; there is no separate spec or plan') : null,
   };
 }
 
-function docGate(artifact: ArtifactKind): WorkflowSpecInput['phases'][number]['gate'] {
+function docGate(artifact: ArtifactKind, isHandoffPhase: boolean): WorkflowSpecInput['phases'][number]['gate'] {
   switch (artifact) {
     case 'spec':
       return {
         state: 'commitSpecGate',
         heading: "SPEC gate — the orchestrator's summary",
         ready: 'Commit-spec gate — spec ready for review',
-        hint: null,
+        // A spec that ends planning IS the whole design — say so. A spec followed
+        // by a plan says nothing: the plan is obviously still coming.
+        hint: isHandoffPhase ? handoffHint('the spec is the single design document; there is no separate plan') : null,
       };
     case 'plan':
       return {
@@ -476,13 +515,6 @@ function docGate(artifact: ArtifactKind): WorkflowSpecInput['phases'][number]['g
         heading: "PLAN gate — the orchestrator's summary",
         ready: 'Plan-approval gate — plan ready for review',
         hint: null,
-      };
-    case 'design':
-      return {
-        state: 'designGate',
-        heading: "DESIGN gate — the orchestrator's summary",
-        ready: 'Design gate — design doc ready for review',
-        hint: '(approving hands off to AFK implementation — the design doc is the single design artifact; there is no separate spec or plan)',
       };
   }
 }
@@ -530,7 +562,7 @@ function presentNumber<K extends string>(key: K, value: number | undefined): { r
 }
 
 function workflowArtifacts(): readonly ArtifactKind[] {
-  return ['spec', 'plan', 'design'] as const satisfies readonly ArtifactKind[];
+  return ['spec', 'plan'] as const satisfies readonly ArtifactKind[];
 }
 
 function workflowReviews(): readonly ReviewPosture[] {

@@ -103,6 +103,51 @@ describe('the snippet library', () => {
     });
   });
 
+  /**
+   * `docs/snippets.md` is the customization MAP, not a copy of the library.
+   * It used to reproduce nine bodies verbatim; nothing pinned them, so they
+   * silently rotted — the doc described a `write-design` snippet months after
+   * the artifact merged into `write-spec`. The bodies now live in exactly two
+   * places (`snippets/*.toml`, and `duet snippets show <key>` for the effective
+   * one), and these guards keep it that way: a snippet the doc names must exist,
+   * and a pasted body announces itself by the token only bodies carry.
+   */
+  describe('docs/snippets.md stays a map, not a second source of truth', () => {
+    const doc = (): string => readFileSync(join(import.meta.dirname, '..', 'docs', 'snippets.md'), 'utf8');
+
+    // The override table IS the map, so every key in it must resolve. A leading
+    // `| \`key\` |` cell is unambiguous — unlike a backtick anywhere in prose,
+    // which also catches lesson filenames like `design-it-twice`.
+    test('every snippet in the override table exists in the library', () => {
+      const known = new Set(loadSnippets().map((s) => s.key));
+      const rows = Array.from(doc().matchAll(/^\| `([a-z][a-z0-9-]+)` \|/gm), (m) => m[1]!);
+      expect(rows.length, 'the override table lost its rows — it is what makes this doc a map').toBeGreaterThan(5);
+      for (const key of rows) {
+        expect.soft(known.has(key), `docs/snippets.md's table names "${key}", which is not a snippet`).toBe(true);
+      }
+    });
+
+    test('the doc reproduces no shipped snippet body (the rot mechanism, removed)', () => {
+      const text = doc();
+      // The precise guard: a shipped body's opening line, verbatim. The doc's
+      // worked example is a USER's override, so it must stay allowed.
+      for (const s of loadSnippets()) {
+        const firstLine = s.expand.trim().split('\n')[0]!;
+        if (firstLine.length < 40) continue;
+        expect.soft(text, `docs/snippets.md reproduces the shipped body of "${s.key}" — cite \`duet snippets show ${s.key}\` instead`).not.toContain(
+          firstLine,
+        );
+      }
+      // A `{{lessons_dir}}` token inside a fenced block is a pasted body; naming
+      // the token in prose (to explain the convention) is the doc's job.
+      for (const block of Array.from(text.matchAll(/```[\s\S]*?```/g), (m) => m[0])) {
+        expect.soft(block, 'a fenced block in docs/snippets.md carries a {{lessons_dir}} token — that is a snippet body').not.toContain(
+          '{{lessons_dir}}',
+        );
+      }
+    });
+  });
+
   test('carries the templates the orchestrator prompts name', () => {
     // Entry prompts reference these by name (src/orchestrator/briefs.ts);
     // a library missing them would strand the orchestrator mid-phase.
@@ -141,7 +186,7 @@ describe('the snippet library', () => {
     // without re-analysis (the measured 7-minute reread was a conscientious
     // implementer re-deriving each wording suggestion). Pinned lightly — the
     // section name and the no-re-analysis license — not verbatim.
-    for (const key of ['review-spec', 'review-plan', 'review-design', 'review-spec-again', 'review-plan-again', 'review-design-again']) {
+    for (const key of ['review-spec', 'review-plan', 'review-spec-again', 'review-plan-again']) {
       const body = getSnippet(key)?.expand ?? '';
       expect.soft(body, `${key} carries the polish output contract`).toContain('Optional polish');
       expect.soft(body, `${key} demands exact replacements`).toMatch(/before → after/);
@@ -149,11 +194,11 @@ describe('the snippet library', () => {
     // The empty case has a skip (round-1 templates carry the full contract; the
     // -agains inherit it in-session): a mandated section with no skip gets
     // filled — a reviewer with nothing to polish would manufacture items.
-    for (const key of ['review-spec', 'review-plan', 'review-design']) {
+    for (const key of ['review-spec', 'review-plan']) {
       const body = getSnippet(key)?.expand ?? '';
       expect.soft(body, `${key} licenses an empty polish section`).toMatch(/nothing qualifies/);
     }
-    for (const key of ['update-spec', 'update-plan', 'update-design', 'update-spec-again', 'update-plan-again', 'update-design-again']) {
+    for (const key of ['update-spec', 'update-plan', 'update-spec-again', 'update-plan-again']) {
       const body = getSnippet(key)?.expand ?? '';
       expect.soft(body, `${key} names the polish section`).toContain('Optional polish');
       expect.soft(body, `${key} licenses applying polish without re-analysis`).toMatch(/re-analysis/i);
@@ -293,30 +338,95 @@ describe('the snippet library', () => {
     }
   });
 
-  test('the design arc snippets exist; the drafter and the build seed both carry the methodology citations', () => {
-    for (const key of ['write-design', 'review-design', 'update-design', 'review-design-again', 'update-design-again', 'implement-design']) {
-      const snippet = getSnippet(key);
-      expect.soft(snippet, `snippet "${key}"`).toBeDefined();
-      expect.soft(snippet?.expand.trim(), `snippet "${key}" body`).toBeTruthy();
-    }
-    // Load-bearing: tools.ts counts a review round by tag.startsWith('review').
-    expect.soft('review-design'.startsWith('review')).toBe(true);
+  // The spec is every workflow's design document, so its reading list is a
+  // DECISION, not a union: read a lesson deeply where its decisions get made,
+  // skim its bar where they are only constrained. The exclusions are as
+  // load-bearing as the inclusions — a future "just cite them all" edit is
+  // exactly what this pins against.
+  test('write-spec reads the design lessons deeply and the testing lessons as a lens', () => {
+    const body = getSnippet('write-spec')?.expand ?? '';
 
-    // The arc that drops the plan must not drop the plan's discipline: the
-    // drafter cites the design + testing methodology (start-plan's set) and the
-    // build seed carries it into the AFK build (implement-direct's role). Pinned
-    // so a future edit can't silently strip the citations.
-    for (const key of ['write-design', 'implement-design']) {
+    // Read deeply — the spec commits the module structure, the interface, and the
+    // seam placement, and design-it-twice is the discipline for choosing them.
+    expect.soft(body, 'write-spec stopped citing the architecture methodology').toContain('{{lessons_dir}}/codebase-design/deep-modules.md');
+    expect.soft(body, 'write-spec stopped citing design-it-twice — the interface is chosen here and nowhere later').toContain(
+      '{{lessons_dir}}/codebase-design/design-it-twice.md',
+    );
+    expect.soft(body, 'write-spec stopped citing deepening — its dependency categories decide whether a seam needs a port').toContain(
+      '{{lessons_dir}}/codebase-design/deepening.md',
+    );
+
+    // Skimmed as a lens — the spec names WHICH behaviors matter and what gets
+    // faked at which boundary; how to write the tests is the plan's or build's.
+    expect.soft(body, 'write-spec stopped citing the TDD methodology').toContain('{{lessons_dir}}/testing/tdd-loop.md');
+    expect.soft(body, 'write-spec stopped citing the mocking boundary rule').toContain('{{lessons_dir}}/testing/mocking-and-fixtures.md');
+    expect.soft(body, 'the testing lessons are a lens at spec altitude, not a deep read').toMatch(/skim the `## The bar`/i);
+
+    // Deliberately NOT read: a spec never writes an assertion, and 440 lines of
+    // tool reference at design altitude buys nothing.
+    expect.soft(body, 'write-spec pulled in the Vitest API reference — the spec writes no assertions').not.toContain('testing/vitest.md');
+
+    // design-it-twice's bar, made operational: three shapes, independence, and a
+    // recommendation rather than a menu. Assert the tokens each rule turns on, not
+    // the sentence around them — emphasis and wording move, the discipline doesn't.
+    expect.soft(body, 'write-spec dropped the three-shapes bar').toMatch(/three shapes/i);
+    expect.soft(body, 'write-spec no longer demands the shapes differ in kind').toMatch(/different in kind/i);
+    expect.soft(body, 'write-spec dropped the constraint axes that pull the shapes apart').toMatch(/ports and adapters/i);
+    expect.soft(body, 'write-spec dropped the independence rule (sequential authorship converges)').toMatch(/out of view/i);
+    expect.soft(body, 'write-spec dropped the winner-not-the-menu rule').toMatch(/winner, not the menu/i);
+    expect.soft(body, 'write-spec dropped the "Shapes considered" record the reviewer checks').toContain('Shapes considered');
+  });
+
+  // Binding convention 7 (docs/prompting-and-tool-design.md): a worker reads its
+  // prompt cold and holds none of duet's vocabulary. The doc-loop family is the
+  // one place that vocabulary keeps trying to creep back in — "the builder" reads
+  // as plain English to whoever wrote it and as a stranger to whoever reads it.
+  // The leak's actual shape is the NOUN — "the builder starts out holding your
+  // mental model", which read as plain English to whoever wrote it and as a
+  // stranger to the worker reading it cold. Match on the article so the guard
+  // catches that and leaves the English verbs alone ("judge it there", "review
+  // critically", "if architectural, say so").
+  test("the spec doc-loop snippets carry none of duet's duty names", () => {
+    const DUTY_NOUN = /\b(?:the|a|an|your|its)\s+(architect|analyst|builder|critic|judge|orchestrator|consultant)s?\b/i;
+    for (const key of ['write-spec', 'review-spec', 'update-spec', 'review-spec-again', 'update-spec-again']) {
       const body = getSnippet(key)?.expand ?? '';
-      expect.soft(body, `${key} stopped citing the architecture methodology`).toContain('{{lessons_dir}}/codebase-design/deep-modules.md');
-      expect.soft(body, `${key} stopped citing the TDD methodology`).toContain('{{lessons_dir}}/testing/tdd-loop.md');
+      const hit = DUTY_NOUN.exec(body);
+      expect.soft(hit?.[1], `snippet "${key}" names a duet duty — a worker reads its prompt cold`).toBeUndefined();
     }
+  });
 
-    // The section-scoped altitude lens: the reviewer holds each tier to its own
-    // altitude, and the build's deferred details stay deferred.
-    const reviewBody = getSnippet('review-design')?.expand ?? '';
-    expect.soft(reviewBody, 'review-design reviews product sections at their own altitude').toMatch(/product sections/i);
-    expect.soft(reviewBody, 'review-design reviews technical sections at design altitude').toMatch(/technical sections/i);
+  test('review-spec holds each tier to its own altitude and checks the shape was chosen, not first', () => {
+    const body = getSnippet('review-spec')?.expand ?? '';
+    expect.soft(body, 'review-spec reviews product sections at their own altitude').toMatch(/product sections/i);
+    expect.soft(body, 'review-spec reviews technical sections at design altitude').toMatch(/technical sections/i);
+    expect.soft(body, 'review-spec dropped the pre-mortem').toMatch(/pre-mortem/i);
+    expect.soft(body, 'review-spec dropped the over-building check').toMatch(/over-building/i);
+    expect.soft(body, 'review-spec no longer audits the target shape\'s alternatives').toMatch(/chosen.*or merely.*first/i);
+  });
+
+  // The plan is the tactics the spec deferred. Its design-it-twice gate moved
+  // upstream to write-spec, where the interface is actually still open — leaving
+  // it here would fire it after start-plan says "follow the settled spec".
+  test('start-plan defers the design methodology to the spec and keeps the test discipline', () => {
+    const body = getSnippet('start-plan')?.expand ?? '';
+    expect.soft(body, 'start-plan re-grew the design-it-twice gate the spec now owns').not.toContain('design-it-twice.md');
+    expect.soft(body, 'start-plan stopped citing the TDD methodology').toContain('{{lessons_dir}}/testing/tdd-loop.md');
+    expect.soft(body, 'start-plan stopped citing the mocking/fixtures methodology').toContain('{{lessons_dir}}/testing/mocking-and-fixtures.md');
+    expect.soft(body, 'start-plan no longer says the spec settled the shape').toMatch(/spec settled/i);
+    // The claim that bit: on a --spec draft entry no write-spec turn ever ran, so
+    // the plan may not assert the architect read the design lessons at the spec stage.
+    expect.soft(body, 'start-plan asserts a lesson-read that a --spec entry never performed').not.toMatch(/you read the design lessons/i);
+  });
+
+  test('implement-spec seeds a cold build from the committed spec, carrying the full methodology', () => {
+    const body = getSnippet('implement-spec')?.expand ?? '';
+    expect.soft(body, 'snippet "implement-spec" body').toBeTruthy();
+    // Cold-safe by contract: relay's fresh builder reads it with no planning
+    // session, so the document plus these lessons are its whole seed.
+    for (const lesson of ['codebase-design/deep-modules.md', 'testing/tdd-loop.md', 'testing/mocking-and-fixtures.md', 'testing/vitest.md']) {
+      expect.soft(body, `implement-spec stopped citing ${lesson}`).toContain(`{{lessons_dir}}/${lesson}`);
+    }
+    expect.soft(body, 'implement-spec still names a "design doc" — the artifact is a spec').not.toMatch(/design doc/i);
   });
 
   test('the RIR arc snippets exist with non-empty bodies; review-direct keeps the review- prefix', () => {

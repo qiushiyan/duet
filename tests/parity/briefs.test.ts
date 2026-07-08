@@ -104,21 +104,21 @@ const CASES: Array<{ name: string; phase: PhaseName; opts: ParityRunOpts }> = [
 
   // ---- design: the one-doc arc (frame pre-authorized by default) ----
   { name: 'blueprint-frame.default', phase: 'frame', opts: { workflow: 'blueprint' } },
-  { name: 'blueprint-design.draft', phase: 'design', opts: { workflow: 'blueprint', warmSessions: true } },
+  { name: 'blueprint-spec.draft', phase: 'spec', opts: { workflow: 'blueprint', warmSessions: true } },
   {
-    name: 'blueprint-design.draft-autocrossed',
-    phase: 'design',
+    name: 'blueprint-spec.draft-autocrossed',
+    phase: 'spec',
     opts: { workflow: 'blueprint', warmSessions: true, autoApprovals: ['directionGate'] },
   },
-  { name: 'blueprint-design.review', phase: 'design', opts: { workflow: 'blueprint', spec: true } },
+  { name: 'blueprint-spec.review', phase: 'spec', opts: { workflow: 'blueprint', spec: true } },
   {
-    name: 'blueprint-design.review-consultant',
-    phase: 'design',
+    name: 'blueprint-spec.review-consultant',
+    phase: 'spec',
     opts: { workflow: 'blueprint', spec: true, consultant: true },
   },
   {
-    name: 'blueprint-design.draft-consultant',
-    phase: 'design',
+    name: 'blueprint-spec.draft-consultant',
+    phase: 'spec',
     opts: { workflow: 'blueprint', warmSessions: true, consultant: true },
   },
   { name: 'blueprint-implement.default', phase: 'implement', opts: { workflow: 'blueprint', spec: true, warmSessions: true } },
@@ -144,17 +144,17 @@ const CASES: Array<{ name: string; phase: PhaseName; opts: ParityRunOpts }> = [
 
   // ---- relay: the fixer arc (design's shape; writing reviewer owns the tails) ----
   { name: 'relay-frame.default', phase: 'frame', opts: { workflow: 'relay' } },
-  { name: 'relay-design.review', phase: 'design', opts: { workflow: 'relay', spec: true } },
+  { name: 'relay-spec.review', phase: 'spec', opts: { workflow: 'relay', spec: true } },
   {
-    name: 'relay-design.review-consultant',
-    phase: 'design',
+    name: 'relay-spec.review-consultant',
+    phase: 'spec',
     opts: { workflow: 'relay', spec: true, consultant: true },
   },
   { name: 'relay-implement.default', phase: 'implement', opts: { workflow: 'relay', spec: true, warmSessions: true } },
   {
     name: 'relay-implement.autocrossed',
     phase: 'implement',
-    opts: { workflow: 'relay', spec: true, warmSessions: true, autoApprovals: ['designGate'] },
+    opts: { workflow: 'relay', spec: true, warmSessions: true, autoApprovals: ['commitSpecGate'] },
   },
   {
     name: 'relay-implement.consultant-frozen',

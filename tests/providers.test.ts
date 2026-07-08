@@ -1225,7 +1225,7 @@ describe('createWorkers', () => {
     };
     const rails = { workerBudgetUsd: 10, timeoutMs: 60_000 };
     // Planning: architect on claude, analyst on codex (the base pair).
-    const planning = createWorkers(crisscross, 'blueprint', 'design', rails);
+    const planning = createWorkers(crisscross, 'blueprint', 'spec', rails);
     expect.soft(planning.architect).toBeInstanceOf(ClaudeWorker);
     expect.soft(planning.analyst?.name).toBe('codex');
     // Delivery: the providers criss-cross — codex builds, claude critiques.

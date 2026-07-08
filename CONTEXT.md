@@ -5,8 +5,8 @@ duet is a semi-AFK orchestrator: a run executes one workflow (full · blueprint 
 ## Workflow structure
 
 **Workflow**:
-A named process shape a run executes, expressed as an ordered list of stages. The shipped standard library: **full** (spec + plan), **blueprint** (one design doc), **relay** (blueprint with a criss-crossed build), **short** (no document). Named on the ceremony/artifact axes, never after a stage, phase, or artifact.
-_Avoid_: arc, pipeline; "design" and "rir" (the retired arc names)
+A named process shape a run executes, expressed as an ordered list of stages. The shipped standard library: **full** (spec + plan), **blueprint** (full minus the plan phase — one spec), **relay** (blueprint with a criss-crossed build), **short** (no document). Named on the ceremony/artifact axes, never after a stage, phase, or artifact.
+_Avoid_: arc, pipeline; "design" and "rir" (retired names)
 
 **Workflow definition**:
 An authored SDK expression (`defineWorkflow({ phases: [...] })`) that composes the closed block vocabulary into a named workflow. It may be shipped by duet or live in a user/project workflow file; it is input, not what a run executes directly.
@@ -25,7 +25,7 @@ The two shared stage names. Planning is the attended thinking stretch — the en
 _Avoid_: thinking/building, pre-handoff/post-handoff (as stage names)
 
 **Phase**:
-The gate/loop unit inside a stage — frame, spec, plan, design, research, implement, finish. Each phase is an instance of a block, runs to convergence under the orchestrator, and exits through a human gate. Phase identity is workflow-scoped: (workflow, name).
+The gate/loop unit inside a stage — frame, spec, plan, research, implement, finish. Each phase is an instance of a block, runs to convergence under the orchestrator, and exits through a human gate. Phase identity is workflow-scoped: (workflow, name).
 _Avoid_: step, sub-phase, job
 
 **Block**:
@@ -107,6 +107,10 @@ _Avoid_: daemon, runner (reserved for CI comparisons)
 **Framing**:
 The human's per-run brief — the single seam through which project knowledge enters a run — plus machine-parsed frontmatter that is the run's manifest (workflow, posture, duty bindings).
 _Avoid_: brief (that's a phase entry brief), issue, prompt
+
+**Spec / Plan**:
+The two documents a doc-loop phase can produce, and the whole artifact vocabulary. A workflow's documents are ordered: the first is always the **spec** — half-technical, product goals on top and module shape, seams, target shape, and test standards below — and any later one is a **plan**, the tactics the spec deferred (slices, cases, fixtures, sequencing). A workflow with no plan phase hands its spec straight to the build; that is topology, not a third kind of document.
+_Avoid_: design doc, blueprint (that's a workflow), technical spec
 
 **Snippet**:
 A prompt template in duet's shipped library, the workflow's substance — adapted per turn by the orchestrator, overridable per key by users.

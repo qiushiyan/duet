@@ -6,7 +6,7 @@
       "always": [
         {
           "guard": "hasSpec",
-          "target": "designLoop"
+          "target": "specLoop"
         },
         {
           "target": "frameLoop"
@@ -50,44 +50,44 @@
       ],
       "on": {
         "human.approve": {
-          "target": "designLoop"
+          "target": "specLoop"
         },
         "human.reject": {
           "target": "frameLoop"
         }
       }
     },
-    "designLoop": {
+    "specLoop": {
       "tags": [
         "phase"
       ],
       "invoke": {
         "src": "phaseDriver",
         "onError": {
-          "target": "designFlagWait"
+          "target": "specFlagWait"
         }
       },
       "on": {
         "phase.advance": {
-          "target": "designGate"
+          "target": "commitSpecGate"
         },
         "phase.flag": {
-          "target": "designFlagWait"
+          "target": "specFlagWait"
         }
       }
     },
-    "designFlagWait": {
+    "specFlagWait": {
       "tags": [
         "quiescent",
         "flag-wait"
       ],
       "on": {
         "human.answer": {
-          "target": "designLoop"
+          "target": "specLoop"
         }
       }
     },
-    "designGate": {
+    "commitSpecGate": {
       "tags": [
         "quiescent",
         "gate"
@@ -97,7 +97,7 @@
           "target": "implementLoop"
         },
         "human.reject": {
-          "target": "designLoop"
+          "target": "specLoop"
         }
       }
     },

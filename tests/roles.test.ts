@@ -35,7 +35,7 @@ describe('voice policy helpers', () => {
 
   test('phaseAddressesFor on relay: delivery pairs the builder with the judge', ({ projectDir }) => {
     const relay = createRun({ cwd: projectDir, bindings: defaultBindingsFor('relay'), workflow: 'relay', framing: 'x' });
-    expect.soft(phaseAddressesFor(relay, 'design')).toEqual(['architect', 'analyst']);
+    expect.soft(phaseAddressesFor(relay, 'spec')).toEqual(['architect', 'analyst']);
     expect.soft(phaseAddressesFor(relay, 'implement')).toEqual(['builder', 'judge']);
   });
 
@@ -92,7 +92,7 @@ describe('voice policy helpers', () => {
     expect.soft(writeAuthorityFor(run, 'implement', 'critic', 'reconcile-docs')).toBe(false);
     expect.soft(writeAuthorityFor(run, 'finish', 'critic', 'pr-description')).toBe(false);
     expect.soft(writeAuthorityFor(shortRun, 'implement', 'critic', 'review-direct')).toBe(false);
-    expect.soft(writeAuthorityFor(blueprintRun, 'design', 'analyst', 'review-design')).toBe(false);
+    expect.soft(writeAuthorityFor(blueprintRun, 'spec', 'analyst', 'review-spec')).toBe(false);
     // The consultant's contract/verify relaxations are PROMPT-scoped — the
     // resolver never widens it, so author-never-commits holds mechanically.
     expect.soft(writeAuthorityFor(consultantRun, 'plan', 'consultant', 'consultant-contract')).toBe(false);
@@ -112,7 +112,7 @@ describe('voice policy helpers', () => {
     expect.soft(writeAuthorityFor(relay, 'implement', 'judge', 'review-midpoint')).toBe(false);
     expect.soft(writeAuthorityFor(relay, 'implement', 'judge', 'custom')).toBe(false);
     // And never in the planning stage — relay's analyst is critique-only pre-handoff.
-    expect.soft(writeAuthorityFor(relay, 'design', 'analyst', 'review-design')).toBe(false);
+    expect.soft(writeAuthorityFor(relay, 'spec', 'analyst', 'review-spec')).toBe(false);
     expect.soft(writeAuthorityFor(relay, 'frame', 'analyst', 'think-holistic')).toBe(false);
   });
 

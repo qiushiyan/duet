@@ -18,17 +18,17 @@ const bootstrapWorkflows = {
   }),
   blueprint: defineWorkflow({
     name: 'blueprint',
-    title: 'Blueprint (frame → design doc → implement → ship → PR)',
-    attend: ['design'],
+    title: 'Blueprint (frame → spec → implement → ship → PR)',
+    attend: ['spec'],
     presets: { afk: [] },
-    phases: [frame(), doc('design', { contract: true }), build({ review: 'critique' }), finish()],
+    phases: [frame(), doc('spec', { rounds: 2, contract: true }), build({ review: 'critique' }), finish()],
   }),
   relay: defineWorkflow({
     name: 'relay',
-    title: 'Relay (frame → design doc → fresh build → judge review-and-fix → PR)',
-    attend: ['design'],
+    title: 'Relay (frame → spec → fresh build → judge review-and-fix → PR)',
+    attend: ['spec'],
     presets: { afk: [] },
-    phases: [frame(), doc('design', { contract: true }), build({ review: 'fixer' }), finish()],
+    phases: [frame(), doc('spec', { rounds: 2, contract: true }), build({ review: 'fixer' }), finish()],
   }),
   short: defineWorkflow({
     name: 'short',

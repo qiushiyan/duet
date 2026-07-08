@@ -411,13 +411,13 @@ describe('no CLI help / template copy carries a Full-only-arc claim', () => {
       (publicCommands.get(cmd)?.options.find((o) => o.long === long)?.description ?? '').toLowerCase();
     // --gates-at: every arc's presets, including the walk-away afk.
     expect.soft(opt('new', '--gates-at')).toContain('short');
-    expect.soft(opt('new', '--gates-at')).toContain('design');
+    expect.soft(opt('new', '--gates-at')).toContain('spec');
     expect.soft(opt('new', '--gates-at')).toContain('afk');
     // --interactive and orchestrate: the handoff gate per arc.
     expect.soft(opt('new', '--interactive')).toContain('short');
-    expect.soft(opt('new', '--interactive')).toContain('design');
+    expect.soft(opt('new', '--interactive')).toContain('spec');
     expect.soft(publicCommands.get('orchestrate')?.description().toLowerCase()).toContain('short');
-    expect.soft(publicCommands.get('orchestrate')?.description().toLowerCase()).toContain('design');
+    expect.soft(publicCommands.get('orchestrate')?.description().toLowerCase()).toContain('spec');
   });
 
   test('the framing template seed names every workflow (workflow:, blueprint, short, afk)', () => {

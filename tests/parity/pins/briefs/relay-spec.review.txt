@@ -13,31 +13,29 @@ plan seed depending on the workflow under pin.
 </documents>
 
 <task>
-Run the SPEC review loop on the draft spec above, then advance to the commit-spec gate.
+Run the SPEC review loop on the draft spec above, then advance to the commit-spec gate. This run's spec is its one committed document — product goals, behaviors, and non-goals on top; module boundaries, seams, the target shape, and test standards below. There is no separate plan phase, so the build works from this document alone.
 
 Branch: the run works on exactly one branch, fixed before your first worker prompt. The repo is currently on "feat/parity". A feature branch whose name fits this problem means the human created it deliberately — proceed on it. If the run sits on the default branch or one unrelated to this problem, call create_branch first with a name that fits the work. Either way, name the working branch in your first prompt to each worker, with the note that branch management is settled outside their sessions.
-
-This phase's exit gate is pre-authorized: the human granted approval at run start, so advance_phase records your packet for their later review and the run continues immediately — no live gate decision arrives, and the human is away from the terminal. Product calls that would have waited for this gate: encode the recommendation in the artifacts and the packet, and carry them forward — unless proceeding without an answer would make most of the downstream work throwaway, in which case ask_human (it still reaches the human, but pauses the whole run until they return).
 
 The shape of the loop:
 1. Read the snippet library (list_snippets) — the review-spec / update-spec snippets (and their -again variants for later rounds) are the templates for this loop.
 2. Send the analyst a review-spec prompt wrapping the current spec. The analyst can read the repo directly, so point it at docs/specs/parity-fixture.md and related code — name the path as well as quoting the content. The review is section-scoped: product sections at product altitude, technical sections at design altitude — the lens is in the template; keep it intact.
 3. Route the analyst's feedback to the architect with an update-spec prompt. The architect should apply accepted changes to docs/specs/parity-fixture.md directly (it has write access) and report what it changed versus rejected and why.
-4. Judge convergence. Run another round with the -again variants when substantive points remain open; stop when what's left is minor. The backstop cap for this phase is 3 review rounds — your judgment should converge well before it.
-5. When converged, call advance_phase with a summary of what the analyst flagged, what changed, and any rejections with their rationale — the human decides at the gate from your summary.
+4. Judge convergence. Run another round with the -again variants when substantive points remain open; stop when what's left is minor. The backstop cap for this phase is 2 review rounds — your judgment should converge well before it.
+5. When converged, call advance_phase with a summary of what the analyst flagged, what changed, and any rejections with their rationale — Approving this gate hands the run off to AFK implementation, so the summary should give the human confidence the design is buildable end to end.
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
 
 ## Spec phase examples
 
-This phase's call is holding each analyst point to its section's altitude — the spec's product sections review at product altitude, its technical sections at design altitude, and the plan's details stay deferred. Apply the section the point lands in, not the point's wording.
+This phase's call is holding each analyst point to its section's altitude — the spec's product sections review at product altitude, its technical sections at design altitude, and the build's details stay deferred. Apply the section the point lands in, not the point's wording.
 <example name="a product gap is a real gap">
-The analyst notes the spec never says what happens when the input is empty — a behavior the feature must define. That is a gap in the product sections: route it to the architect to resolve in the spec, because the technical sections and the plan both build on the answer.
+The analyst notes the spec never says what happens when the input is empty — a behavior the feature must define. That is a gap in the product sections: route it to the architect to resolve in the spec, because the technical sections and the build both build on the answer.
 </example>
 <example name="module design reviews at design altitude">
 The analyst flags a module boundary that leaves two callers reimplementing the same rule — a seam in the wrong place. Fair game: the technical sections own module boundaries and the target shape, so route it as a design change to make, not a nitpick to note.
 </example>
 <example type="avoid" name="pressing the spec down to build depth">
-The analyst asks the spec to enumerate the test cases per behavior and sketch the helper bodies. Those are the plan's to decide — the spec owes behaviors, strategies, and gotchas, not cases and code. Note they are deferred and move on.
+The analyst asks the spec to enumerate the test cases per behavior and sketch the helper bodies. Those are the build's to decide — the spec owes behaviors, strategies, and gotchas, not cases and code. Note they are deferred and move on.
 </example>
 </task>

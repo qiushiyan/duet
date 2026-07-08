@@ -36,7 +36,8 @@ import {
   saveRunState,
   scratchDirOf,
   stageHumanInput,
-  } from '../src/run/store.ts';
+  UnloadableRunError,
+} from '../src/run/store.ts';
 import { test } from './helpers/fixtures.ts';
 
 describe('recordPhaseLabel — the view-only tmux phase sidecar', () => {
@@ -233,12 +234,12 @@ describe('run creation', () => {
     // workflow and no frozen workflow must still die at the boundary, not fall
     // through to a lookup crash.
     const legacy = JSON.parse(readFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), 'utf8'));
-    legacy.workflow = 'design';
+    legacy.workflow = 'spec';
     writeFileSync(join(runDirOf(projectDir, run.runId), 'state.json'), JSON.stringify(legacy, null, 2));
     rmSync(workflowPath(projectDir, run.runId), { force: true });
 
     expect(() => loadRunState(projectDir, run.runId)).toThrow(
-      /workflow "design"[\s\S]*no frozen workflow\.json[\s\S]*project\/user workflow files[\s\S]*claude --resume/,
+      /workflow "spec"[\s\S]*no frozen workflow\.json[\s\S]*project\/user workflow files[\s\S]*claude --resume/,
     );
   });
 
@@ -345,8 +346,34 @@ describe('run creation', () => {
     const frozen = JSON.parse(readFileSync(workflowPath(projectDir, created.runId), 'utf8'));
 
     expect.soft(frozen.name).toBe('blueprint');
-    expect.soft(frozen.displayName).toBe('Blueprint (frame → design doc → implement → ship → PR)');
-    expect.soft(workflowFor(created).phases.map((p) => p.name)).toEqual(['frame', 'design', 'implement', 'finish']);
+    expect.soft(frozen.displayName).toBe('Blueprint (frame → spec → implement → ship → PR)');
+    expect.soft(workflowFor(created).phases.map((p) => p.name)).toEqual(['frame', 'spec', 'implement', 'finish']);
+  });
+
+  // The deliberate break: runs frozen before 2026-07-08 carry a `design`
+  // doc-loop, a vocabulary duet no longer speaks. They must fail LOUD and
+  // ACTIONABLE — an UnloadableRunError the listing surfaces report — not with a
+  // registry-internal message, and never by silently vanishing from the run list.
+  test('a run frozen with the retired "design" artifact is refused with a named era and a way out', ({ projectDir }) => {
+    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('blueprint'), workflow: 'blueprint' });
+    const path = workflowPath(projectDir, created.runId);
+    const frozen = JSON.parse(readFileSync(path, 'utf8'));
+    const doc = frozen.phases.find((p: { semantics: { block: string } }) => p.semantics.block === 'doc-loop');
+    doc.semantics = { block: 'doc-loop', artifactKind: 'design', examplesKey: 'design' };
+    writeFileSync(path, JSON.stringify(frozen));
+
+    let thrown: unknown;
+    try {
+      workflowFor(created);
+    } catch (error) {
+      thrown = error;
+    }
+    expect.soft(thrown).toBeInstanceOf(UnloadableRunError);
+    const message = (thrown as Error).message;
+    expect.soft(message, 'names the retired vocabulary').toContain('design');
+    expect.soft(message, 'names the era so a reader knows which runs are affected').toContain('2026-07-08');
+    expect.soft(message, 'every stop needs a next command — the transcripts are still there').toContain('transcripts');
+    expect.soft(message, 'says plainly that replay/grading of these runs is gone').toMatch(/replay and grading/i);
   });
 
   test('a pre-feature shipped run with no workflow.json falls back to the shipped registry row', ({ projectDir }) => {

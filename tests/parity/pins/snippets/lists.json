@@ -140,35 +140,35 @@
       "consultant-frame"
     ]
   },
-  "blueprint.design": {
+  "blueprint.spec": {
     "base": [
-      "write-design",
-      "review-design",
-      "update-design",
-      "review-design-again",
-      "update-design-again"
+      "write-spec",
+      "review-spec",
+      "update-spec",
+      "review-spec-again",
+      "update-spec-again"
     ],
     "consultant": [
-      "write-design",
-      "review-design",
-      "update-design",
-      "review-design-again",
-      "update-design-again",
+      "write-spec",
+      "review-spec",
+      "update-spec",
+      "review-spec-again",
+      "update-spec-again",
       "consultant-contract"
     ],
     "consultantGateless": [
-      "write-design",
-      "review-design",
-      "update-design",
-      "review-design-again",
-      "update-design-again",
+      "write-spec",
+      "review-spec",
+      "update-spec",
+      "review-spec-again",
+      "update-spec-again",
       "consultant-contract"
     ]
   },
   "blueprint.implement": {
     "base": [
       "compact-for-impl",
-      "implement-design",
+      "implement-spec",
       "midpoint-status",
       "review-midpoint",
       "respond-midpoint",
@@ -183,7 +183,7 @@
     ],
     "consultant": [
       "compact-for-impl",
-      "implement-design",
+      "implement-spec",
       "midpoint-status",
       "review-midpoint",
       "respond-midpoint",
@@ -199,7 +199,7 @@
     ],
     "consultantGateless": [
       "compact-for-impl",
-      "implement-design",
+      "implement-spec",
       "midpoint-status",
       "review-midpoint",
       "respond-midpoint",
@@ -244,34 +244,34 @@
       "consultant-frame"
     ]
   },
-  "relay.design": {
+  "relay.spec": {
     "base": [
-      "write-design",
-      "review-design",
-      "update-design",
-      "review-design-again",
-      "update-design-again"
+      "write-spec",
+      "review-spec",
+      "update-spec",
+      "review-spec-again",
+      "update-spec-again"
     ],
     "consultant": [
-      "write-design",
-      "review-design",
-      "update-design",
-      "review-design-again",
-      "update-design-again",
+      "write-spec",
+      "review-spec",
+      "update-spec",
+      "review-spec-again",
+      "update-spec-again",
       "consultant-contract"
     ],
     "consultantGateless": [
-      "write-design",
-      "review-design",
-      "update-design",
-      "review-design-again",
-      "update-design-again",
+      "write-spec",
+      "review-spec",
+      "update-spec",
+      "review-spec-again",
+      "update-spec-again",
       "consultant-contract"
     ]
   },
   "relay.implement": {
     "base": [
-      "implement-design",
+      "implement-spec",
       "midpoint-status",
       "review-midpoint",
       "respond-midpoint",
@@ -281,7 +281,7 @@
       "ceo-summary"
     ],
     "consultant": [
-      "implement-design",
+      "implement-spec",
       "midpoint-status",
       "review-midpoint",
       "respond-midpoint",
@@ -292,7 +292,7 @@
       "consultant-verify"
     ],
     "consultantGateless": [
-      "implement-design",
+      "implement-spec",
       "midpoint-status",
       "review-midpoint",
       "respond-midpoint",

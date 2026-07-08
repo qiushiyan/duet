@@ -2,10 +2,10 @@
 Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in workflow order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).
 <phase_templates phase="implement">
 <snippet key="compact-for-impl">
-/compact Transitioning from design to implementation. The design is settled and committed on disk — the spec and plan files, or the single design doc — so compact for a **focused implementation window**: keep what the build turns on, drop the journey that produced the design.
+/compact Transitioning from design to implementation. The design is settled and committed on disk — the spec, plus the plan file when the run has one — so compact for a **focused implementation window**: keep what the build turns on, drop the journey that produced the design.
 
 **Preserve:**
-- The committed design documents as the source of truth — the problem, the settled approach, the slice breakdown or module boundaries, and the test cases or standards the build must honor.
+- The committed documents as the source of truth — the problem, the settled approach, the slice breakdown or module boundaries, and the test cases or standards the build must honor.
 - The load-bearing architectural direction: module/function names, the composition shape, the coupling decision, and the invariants the build must hold.
 - *Why* the design is shaped this way — the decisions the build has to honor — but not the alternatives that lost.
 

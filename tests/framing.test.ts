@@ -72,7 +72,7 @@ describe('parseWorkflow', () => {
     expect.soft(() => parseWorkflow('xyz')).toThrow(/"xyz" is not a duet workflow.*full, blueprint, relay, short/);
     // The retired spellings reject with the same valid set — a stale framing
     // fails loudly at duet new, never silently starts the wrong workflow.
-    expect.soft(() => parseWorkflow('design')).toThrow(/not a duet workflow/);
+    expect.soft(() => parseWorkflow('spec')).toThrow(/not a duet workflow/);
     expect.soft(() => parseWorkflow('rir')).toThrow(/not a duet workflow/);
   });
 });

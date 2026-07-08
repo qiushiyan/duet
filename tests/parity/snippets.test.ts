@@ -96,7 +96,7 @@ describe('served library pins — phase-scoped', () => {
     { name: 'full-spec.unbound', phase: 'spec', workflow: 'full' },
     { name: 'full-plan.bound', phase: 'plan', workflow: 'full', consultant: true },
     { name: 'full-implement.bound', phase: 'implement', workflow: 'full', consultant: true },
-    { name: 'blueprint-design.bound', phase: 'design', workflow: 'blueprint', consultant: true },
+    { name: 'blueprint-spec.bound', phase: 'spec', workflow: 'blueprint', consultant: true },
     { name: 'relay-implement.bound', phase: 'implement', workflow: 'relay', consultant: true },
     { name: 'short-implement.bound', phase: 'implement', workflow: 'short', consultant: true },
     { name: 'short-implement.bound-gateless', phase: 'implement', workflow: 'short', consultant: true, gateless: true },
