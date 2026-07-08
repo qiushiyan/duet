@@ -494,13 +494,9 @@ describe('parseFramingFile — the bind.* manifest tier', () => {
   });
 
   test('a bind value is validated at parse time — a typo fails at duet new, not at the freeze', () => {
-    expect.soft(() => parseFramingFile(framed('bind.builder: codux'))).toThrow(/provider must be "claude" or "codex"/);
-    expect.soft(() => parseFramingFile(framed('bind.builder: codex:gpt-6@max'))).toThrow(/codex effort must be one of/);
-  });
-
-  test('an unknown bind address rejects naming the vocabulary; the stage.duty form points at the bare spelling', () => {
-    expect.soft(() => parseFramingFile(framed('bind.implementer: codex'))).toThrow(/not bindable — use a duty/);
-    expect.soft(() => parseFramingFile(framed('bind.delivery.builder: codex'))).toThrow(/spell it bare: "builder"/);
+    // One token per case — the full grammar prose is tests/config.test.ts's pin.
+    expect.soft(() => parseFramingFile(framed('bind.builder: codux'))).toThrow(/provider must be/);
+    expect.soft(() => parseFramingFile(framed('bind.builder: codex:gpt-6@max'))).toThrow(/effort must be/);
   });
 
   test('a duplicated key in one source rejects, never last-wins — bind.* and plain keys alike', () => {

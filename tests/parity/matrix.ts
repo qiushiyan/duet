@@ -49,6 +49,8 @@ export interface ParityRunOpts {
   autoApprovals?: string[];
   /** Run the implementer on codex (the compaction-prose branch). */
   codexImplementer?: boolean;
+  /** Bind ONLY the builder on codex — degrades the builder←architect continuity edge (the fresh-seed brief world). */
+  degradedBuilder?: boolean;
   /** Acceptance-contract state; absent ⇒ none. */
   contract?: 'draft' | 'frozen' | 'verified';
   /** Mark both worker sessions live (drops the first-prompt branch paragraph). */
@@ -60,8 +62,13 @@ export function parityRun(projectDir: string, opts: ParityRunOpts = {}): RunStat
   const bindings: VoiceBindings = opts.consultant ? consultantBindingsFor(wf) : defaultBindingsFor(wf);
   if (opts.codexImplementer) {
     // The whole maker lane on codex — both stages, so every phase's brief
-    // renders the codex-implementer world.
+    // renders the codex-implementer world (the edge stays live, same-provider).
     bindings.duties = { ...bindings.duties, architect: { provider: 'codex' }, builder: { provider: 'codex' } };
+  }
+  if (opts.degradedBuilder) {
+    // Builder alone crosses providers — the builder←architect edge degrades to
+    // fresh at the freeze, so the implement brief renders the cold-seed world.
+    bindings.duties = { ...bindings.duties, builder: { provider: 'codex' } };
   }
   if (opts.spec) {
     const specFile = join(projectDir, SPEC_PATH);

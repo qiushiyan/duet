@@ -147,14 +147,13 @@ describe('buildPhaseBrief (the shared entry-prompt renderer — headless parity)
       bindings: { ...base, duties: { ...base.duties, builder: { provider: 'codex' } } },
     });
     const brief = buildPhaseBrief(crossed, 'implement');
-    expect.soft(brief).toContain('fresh session');
-    expect.soft(brief).toContain('this first prompt reads cold');
-    expect.soft(brief).not.toContain('still holds');
+    // The degraded brief's bytes are the full-implement.degraded parity pin;
+    // here only the live-vs-degraded flips.
+    expect.soft(brief).not.toContain('still holds'); // live-edge prose (parity-pinned) must not leak
     expect.soft(brief).not.toContain('compact-for-impl'); // no boundary compact on a session that never existed
     // The LIVE edge (default all-claude bindings) keeps the compaction ritual.
     const live = buildPhaseBrief(runOf(projectDir, 'full'), 'implement');
     expect.soft(live).toContain('compact-for-impl');
-    expect.soft(live).toContain('still holds');
   });
 
   // The two load-bearing contracts of the shared openPr brief (full's finish,
@@ -305,25 +304,15 @@ describe('phase-event mapping', () => {
   });
 });
 
-describe('the terminal marker (first-terminal-wins, replay-safe)', () => {
-  test('advance_phase then ask_human in one turn emits exactly one event — advance wins', async ({
-    projectDir,
-    run,
-  }) => {
-    const { runTurn } = scriptedSession(async (ctx) => {
-      await callTool(ctx, 'advance_phase', { summary: 'done', artifacts: [] });
-      await callTool(ctx, 'ask_human', { question: 'wait, actually?' }); // refused — phase already ending
-      return [success()];
-    });
-
-    const event = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
-    expect(event).toEqual({ type: 'phase.advance' });
-    const state = loadRunState(projectDir, run.runId);
-    expect.soft(state.terminalMarker).toEqual({ phase: 'frame', kind: 'advance' });
-    expect.soft(state.pendingQuestion).toBeUndefined(); // the second terminal call never queued
-  });
-
-  test('a marker for this phase on re-entry re-drives the transition without re-running the session', async ({
+/**
+ * Host run-loop wiring smokes. The rails themselves — entry marker-replay,
+ * stale-marker rejection, nudge-once, twice-ended flag, crash → flag + retry,
+ * first-terminal-wins — are owned by tests/host-runner.test.ts through the
+ * PhaseHost seam (and the second-terminal refusal by tools.test.ts); one smoke
+ * per concern here proves the SDK host wires into that shared loop.
+ */
+describe('host run-loop wiring (rails owned by host-runner.test.ts)', () => {
+  test('marker replay: a marker for this phase on re-entry re-drives the transition without re-running the session', async ({
     projectDir,
     run,
   }) => {
@@ -341,31 +330,10 @@ describe('the terminal marker (first-terminal-wins, replay-safe)', () => {
     expect(event).toEqual({ type: 'phase.advance' });
   });
 
-  test('a marker for a different phase is stale — ignored, the session runs normally', async ({
+  test('nudge: a silent turn gets one nudge through the SDK session; advancing on the nudge counts', async ({
     projectDir,
     run,
   }) => {
-    // The deliver-before-clear window: a marker from the prior phase survived a
-    // crash into the next phase. markerToEvent rejects the phase mismatch, so it
-    // does not short-circuit — this phase's session runs and overwrites it.
-    const staged = loadRunState(projectDir, run.runId);
-    staged.terminalMarker = { phase: 'frame', kind: 'advance' }; // foreign to spec
-    staged.rounds.spec = 1; // spec advance needs a review round
-    saveRunState(staged);
-
-    const session = scriptedSession(async (ctx) => {
-      await callTool(ctx, 'advance_phase', { summary: 'spec done', artifacts: [] });
-      return [success()];
-    });
-    const event = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'spec' }, session.runTurn);
-    expect(event).toEqual({ type: 'phase.advance' });
-    expect.soft(session.prompts).toHaveLength(1); // the session DID run — no short-circuit
-    expect.soft(loadRunState(projectDir, run.runId).terminalMarker).toEqual({ phase: 'spec', kind: 'advance' });
-  });
-});
-
-describe('the silent-turn nudge', () => {
-  test('a silent turn gets one nudge; advancing on the nudge counts', async ({ projectDir, run }) => {
     const { runTurn, prompts } = scriptedSession(
       async () => [assistantText('thinking out loud'), success()],
       async (ctx) => {
@@ -380,23 +348,10 @@ describe('the silent-turn nudge', () => {
     expect(prompts[1]).toContain('Your turn ended without calling advance_phase or ask_human');
   });
 
-  test('two silent turns are a stuck run — flagged with a synthetic question', async ({ projectDir, run }) => {
-    const { runTurn, prompts } = scriptedSession(
-      async () => [success()],
-      async () => [success()],
-    );
-
-    const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
-    expect(result).toEqual({ type: 'phase.flag' });
-    expect(prompts).toHaveLength(2);
-    expect(loadRunState(projectDir, run.runId).pendingQuestion?.question).toContain('the run is stuck');
-  });
-});
-
-describe('infrastructure failure', () => {
-  test('a session crash flags the human with the failure, not a silent dead end', async ({ projectDir, run }) => {
-    // Retry explicitly off so the transient failure flags immediately — this test
-    // pins the flag classification, not the retry loop (S6 made retry default-on).
+  test('crash → flag: a session crash flags the human, classified by the SDK host', async ({ projectDir, run }) => {
+    // Retry explicitly off so the transient failure flags immediately — this smoke
+    // pins the flag wiring plus classifyInfraError (the SDK host's classifyFailure),
+    // not the retry loop (S6 made retry default-on).
     run.retryInfra = 0;
     saveRunState(run);
     const runTurn: RunOrchestratorTurn = async function* () {
@@ -408,24 +363,12 @@ describe('infrastructure failure', () => {
     expect(result).toEqual({ type: 'phase.flag' });
     const q = loadRunState(projectDir, run.runId).pendingQuestion;
     expect.soft(q?.question).toContain('failed at the infrastructure layer (ECONNRESET mid-stream)');
-    // With retry explicitly off, the flag is classified infra (#4a) but behaves as before.
     expect.soft(q?.cause).toBe('infra');
     expect.soft(q?.errorClass).toBe('network');
   });
+});
 
-  test('a crash never overwrites a question the orchestrator already queued', async ({ projectDir, run }) => {
-    const { runTurn } = scriptedSession(async (ctx) => {
-      await callTool(ctx, 'ask_human', { question: 'the real question' });
-      throw new Error('stream died after the tool call');
-    });
-
-    const result = await runPhase({ runId: run.runId, cwd: projectDir, phase: 'frame' }, runTurn);
-    expect(result).toEqual({ type: 'phase.flag' });
-    const q = loadRunState(projectDir, run.runId).pendingQuestion;
-    expect.soft(q?.question).toBe('the real question');
-    expect.soft(q?.cause).toBe('human'); // the orchestrator's question wins and stays human-owned
-  });
-
+describe('the abnormal orchestrator result (streamTurn’s in-band self-flag — no host-runner twin)', () => {
   test('an abnormal orchestrator result is an infra flag, errorClass unknown (never retried)', async ({ projectDir, run }) => {
     run.retryInfra = 5;
     saveRunState(run);

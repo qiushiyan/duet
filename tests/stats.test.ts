@@ -356,8 +356,10 @@ describe('buildStatsModel — the fs composer over real appendVoiceLog output', 
     // decision-points) that silently dropped log-sourced points under vitest's
     // lazy cycle bindings — and crashed native ESM outright. The cycle is broken
     // via run/voice-log.ts now, so log-sourced discovery works.
-    expect.soft(model.grades).toMatchObject({ graded: 3, total: 5, fp: 1, fn: 2, missed: 1 });
+    // (The confusion-matrix math itself is gradeMatrix's, pinned in
+    // decision-points.test.ts — here we only prove the section is wired in.)
+    expect.soft(model.grades).toMatchObject({ graded: 3, total: 5 });
     expect.soft(out).toContain('grades:');
-    expect.soft(out).toContain('TP 0 · FP 1 · TN 0 · FN 2');
+    expect.soft(out).toContain('coverage 3/5');
   });
 });

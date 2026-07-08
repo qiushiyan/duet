@@ -22,13 +22,13 @@ function startActor(machine: ReturnType<typeof scriptedMachine>['machine'], hasS
   return actor;
 }
 
-// The arcs under test. The coherence + spine-walk assertions derive from
+// The workflows under test. The coherence + spine-walk assertions derive from
 // `phasesOf(workflow)`, so every workflow's machine is checked against its own
-// registry entry, not a single hardcoded arc.
-const ARCS = Object.keys(WORKFLOWS) as ShippedWorkflowName[];
+// registry entry, not a single hardcoded workflow.
+const WORKFLOW_NAMES = Object.keys(WORKFLOWS) as ShippedWorkflowName[];
 
 describe('phase table ⇄ machine coherence (per workflow)', () => {
-  test.each(ARCS)('%s: every phase contributes its loop, flag-wait, and gate, with the right tags', (wf) => {
+  test.each(WORKFLOW_NAMES)('%s: every phase contributes its loop, flag-wait, and gate, with the right tags', (wf) => {
     const machine = machineFor(wf);
     for (const spec of phasesOf(wf)) {
       expect.soft(machine.states[`${spec.name}Loop`]?.tags, `${spec.name}Loop`).toEqual(['phase']);
@@ -41,7 +41,7 @@ describe('phase table ⇄ machine coherence (per workflow)', () => {
     }
   });
 
-  test.each(ARCS)('%s: quiescent states are exactly the gates, flag-waits, and done', (wf) => {
+  test.each(WORKFLOW_NAMES)('%s: quiescent states are exactly the gates, flag-waits, and done', (wf) => {
     // The lifecycle loop persists snapshots wherever this tag appears; a
     // state tagged quiescent by mistake would persist a snapshot with a live
     // actor, which restore cannot resume (the persistence guardrail).
@@ -56,7 +56,7 @@ describe('phase table ⇄ machine coherence (per workflow)', () => {
     expect(quiescent).toEqual(expected);
   });
 
-  test.each(ARCS)('%s: the clean advance→approve spine visits each gate in order, ending done', async (wf) => {
+  test.each(WORKFLOW_NAMES)('%s: the clean advance→approve spine visits each gate in order, ending done', async (wf) => {
     const phases = phasesOf(wf);
     const { machine, calls } = scriptedMachine(
       phases.map(() => ({ type: 'phase.advance' as const })),
@@ -92,7 +92,7 @@ describe('entry routing', () => {
     expect(calls).toEqual(['spec']);
   });
 
-  test('a design-arc spec entry skips frame and starts at the design loop (--spec = a draft of the primary artifact)', async () => {
+  test('a blueprint spec entry skips frame and starts at the design loop (--spec = a draft of the primary artifact)', async () => {
     const { machine, calls } = scriptedMachine([{ type: 'phase.advance' }], 'blueprint');
     const actor = startActor(machine, true);
     const snap = await waitFor(actor, quiescent);
@@ -251,7 +251,7 @@ describe('the interactive machine variant (Stage 1 — the session drives, the a
   });
 });
 
-describe('the full arc', () => {
+describe('the full workflow', () => {
   test('frame → spec → plan → implement → finish → done, with flags and rejects along the way', async () => {
     const { machine, calls } = scriptedMachine([
       { type: 'phase.flag' }, // frame entry → queued question
@@ -313,7 +313,7 @@ describe('the full arc', () => {
   });
 });
 
-describe('the blueprint arc', () => {
+describe('the blueprint workflow', () => {
   test('frame → Direction → spec → Commit-spec → implement → Ship → finish → Open-PR → done; no plan state leaks in', async () => {
     const { machine, calls } = scriptedMachine(
       [
@@ -363,7 +363,7 @@ describe('the blueprint arc', () => {
   });
 });
 
-describe('the RIR arc', () => {
+describe('the short workflow', () => {
   test('research → Direction → implement → Ship → finish → Open-PR → done, three gates, no full-only states', async () => {
     const { machine, calls } = scriptedMachine(
       [{ type: 'phase.advance' }, { type: 'phase.advance' }, { type: 'phase.advance' }],
