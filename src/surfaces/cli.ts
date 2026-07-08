@@ -266,7 +266,7 @@ export function takeoverPlan(state: RunState, voice: Voice): TakeoverPlan {
 program
   .name('duet')
   .description(
-    "Compose your AI engineering workflow from opinionated building blocks and run it semi-AFK: an LLM orchestrator routes each stage's duty pair (planning's architect and analyst; delivery's builder and critic or judge) through the workflow's phases, pausing at human gates only you can cross.",
+    'Opinionated blocks for AI coding workflows — spec loops, adversarial review, an autonomous build. Run it AFK with human gates.',
   )
   .version('0.1.0')
   .addHelpText(
