@@ -6,8 +6,8 @@ Parity framing: a fixed briefing used only by the parity pins.
 # Parity fixture spec
 
 A fixed document the parity pins read through documentsBlock. Its content is
-frozen so the rendered briefs are byte-stable; it stands in for a real spec,
-plan seed depending on the workflow under pin.
+frozen so the rendered briefs are byte-stable; it stands in for a real spec or
+plan seed, depending on the workflow under pin.
 
 </document>
 </documents>
@@ -22,7 +22,7 @@ The shape of the loop:
 2. Send the analyst a review-spec prompt wrapping the current spec. The analyst can read the repo directly, so point it at docs/specs/parity-fixture.md and related code — name the path as well as quoting the content. The review is section-scoped: product sections at product altitude, technical sections at design altitude — the lens is in the template; keep it intact.
 3. Route the analyst's feedback to the architect with an update-spec prompt. The architect should apply accepted changes to docs/specs/parity-fixture.md directly (it has write access) and report what it changed versus rejected and why.
 4. Judge convergence. Run another round with the -again variants when substantive points remain open; stop when what's left is minor. The backstop cap for this phase is 3 review rounds — your judgment should converge well before it.
-5. When converged, call advance_phase with a summary of what the analyst flagged, what changed, and any rejections with their rationale — the human decides at the gate from your summary.
+5. When converged, call advance_phase with a summary of what the analyst flagged, what changed, and any rejections with their rationale. The human decides at the gate from your summary.
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
 
@@ -35,7 +35,7 @@ The analyst notes the spec never says what happens when the input is empty — a
 <example name="module design reviews at design altitude">
 The analyst flags a module boundary that leaves two callers reimplementing the same rule — a seam in the wrong place. Fair game: the technical sections own module boundaries and the target shape, so route it as a design change to make, not a nitpick to note.
 </example>
-<example type="avoid" name="pressing the spec down to build depth">
-The analyst asks the spec to enumerate the test cases per behavior and sketch the helper bodies. Those are the plan's to decide — the spec owes behaviors, strategies, and gotchas, not cases and code. Note they are deferred and move on.
+<example type="avoid" name="pressing the spec down to plan depth">
+The analyst asks the spec to enumerate the test cases per behavior and sketch the helper bodies. Those belong to the plan — the spec owes behaviors, strategies, and gotchas, not cases and code. Note they are deferred and move on.
 </example>
 </task>

@@ -39,7 +39,7 @@ workflow: blueprint
 <the files to read first, by path>
 ```
 
-One committed spec replaces the spec + plan pair — blueprint is full minus the plan phase. **Omitted:** `gates_at` — blueprint's default is already attend-`spec`-only, the one-interruption promise this sentence asks for; writing `gates_at: spec` would only restate it. The Direction gate auto-crosses (a contentious direction still stops the run — a high-stakes call at an auto-crossed gate converts it to an attended stop), the user reads the doc, taps once, and the delivery runs to an open PR.
+One committed spec carries the whole design, absorbing the tactics full defers to its plan — blueprint is full minus the plan phase. **Omitted:** `gates_at` — blueprint's default is already attend-`spec`-only, the one-interruption promise this sentence asks for; writing `gates_at: spec` would only restate it. The Direction gate auto-crosses (a contentious direction still stops the run — a high-stakes call at an auto-crossed gate converts it to an attended stop), the user reads the doc, taps once, and the delivery runs to an open PR.
 
 ## 3 · The standard relay — "Plan on Claude; codex builds it cheap; a strong judge reviews with write access and owns the PR."
 

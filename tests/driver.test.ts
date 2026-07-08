@@ -103,7 +103,11 @@ describe('buildPhaseBrief (the shared entry-prompt renderer — headless parity)
     // The terminal-spec world: this gate hands off to the build, and the details
     // it defers belong to the build, not to a plan that does not exist.
     expect.soft(specBrief).toMatch(/no separate plan/i);
-    expect.soft(specBrief, "the deferral noun must name this workflow's real downstream").not.toMatch(/deferred to the plan/i);
+    // The examples fork on the same fact. `the plan's` is the phrase the with-plan
+    // world actually emits ("the plan's details stay deferred"), so this fails if
+    // blueprint ever renders full's examples — which asserting on a phrase neither
+    // world emits could not.
+    expect.soft(specBrief, "the examples must name this workflow's real downstream").not.toMatch(/the plan's/i);
 
     const implBrief = buildPhaseBrief(blueprint, 'implement');
     // The build seeds from implement-spec and commits the spec — full's "commit
@@ -125,7 +129,7 @@ describe('buildPhaseBrief (the shared entry-prompt renderer — headless parity)
       'approving hands off to AFK implementation',
     );
     expect.soft(specBrief).not.toMatch(/no separate plan/i);
-    expect.soft(specBrief, "the deferred detail is the plan's on full").toMatch(/plan's to decide/i);
+    expect.soft(specBrief, "the deferred detail belongs to the plan on full").toMatch(/belong to the plan/i);
   });
 
   test('a DEGRADED continuity edge adapts the build ritual — seed from the committed artifacts, never /compact a session the builder does not have', ({

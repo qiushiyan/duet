@@ -1224,7 +1224,7 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
     expect.soft(await headOf(projectDir)).toBe(head);
   });
 
-  test('design arc: freezes at the design gate on a PATH-LESS marker (late-author — spec_path lands after the consultant settles)', async ({ projectDir }) => {
+  test('blueprint: freezes at the spec gate on a PATH-LESS marker (late-author — spec_path lands after the consultant settles)', async ({ projectDir }) => {
     // The design arc's draft flow authors the contract in the same phase that
     // writes the doc, so the settle-time marker carries no path; the freeze
     // derives the path at crossing time and verifies the file there.
@@ -1237,7 +1237,7 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
     expect.soft(await inHead(projectDir, contractPath)).toBe(true);
   });
 
-  test('design arc: the plan gate name does nothing — only the design gate freezes', async ({ projectDir }) => {
+  test('blueprint: the plan gate name does nothing — only the spec gate freezes', async ({ projectDir }) => {
     const { state } = await contractRun(projectDir, { workflow: 'blueprint' });
     const head = await headOf(projectDir);
 

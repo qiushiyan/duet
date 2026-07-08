@@ -26,8 +26,8 @@ export const SPEC_PATH = 'docs/specs/parity-fixture.md';
 const SPEC_CONTENT = `# Parity fixture spec
 
 A fixed document the parity pins read through documentsBlock. Its content is
-frozen so the rendered briefs are byte-stable; it stands in for a real spec,
-plan seed depending on the workflow under pin.
+frozen so the rendered briefs are byte-stable; it stands in for a real spec or
+plan seed, depending on the workflow under pin.
 `;
 
 const FRAMING = 'Parity framing: a fixed briefing used only by the parity pins.';

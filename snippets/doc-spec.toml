@@ -147,6 +147,8 @@ Engineering team's review feedback on your spec below. **For each point:**
 2. **If valid:** update the spec. You may propose a better solution than suggested — explain why.
 3. **If you disagree:** explain from first principles why the spec is correct as-is.
 
+If a point asks whether the target shape was *chosen* or merely *first*, read `{{lessons_dir}}/codebase-design/design-it-twice.md` before you revise it. Arriving at the second and third shape is the work; what lands in the document is the winner plus a short "Shapes considered" note, never the menu.
+
 The feedback may end with an "Optional polish" section — exact before → after replacements, pre-checked to change no meaning. Apply them as given, or skip any you disagree with; they need no re-analysis, so spend the thinking on the findings above them.
 
 ---

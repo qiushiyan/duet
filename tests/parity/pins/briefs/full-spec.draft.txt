@@ -4,8 +4,8 @@ The human approved the direction at the Direction gate. Draft the spec, then run
 The shape of the phase:
 1. Decide where the spec file lives — the framing names the project's spec location. When it doesn't, have the architect follow the project's own documentation conventions — a documentation-standards doc, an existing dated-specs directory — rather than inventing a new top-level path; ask_human only when the project shows no convention to follow.
 2. Send the architect a write-spec prompt carrying the approved direction; it writes the spec file and reports the path and content.
-3. Run the review loop: review-spec to the analyst (point it at the file's path as well as the content), update-spec to the architect, -again variants for later rounds. The review is section-scoped — product sections at product altitude, technical sections at design altitude; the lens is in the template, keep it intact. The backstop cap is 3 review rounds; converge well before it.
-4. When converged, call advance_phase with the summary and with spec_path set to the spec file's repo-relative path — the harness records it for the later phases. the human decides at the gate from your summary.
+3. Run the review loop: review-spec to the analyst (point it at the file's path as well as the content), update-spec to the architect, -again variants for later rounds. The review is section-scoped — product sections at product altitude, technical sections at design altitude; the lens is in the template, keep it intact. The backstop cap is 3 review rounds — your judgment should converge well before it.
+4. When converged, call advance_phase with the summary and with spec_path set to the spec file's repo-relative path — the harness records it for the later phases. The human decides at the gate from your summary.
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
 
@@ -18,7 +18,7 @@ The analyst notes the spec never says what happens when the input is empty — a
 <example name="module design reviews at design altitude">
 The analyst flags a module boundary that leaves two callers reimplementing the same rule — a seam in the wrong place. Fair game: the technical sections own module boundaries and the target shape, so route it as a design change to make, not a nitpick to note.
 </example>
-<example type="avoid" name="pressing the spec down to build depth">
-The analyst asks the spec to enumerate the test cases per behavior and sketch the helper bodies. Those are the plan's to decide — the spec owes behaviors, strategies, and gotchas, not cases and code. Note they are deferred and move on.
+<example type="avoid" name="pressing the spec down to plan depth">
+The analyst asks the spec to enumerate the test cases per behavior and sketch the helper bodies. Those belong to the plan — the spec owes behaviors, strategies, and gotchas, not cases and code. Note they are deferred and move on.
 </example>
 </task>

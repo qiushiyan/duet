@@ -18,7 +18,9 @@ import {
   gatePhasesOf,
   handoffGateOf,
   handoffWatchLabel,
+  hasUpstreamDoc,
   isBackstopCheckpoint,
+  isHandoffPhase,
   makerDutyOf,
   phaseOfGateState,
   stageOf,
@@ -397,24 +399,19 @@ describe('the blueprint workflow (the middle arc — full minus the plan phase)'
     expect.soft(spec.snippets).toEqual(phaseSpec('full', 'spec').snippets);
   });
 
-  // The two facts the compiler derives from the phase list and the renderers then
-  // trust: this spec is the whole design (nothing follows it in planning), and it
-  // has no upstream document, so its contract authors from its own converged draft.
-  test('the spec carries the derived topology: terminal in planning, no upstream doc', () => {
-    const semantics = phaseSpec('blueprint', 'spec').semantics;
-    expect(semantics.block).toBe('doc-loop');
-    if (semantics.block !== 'doc-loop') return;
-    expect.soft(semantics.isHandoffPhase).toBe(true);
-    expect.soft(semantics.hasUpstreamDoc).toBe(false);
+  // The two topology questions the renderers ask the frozen phase list — never
+  // fields it could lie about. blueprint's spec is the whole design (nothing
+  // follows it in planning) and has no upstream document, so its acceptance
+  // contract authors from its own converged draft.
+  test('the spec derives its topology: terminal in planning, no upstream doc', () => {
+    expect.soft(isHandoffPhase('blueprint', 'spec')).toBe(true);
+    expect.soft(hasUpstreamDoc('blueprint', 'spec')).toBe(false);
     // full's spec is the mirror: a plan follows, so it is neither.
-    const fullSpec = phaseSpec('full', 'spec').semantics;
-    if (fullSpec.block !== 'doc-loop') return;
-    expect.soft(fullSpec.isHandoffPhase).toBe(false);
-    expect.soft(fullSpec.hasUpstreamDoc).toBe(false);
-    const fullPlan = phaseSpec('full', 'plan').semantics;
-    if (fullPlan.block !== 'doc-loop') return;
-    expect.soft(fullPlan.isHandoffPhase).toBe(true);
-    expect.soft(fullPlan.hasUpstreamDoc).toBe(true);
+    expect.soft(isHandoffPhase('full', 'spec')).toBe(false);
+    expect.soft(hasUpstreamDoc('full', 'spec')).toBe(false);
+    // …and full's plan ends planning, rereading the spec committed before it.
+    expect.soft(isHandoffPhase('full', 'plan')).toBe(true);
+    expect.soft(hasUpstreamDoc('full', 'plan')).toBe(true);
   });
 
   // The hand-off-to-AFK clause is one derivation (isHandoffPhase), rendered by
@@ -859,7 +856,7 @@ describe('validateRegistry — brief worlds are load-time vocabulary', () => {
       phases: [
         phase('a', 'aGate', {
           reviewLoop: true,
-          semantics: { block: 'doc-loop', artifactKind: 'plan', hasUpstreamDoc: false, isHandoffPhase: true } as PhaseSemantics,
+          semantics: { block: 'doc-loop', artifactKind: 'plan' } as PhaseSemantics,
         }),
         phase('b', 'bGate'),
       ],
@@ -874,11 +871,11 @@ describe('validateRegistry — brief worlds are load-time vocabulary', () => {
       phases: [
         phase('a', 'aGate', {
           reviewLoop: true,
-          semantics: { block: 'doc-loop', artifactKind: 'spec', hasUpstreamDoc: false, isHandoffPhase: false } as PhaseSemantics,
+          semantics: { block: 'doc-loop', artifactKind: 'spec' } as PhaseSemantics,
         }),
         phase('a2', 'a2Gate', {
           reviewLoop: true,
-          semantics: { block: 'doc-loop', artifactKind: 'spec', hasUpstreamDoc: true, isHandoffPhase: true } as PhaseSemantics,
+          semantics: { block: 'doc-loop', artifactKind: 'spec' } as PhaseSemantics,
         }),
         phase('b', 'bGate'),
       ],
@@ -886,39 +883,6 @@ describe('validateRegistry — brief worlds are load-time vocabulary', () => {
     });
     expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).toThrow(
       /phase "a2" is a "spec" doc-loop following another document/,
-    );
-  });
-
-  // The doc-loop's derived facts are trusted by the renderers without re-derivation
-  // (the gate hint, the contract's seed placement), so a frozen or hand-authored
-  // spec must not be able to lie about them.
-  test('a lying hasUpstreamDoc throws — it decides where the acceptance contract seeds from', () => {
-    const w = workflow({
-      phases: [
-        phase('a', 'aGate', {
-          reviewLoop: true,
-          semantics: { block: 'doc-loop', artifactKind: 'spec', hasUpstreamDoc: true, isHandoffPhase: true } as PhaseSemantics,
-        }),
-        phase('b', 'bGate'),
-      ],
-    });
-    expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).toThrow(
-      /phase "a" declares hasUpstreamDoc true but no document phase precedes it/,
-    );
-  });
-
-  test("a lying isHandoffPhase throws — it decides the gate's hand-off-to-AFK copy", () => {
-    const w = workflow({
-      phases: [
-        phase('a', 'aGate', {
-          reviewLoop: true,
-          semantics: { block: 'doc-loop', artifactKind: 'spec', hasUpstreamDoc: false, isHandoffPhase: false } as PhaseSemantics,
-        }),
-        phase('b', 'bGate'),
-      ],
-    });
-    expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).toThrow(
-      /phase "a" declares isHandoffPhase false but planning's last phase is "a"/,
     );
   });
 
@@ -976,7 +940,7 @@ describe('validateRegistry — the acceptance contract is one chain (author ⇔ 
   const docPhase = (overrides: Record<string, unknown> = {}) =>
     phase('a', 'aGate', {
       reviewLoop: true,
-      semantics: { block: 'doc-loop', artifactKind: 'spec', hasUpstreamDoc: false, isHandoffPhase: true } as PhaseSemantics,
+      semantics: { block: 'doc-loop', artifactKind: 'spec' } as PhaseSemantics,
       ...overrides,
     });
 

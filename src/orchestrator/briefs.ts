@@ -6,11 +6,14 @@ import {
   consultantSnippetFor,
   contractAuthorPhaseOf,
   phaseSpec,
+  hasUpstreamDoc,
+  isHandoffPhase,
   phasesOf,
   priorPhaseOf,
 } from '../registry/workflows.ts';
 import type {
   ArtifactKind,
+  CompiledWorkflow,
   CritiqueBuildBriefWorld,
   FixerBuildBriefWorld,
   FrameBriefWorld,
@@ -228,25 +231,40 @@ Routing the analyst's critique to the architect as a verdict to comply with. com
 /**
  * The spec phase's worked examples. The spec runs top-down — product sections
  * above technical sections — so the orchestrator's call is section-scoped, not
- * one flat altitude. `deferredTo` names who owns the detail the spec defers, the
- * one fact that varies: a workflow with a plan phase defers cases and fixtures to
- * it, a plan-less workflow defers them to the build. A composer-computed noun,
- * not a hedge — the rendered prompt still names exactly one downstream.
+ * one flat altitude. Who owns the detail the spec defers is the one fact that
+ * varies: a workflow with a plan phase defers cases and fixtures to it, a
+ * plan-less workflow defers them to the build.
+ *
+ * FORKED, not parameterized (`docs/prompting-and-tool-design.md`): substituting
+ * a noun into a sentence written around the other one reads as filler — "the
+ * technical sections and the build both build on the answer". Each world's
+ * prose is written for the world it ships to.
  */
-function specExamples(deferredTo: 'plan' | 'build'): string {
-  return `## Spec phase examples
+const SPEC_EXAMPLES_WITH_PLAN = `## Spec phase examples
 
-This phase's call is holding each analyst point to its section's altitude — the spec's product sections review at product altitude, its technical sections at design altitude, and the ${deferredTo}'s details stay deferred. Apply the section the point lands in, not the point's wording.
+This phase's call is holding each analyst point to its section's altitude — the spec's product sections review at product altitude, its technical sections at design altitude, and the plan's details stay deferred. Apply the section the point lands in, not the point's wording.
 <example name="a product gap is a real gap">
-The analyst notes the spec never says what happens when the input is empty — a behavior the feature must define. That is a gap in the product sections: route it to the architect to resolve in the spec, because the technical sections and the ${deferredTo} both build on the answer.
+The analyst notes the spec never says what happens when the input is empty — a behavior the feature must define. That is a gap in the product sections: route it to the architect to resolve in the spec, because the technical sections and the plan both build on the answer.
+</example>
+<example name="module design reviews at design altitude">
+The analyst flags a module boundary that leaves two callers reimplementing the same rule — a seam in the wrong place. Fair game: the technical sections own module boundaries and the target shape, so route it as a design change to make, not a nitpick to note.
+</example>
+<example type="avoid" name="pressing the spec down to plan depth">
+The analyst asks the spec to enumerate the test cases per behavior and sketch the helper bodies. Those belong to the plan — the spec owes behaviors, strategies, and gotchas, not cases and code. Note they are deferred and move on.
+</example>`;
+
+const SPEC_EXAMPLES_TERMINAL = `## Spec phase examples
+
+This phase's call is holding each analyst point to its section's altitude — the spec's product sections review at product altitude, its technical sections at design altitude, and the build's details stay deferred. Apply the section the point lands in, not the point's wording.
+<example name="a product gap is a real gap">
+The analyst notes the spec never says what happens when the input is empty — a behavior the feature must define. That is a gap in the product sections: route it to the architect to resolve in the spec, because the technical sections and the build that follows both rest on the answer.
 </example>
 <example name="module design reviews at design altitude">
 The analyst flags a module boundary that leaves two callers reimplementing the same rule — a seam in the wrong place. Fair game: the technical sections own module boundaries and the target shape, so route it as a design change to make, not a nitpick to note.
 </example>
 <example type="avoid" name="pressing the spec down to build depth">
-The analyst asks the spec to enumerate the test cases per behavior and sketch the helper bodies. Those are the ${deferredTo}'s to decide — the spec owes behaviors, strategies, and gotchas, not cases and code. Note they are deferred and move on.
+The analyst asks the spec to enumerate the test cases per behavior and sketch the helper bodies. Those belong to the build — the spec owes behaviors, strategies, and gotchas, not cases and code. Note they are deferred and move on.
 </example>`;
-}
 
 const PLAN_EXAMPLES = `## Plan phase examples
 
@@ -580,12 +598,12 @@ ${data.examples}
 const DOC_BRIEFS = {
   spec: specDocBrief,
   plan: planDocBrief,
-} satisfies Record<ArtifactKind, (state: RunState, spec: PhaseSpec, semantics: DocLoopSemantics) => string>;
+} satisfies Record<ArtifactKind, (state: RunState, spec: PhaseSpec) => string>;
 
 type DocLoopSemantics = Extract<PhaseSemantics, { block: 'doc-loop' }>;
 
 function renderDocLoopBrief(state: RunState, spec: PhaseSpec, semantics: DocLoopSemantics): string {
-  return DOC_BRIEFS[semantics.artifactKind](state, spec, semantics);
+  return DOC_BRIEFS[semantics.artifactKind](state, spec);
 }
 
 /**
@@ -598,37 +616,41 @@ function renderDocLoopBrief(state: RunState, spec: PhaseSpec, semantics: DocLoop
 interface SpecWorld {
   /** The one-line description of what this run's spec is, appended to the task opening. */
   role: string;
-  /** Who owns the detail the spec defers — folded into the examples and the review step. */
-  deferredTo: 'plan' | 'build';
-  /** What the advance_phase summary owes the human at the gate. */
+  /** What the round cap means here. blueprint and relay premise fast convergence; full does not. */
+  convergenceClause: string;
+  /** What the advance_phase summary owes the human at the gate. A whole sentence: both call sites end the one before it. */
   advanceClause: string;
+  /** The worked examples, written for this world (see SPEC_EXAMPLES_*). */
+  examples: string;
 }
 
 const SPEC_WORLDS: Record<'with-plan' | 'terminal', SpecWorld> = {
   'with-plan': {
     role: '',
-    deferredTo: 'plan',
-    advanceClause: 'the human decides at the gate from your summary.',
+    convergenceClause: 'your judgment should converge well before it.',
+    advanceClause: 'The human decides at the gate from your summary.',
+    examples: SPEC_EXAMPLES_WITH_PLAN,
   },
   terminal: {
     role: " This run's spec is its one committed document — product goals, behaviors, and non-goals on top; module boundaries, seams, the target shape, and test standards below. There is no separate plan phase, so the build works from this document alone.",
-    deferredTo: 'build',
+    convergenceClause: 'this run type premises fast convergence, so one round is the norm and the cap should never bind.',
     advanceClause:
       'Approving this gate hands the run off to AFK implementation, so the summary should give the human confidence the design is buildable end to end.',
+    examples: SPEC_EXAMPLES_TERMINAL,
   },
 };
 
-function specWorldFor(semantics: DocLoopSemantics): SpecWorld {
-  return SPEC_WORLDS[semantics.isHandoffPhase ? 'terminal' : 'with-plan'];
+function specWorldFor(workflow: CompiledWorkflow, phase: PhaseName): SpecWorld {
+  return SPEC_WORLDS[isHandoffPhase(workflow, phase) ? 'terminal' : 'with-plan'];
 }
 
-function specDocBrief(state: RunState, spec: PhaseSpec, semantics: DocLoopSemantics): string {
+function specDocBrief(state: RunState, spec: PhaseSpec): string {
   const roundCap = spec.roundCap;
-  if (!state.specPath) return specDraftBrief(state, spec, semantics);
+  if (!state.specPath) return specDraftBrief(state, spec);
   const workflow = workflowFor(state);
   const maker = makerDutyOf(workflow, 'planning');
   const checker = checkerDutyOf(workflow, 'planning');
-  const world = specWorldFor(semantics);
+  const world = specWorldFor(workflow, spec.name);
   return `${documentsBlock(state)}
 
 <task>
@@ -638,20 +660,20 @@ The shape of the loop:
 1. Read the snippet library (list_snippets) — the review-spec / update-spec snippets (and their -again variants for later rounds) are the templates for this loop.
 2. Send the ${checker} a review-spec prompt wrapping the current spec. The ${checker} can read the repo directly, so point it at ${state.specPath} and related code — name the path as well as quoting the content. The review is section-scoped: product sections at product altitude, technical sections at design altitude — the lens is in the template; keep it intact.
 3. Route the ${checker}'s feedback to the ${maker} with an update-spec prompt. The ${maker} should apply accepted changes to ${state.specPath} directly (it has write access) and report what it changed versus rejected and why.
-4. Judge convergence. Run another round with the -again variants when substantive points remain open; stop when what's left is minor. The backstop cap for this phase is ${roundCap} review rounds — your judgment should converge well before it.${docLoopContractStep(state, spec, semantics)}
-5. When converged, call advance_phase with a summary of what the ${checker} flagged, what changed, and any rejections with their rationale — ${world.advanceClause}${docLoopAuditStep(state, spec)}
+4. Judge convergence. Run another round with the -again variants when substantive points remain open; stop when what's left is minor. The backstop cap for this phase is ${roundCap} review rounds — ${world.convergenceClause}${docLoopContractStep(state, workflow, spec)}
+5. When converged, call advance_phase with a summary of what the ${checker} flagged, what changed, and any rejections with their rationale. ${world.advanceClause}${docLoopAuditStep(state, spec)}
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
 
-${specExamples(world.deferredTo)}
+${world.examples}
 </task>`;
 }
 
-function specDraftBrief(state: RunState, spec: PhaseSpec, semantics: DocLoopSemantics): string {
+function specDraftBrief(state: RunState, spec: PhaseSpec): string {
   const workflow = workflowFor(state);
   const maker = makerDutyOf(workflow, 'planning');
   const checker = checkerDutyOf(workflow, 'planning');
-  const world = specWorldFor(semantics);
+  const world = specWorldFor(workflow, spec.name);
   return `<task>
 ${approvalClause(
     state,
@@ -663,12 +685,12 @@ ${attendancePosture(state, spec.name)}
 The shape of the phase:
 1. Decide where the spec file lives — the framing names the project's spec location. When it doesn't, have the ${maker} follow the project's own documentation conventions — a documentation-standards doc, an existing dated-specs directory — rather than inventing a new top-level path; ask_human only when the project shows no convention to follow.
 2. Send the ${maker} a write-spec prompt carrying the approved direction; it writes the spec file and reports the path and content.
-3. Run the review loop: review-spec to the ${checker} (point it at the file's path as well as the content), update-spec to the ${maker}, -again variants for later rounds. The review is section-scoped — product sections at product altitude, technical sections at design altitude; the lens is in the template, keep it intact. The backstop cap is ${spec.roundCap} review rounds; converge well before it.${docLoopContractStep(state, spec, semantics)}
+3. Run the review loop: review-spec to the ${checker} (point it at the file's path as well as the content), update-spec to the ${maker}, -again variants for later rounds. The review is section-scoped — product sections at product altitude, technical sections at design altitude; the lens is in the template, keep it intact. The backstop cap is ${spec.roundCap} review rounds — ${world.convergenceClause}${docLoopContractStep(state, workflow, spec)}
 4. When converged, call advance_phase with the summary and with spec_path set to the spec file's repo-relative path — the harness records it for the later phases. ${world.advanceClause}${docLoopAuditStep(state, spec)}
 
 Throughout: flag product or direction questions with ask_human as they arise; tactical questions bounce back to the worker that raised them.
 
-${specExamples(world.deferredTo)}
+${world.examples}
 </task>`;
 }
 
@@ -685,9 +707,9 @@ ${specExamples(world.deferredTo)}
  * advance, run its bet audit", so it rides the advance step. Swapping them would
  * put a step's instructions after the call they precede.
  */
-function docLoopContractStep(state: RunState, spec: PhaseSpec, semantics: DocLoopSemantics): string {
+function docLoopContractStep(state: RunState, workflow: CompiledWorkflow, spec: PhaseSpec): string {
   if (spec.consultantCheckpoint !== 'contract') return '';
-  const placement = semantics.hasUpstreamDoc ? UPSTREAM_DOC_CONTRACT_PLACEMENT : CONVERGED_DOC_CONTRACT_PLACEMENT;
+  const placement = hasUpstreamDoc(workflow, spec.name) ? UPSTREAM_DOC_CONTRACT_PLACEMENT : CONVERGED_DOC_CONTRACT_PLACEMENT;
   return consultantContractStep(state, placement(state));
 }
 
@@ -696,7 +718,7 @@ function docLoopAuditStep(state: RunState, spec: PhaseSpec): string {
   return consultantAuditStep(state, spec.name, 'the settled spec and the decisions it must treat as by-design — not the review-loop traffic.');
 }
 
-function planDocBrief(state: RunState, spec: PhaseSpec, semantics: DocLoopSemantics): string {
+function planDocBrief(state: RunState, spec: PhaseSpec): string {
   const roundCap = spec.roundCap;
   const workflow = workflowFor(state);
   const maker = makerDutyOf(workflow, 'planning');
@@ -719,7 +741,7 @@ ${approvalClause(
     'The commit-spec gate was pre-authorized at run start and auto-crossed — the spec stands approved as converged.',
   )} Run the PLAN phase:
 ${attendancePosture(state, spec.name)}
-1. Have the ${maker} commit the approved spec file (${specRef}) with a conventional message, as its own commit.${docLoopContractStep(state, spec, semantics)}
+1. Have the ${maker} commit the approved spec file (${specRef}) with a conventional message, as its own commit.${docLoopContractStep(state, workflow, spec)}
 2. Decide where the plan file lives: the framing names the project's plan location (path or directory convention). The plan must be a file in the repo — the build may compact a worker's context, and the plan file is what later turns re-anchor on. If the framing doesn't name a plan location, ask_human for one before drafting.
 3. Send the ${maker} a planning prompt based on the start-plan snippet. The ${maker} writes the plan to the file and reports it. The spec already settled the module shape, the seams, and the test standards, so the plan is the tactics it deferred — slices, sequencing, specific test cases, fixtures, line-level anchors.
 4. Run the plan review loop: review-plan to the ${checker} (point it at the plan file's path as well as the content), update-plan to the ${maker}, -again variants for later rounds. Plans are reviewable at a finer altitude than specs — test cases, fixtures, and line-level references are fair game; only full code bodies are deferred.

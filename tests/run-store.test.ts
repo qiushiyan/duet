@@ -352,8 +352,9 @@ describe('run creation', () => {
 
   // The deliberate break: runs frozen before 2026-07-08 carry a `design`
   // doc-loop, a vocabulary duet no longer speaks. They must fail LOUD and
-  // ACTIONABLE — an UnloadableRunError the listing surfaces report — not with a
-  // registry-internal message, and never by silently vanishing from the run list.
+  // ACTIONABLE — an UnloadableRunError the listing surfaces report, naming the
+  // retired knob, the era, and a way out — never by silently vanishing from the
+  // run list. The validator's own words carry the knob; the boundary adds the rest.
   test('a run frozen with the retired "design" artifact is refused with a named era and a way out', ({ projectDir }) => {
     const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('blueprint'), workflow: 'blueprint' });
     const path = workflowPath(projectDir, created.runId);
@@ -374,6 +375,57 @@ describe('run creation', () => {
     expect.soft(message, 'names the era so a reader knows which runs are affected').toContain('2026-07-08');
     expect.soft(message, 'every stop needs a next command — the transcripts are still there').toContain('transcripts');
     expect.soft(message, 'says plainly that replay/grading of these runs is gone').toMatch(/replay and grading/i);
+  });
+
+  // The refusal carries the validator's own reason, so it works for a knob duet
+  // retired AND a knob duet never spoke — no second category, nothing to translate.
+  // The era rides as the known cause, never as the diagnosis: a corrupt file must
+  // not be told it belongs to a cohort it was never part of.
+  test('a frozen doc-loop duet cannot parse is refused with the reason, not a guess at its era', ({ projectDir }) => {
+    for (const artifactKind of ['memo', undefined]) {
+      const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('blueprint'), workflow: 'blueprint' });
+      const path = workflowPath(projectDir, created.runId);
+      const frozen = JSON.parse(readFileSync(path, 'utf8'));
+      const doc = frozen.phases.find((p: { semantics: { block: string } }) => p.semantics.block === 'doc-loop');
+      doc.semantics = { ...doc.semantics, artifactKind }; // undefined drops the key entirely
+      writeFileSync(path, JSON.stringify(frozen));
+
+      let thrown: unknown;
+      try {
+        workflowFor(created);
+      } catch (error) {
+        thrown = error;
+      }
+      const label = artifactKind ?? 'a missing artifactKind';
+      const message = thrown instanceof Error ? thrown.message : '<loaded without complaint>';
+      expect.soft(thrown, `${label}: reported by the listing surfaces, not skipped`).toBeInstanceOf(UnloadableRunError);
+      expect.soft(message, `${label}: names the knob the validator actually rejected`).toContain('artifactKind');
+      expect.soft(message, `${label}: never claims the run froze a retired artifact`).not.toMatch(/froze a "(memo|undefined|design)"/);
+    }
+  });
+
+  // `loadRunStateFromDir` blanket-wraps a throw from the workflow boundary to add a
+  // way out. When the boundary already refused prescriptively, that appended a
+  // SECOND and contradictory one — "read them directly" followed by "finish
+  // manually with --resume". Mutation guard: drop the instanceof rethrow and the
+  // way out appears twice.
+  test('an unloadable frozen workflow states its way out exactly once through loadRunState', ({ projectDir }) => {
+    const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('blueprint'), workflow: 'blueprint' });
+    const path = workflowPath(projectDir, created.runId);
+    const frozen = JSON.parse(readFileSync(path, 'utf8'));
+    frozen.phases.find((p: { semantics: { block: string } }) => p.semantics.block === 'doc-loop').semantics.artifactKind = 'design';
+    writeFileSync(path, JSON.stringify(frozen));
+
+    let thrown: unknown;
+    try {
+      loadRunState(projectDir, created.runId);
+    } catch (error) {
+      thrown = error;
+    }
+    expect.soft(thrown).toBeInstanceOf(UnloadableRunError);
+    const message = (thrown as Error).message;
+    expect.soft(message.match(/intact/g) ?? [], 'one statement of the way out, not two').toHaveLength(1);
+    expect.soft(message, 'and it is the boundary’s own, which knows the transcripts are readable').toContain('read them directly');
   });
 
   test('a pre-feature shipped run with no workflow.json falls back to the shipped registry row', ({ projectDir }) => {

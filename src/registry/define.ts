@@ -211,11 +211,11 @@ export function compileWorkflow(definition: WorkflowDefinition): CompiledWorkflo
         finishOwner,
         hasDocLoopAfter: hasDocLoopAfter(phases, phase.index, buildPhase.index),
         isFirstPlanningFrame: isFirstPlanningFrame(phases, phase.index, buildPhase.index),
-        hasUpstreamDoc: phases.slice(0, phase.index).some((p) => p.expr.block === 'doc'),
         // Planning's last phase — the gate that hands an interactive run to the
         // headless driver. One derivation, read by both the frame and doc gates
         // (it was hand-encoded twice: `frameGate(docLoopFollows)` and the design
-        // gate's literal hint).
+        // gate's literal hint). Compile-time only: the runtime asks
+        // `isHandoffPhase(workflow, phase)`, which reads the frozen phase list.
         isHandoffPhase: phase.index === buildPhase.index - 1,
       }),
     ),
@@ -239,7 +239,6 @@ function compilePhase(
     finishOwner: TailOwner;
     hasDocLoopAfter: boolean;
     isFirstPlanningFrame: boolean;
-    hasUpstreamDoc: boolean;
     isHandoffPhase: boolean;
   },
 ): WorkflowSpecInput['phases'][number] {
@@ -261,12 +260,7 @@ function compilePhase(
       const checkpoint = docCheckpointFor(phase.expr);
       return {
         name: phase.name,
-        semantics: {
-          block: 'doc-loop',
-          artifactKind: phase.expr.artifact,
-          hasUpstreamDoc: context.hasUpstreamDoc,
-          isHandoffPhase: context.isHandoffPhase,
-        },
+        semantics: { block: 'doc-loop', artifactKind: phase.expr.artifact },
         gate: docGate(phase.expr.artifact, context.isHandoffPhase),
         artifactLabel: phase.expr.artifact,
         reviewLoop: true,

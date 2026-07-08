@@ -102,7 +102,7 @@ const CASES: Array<{ name: string; phase: PhaseName; opts: ParityRunOpts }> = [
     opts: { spec: true, warmSessions: true, gatesAt: ['frame', 'spec', 'plan', 'implement', 'finish'] },
   },
 
-  // ---- design: the one-doc arc (frame pre-authorized by default) ----
+  // ---- blueprint: the one-doc arc (frame pre-authorized by default) ----
   { name: 'blueprint-frame.default', phase: 'frame', opts: { workflow: 'blueprint' } },
   { name: 'blueprint-spec.draft', phase: 'spec', opts: { workflow: 'blueprint', warmSessions: true } },
   {
@@ -133,8 +133,8 @@ const CASES: Array<{ name: string; phase: PhaseName; opts: ParityRunOpts }> = [
     opts: { workflow: 'blueprint', spec: true, warmSessions: true, consultant: true, contract: 'frozen' },
   },
   {
-    // The no-contract verify skip on a DESIGN-gate workflow — pins the derived
-    // gate name ("authored at the design phase", not full's plan) in the one
+    // The no-contract verify skip on a plan-less workflow — pins the derived gate
+    // name ("authored at the spec phase", not full's plan) in the one
     // brief text shared across the verify-carrying builds.
     name: 'blueprint-implement.consultant-no-contract',
     phase: 'implement',
@@ -142,7 +142,7 @@ const CASES: Array<{ name: string; phase: PhaseName; opts: ParityRunOpts }> = [
   },
   { name: 'blueprint-finish.default', phase: 'finish', opts: { workflow: 'blueprint', spec: true, warmSessions: true } },
 
-  // ---- relay: the fixer arc (design's shape; writing reviewer owns the tails) ----
+  // ---- relay: the fixer arc (blueprint's shape; writing reviewer owns the tails) ----
   { name: 'relay-frame.default', phase: 'frame', opts: { workflow: 'relay' } },
   { name: 'relay-spec.review', phase: 'spec', opts: { workflow: 'relay', spec: true } },
   {
@@ -163,7 +163,7 @@ const CASES: Array<{ name: string; phase: PhaseName; opts: ParityRunOpts }> = [
   },
   { name: 'relay-finish.default', phase: 'finish', opts: { workflow: 'relay', spec: true, warmSessions: true } },
 
-  // ---- rir: the lighter arc (attend-all by default; one writable round) ----
+  // ---- short: the lighter arc (attend-all by default; one writable round) ----
   { name: 'short-research.default', phase: 'research', opts: { workflow: 'short' } },
   { name: 'short-research.consultant', phase: 'research', opts: { workflow: 'short', consultant: true } },
   { name: 'short-implement.default', phase: 'implement', opts: { workflow: 'short', warmSessions: true } },

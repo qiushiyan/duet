@@ -372,9 +372,23 @@ describe('the snippet library', () => {
     expect.soft(body, 'write-spec dropped the three-shapes bar').toMatch(/three shapes/i);
     expect.soft(body, 'write-spec no longer demands the shapes differ in kind').toMatch(/different in kind/i);
     expect.soft(body, 'write-spec dropped the constraint axes that pull the shapes apart').toMatch(/ports and adapters/i);
-    expect.soft(body, 'write-spec dropped the independence rule (sequential authorship converges)').toMatch(/out of view/i);
-    expect.soft(body, 'write-spec dropped the winner-not-the-menu rule').toMatch(/winner, not the menu/i);
-    expect.soft(body, 'write-spec dropped the "Shapes considered" record the reviewer checks').toContain('Shapes considered');
+  });
+
+  // "Shapes considered" is the one phrase with real callers: write-spec produces the
+  // note, review-spec audits it, implement-spec is told the alternatives are already
+  // weighed. Rename it in one place and the other two silently stop finding it — so
+  // the token is pinned, and the prose around it is free to move.
+  test('the "Shapes considered" note is one token across the snippets that produce, audit, and read it', () => {
+    for (const key of ['write-spec', 'review-spec', 'implement-spec']) {
+      expect.soft(getSnippet(key)?.expand ?? '', `snippet "${key}" lost the "Shapes considered" token`).toContain('Shapes considered');
+    }
+  });
+
+  // The methodology write-spec reads is also owed to the maker on a `--spec` draft
+  // entry, where write-spec never runs: review-spec still asks whether the shape was
+  // chosen or merely first, and update-spec is the only turn that can answer.
+  test('update-spec reaches design-it-twice, the lesson review-spec holds the shape to', () => {
+    expect.soft(getSnippet('update-spec')?.expand ?? '').toContain('codebase-design/design-it-twice.md');
   });
 
   // Binding convention 7 (docs/prompting-and-tool-design.md): a worker reads its
@@ -401,7 +415,6 @@ describe('the snippet library', () => {
     expect.soft(body, 'review-spec reviews technical sections at design altitude').toMatch(/technical sections/i);
     expect.soft(body, 'review-spec dropped the pre-mortem').toMatch(/pre-mortem/i);
     expect.soft(body, 'review-spec dropped the over-building check').toMatch(/over-building/i);
-    expect.soft(body, 'review-spec no longer audits the target shape\'s alternatives').toMatch(/chosen.*or merely.*first/i);
   });
 
   // The plan is the tactics the spec deferred. Its design-it-twice gate moved

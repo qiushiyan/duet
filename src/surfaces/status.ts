@@ -17,7 +17,7 @@ import { workflowFor } from '../run/workflow.ts';
 /**
  * Whether a workflow's arc fills the spec slot (so a missing spec is worth
  * reporting). Keyed on the entry route, not a phase literally named `spec`:
- * any arc that admits a `--spec` draft entry (full's spec, design's design doc)
+ * any arc that admits a `--spec` draft entry (every workflow with a spec phase)
  * produces a primary artifact at specPath; short has no such slot.
  */
 function hasSpecPhase(workflow: WorkflowRef): boolean {

@@ -257,6 +257,27 @@ export function handoffGateOf(workflow: WorkflowRef): GatePhase {
 }
 
 /**
+ * Approving this phase's gate hands the run to the headless driver — so its gate
+ * hint says so, and its brief's advance clause tells the human what they are
+ * signing off. The same fact `handoffGateOf` names, asked of one phase.
+ */
+export function isHandoffPhase(workflow: WorkflowRef, phase: PhaseName): boolean {
+  return handoffGateOf(workflow) === phase;
+}
+
+/**
+ * A committed document precedes this phase. Decides where the acceptance contract
+ * seeds from: a doc-loop with an upstream document authors EARLY from it (full's
+ * plan, blind to the plan's own tactics); one whose artifact is the only document
+ * authors LATE, from its own converged draft (blueprint's and relay's spec).
+ */
+export function hasUpstreamDoc(workflow: WorkflowRef, phase: PhaseName): boolean {
+  const phases = phasesOf(workflow);
+  const index = phases.findIndex((p) => p.name === phase);
+  return phases.slice(0, index).some((p) => p.semantics?.block === 'doc-loop');
+}
+
+/**
  * The planning duty a delivery duty CONTINUES across the stage boundary, or
  * undefined when the duty starts fresh (no edge — relay's whole delivery).
  * The registry half of the session-derivation walk; the binding-dependent

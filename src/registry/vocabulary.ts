@@ -118,25 +118,16 @@ export type FixerBuildBriefWorld = (typeof BRIEF_WORLDS.build.fixer)[number];
 /** A phase's block identity + knob values (discriminated on `block`). */
 export type PhaseSemantics =
   | { readonly block: 'frame'; readonly examplesKey: 'frame' | 'research' }
-  | {
-      readonly block: 'doc-loop';
-      readonly artifactKind: ArtifactKind;
-      /**
-       * A committed doc phase precedes this one. DERIVED from the phase list by
-       * the compiler, carried here so no renderer re-derives topology: it decides
-       * the acceptance contract's seed placement — a doc with an upstream
-       * committed document authors EARLY from it (full's plan, blind to the
-       * technical approach), one without authors LATE from its own converged
-       * draft (blueprint/relay's spec).
-       */
-      readonly hasUpstreamDoc: boolean;
-      /**
-       * This is planning's last phase — approving its gate hands the run to the
-       * headless driver. DERIVED like the above; the gate hint and the brief's
-       * advance clause read it rather than asking which workflow this is.
-       */
-      readonly isHandoffPhase: boolean;
-    }
+  /**
+   * The artifact is the doc-loop's ONE knob. Everything else a renderer wants to
+   * know about a document — does a committed one precede it (contract seeding),
+   * is it planning's last phase (the hand-off-to-AFK copy) — is a question about
+   * the phase list, answered by `hasUpstreamDoc` / `isHandoffPhase` in
+   * `registry/workflows.ts`. Carrying those answers here as data would make a
+   * frozen workflow able to lie about its own topology, and buy a validator to
+   * catch the lie; the phase list is already frozen beside them.
+   */
+  | { readonly block: 'doc-loop'; readonly artifactKind: ArtifactKind }
   | {
       readonly block: 'build';
       readonly entrySeed: EntrySeed;
@@ -640,27 +631,6 @@ export function validateRegistry(workflows: Record<string, WorkflowSpecInput>): 
       throw new Error(
         `registry: workflow "${wfName}" stages [${stagePhases.join(', ')}] do not partition its phases [${arcPhases.join(', ')}] in order — every phase belongs to exactly one stage, planning first`,
       );
-    }
-    // The doc-loop's DERIVED facts must agree with the topology they were derived
-    // from. The compiler computes them; a frozen or hand-authored spec could
-    // carry a lie, and the renderers trust them without re-deriving — so a wrong
-    // `isHandoffPhase` would tell a worker the run hands off to AFK when a plan
-    // phase still follows.
-    const handoffPhase = planning.phases.at(-1);
-    for (const p of wf.phases) {
-      if (p.semantics?.block !== 'doc-loop') continue;
-      const priorDoc = wf.phases.slice(0, arcPhases.indexOf(p.name)).some((q) => q.semantics?.block === 'doc-loop');
-      if (p.semantics.hasUpstreamDoc !== priorDoc) {
-        throw new Error(
-          `registry: workflow "${wfName}" phase "${p.name}" declares hasUpstreamDoc ${p.semantics.hasUpstreamDoc} but ${priorDoc ? 'a document phase precedes it' : 'no document phase precedes it'} — the field is derived from the phase list and decides where the acceptance contract seeds from`,
-        );
-      }
-      const isHandoff = p.name === handoffPhase;
-      if (p.semantics.isHandoffPhase !== isHandoff) {
-        throw new Error(
-          `registry: workflow "${wfName}" phase "${p.name}" declares isHandoffPhase ${p.semantics.isHandoffPhase} but planning's last phase is "${handoffPhase}" — the field is derived from the stage partition and decides the gate's hand-off-to-AFK copy`,
-        );
-      }
     }
     // Duties: in the vocabulary, in their own stage, in their own lane —
     // global stage-uniqueness is what the bare `--bind <duty>=…` grammar
