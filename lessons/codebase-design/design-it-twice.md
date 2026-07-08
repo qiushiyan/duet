@@ -1,52 +1,43 @@
 # Design It Twice
 
-When you want to explore alternative interfaces for a chosen deepening candidate, use this parallel sub-agent pattern. Based on "Design It Twice" (Ousterhout) — your first idea is unlikely to be the best.
+Your first interface idea is rarely your best. Before committing to one, produce several **radically different** designs for the same module, then choose — or graft. From Ousterhout's *A Philosophy of Software Design*.
 
 Uses the vocabulary in [deep-modules.md](deep-modules.md) — **module**, **interface**, **seam**, **adapter**, **leverage**.
 
-> _Lesson · codebase-design. Consolidates `improve-codebase-architecture/INTERFACE-DESIGN.md` + `DESIGN-IT-TWICE.md` (deduped — they were the same pattern). Upstream baseline: `.upstream/codebase-design/DESIGN-IT-TWICE.md`._
-
 ## The bar
 
-- Spin up **3+ parallel sub-agents**, each given a *different* design constraint, each producing a **radically different** interface for the deepened module.
-- Compare the designs on **depth** (leverage at the interface), **locality** (where change concentrates), and **seam placement**.
-- Be opinionated: recommend the strongest design and why, or propose a hybrid that grafts the best of each. The user wants a strong read, not a menu.
+- **Three designs, different in kind** — not three shades of one idea. Each takes a different constraint seriously enough to distort the interface around it.
+- **Generate them independently.** Design two must not be anchored on design one. Parallel sub-agents get this for free; alone, you get it by writing each design's constraint down first and holding the others out of view. Sequential authorship converges, and that convergence is the failure this pattern exists to prevent.
+- **Compare on depth, locality, and seam placement** — where leverage concentrates, where change concentrates, where the seam falls — not on taste.
+- **Land on a recommendation.** The strongest design and why, or a hybrid grafting the best of each. A menu is not a design.
 
-## Process
+## Frame the problem space first
 
-### 1. Frame the problem space
+Make the constraints concrete before generating anything:
 
-Before spawning sub-agents, write a user-facing explanation of the problem space for the chosen candidate:
+- What any interface here must satisfy.
+- The dependencies it relies on, and which category they fall into ([deepening.md](deepening.md)).
+- A rough code sketch — a way to make the constraints tangible, not a proposal.
 
-- The constraints any new interface would need to satisfy
-- The dependencies it would rely on, and which category they fall into (see [deepening.md](deepening.md))
-- A rough illustrative code sketch to ground the constraints — not a proposal, just a way to make the constraints concrete
+Whoever will judge the designs should be reading this framing while the alternatives are being written.
 
-Show this to the user, then immediately proceed to Step 2. The user reads and thinks while the sub-agents work in parallel.
+## The constraints that pull designs apart
 
-### 2. Spawn sub-agents
+Each design gets one constraint, and follows it further than feels comfortable — a constraint applied timidly yields the design you'd have written anyway:
 
-Spawn 3+ sub-agents in parallel using the Agent tool. Each must produce a **radically different** interface for the deepened module.
+- **Minimal** — one to three entry points. Maximise leverage per entry point.
+- **Flexible** — many use cases, room to extend.
+- **Common case** — make the default caller's path trivial, even at the expense of the rare one.
+- **Ports and adapters** — when the dependency crosses a seam you don't own ([deepening.md](deepening.md)).
 
-Prompt each sub-agent with a separate technical brief (file paths, coupling details, dependency category from [deepening.md](deepening.md), what sits behind the seam). The brief is independent of the user-facing problem-space explanation in Step 1. Give each agent a different design constraint:
+Each design states its interface (types, methods, params — plus invariants, ordering, error modes), a usage example from the caller's side, what stays hidden behind the seam, its dependency strategy and adapters, and where its leverage is high and where it's thin.
 
-- Agent 1: "Minimize the interface — aim for 1–3 entry points max. Maximise leverage per entry point."
-- Agent 2: "Maximise flexibility — support many use cases and extension."
-- Agent 3: "Optimise for the most common caller — make the default case trivial."
-- Agent 4 (if applicable): "Design around ports & adapters for cross-seam dependencies."
+Name things in the project's domain language (`CONTEXT.md`) and the vocabulary of [deep-modules.md](deep-modules.md), so designs stay comparable rather than each inventing its own words.
 
-Include both [deep-modules.md](deep-modules.md) vocabulary and `CONTEXT.md` domain vocabulary in the brief so each sub-agent names things consistently with the architecture language and the project's domain language.
+## Choosing
 
-Each sub-agent outputs:
+Present the designs one at a time — each is absorbed on its own terms — then compare them in prose, contrasting depth, locality, and seam placement. Recommend the strongest and say why. When elements combine well, propose the hybrid rather than picking a weaker whole.
 
-1. Interface (types, methods, params — plus invariants, ordering, error modes)
-2. Usage example showing how callers use it
-3. What the implementation hides behind the seam
-4. Dependency strategy and adapters (see [deepening.md](deepening.md))
-5. Trade-offs — where leverage is high, where it's thin
+---
 
-### 3. Present and compare
-
-Present designs sequentially so the user can absorb each one, then compare them in prose. Contrast by **depth** (leverage at the interface), **locality** (where change concentrates), and **seam placement**.
-
-After comparing, give your own recommendation: which design you think is strongest and why. If elements from different designs would combine well, propose a hybrid. Be opinionated — the user wants a strong read, not a menu.
+> _Lesson · codebase-design. Consolidates `improve-codebase-architecture/INTERFACE-DESIGN.md` + `DESIGN-IT-TWICE.md` (deduped — they were the same pattern). Upstream baseline: `.upstream/codebase-design/DESIGN-IT-TWICE.md`._

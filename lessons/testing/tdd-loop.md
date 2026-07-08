@@ -2,8 +2,6 @@
 
 Test-driven development with a red-green-refactor loop, built one vertical slice at a time. This is the tool-agnostic discipline; Vitest specifics live in [vitest.md](vitest.md), and what-to-mock in [mocking-and-fixtures.md](mocking-and-fixtures.md).
 
-> _Lesson · testing. Consolidates `tdd/SKILL.md` + `tdd/refactoring.md` (+ the good/bad-test principles from `tdd/tests.md`). Upstream baseline: `.upstream/tdd/SKILL.md`._
-
 ## The bar
 
 - **Test behaviour through public interfaces, not implementation.** Code can change entirely; tests shouldn't. A good test reads like a spec — "user can checkout with valid cart."
@@ -14,8 +12,6 @@ Test-driven development with a red-green-refactor loop, built one vertical slice
 
 ## Philosophy
 
-**Core principle**: Tests should verify behavior through public interfaces, not implementation details. Code can change entirely; tests shouldn't.
-
 **Good tests** are integration-style: they exercise real code paths through public APIs. They describe _what_ the system does, not _how_ it does it. A good test reads like a specification — "user can checkout with valid cart" tells you exactly what capability exists. These tests survive refactors because they don't care about internal structure.
 
 **Bad tests** are coupled to implementation. They mock internal collaborators, test private methods, or verify through external means (like querying a database directly instead of using the interface). The warning sign: your test breaks when you refactor, but behavior hasn't changed. If you rename an internal function and tests fail, those tests were testing implementation, not behavior.
@@ -24,28 +20,16 @@ Concrete good/bad examples are in [vitest.md](vitest.md); what may and may not b
 
 ## Anti-pattern: horizontal slices
 
-**DO NOT write all tests first, then all implementation.** This is "horizontal slicing" — treating RED as "write all tests" and GREEN as "write all code."
+Write one test, make it pass, repeat. The failure mode with a name is **horizontal slicing** — all the tests first, then all the implementation, treating RED as "write every test" and GREEN as "write every line."
 
-This produces **crap tests**:
+Horizontal slices produce **crap tests**:
 
 - Tests written in bulk test _imagined_ behavior, not _actual_ behavior
 - You end up testing the _shape_ of things (data structures, function signatures) rather than user-facing behavior
 - Tests become insensitive to real changes — they pass when behavior breaks, fail when behavior is fine
 - You outrun your headlights, committing to test structure before understanding the implementation
 
-**Correct approach**: Vertical slices via tracer bullets. One test → one implementation → repeat. Each test responds to what you learned from the previous cycle. Because you just wrote the code, you know exactly what behavior matters and how to verify it.
-
-```
-WRONG (horizontal):
-  RED:   test1, test2, test3, test4, test5
-  GREEN: impl1, impl2, impl3, impl4, impl5
-
-RIGHT (vertical):
-  RED→GREEN: test1→impl1
-  RED→GREEN: test2→impl2
-  RED→GREEN: test3→impl3
-  ...
-```
+The cure is the **vertical slice**, driven by tracer bullets: one test → one implementation → repeat, each test responding to what the last cycle taught you. Because you just wrote the code, you know which behaviour matters and how to verify it.
 
 ## Workflow
 
@@ -53,23 +37,21 @@ RIGHT (vertical):
 
 When exploring the codebase, read `CONTEXT.md` (if it exists) so test names and interface vocabulary match the project's domain language, and respect ADRs in the area you're touching.
 
-Before writing any code:
+Settle these before writing code:
 
-- [ ] Confirm with user what interface changes are needed
-- [ ] Confirm with user which behaviors to test (prioritize)
-- [ ] Identify opportunities for [deep modules](../codebase-design/deep-modules.md) (small interface, deep implementation) and [design for testability](../codebase-design/deep-modules.md#designing-for-testability)
-- [ ] List the behaviors to test (not implementation steps)
-- [ ] Get user approval on the plan
+- [ ] The interface changes the work needs
+- [ ] The behaviours worth testing, in priority order — named as behaviours, not implementation steps
+- [ ] Opportunities for [deep modules](../codebase-design/deep-modules.md) (small interface, deep implementation) and [design for testability](../codebase-design/deep-modules.md#designing-for-testability)
 
-Ask: "What should the public interface look like? Which behaviors are most important to test?"
+**You can't test everything**, which makes the priority order the real decision: critical paths and complex logic earn tests, exhaustive edge cases don't. Make that choice deliberately rather than letting it fall out of whatever was easiest to test.
 
-**You can't test everything.** Confirm with the user exactly which behaviors matter most. Focus testing effort on critical paths and complex logic, not every possible edge case.
+The choice divides by who owns it. *Which behaviours matter* is the product's call — surface it and wait for an answer rather than assuming one. *How to reach them through the interface* is yours — decide it, and record why.
 
-Stub the planned behaviors as a visible backlog with `test.todo` so each becomes a vertical slice to implement (see [vitest.md](vitest.md#running-tests-in-the-loop)).
+Stub the planned behaviours as a visible backlog with `test.todo` so each becomes a vertical slice to implement (see [vitest.md](vitest.md#running-tests-in-the-loop)).
 
 ### 2. Tracer bullet
 
-Write ONE test that confirms ONE thing about the system:
+Write one test that confirms one thing about the system:
 
 ```
 RED:   Write test for first behavior → run it → test fails
@@ -87,12 +69,7 @@ RED:   Write next test → fails
 GREEN: Minimal code to pass → passes
 ```
 
-Rules:
-
-- One test at a time
-- Only enough code to pass the current test
-- Don't anticipate future tests
-- Keep tests focused on observable behavior
+Each cycle earns its next test from what the last one taught you, which is why the loop tolerates no lookahead: code written for a test you haven't reached yet is speculation the loop can't check.
 
 ### 4. Refactor
 
@@ -118,3 +95,7 @@ After all tests pass, look for refactor candidates:
 [ ] Code is minimal for this test
 [ ] No speculative features added
 ```
+
+---
+
+> _Lesson · testing. Consolidates `tdd/SKILL.md` + `tdd/refactoring.md` (+ the good/bad-test principles from `tdd/tests.md`). Upstream baseline: `.upstream/tdd/SKILL.md`._

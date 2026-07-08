@@ -2,8 +2,6 @@
 
 What earns a place in the suite, and what to do about what doesn't. [tdd-loop.md](tdd-loop.md) says test behaviour, not implementation; this doc is the operational half — the shapes that violate it, how to spot them in review, how to delete them safely, and how to know a new test is real.
 
-> _Lesson · testing. Distilled from a whole-suite audit and consolidation pass (1400+ tests): every low-quality test that had to be removed, classified by why someone wrote it. The recurring cause was never laziness — it was writing a test without asking who already owns the behaviour._
-
 ## The bar
 
 - **Coverage is feedback, not the goal.** A test that cannot fail for a real reason is worse than no test: it costs maintenance, and it makes a green suite lie.
@@ -134,3 +132,7 @@ Expect roughly a fifth of any redundancy list to dissolve under this check. That
 [ ] Fakes only at boundaries; no scaffolding under test
 [ ] A near-duplicate sibling would be a table row, not a copy
 ```
+
+---
+
+> _Lesson · testing. Distilled from a whole-suite audit and consolidation pass (1400+ tests): every low-quality test that had to be removed, classified by why someone wrote it. The recurring cause was never laziness — it was writing a test without asking who already owns the behaviour._

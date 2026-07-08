@@ -1,14 +1,12 @@
 # Deepening
 
-How to deepen a cluster of shallow modules safely, given its dependencies. Assumes the vocabulary in [deep-modules.md](deep-modules.md) — **module**, **interface**, **seam**, **adapter**.
-
-> _Lesson · codebase-design. Consolidates `improve-codebase-architecture/DEEPENING.md`. Upstream baseline: `.upstream/codebase-design/DEEPENING.md`._
+How to deepen a cluster of shallow modules safely, given its dependencies. Assumes the vocabulary in [deep-modules.md](deep-modules.md) — **module**, **interface**, **seam**, **adapter**, and the **two-adapter rule**.
 
 ## The bar
 
 - **Classify the candidate's dependencies first** — the category dictates how the deepened module is tested across its seam.
-- **One adapter means a hypothetical seam. Two adapters means a real one.** Don't introduce a port unless at least two adapters are justified (typically production + test). A single-adapter seam is just indirection.
-- **Replace, don't layer.** New tests at the deepened interface *replace* the old shallow-module unit tests — delete those.
+- **The two-adapter rule decides whether a port exists at all** ([deep-modules.md](deep-modules.md)). Production plus test is the usual pair that earns one.
+- **Replace, don't layer.** Tests at the deepened interface *replace* the shallow modules' unit tests — but they exist before those are deleted, never after.
 
 ## Dependency categories
 
@@ -32,16 +30,22 @@ Recommendation shape: *"Define a port at the seam, implement an HTTP adapter for
 
 Third-party services (Stripe, Twilio, etc.) you don't control. The deepened module takes the external dependency as an injected port; tests provide a mock adapter.
 
-## Seam discipline
-
-- **One adapter means a hypothetical seam. Two adapters means a real one.** Don't introduce a port unless at least two adapters are justified (typically production + test). A single-adapter seam is just indirection.
-- **Internal seams vs external seams.** A deep module can have internal seams (private to its implementation, used by its own tests) as well as the external seam at its interface. Don't expose internal seams through the interface just because tests use them.
+Category 3 and 4 are the two that produce a port, because they are the two where a second adapter genuinely exists. Categories 1 and 2 tempt you into one anyway — a single-adapter port around pure computation is indirection, not a seam.
 
 ## Testing strategy: replace, don't layer
 
-- Old unit tests on shallow modules become waste once tests at the deepened module's interface exist — delete them.
-- Write new tests at the deepened module's interface. The **interface is the test surface**.
-- Tests assert on observable outcomes through the interface, not internal state.
-- Tests should survive internal refactors — they describe behaviour, not implementation. If a test has to change when the implementation changes, it's testing past the interface.
+Deepening moves the test surface. The old shallow modules' unit tests were written against interfaces that are about to stop existing, so they become waste — but *waste is not the same as safe to delete first*.
+
+The order is what keeps coverage:
+
+1. Write the new tests at the deepened module's interface. **The interface is the test surface**; they assert observable outcomes through it, never internal state.
+2. Check each old test's behaviour has a home in the new suite — by behaviour, not by topic. A test whose branch has no new twin is coverage you are about to lose, and it is telling you the new interface doesn't reach something the old one did.
+3. Then delete the old tests.
+
+Deleting first and backfilling second is how a deepening quietly sheds coverage while the suite stays green. The discipline generalizes: [../testing/test-quality.md](../testing/test-quality.md) covers deleting tests safely, and the shapes to reject when writing their replacements.
 
 Where the seam is a mock or injected adapter, the mechanics live in [../testing/mocking-and-fixtures.md](../testing/mocking-and-fixtures.md).
+
+---
+
+> _Lesson · codebase-design. Consolidates `improve-codebase-architecture/DEEPENING.md`. Upstream baseline: `.upstream/codebase-design/DEEPENING.md`._

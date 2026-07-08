@@ -2,8 +2,6 @@
 
 Where to mock, how to mock each kind of boundary, and how to inject dependencies with fixtures. This is the mocking cookbook plus the DI strategy; the cross-cutting Vitest gotchas (hoisting order, the clearing hierarchy, constructor mocks, async-timer flushing) are in [vitest.md](vitest.md).
 
-> _Lesson · testing. Consolidates `tdd/mocking.md` (full) + `tdd/interface-design.md`. Upstream baseline: `.upstream/tdd/mocking.md`._
-
 ## The bar
 
 - **Mock only at system boundaries** — external APIs, databases (prefer a real test DB or transaction rollback), time/randomness, environment variables, sometimes the filesystem.
@@ -312,3 +310,7 @@ For fixture **scoping** (`scope: 'file'`), **auto** fixtures, and inline `onTest
 ## Mock cleanup
 
 Always clean up mocks to prevent test pollution. Prefer global config over manual cleanup — set `restoreMocks`, `clearMocks`, `unstubEnvs`, and `unstubGlobals` in `vitest.config.ts` so you never think about it. The exact config block and the manual clearing hierarchy (`mockClear` vs `mockReset` vs `mockRestore`) are in [vitest.md](vitest.md#mock-clearing-hierarchy).
+
+---
+
+> _Lesson · testing. Consolidates `tdd/mocking.md` (full) + `tdd/interface-design.md`. Upstream baseline: `.upstream/tdd/mocking.md`._
