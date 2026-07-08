@@ -39,7 +39,7 @@ workflow: blueprint
 <the files to read first, by path>
 ```
 
-One committed design doc replaces the spec + plan pair. **Omitted:** `gates_at` — blueprint's default is already attend-`design`-only, the one-interruption promise this sentence asks for; writing `gates_at: design` would only restate it. The Direction gate auto-crosses (a contentious direction still stops the run — a high-stakes call at an auto-crossed gate converts it to an attended stop), the user reads the doc, taps once, and the delivery runs to an open PR.
+One committed spec carries the whole design, absorbing the tactics full defers to its plan — blueprint is full minus the plan phase. **Omitted:** `gates_at` — blueprint's default is already attend-`spec`-only, the one-interruption promise this sentence asks for; writing `gates_at: spec` would only restate it. The Direction gate auto-crosses (a contentious direction still stops the run — a high-stakes call at an auto-crossed gate converts it to an attended stop), the user reads the doc, taps once, and the delivery runs to an open PR.
 
 ## 3 · The standard relay — "Plan on Claude; codex builds it cheap; a strong judge reviews with write access and owns the PR."
 
@@ -51,10 +51,10 @@ bind.judge: claude:claude-fable-5
 ---
 
 # Problem
-<work where the design doc will be strong enough that the build is labor, not judgment>
+<work where the spec will be strong enough that the build is labor, not judgment>
 ```
 
-The two binds are relay's whole economy — a cheap builder under a strong judge — and a duty alone names its stage, so there is no `delivery.` prefix to spell. A bind can pin more than a provider: a model (codex included, `bind.builder: codex:gpt-5-codex`), a reasoning effort (`@high`), or both (`codex:gpt-5-codex@high`); raw provider flags live in config as `claude_args` / `codex_config`, never a `bind.*` key. The judge *fixing* findings directly and owning docs + PR is the workflow's shape, not the binding's: binding it to a stronger model is what makes that shape safe. **Omitted:** the planning duties — `architect` (claude) and `analyst` (codex) stay on defaults; `gates_at` — the same attend-`design`-only default as blueprint. Relay's delivery is born fresh by design (the builder implements the committed doc cold), so a cross-provider pair like this costs nothing in session continuity.
+The two binds are relay's whole economy — a cheap builder under a strong judge — and a duty alone names its stage, so there is no `delivery.` prefix to spell. A bind can pin more than a provider: a model (codex included, `bind.builder: codex:gpt-5-codex`), a reasoning effort (`@high`), or both (`codex:gpt-5-codex@high`); raw provider flags live in config as `claude_args` / `codex_config`, never a `bind.*` key. The judge *fixing* findings directly and owning docs + PR is the workflow's shape, not the binding's: binding it to a stronger model is what makes that shape safe. **Omitted:** the planning duties — `architect` (claude) and `analyst` (codex) stay on defaults; `gates_at` — the same attend-`spec`-only default as blueprint. Relay's delivery is born fresh by design (the builder implements the committed doc cold), so a cross-provider pair like this costs nothing in session continuity.
 
 ## 4 · "The direction is settled — run straight to a PR, and keep the correctness net."
 
@@ -69,7 +69,7 @@ bind.consultant: claude
 <a settled direction the user has already decided to bet on>
 ```
 
-`gateless: true` pre-authorizes **every** gate — the run flows to an open PR with no attended stop — and narrows a bound consultant to its non-holding work: the bet audits that could pause the run mid-flight drop, while the framing third-opinion and the **acceptance contract** survive (authored at the design gate, verified against the built system before Ship — a contract that stays broken still stops the run, which is the net this sentence keeps). `bind.consultant: claude` binds the outside voice and by itself implies it is on. **Omitted / rejected:** `gates_at` — gateless already answers the posture question, and duet rejects the two side by side; `interactive` — gateless is its opposite (nothing to attend), so they don't combine.
+`gateless: true` pre-authorizes **every** gate — the run flows to an open PR with no attended stop — and narrows a bound consultant to its non-holding work: the bet audits that could pause the run mid-flight drop, while the framing third-opinion and the **acceptance contract** survive (authored at the spec gate, verified against the built system before Ship — a contract that stays broken still stops the run, which is the net this sentence keeps). `bind.consultant: claude` binds the outside voice and by itself implies it is on. **Omitted / rejected:** `gates_at` — gateless already answers the posture question, and duet rejects the two side by side; `interactive` — gateless is its opposite (nothing to attend), so they don't combine.
 
 ## 5 · "This is a hotfix lane: triage once, patch once, open the PR."
 

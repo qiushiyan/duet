@@ -13,7 +13,7 @@
  * - `implGate` — the open-ended bet-audit mode at the impl-side gate. short's
  *   `implement` uses it (it has no plan phase, so it authors no contract).
  * - `contract` — the generative-and-writing mode: the consultant AUTHORS the
- *   acceptance contract (full's `plan`; blueprint's and relay's `design`), blind to the plan and code.
+ *   acceptance contract (full's `plan`; blueprint's and relay's `spec`), blind to the code.
  * - `verify` — the evidence-grounded verification mode: a fresh session VERIFIES
  *   the frozen acceptance contract (the verify-carrying `implement` phases), supplanting the open-ended
  *   `implGate` audit there.
@@ -45,19 +45,27 @@ export type ConsultantCheckpoint = 'frame' | 'specGate' | 'implGate' | 'contract
 /** The lane that owns a finishing tail (the build tail or the PR phase). */
 export type TailOwner = 'maker' | 'checker';
 
-/** The doc-loop's artifact — sets the review lens and the snippet family. */
-export type ArtifactKind = 'spec' | 'plan' | 'design';
+/**
+ * The doc-loop's artifact — sets the review lens and the snippet family. A
+ * workflow's docs are ordered: the FIRST is always the `spec` (half-technical:
+ * the product tier plus the module shape, seams, and test standards), and any
+ * later doc is a `plan` (the tactics the spec deferred — slices, cases,
+ * fixtures, sequencing). A workflow with no plan phase hands the spec straight
+ * to the build; that is topology, not a third artifact (the retired `design`
+ * kind was a proxy for exactly this).
+ */
+export type ArtifactKind = 'spec' | 'plan';
 
 /**
  * How the build phase enters: full compacts the planning session down to the
- * committed spec + plan (`compact-for-impl`), the blueprint arc re-anchors on its
- * one committed doc (`implement-design`), short builds directly from the
+ * committed spec + plan (`compact-for-impl`), a plan-less workflow re-anchors
+ * on its one committed spec (`implement-spec`), short builds directly from the
  * research decisions (`implement-direct`), and relay seeds a FRESH builder
- * session from the committed design doc (`fresh-seed` — the provider-switched
+ * session from the committed spec (`fresh-seed` — the provider-switched
  * builder never held the planning context, so there is nothing to compact;
- * the doc is the whole re-anchor).
+ * the document is the whole re-anchor).
  */
-export type EntrySeed = 'compact-for-impl' | 'implement-design' | 'implement-direct' | 'fresh-seed';
+export type EntrySeed = 'compact-for-impl' | 'implement-spec' | 'implement-direct' | 'fresh-seed';
 
 /**
  * The build's review posture — the vocabulary's load-bearing axis: `critique`
@@ -69,8 +77,14 @@ export type EntrySeed = 'compact-for-impl' | 'implement-design' | 'implement-dir
  */
 export type ReviewPosture = 'critique' | 'writable' | 'fixer';
 
-/** The worked-example set a phase's brief appends — per-workflow data, keyed not inlined. */
-export type ExamplesKey = 'frame' | 'research' | 'spec' | 'plan' | 'design' | 'impl' | 'blueprint-impl' | 'short-impl' | 'relay-impl';
+/**
+ * The worked-example set a phase's brief appends — per-world data, keyed not
+ * inlined. Named after the KNOB VALUES that select them, never after a workflow
+ * (`docs/engineering.md`: a behavior conditioned on a workflow name instead of a
+ * knob is the drift to refuse). The doc-loop carries no key: each artifact has
+ * exactly one example world, so a key there would restate `artifactKind`.
+ */
+export type ExamplesKey = 'frame' | 'research' | 'impl-from-plan' | 'impl-from-spec' | 'impl-direct' | 'impl-fixer';
 
 /**
  * The model-read brief worlds the prose layer actually ships. The registry
@@ -79,27 +93,24 @@ export type ExamplesKey = 'frame' | 'research' | 'spec' | 'plan' | 'design' | 'i
  * at load, and `orchestrator/briefs.ts` type-checks its data records against the
  * same declaration. A missing world is therefore a load-time workflow error,
  * not a mid-run render throw.
+ *
+ * The doc-loop is absent by construction: its prose map (`DOC_BRIEFS`) is keyed
+ * by the closed `ArtifactKind` union and proved total by TypeScript, so there is
+ * no world a valid artifact could fail to have.
  */
 export const BRIEF_WORLDS = {
   frame: ['frame', 'research'],
-  docLoop: {
-    spec: ['spec'],
-    plan: ['plan'],
-    design: ['design'],
-  },
   build: {
-    critique: ['impl', 'blueprint-impl'],
-    writable: ['short-impl'],
-    fixer: ['relay-impl'],
+    critique: ['impl-from-plan', 'impl-from-spec'],
+    writable: ['impl-direct'],
+    fixer: ['impl-fixer'],
   },
 } as const satisfies {
   frame: readonly ExamplesKey[];
-  docLoop: Record<ArtifactKind, readonly ExamplesKey[]>;
   build: Record<ReviewPosture, readonly ExamplesKey[]>;
 };
 
 export type FrameBriefWorld = (typeof BRIEF_WORLDS.frame)[number];
-export type DocLoopBriefArtifact = keyof typeof BRIEF_WORLDS.docLoop;
 export type CritiqueBuildBriefWorld = (typeof BRIEF_WORLDS.build.critique)[number];
 export type WritableBuildBriefWorld = (typeof BRIEF_WORLDS.build.writable)[number];
 export type FixerBuildBriefWorld = (typeof BRIEF_WORLDS.build.fixer)[number];
@@ -107,7 +118,16 @@ export type FixerBuildBriefWorld = (typeof BRIEF_WORLDS.build.fixer)[number];
 /** A phase's block identity + knob values (discriminated on `block`). */
 export type PhaseSemantics =
   | { readonly block: 'frame'; readonly examplesKey: 'frame' | 'research' }
-  | { readonly block: 'doc-loop'; readonly artifactKind: ArtifactKind; readonly examplesKey: ExamplesKey }
+  /**
+   * The artifact is the doc-loop's ONE knob. Everything else a renderer wants to
+   * know about a document — does a committed one precede it (contract seeding),
+   * is it planning's last phase (the hand-off-to-AFK copy) — is a question about
+   * the phase list, answered by `hasUpstreamDoc` / `isHandoffPhase` in
+   * `registry/workflows.ts`. Carrying those answers here as data would make a
+   * frozen workflow able to lie about its own topology, and buy a validator to
+   * catch the lie; the phase list is already frozen beside them.
+   */
+  | { readonly block: 'doc-loop'; readonly artifactKind: ArtifactKind }
   | {
       readonly block: 'build';
       readonly entrySeed: EntrySeed;
@@ -146,25 +166,24 @@ const FRAME_SNIPPETS: readonly string[] = ['think-holistic', 'compare-notes'];
 const ARTIFACT_SNIPPETS: Record<ArtifactKind, readonly string[]> = {
   spec: ['write-spec', 'review-spec', 'update-spec', 'review-spec-again', 'update-spec-again'],
   plan: ['start-plan', 'review-plan', 'update-plan', 'review-plan-again', 'update-plan-again'],
-  design: ['write-design', 'review-design', 'update-design', 'review-design-again', 'update-design-again'],
 };
 
 /**
  * What each entry seed brings to the build's front: the persistent-session
- * arcs enter through the design→implementation boundary compaction
- * (compact-for-impl), and the blueprint arc adds its doc seed on top —
- * implement-design re-anchors the build on the ONE committed doc, NOT short's
- * implement-direct (that body assumes no design artifact exists). short enters
+ * workflows enter through the planning→implementation boundary compaction
+ * (compact-for-impl), and a plan-less workflow adds its doc seed on top —
+ * implement-spec re-anchors the build on the ONE committed spec, NOT short's
+ * implement-direct (that body assumes no document exists). short enters
  * directly from the research decisions, no compaction ceremony.
  */
 const ENTRY_SEED_SNIPPETS: Record<EntrySeed, readonly string[]> = {
   'compact-for-impl': ['compact-for-impl'],
-  'implement-design': ['compact-for-impl', 'implement-design'],
+  'implement-spec': ['compact-for-impl', 'implement-spec'],
   'implement-direct': ['implement-direct'],
-  // The fresh builder seeds from the committed doc alone — implement-design's
-  // body is cold-safe (it anchors on the doc and the vendored lessons, never
-  // on prior session context), and there is no planning session to compact.
-  'fresh-seed': ['implement-design'],
+  // The fresh builder seeds from the committed spec alone — implement-spec's
+  // body is cold-safe (it anchors on the document and the vendored lessons,
+  // never on prior session context), and there is no planning session to compact.
+  'fresh-seed': ['implement-spec'],
 };
 
 const MIDPOINT_SNIPPETS: readonly string[] = ['midpoint-status', 'review-midpoint', 'respond-midpoint'];
@@ -551,14 +570,6 @@ export function validateRegistry(workflows: Record<string, WorkflowSpecInput>): 
           );
         }
       }
-      if (p.semantics.block === 'doc-loop') {
-        const worlds = (BRIEF_WORLDS.docLoop as Record<string, readonly string[]>)[p.semantics.artifactKind];
-        if (!worlds?.includes(p.semantics.examplesKey)) {
-          throw new Error(
-            `registry: workflow "${wfName}" phase "${p.name}" is a "${p.semantics.artifactKind}" doc-loop with examplesKey "${p.semantics.examplesKey}", but no doc-loop brief world is declared for that pair — valid ${p.semantics.artifactKind} worlds: ${worlds?.join(', ') ?? 'none'}. Add the prose world to BRIEF_WORLDS and src/orchestrator/briefs.ts, or choose a declared artifact/world pair.`,
-          );
-        }
-      }
       if (p.semantics.block === 'build') {
         const worlds = (BRIEF_WORLDS.build as Record<string, readonly string[]>)[p.semantics.reviewPosture];
         if (!worlds?.includes(p.semantics.examplesKey)) {
@@ -579,6 +590,24 @@ export function validateRegistry(workflows: Record<string, WorkflowSpecInput>): 
         `registry: workflow "${wfName}" declares a "${checkpointModes.has('verify') ? 'verify' : 'contract'}" consultant checkpoint without its "${checkpointModes.has('verify') ? 'contract' : 'verify'}" counterpart — the acceptance contract is author → freeze → verify as one chain; a workflow carries both or neither`,
       );
     }
+    // The doc order — the topology the artifact kinds ENCODE, checked rather
+    // than assumed. A workflow's first document is always the spec (the
+    // half-technical one, carrying the whole mental model); every later one is a
+    // plan (the tactics the spec deferred). start-plan's body rereads "the
+    // settled spec", so a plan with no spec upstream would brief a worker about a
+    // document that does not exist; and a second spec has no world to render.
+    const docs = wf.phases.filter((p) => p.semantics?.block === 'doc-loop');
+    docs.forEach((p, i) => {
+      if (p.semantics.block !== 'doc-loop') return;
+      const expected: ArtifactKind = i === 0 ? 'spec' : 'plan';
+      if (p.semantics.artifactKind !== expected) {
+        throw new Error(
+          i === 0
+            ? `registry: workflow "${wfName}" opens its documents with a "${p.semantics.artifactKind}" doc-loop ("${p.name}") — a workflow's first document is always the spec, and a plan rereads a settled spec that would not exist`
+            : `registry: workflow "${wfName}" phase "${p.name}" is a "${p.semantics.artifactKind}" doc-loop following another document — only the first document is a spec; every later one is a plan (the tactics the spec deferred)`,
+        );
+      }
+    });
     // The stage topology — the invariants the duty-keyed runtime rests on,
     // checked as TOPOLOGY ONLY (the registry cannot see bindings; the
     // binding-dependent check — the provider-crossing edge degrade — runs at

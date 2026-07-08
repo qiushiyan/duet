@@ -3,8 +3,8 @@
 # Parity fixture spec
 
 A fixed document the parity pins read through documentsBlock. Its content is
-frozen so the rendered briefs are byte-stable; it stands in for a real spec,
-plan seed, or design doc depending on the workflow under pin.
+frozen so the rendered briefs are byte-stable; it stands in for a real spec or
+plan seed, depending on the workflow under pin.
 
 </document>
 </documents>
@@ -16,7 +16,7 @@ This phase's exit gate is pre-authorized: the human granted approval at run star
 
 1. Have the architect commit the approved spec file (docs/specs/parity-fixture.md) with a conventional message, as its own commit.
 2. Decide where the plan file lives: the framing names the project's plan location (path or directory convention). The plan must be a file in the repo — the build may compact a worker's context, and the plan file is what later turns re-anchor on. If the framing doesn't name a plan location, ask_human for one before drafting.
-3. Send the architect a planning prompt based on the start-plan snippet. The architect writes the plan to the file and reports it.
+3. Send the architect a planning prompt based on the start-plan snippet. The architect writes the plan to the file and reports it. The spec already settled the module shape, the seams, and the test standards, so the plan is the tactics it deferred — slices, sequencing, specific test cases, fixtures, line-level anchors.
 4. Run the plan review loop: review-plan to the analyst (point it at the plan file's path as well as the content), update-plan to the architect, -again variants for later rounds. Plans are reviewable at a finer altitude than specs — test cases, fixtures, and line-level references are fair game; only full code bodies are deferred.
 5. The backstop cap for this phase is 3 review rounds; converge well before it.
 6. When converged, call advance_phase with a summary, listing the plan file among the artifacts. Implementation runs AFK after this gate, so the summary should give the human confidence the plan is workable end to end.

@@ -57,8 +57,8 @@ export const FRAMING_TEMPLATE = `---
 # detail belongs in the prose below). Uncomment to use.
 # workflow: full          — full (default): frame → spec → plan → implement →
 #                           finish (reconcile docs, open a PR). blueprint:
-#                           frame → design (one design doc replaces spec +
-#                           plan) → implement → finish, for serious work on a
+#                           frame → spec → implement → finish — full minus the
+#                           plan phase, for serious work on a
 #                           trusted frontier-model builder. relay:
 #                           blueprint's shape, but delivery is born fresh and
 #                           its judge reviews with write access — it fixes
@@ -75,12 +75,12 @@ export const FRAMING_TEMPLATE = `---
 #                           Default for full: overnight — attend frame and spec;
 #                           plan, Ship, and the Open-PR gate all auto-cross. List
 #                           "finish" to stop and review the opened PR. Default
-#                           for blueprint/relay: attend the design gate only (one
+#                           for blueprint/relay: attend the spec gate only (one
 #                           interruption). short attends all three of its gates
 #                           by default.
-# spec: path/to/draft.md  — enter at the primary-artifact review loop, skipping
-#                           FRAME (full: the spec; blueprint/relay: the design
-#                           doc). Not for short, which has no such document.
+# spec: path/to/draft.md  — enter at the spec review loop, skipping FRAME. Every
+#                           document-bearing workflow starts from a draft spec.
+#                           Not for short, which has no document.
 # bind.<duty>: provider[:model] — bind a duty for this run, e.g.
 #                           "bind.builder: codex" or "bind.judge:
 #                           claude:claude-fable-5". Duties: architect/analyst
@@ -616,11 +616,12 @@ export async function resolveRunInputs(
   let specPath: string | undefined;
   const specInput = opts.spec ?? meta.spec; // flag wins over frontmatter
   if (specInput) {
-    // --spec means "a draft of the arc's primary artifact" — only an arc whose
-    // entry route admits one (full's spec, blueprint's design doc) can take it.
+    // --spec means "a draft of the workflow's first document" — every document
+    // -bearing workflow's first doc-loop is the spec, so only a workflow with no
+    // doc-loop at all (short) has no entry route for it.
     if (entryOf(workflow).specSkipsTo === undefined) {
       throw new Error(
-        `--workflow ${workflow.name} takes no --spec: this arc has no primary design document — its research decisions are the design. Use full (a spec) or blueprint (a design doc) for a draft-entry run.`,
+        `--workflow ${workflow.name} takes no --spec: it drafts no document — its research decisions are the design. Use a workflow with a spec phase (full, blueprint, or relay) for a draft-entry run.`,
       );
     }
     specPath = relative(cwd, resolve(cwd, specInput));

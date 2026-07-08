@@ -18,7 +18,9 @@ import {
   gatePhasesOf,
   handoffGateOf,
   handoffWatchLabel,
+  hasUpstreamDoc,
   isBackstopCheckpoint,
+  isHandoffPhase,
   makerDutyOf,
   phaseOfGateState,
   stageOf,
@@ -372,45 +374,69 @@ describe('the RIR workflow', () => {
   });
 });
 
-describe('the design workflow (the middle arc — one design doc between framing and the build)', () => {
-  // A literal pin (not self-derived), like full's: frame → design → implement → finish.
-  test('phasesOf("design") is the four-phase arc in order', () => {
-    expect(phasesOf('blueprint').map((p) => p.name)).toEqual(['frame', 'design', 'implement', 'finish']);
+describe('the blueprint workflow (the middle arc — full minus the plan phase)', () => {
+  // A literal pin (not self-derived), like full's: frame → spec → implement → finish.
+  test('phasesOf("blueprint") is the four-phase arc in order', () => {
+    expect(phasesOf('blueprint').map((p) => p.name)).toEqual(['frame', 'spec', 'implement', 'finish']);
   });
 
   test('all four phases are gates; shared gate-state names resolve within the workflow', () => {
-    expect.soft(gatePhasesOf('blueprint')).toEqual(['frame', 'design', 'implement', 'finish']);
+    expect.soft(gatePhasesOf('blueprint')).toEqual(['frame', 'spec', 'implement', 'finish']);
     expect.soft(phaseOfGateState('blueprint', 'directionGate')).toBe('frame');
-    expect.soft(phaseOfGateState('blueprint', 'designGate')).toBe('design');
+    expect.soft(phaseOfGateState('blueprint', 'commitSpecGate')).toBe('spec');
     expect.soft(phaseOfGateState('blueprint', 'shipGate')).toBe('implement');
     expect.soft(phaseOfGateState('blueprint', 'openPrGate')).toBe('finish');
-    // Full-only gate states do not resolve inside the design arc.
-    expect.soft(phaseOfGateState('blueprint', 'commitSpecGate')).toBeUndefined();
+    // The plan gate is full-only — blueprint's spec IS its last planning phase.
     expect.soft(phaseOfGateState('blueprint', 'planApprovalGate')).toBeUndefined();
   });
 
-  test('the design phase is ONE review loop at cap 2 — the arc premises fast convergence', () => {
-    const design = phaseSpec('blueprint', 'design');
-    expect.soft(design.reviewLoop).toBe(true);
-    expect.soft(design.roundCap).toBe(2); // not full's 3: the observed spec/plan loops never used 3
-    expect.soft(design.artifactLabel).toBe('design doc');
-    expect.soft(design.snippets).toEqual([
-      'write-design',
-      'review-design',
-      'update-design',
-      'review-design-again',
-      'update-design-again',
-    ]);
+  test('the spec phase is ONE review loop at cap 2 — the arc premises fast convergence', () => {
+    const spec = phaseSpec('blueprint', 'spec');
+    expect.soft(spec.reviewLoop).toBe(true);
+    expect.soft(spec.roundCap).toBe(2); // an explicit `rounds: 2`, not full's default 3
+    expect.soft(spec.artifactLabel).toBe('spec');
+    // The SAME doc-loop family full's spec runs — one artifact, one snippet set.
+    expect.soft(spec.snippets).toEqual(phaseSpec('full', 'spec').snippets);
   });
 
-  test('implement reuses full’s spec with implement-design as the build seed (not rir’s implement-direct)', () => {
+  // The two topology questions the renderers ask the frozen phase list — never
+  // fields it could lie about. blueprint's spec is the whole design (nothing
+  // follows it in planning) and has no upstream document, so its acceptance
+  // contract authors from its own converged draft.
+  test('the spec derives its topology: terminal in planning, no upstream doc', () => {
+    expect.soft(isHandoffPhase('blueprint', 'spec')).toBe(true);
+    expect.soft(hasUpstreamDoc('blueprint', 'spec')).toBe(false);
+    // full's spec is the mirror: a plan follows, so it is neither.
+    expect.soft(isHandoffPhase('full', 'spec')).toBe(false);
+    expect.soft(hasUpstreamDoc('full', 'spec')).toBe(false);
+    // …and full's plan ends planning, rereading the spec committed before it.
+    expect.soft(isHandoffPhase('full', 'plan')).toBe(true);
+    expect.soft(hasUpstreamDoc('full', 'plan')).toBe(true);
+  });
+
+  // The hand-off-to-AFK clause is one derivation (isHandoffPhase), rendered by
+  // whichever planning phase ends the stage. Assert the token and the absence
+  // flip, not the sentence: the tails legitimately differ per block.
+  test("planning's last gate says it hands off to AFK; a gate with a plan after it does not", () => {
+    const clause = 'approving hands off to AFK implementation';
+    expect.soft(gateOf('blueprint', 'spec').hint).toContain(clause);
+    expect.soft(gateOf('relay', 'spec').hint).toContain(clause);
+    expect.soft(gateOf('short', 'research').hint).toContain(clause);
+    // full's spec is a waypoint — the plan is obviously still coming.
+    expect.soft(gateOf('full', 'spec').hint).toBeNull();
+    expect.soft(gateOf('full', 'frame').hint).toBeNull();
+    // …and full's plan gate ends planning but IS the plan, so it says nothing.
+    expect.soft(gateOf('full', 'plan').hint).toBeNull();
+  });
+
+  test('implement reuses full’s spec with implement-spec as the build seed (not short’s implement-direct)', () => {
     const implement = phaseSpec('blueprint', 'implement');
     const full = phaseSpec('full', 'implement');
-    // The one substitution: implement-design seeds the build (the committed design
-    // doc is the authority); everything else — midpoint, compactions, the review
-    // loop, docs-reconcile-last, ceo-summary — is full's implement.
-    expect.soft(implement.snippets).toEqual(['compact-for-impl', 'implement-design', ...full.snippets.slice(1)]);
-    expect.soft(implement.snippets).not.toContain('implement-direct'); // that body assumes no design artifact exists
+    // The one substitution: implement-spec seeds the build (the committed spec is
+    // the authority); everything else — midpoint, compactions, the review loop,
+    // docs-reconcile-last, ceo-summary — is full's implement.
+    expect.soft(implement.snippets).toEqual(['compact-for-impl', 'implement-spec', ...full.snippets.slice(1)]);
+    expect.soft(implement.snippets).not.toContain('implement-direct'); // that body assumes no document exists
     expect.soft(implement.roundCap).toBe(full.roundCap);
     expect.soft(implement.gate.state).toBe('shipGate');
     expect.soft(implement.workerTurnTimeoutMs).toBe(90 * 60_000);
@@ -423,47 +449,47 @@ describe('the design workflow (the middle arc — one design doc between framing
     expect(phaseSpec('blueprint', 'finish')).toEqual(phaseSpec('full', 'finish'));
   });
 
-  test('entry: --spec skips to the design loop (the flag generalizes to "a draft of the primary artifact")', () => {
-    expect(WORKFLOWS.blueprint.entry).toEqual({ firstPhase: 'frame', specSkipsTo: 'design' });
+  test('entry: --spec skips to the spec loop (the first doc phase, whatever it is named)', () => {
+    expect(WORKFLOWS.blueprint.entry).toEqual({ firstPhase: 'frame', specSkipsTo: 'spec' });
   });
 
-  test('the design gate is the interactive→headless handoff (derived: planning ends at design)', () => {
-    expect.soft(handoffGateOf('blueprint')).toBe('design');
-    expect.soft(handoffWatchLabel('blueprint')).toBe('design approved — AFK implement');
+  test('the spec gate is the interactive→headless handoff (derived: planning ends at spec)', () => {
+    expect.soft(handoffGateOf('blueprint')).toBe('spec');
+    expect.soft(handoffWatchLabel('blueprint')).toBe('spec approved — AFK implement');
   });
 
-  test('the stage partition splits at the design gate — delivery begins at the AFK build', () => {
+  test('the stage partition splits at the spec gate — delivery begins at the AFK build', () => {
     expect.soft(stageOf('blueprint', 'frame')).toBe('planning');
-    expect.soft(stageOf('blueprint', 'design')).toBe('planning'); // the handoff gate itself is planning's last phase
+    expect.soft(stageOf('blueprint', 'spec')).toBe('planning'); // the handoff gate itself is planning's last phase
     expect.soft(stageOf('blueprint', 'implement')).toBe('delivery');
     expect.soft(stageOf('blueprint', 'finish')).toBe('delivery');
   });
 
-  test('the one-interruption posture: a new run materializes gatesAt = ["design"]', () => {
+  test('the one-interruption posture: a new run materializes gatesAt = ["spec"]', () => {
     expect.soft(WORKFLOWS.blueprint.defaultPreAuthorized).toEqual(['frame', 'implement', 'finish']);
     expect.soft(WORKFLOWS.blueprint.forceAttend).toEqual([]);
     expect.soft(WORKFLOWS.blueprint.presets.afk).toEqual([]);
-    // The materialized default: attend the design gate only — read one document,
+    // The materialized default: attend the spec gate only — read one document,
     // tap once, walk away. (The severity hold still converts a `high` at the
     // auto-crossed Direction gate into an attended stop — pinned in lifecycle tests.)
-    expect.soft(defaultPosture(gatePhasesOf('blueprint'), WORKFLOWS.blueprint.defaultPreAuthorized)).toEqual(['design']);
+    expect.soft(defaultPosture(gatePhasesOf('blueprint'), WORKFLOWS.blueprint.defaultPreAuthorized)).toEqual(['spec']);
   });
 
   test('consultant checkpoints: frame → contract → verify — no challenge anywhere (a stance, not an accident)', () => {
     expect.soft(phaseSpec('blueprint', 'frame').consultantCheckpoint).toBe('frame');
-    expect.soft(phaseSpec('blueprint', 'design').consultantCheckpoint).toBe('contract'); // LATE-authored: after the loop converges
+    expect.soft(phaseSpec('blueprint', 'spec').consultantCheckpoint).toBe('contract'); // LATE-authored: after the loop converges
     expect.soft(phaseSpec('blueprint', 'implement').consultantCheckpoint).toBe('verify');
     expect.soft(phaseSpec('blueprint', 'finish').consultantCheckpoint).toBeUndefined();
     // The arc exists for work where the owner trusts the direction after framing:
-    // no holding bet-audit at any phase, so a gateless design run drops nothing extra.
+    // no holding bet-audit at any phase, so a gateless blueprint run drops nothing extra.
     const modes = phasesOf('blueprint').map((p) => p.consultantCheckpoint);
     expect.soft(modes).not.toContain('specGate');
     expect.soft(modes).not.toContain('implGate');
   });
 
-  test('contractAuthorPhaseOf("design") is the design phase — the design gate is the freeze gate', () => {
-    expect.soft(contractAuthorPhaseOf('blueprint')).toBe('design');
-    expect.soft(consultantSnippetFor('blueprint', 'design')).toBe('consultant-contract');
+  test('contractAuthorPhaseOf("blueprint") is its spec phase — that gate is the freeze gate', () => {
+    expect.soft(contractAuthorPhaseOf('blueprint')).toBe('spec');
+    expect.soft(consultantSnippetFor('blueprint', 'spec')).toBe('consultant-contract');
     expect.soft(consultantSnippetFor('blueprint', 'implement')).toBe('consultant-verify');
     expect.soft(workflowHasConsultantBackstop('blueprint')).toBe(true);
   });
@@ -573,7 +599,7 @@ describe('the AFK build caps (S3 — wall-clock-bounded per-turn timeouts)', () 
   test('the planning and finishing phases keep the 30-min cap (their longest healthy turns ≈17 min)', () => {
     for (const [workflow, phase] of [
       ['full', 'frame'], ['full', 'spec'], ['full', 'plan'], ['full', 'finish'],
-      ['blueprint', 'frame'], ['blueprint', 'design'], ['blueprint', 'finish'],
+      ['blueprint', 'frame'], ['blueprint', 'spec'], ['blueprint', 'finish'],
       ['short', 'research'], ['short', 'finish'],
     ] as const) {
       expect.soft(phaseSpec(workflow, phase).workerTurnTimeoutMs).toBe(30 * 60_000);
@@ -703,11 +729,11 @@ describe('the stage partition — stages, duties, and continuity edges (registry
       { name: 'delivery', phases: ['implement', 'finish'] },
     ]);
     expect.soft(stagesOf('blueprint').map((s) => ({ name: s.name, phases: s.phases }))).toEqual([
-      { name: 'planning', phases: ['frame', 'design'] },
+      { name: 'planning', phases: ['frame', 'spec'] },
       { name: 'delivery', phases: ['implement', 'finish'] },
     ]);
     expect.soft(stagesOf('relay').map((s) => ({ name: s.name, phases: s.phases }))).toEqual([
-      { name: 'planning', phases: ['frame', 'design'] },
+      { name: 'planning', phases: ['frame', 'spec'] },
       { name: 'delivery', phases: ['implement', 'finish'] },
     ]);
     // A workflow with no document still has a planning stage: research alone.
@@ -726,8 +752,8 @@ describe('the stage partition — stages, duties, and continuity edges (registry
 
   test('handoffGateOf derives as planning last phase — the deleted handoffGate field, one source', () => {
     expect.soft(handoffGateOf('full')).toBe('plan');
-    expect.soft(handoffGateOf('blueprint')).toBe('design');
-    expect.soft(handoffGateOf('relay')).toBe('design');
+    expect.soft(handoffGateOf('blueprint')).toBe('spec');
+    expect.soft(handoffGateOf('relay')).toBe('spec');
     expect.soft(handoffGateOf('short')).toBe('research');
   });
 
@@ -780,7 +806,7 @@ describe('validateRegistry — posture/seed coherence on a delivery build phase'
         midpoint: 'none',
         shipPacket: 'lean',
         buildTailOwner: 'checker',
-        examplesKey: 'relay-impl',
+        examplesKey: 'impl-fixer',
         ...semantics,
       } as PhaseSemantics,
     });
@@ -794,7 +820,7 @@ describe('validateRegistry — posture/seed coherence on a delivery build phase'
 
   test('a fresh-seed build with a maker continuity edge throws', () => {
     const w = workflow({
-      phases: [phase('a', 'aGate'), buildPhase({ reviewPosture: 'writable', examplesKey: 'short-impl' })],
+      phases: [phase('a', 'aGate'), buildPhase({ reviewPosture: 'writable', examplesKey: 'impl-direct' })],
       stages: stages({ delivery: { edges: { builder: { from: 'architect' } } } }),
     });
     expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).toThrow(
@@ -804,7 +830,7 @@ describe('validateRegistry — posture/seed coherence on a delivery build phase'
 
   test('a session-carrying entrySeed without a maker edge throws (the edge and the seed are one fact)', () => {
     const w = workflow({
-      phases: [phase('a', 'aGate'), buildPhase({ reviewPosture: 'writable', examplesKey: 'short-impl', entrySeed: 'compact-for-impl' })],
+      phases: [phase('a', 'aGate'), buildPhase({ reviewPosture: 'writable', examplesKey: 'impl-direct', entrySeed: 'compact-for-impl' })],
     });
     expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).toThrow(
       /declare the edge or seed fresh/,
@@ -825,18 +851,38 @@ describe('validateRegistry — brief worlds are load-time vocabulary', () => {
     );
   });
 
-  test('a doc-loop artifact must select that artifact prose world', () => {
+  test("a workflow's first document must be the spec — a plan would reread a spec that never existed", () => {
     const w = workflow({
       phases: [
         phase('a', 'aGate', {
           reviewLoop: true,
-          semantics: { block: 'doc-loop', artifactKind: 'plan', examplesKey: 'spec' } as PhaseSemantics,
+          semantics: { block: 'doc-loop', artifactKind: 'plan' } as PhaseSemantics,
         }),
         phase('b', 'bGate'),
       ],
     });
     expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).toThrow(
-      /no doc-loop brief world is declared.*valid plan worlds: plan/,
+      /opens its documents with a "plan" doc-loop/,
+    );
+  });
+
+  test('a second spec is rejected — only the first document is a spec, every later one a plan', () => {
+    const w = workflow({
+      phases: [
+        phase('a', 'aGate', {
+          reviewLoop: true,
+          semantics: { block: 'doc-loop', artifactKind: 'spec' } as PhaseSemantics,
+        }),
+        phase('a2', 'a2Gate', {
+          reviewLoop: true,
+          semantics: { block: 'doc-loop', artifactKind: 'spec' } as PhaseSemantics,
+        }),
+        phase('b', 'bGate'),
+      ],
+      stages: stages({ planning: { phases: ['a', 'a2'] } }),
+    });
+    expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).toThrow(
+      /phase "a2" is a "spec" doc-loop following another document/,
     );
   });
 
@@ -853,22 +899,22 @@ describe('validateRegistry — brief worlds are load-time vocabulary', () => {
             midpoint: 'judgment',
             shipPacket: 'ceo-summary',
             buildTailOwner: 'checker',
-            examplesKey: 'impl',
+            examplesKey: 'impl-from-plan',
           } as PhaseSemantics,
         }),
       ],
       stages: stages({ delivery: { duties: { maker: 'builder', checker: 'judge' } } }),
     });
     expect(() => validateRegistry({ w } as unknown as Record<string, WorkflowSpecInput>)).toThrow(
-      /no fixer build brief world is declared.*valid fixer build worlds: relay-impl/,
+      /no fixer build brief world is declared.*valid fixer build worlds: impl-fixer/,
     );
   });
 
   test('the registry declaration names the shipped build prose worlds', () => {
     expect(BRIEF_WORLDS.build).toEqual({
-      critique: ['impl', 'blueprint-impl'],
-      writable: ['short-impl'],
-      fixer: ['relay-impl'],
+      critique: ['impl-from-plan', 'impl-from-spec'],
+      writable: ['impl-direct'],
+      fixer: ['impl-fixer'],
     });
   });
 });
@@ -886,7 +932,7 @@ describe('validateRegistry — the acceptance contract is one chain (author ⇔ 
         midpoint: 'none',
         shipPacket: 'lean',
         buildTailOwner: 'maker',
-        examplesKey: 'short-impl',
+        examplesKey: 'impl-direct',
       } as PhaseSemantics,
       ...overrides,
     });
@@ -894,7 +940,7 @@ describe('validateRegistry — the acceptance contract is one chain (author ⇔ 
   const docPhase = (overrides: Record<string, unknown> = {}) =>
     phase('a', 'aGate', {
       reviewLoop: true,
-      semantics: { block: 'doc-loop', artifactKind: 'design', examplesKey: 'design' } as PhaseSemantics,
+      semantics: { block: 'doc-loop', artifactKind: 'spec' } as PhaseSemantics,
       ...overrides,
     });
 

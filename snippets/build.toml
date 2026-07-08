@@ -1,8 +1,8 @@
 # Build block — the AFK implementation phase of every workflow. In lifecycle
 # order: the entry seeds (compact-for-impl for full's plan-driven build,
-# implement-design for design-doc-driven builds — blueprint, relay's fresh
-# builder, any composed design-upstream workflow — and implement-direct for
-# docless builds from the research decisions), the midpoint checkpoint
+# implement-spec for spec-driven builds — blueprint, relay's fresh builder,
+# any composed workflow whose spec is its one document — and implement-direct
+# for docless builds from the research decisions), the midpoint checkpoint
 # trio, the build → review compaction, the critique review family
 # (implementation-handoff → review-implementation → respond-review, with
 # -again round-2 variants), the writable one-round family (handoff-direct →
@@ -16,10 +16,10 @@
 [[snippets]]
 key = "compact-for-impl"
 expand = '''
-/compact Transitioning from design to implementation. The design is settled and committed on disk — the spec and plan files, or the single design doc — so compact for a **focused implementation window**: keep what the build turns on, drop the journey that produced the design.
+/compact Transitioning from design to implementation. The design is settled and committed on disk — the spec, plus the plan file when the run has one — so compact for a **focused implementation window**: keep what the build turns on, drop the journey that produced the design.
 
 **Preserve:**
-- The committed design documents as the source of truth — the problem, the settled approach, the slice breakdown or module boundaries, and the test cases or standards the build must honor.
+- The committed documents as the source of truth — the problem, the settled approach, the slice breakdown or module boundaries, and the test cases or standards the build must honor.
 - The load-bearing architectural direction: module/function names, the composition shape, the coupling decision, and the invariants the build must hold.
 - *Why* the design is shaped this way — the decisions the build has to honor — but not the alternatives that lost.
 
@@ -30,9 +30,9 @@ expand = '''
 '''
 
 [[snippets]]
-key = "implement-design"
+key = "implement-spec"
 expand = '''
-Build the change from the committed design doc — it is the authority for what we're building and why: its product sections carry the goal and the boundaries, its technical sections the module shapes, seams, and test standards the build must honor. Execute the design; don't re-decide it. This prompt carries the *how*.
+Build the change from the committed spec — it is the authority for what we're building and why: its product sections carry the goal and the boundaries, its technical sections the module shapes, seams, target shape, and test standards the build must honor. Execute the design; don't re-decide it. This prompt carries the *how*.
 
 ## Read these first, then build
 Read each one and adapt it to this change — they're the bar, not optional background; don't go hunting them mid-build, and ask me for a path if one's missing.
@@ -43,7 +43,7 @@ Read each one and adapt it to this change — they're the bar, not optional back
 - `{{lessons_dir}}/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
 
 ## Before you write code
-- **Re-read the design doc** — the goals and non-goals bound the scope; the module boundaries and seams are the target shape.
+- **Re-read the spec** — the goals and non-goals bound the scope; the module boundaries, seams, and target shape are the shape to build. Where it records "Shapes considered", those alternatives were already weighed and rejected: build the chosen one rather than re-deriving it.
 - **Re-read the code you're about to touch** — trace the real data/control flow and the existing patterns, so the change fits what's already there.
 
 ## How to build it
@@ -68,7 +68,7 @@ A dependency weighty enough to be an architecture decision in its own right is m
 ### Tests
 The design's test standards name the behaviors that must be tested and the strategy for each — the specific cases are yours. Write each test against **real** behavior as you build its slice, not a batch up front against imagined shapes — behavior through the public interface, covering the critical paths and complex logic, not every edge case (skip UI tests unless asked). Before adding one, find where that behavior is already covered and assert only what's new: a second test proving what another already proves fails twice for one bug, and drifts when only one is updated. Skip the test that can't fail for a real reason — one pinning wording no caller depends on, or restating a constant — because coverage is feedback, never the goal. Apply red-green-refactor inside a slice when design is uncertain or behavior is subtle; test and code together is fine otherwise. Run them as you go and keep them green.
 
-If the design turns out wrong or underspecified once you're in the code, **stop and flag it** rather than guessing your way past it.'''
+If the spec turns out wrong or underspecified once you're in the code, **stop and flag it** rather than guessing your way past it.'''
 
 [[snippets]]
 key = "implement-direct"
@@ -209,6 +209,7 @@ expand = '''
 Code-review my implementation. **Read the actual code, not just commit messages.**
 
 **Lens:**
+- **Step back before judging locally.** The default reviewer failure is tactical: accept the implementation's framing and optimize inside it, converging on a local optimum — the adjusted argument, the patched conditional. First ask whether reshaping the design dissolves the problem: a new module or helper, a shared component extracted, a function redesigned around a different contract, modules wired differently. The local patch is the fallback, not the finding.
 - Implementation is fair game across the board — correctness, structure, test quality, performance, readability, edge cases, pattern consistency.
 - Plan ↔ code mismatches → flag silent deviations (missing planned tests, missing helpers, scope creep).
 - Spec/plan are settled — **don't relitigate approved decisions**. If a fundamental issue only surfaces from the code, say so explicitly; don't smuggle it in as a "small fix."
@@ -222,9 +223,11 @@ Code-review my implementation. **Read the actual code, not just commit messages.
 - **Structural quality — be ambitious, not just local:**
     - **Code-judo:** is there a reframing that makes whole branches, helpers, modes, conditionals, or layers disappear entirely — not just rearranges them? Don't stop at "this could be a bit cleaner."
     - **Spaghetti growth:** ad-hoc conditionals or special cases bolted into unrelated flows = design problem, not a stylistic nit. Push the logic behind its own abstraction.
-    - **Thin abstractions:** pass-through wrappers, identity helpers, abstractions that add indirection without buying clarity — flag them.
+    - **Thin abstractions:** pass-through wrappers, identity helpers, an interface nearly as complex as its implementation — apply the deletion test to a new module: does it concentrate complexity, or just relocate it?
     - **Boundary cleanliness:** casts, `any`, `unknown`, optionality papering over unclear invariants — push for an explicit contract.
     - **Canonical layer:** is the logic in the right module/package, or leaking across boundaries? Prefer existing canonical helpers over near-duplicates.
+    - **Preparatory refactoring** (when the diff includes one): behavior-preserving and proportionate — sized to this change, not a rewrite smuggled in alongside it.
+- **Right-sizing — over-building is the likelier failure:** defensive branches for states that can't occur, fallbacks the invariants already rule out, speculative features or config beyond the spec, abstractions pulled out before the pattern is real. Prefer making a bad state unrepresentable (a type, constructor, or enum) or validating at one boundary over more handling — and don't reflexively ask for more handling; that reflex is the slop we're avoiding.
 
 **Per issue:**
 - Severity: **critical** (blocks merge) / **moderate** (fix before merge) / **minor** (nice-to-have).
@@ -301,6 +304,7 @@ Code-review this implementation. **Read the actual code, not just commit message
 There's no spec or plan here — the bar is the **research decisions we settled and the actual goal behind them.** Review against those, not a document.
 
 **Lens:**
+- **Step back before judging locally.** The default reviewer failure is tactical: accept the implementation's framing and optimize inside it, converging on a local optimum — the adjusted argument, the patched conditional. First ask whether reshaping the design dissolves the problem: a new module or helper, a shared component extracted, a function redesigned around a different contract, modules wired differently. The local patch is the fallback, not the finding.
 - Everything is fair game — correctness, structure, test quality, performance, readability, edge cases, pattern consistency.
 - Decisions ↔ code mismatches → flag where the build drifted from what we agreed. If a decision turns out wrong now that it's real code, say so explicitly; don't smuggle it in as a "small fix."
 
@@ -347,9 +351,11 @@ $0'''
 [[snippets]]
 key = "review-and-fix"
 expand = '''
-Code-review this implementation — and resolve what you find. You review with write access: you didn't write this code, but you own getting it ship-ready. The bar is the committed design doc — its product sections carry the goal and the boundaries, its technical sections the module shapes, seams, and test standards the build was to honor. Review against the doc's intent, not a redesign of your own.
+Code-review this implementation — and resolve what you find. You review with write access: you didn't write this code, but you own getting it ship-ready. The bar is the committed spec — its product sections carry the goal and the boundaries, its technical sections the module shapes, seams, target shape, and test standards the build was to honor. Review against the spec's intent, not a redesign of your own.
 
 **First, understand what the builder did.** Read the actual code and commits, not just the handoff below. Where something looks wrong, work out what the builder was doing before judging it (Chesterton's fence: don't tear down what you don't yet know the purpose of) — an approach that reads oddly from outside often encodes a constraint you haven't hit yet, and where it is genuinely wrong, knowing the intent is what lets you fix it without breaking what the intent got right.
+
+**Then step back before judging locally.** The default reviewer failure is tactical: accept the implementation's framing and optimize inside it, converging on a local optimum — the adjusted argument, the patched conditional. First ask whether reshaping the design dissolves the problem: a new module or helper, a shared component extracted, a function redesigned around a different contract, modules wired differently. The local patch is the fallback, not the finding.
 
 **Lens — everything is fair game:**
 - **Correctness** — bugs, edge cases, failure modes.

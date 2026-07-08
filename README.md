@@ -1,8 +1,8 @@
 # duet
 
-**Compose the way you build software from opinionated building blocks — spec loops, design docs, adversarial review, an AFK build — and duet runs it: one AI agent makes each artifact, another checks it, an LLM orchestrator routes between them, and human gates only you can cross.**
+**Compose the way you build software from opinionated building blocks — spec loops, technical plans, adversarial review, an AFK build — and duet runs it: one AI agent makes each artifact, another checks it, an LLM orchestrator routes between them, and human gates only you can cross.**
 
-duet is built around one process shape: every artifact — a spec, a design doc, the code — is drafted by one agent and critiqued by another, phase after phase, while you approve direction at a few gates and stay away from the keyboard for the rest. What that process _is_ is yours to say: duet ships four ready workflows (from a thorough spec → plan → implement pipeline down to a research → implement quickie) and the vocabulary they're built from — pick one, or compose your own in a few lines of TypeScript. Either way the same runtime drives it, and you come back to an opened pull request or a well-formed question waiting for you.
+duet is built around one process shape: every artifact — a spec, a plan, the code — is drafted by one agent and critiqued by another, phase after phase, while you approve direction at a few gates and stay away from the keyboard for the rest. What that process _is_ is yours to say: duet ships four ready workflows (from a thorough spec → plan → implement pipeline down to a research → implement quickie) and the vocabulary they're built from — pick one, or compose your own in a few lines of TypeScript. Either way the same runtime drives it, and you come back to an opened pull request or a well-formed question waiting for you.
 
 It's a personal tool, built for one developer's workflow across their own projects, and published in case the shape is useful to you — not a polished product. Expect rough edges.
 
@@ -13,7 +13,7 @@ The process duet automates is one you may already run by hand: two coding agents
 | Voice                                               | Does                                                                                                           | Default         |
 | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | --------------- |
 | **Orchestrator**                                    | Routes the protocol — never writes code, only triages and decides who answers what                             | `claude` (Opus) |
-| **architect** · **builder** — the makers            | The architect writes the spec, plan, or design doc; the builder writes the code and the PR                     | `claude` (Opus) |
+| **architect** · **builder** — the makers            | The architect writes the spec and the plan; the builder writes the code and the PR                             | `claude` (Opus) |
 | **analyst** · **critic** / **judge** — the checkers | Critique each artifact — read-only, except relay's judge, which fixes findings directly and owns the docs + PR | `codex`         |
 
 You pick the workflow at the start (`--workflow`). Under the hood the workflows aren't four hand-built pipelines — each is composed from the same few **phase blocks** (a framing analysis, a document loop, the AFK build, a finishing phase that opens the PR) with named knobs: which document the loop produces, whether the delivery checker critiques or fixes, who owns the finishing steps, which sessions carry across the stage boundary. duet ships four compositions as its standard library, and the same blocks are yours to compose ([below](#compose-your-own-workflow)). Each `→` is a phase the agents work through; each **GATE** is a stop where the run waits for you:
@@ -22,11 +22,11 @@ You pick the workflow at the start (`--workflow`). Under the hood the workflows 
 full       frame → DIRECTION → spec → COMMIT-SPEC → plan → PLAN (walk away)
              → implement (AFK, often hours) → SHIP → finish (open the PR) → OPEN-PR → done
 
-blueprint  frame → DIRECTION (auto-crosses) → design → DESIGN (your one stop — then walk away)
+blueprint  frame → DIRECTION (auto-crosses) → spec → COMMIT-SPEC (your one stop — then walk away)
              → implement (AFK) → SHIP → finish (open the PR) → OPEN-PR → done
 
-relay      frame → DIRECTION (auto-crosses) → design → DESIGN (your one stop)
-             → implement (AFK: a fresh builder implements the doc; the judge reviews AND fixes)
+relay      frame → DIRECTION (auto-crosses) → spec → COMMIT-SPEC (your one stop)
+             → implement (AFK: a fresh builder implements the spec; the judge reviews AND fixes)
              → SHIP → finish (the judge opens the PR) → OPEN-PR → done
 
 short      research → DIRECTION (walk away) → implement (AFK) → SHIP
@@ -34,8 +34,8 @@ short      research → DIRECTION (walk away) → implement (AFK) → SHIP
 ```
 
 - **full** — the thorough workflow: a spec and a plan, each drafted and reviewed on paper before any code. Pick it for unfamiliar or risky work, where the product spec and the technical plan each deserve their own review.
-- **blueprint** — the middle workflow: one committed **design doc** replaces the spec + plan pair — product goals and behaviors on top, module boundaries and test standards below — reviewed in a single loop. Pick it for serious work on a builder model you trust: by default you read one document, tap once, and walk away.
-- **relay** — blueprint's shape with the delivery **criss-crossed**: after the design doc commits, a fresh **builder** on a fast, cheaper binding implements the doc, while the checking duty goes to a **judge** on a strong model that doesn't just file critiques — it fixes ordinary findings in place, owns the docs pass, and opens the PR, escalating anything that smells like a design change instead of patching over it. Pick it when the doc is strong enough that the build is labor, not judgment. The model pairing is yours to bind (`--bind builder=… --bind judge=…` — see [Configure](#configure)); the workflow supplies the shape.
+- **blueprint** — the middle workflow: full minus the plan phase. Its one committed **spec** carries the whole design — product goals and behaviors on top, module boundaries, the target shape, and test standards below — reviewed in a single loop. Pick it for serious work on a builder model you trust: by default you read one document, tap once, and walk away.
+- **relay** — blueprint's shape with the delivery **criss-crossed**: after the spec commits, a fresh **builder** on a fast, cheaper binding implements it cold, while the checking duty goes to a **judge** on a strong model that doesn't just file critiques — it fixes ordinary findings in place, owns the docs pass, and opens the PR, escalating anything that smells like a design change instead of patching over it. Pick it when the spec is strong enough that the build is labor, not judgment. The model pairing is yours to bind (`--bind builder=… --bind judge=…` — see [Configure](#configure)); the workflow supplies the shape.
 - **short** — the fast workflow: no documents at all; the research decisions are the design. Pick it for small, well-understood changes.
 
 Every workflow shares the same AFK implementation phase and ends by opening a real pull request.
@@ -46,7 +46,7 @@ The gates are enforced in code (a statechart), not by a prompt an agent could be
 - The **OPEN-PR** gate sits _after_ the PR opens. Under the hands-off defaults it auto-crosses to done; to stop and review the opened PR, list `finish` in `--gates-at` (rejecting there amends the PR in place). A bare short run still attends all of its gates.
 - A pre-authorized gate auto-crosses only on a clean packet: a `high`-severity decision in it holds the run for you instead, and an `ask_human` question stops the run under any posture. The merge is always yours.
 
-Each phase runs a handful of prompt templates — **snippets** — that carry the workflow's conventions. The stage's maker drafts each artifact from one — the architect from [`write-spec`](docs/snippets.md#write-spec) in spec, [`start-plan`](docs/snippets.md#start-plan) in plan, and [`write-design`](docs/snippets.md#the-blueprint-snippets) on blueprint and relay; the builder from [`implement-direct`](docs/snippets.md#implement-direct) on short — and the checker critiques through altitude-tuned lenses like [`review-spec`](docs/snippets.md#review-spec) (the analyst) and [`review-implementation`](docs/snippets.md#review-implementation) (the critic). Relay's judge works from [`review-and-fix`](docs/snippets.md#review-and-fix) — the same lens, plus the authority to fix what it finds. The snippets are the substance of the workflow, and the part you can reshape to your own methodology — see [Customizing the snippets](#customizing-the-snippets), or the full [snippet reference](docs/snippets.md).
+Each phase runs a handful of prompt templates — **snippets** — that carry the workflow's conventions. The stage's maker drafts each artifact from one: the architect from `write-spec` in spec and `start-plan` in plan; the builder from `implement-spec` on blueprint and relay, or `implement-direct` on short. The checker critiques through altitude-tuned lenses like `review-spec` (the analyst) and `review-implementation` (the critic), while relay's judge works from `review-and-fix` — the same lens, plus the authority to fix what it finds. Read any of them with `duet snippets show <key>`. The snippets are the substance of the workflow, and the part you can reshape to your own methodology — see [Customizing the snippets](#customizing-the-snippets), or the [snippet reference](docs/snippets.md).
 
 ### Compose your own workflow
 
@@ -113,8 +113,8 @@ The smoothest way to run duet is to let a Claude Code session sharpen your probl
    ```bash
    duet new --interactive --framing .duet/<your-framing>.md
    ```
-   Your own Claude Code session becomes the orchestrator: you act at the early gates right in the chat — the spec and plan on full, the design doc on blueprint, the direction on short.
-4. **Walk away.** At the planning stage's last gate — plan approval (full), the Design gate (blueprint and relay), or Direction (short) — the session hands the run to a background driver, which implements semi-AFK, often for an hour or more. Under the hands-off defaults it then crosses the Ship gate and opens the PR, so you return to an opened pull request (with a CEO-style summary recorded for your morning review) — or a well-formed question waiting for you. Prefer to verify the build before it ships? Attend the Ship gate (`--gates-at skip-plan` on full).
+   Your own Claude Code session becomes the orchestrator: you act at the early gates right in the chat — the spec and plan on full, the spec on blueprint, the direction on short.
+4. **Walk away.** At the planning stage's last gate — plan approval (full), spec approval (blueprint and relay), or Direction (short) — the session hands the run to a background driver, which implements semi-AFK, often for an hour or more. Under the hands-off defaults it then crosses the Ship gate and opens the PR, so you return to an opened pull request (with a CEO-style summary recorded for your morning review) — or a well-formed question waiting for you. Prefer to verify the build before it ships? Attend the Ship gate (`--gates-at skip-plan` on full).
 
 > **Prefer the terminal?** Skip `--interactive` and run a headless framing turn instead — `duet new` opens your editor on a framing draft, then the orchestrator runs in the background and you act at each gate with `duet continue`.
 
@@ -123,7 +123,7 @@ Common ways to start a run:
 ```bash
 duet new                       # editor on a framing draft (issue, context, scope)
 duet new --template bug        # seed the draft from .duet/templates/bug.md
-duet new --spec spec.md        # start from a draft you already wrote (full: a spec; blueprint: a design doc)
+duet new --spec spec.md        # start from a draft spec you already wrote (every document-bearing workflow)
 duet new --workflow blueprint  # the one-doc middle workflow — one attended gate by default
 duet new --workflow relay      # blueprint criss-crossed — bind the delivery pair: --bind builder=… --bind judge=…
 duet new --workflow short      # the fast workflow (add --gates-at afk to run unattended → PR open)
@@ -133,7 +133,7 @@ duet new --gateless            # walk away from the START — every gate pre-aut
 duet new --retry-infra 2       # tune the bounded infra auto-retry budget (default 3 for new runs; 0 disables)
 ```
 
-Each workflow has a sensible hands-off default: **full** is `overnight` — approve the spec, then walk away (plan, Ship, and the Open-PR gate all auto-cross); **blueprint** and **relay** attend only their Design gate — one interruption for the whole run; **short** attends all three of its gates unless you say `afk`. `--gates-at` names the _complete_ set of gates you attend, not a delta: `--gates-at finish` attends **only** the Open-PR gate — everything else auto-crosses; to keep the usual stops _and_ add a post-open review, list them all.
+Each workflow has a sensible hands-off default: **full** is `overnight` — approve the spec, then walk away (plan, Ship, and the Open-PR gate all auto-cross); **blueprint** and **relay** attend only their spec gate — one interruption for the whole run; **short** attends all three of its gates unless you say `afk`. `--gates-at` names the _complete_ set of gates you attend, not a delta: `--gates-at finish` attends **only** the Open-PR gate — everything else auto-crosses; to keep the usual stops _and_ add a post-open review, list them all.
 
 ## Everyday commands
 
@@ -184,7 +184,7 @@ budget = "off"              # opt-in per-turn cost caps: "off" (default), "defau
 provider = "claude"         # must be claude in v1 — codex-as-orchestrator is designed but unbuilt
 model = "claude-opus-4-8"   # any Anthropic model id
 
-[duties.architect]          # planning's maker — drafts the spec / plan / design doc
+[duties.architect]          # planning's maker — drafts the spec and the plan
 provider = "claude"
 model = "claude-opus-4-8"
 effort = "high"             # normalized: low|medium|high|xhigh (+ claude's max)
@@ -218,7 +218,7 @@ That's the only config duet has — per-duty (and orchestrator/consultant) provi
 
 **What they are.** The snippets are the prompt templates the orchestrator sends the workers — they _are_ the workflow, and duet ships an opinionated set: leader-facing specs, TDD-shaped vertical-slice planning, altitude-tuned review lenses. The catalog of the ones worth customizing, with their full bodies, is the [snippet reference](docs/snippets.md).
 
-**Why you'd change one.** To make duet work _your_ way without forking it — plan to a different methodology, write specs in a different shape, dial your checkers' altitude up or down. The biggest levers are the **generative drafts** — [`write-spec`](docs/snippets.md#write-spec), [`start-plan`](docs/snippets.md#start-plan), [`implement-direct`](docs/snippets.md#implement-direct) — which write the _first_ artifact of each phase, so reshaping one reshapes everything downstream.
+**Why you'd change one.** To make duet work _your_ way without forking it — plan to a different methodology, write specs in a different shape, dial your checkers' altitude up or down. The biggest levers are the **generative drafts** — `write-spec`, `start-plan`, `implement-direct` — which write the _first_ artifact of each phase, so reshaping one reshapes everything downstream.
 
 **How — two grains.**
 

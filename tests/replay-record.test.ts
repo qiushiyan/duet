@@ -6,21 +6,21 @@ describe('parseProtocolTrace', () => {
   test('extracts phase briefs, worker prompts and responses, terminals, and ordering', () => {
     const trace = parseProtocolTrace({
       orchestratorLog: [
-        entry(0, '◀ harness prompt (phase=design)', 'recorded brief'),
-        entry(5, 'advance_phase (design)', 'ship the design'),
+        entry(0, '◀ harness prompt (phase=spec)', 'recorded brief'),
+        entry(5, 'advance_phase (spec)', 'ship the design'),
       ].join(''),
       workerLogs: [
         {
           voice: 'architect',
           log: [
-            entry(1, '◀ prompt (tag=write-design, from orchestrator)', 'write prompt'),
+            entry(1, '◀ prompt (tag=write-spec, from orchestrator)', 'write prompt'),
             entry(3, '▶ response (session a1) · context 12%', 'wrote it'),
           ].join(''),
         },
         {
           voice: 'analyst',
           log: [
-            entry(2, '◀ prompt (tag=review-design, from orchestrator)', 'review prompt'),
+            entry(2, '◀ prompt (tag=review-spec, from orchestrator)', 'review prompt'),
             entry(4, '▶ response (session c1)', 'reviewed it'),
           ].join(''),
         },
@@ -36,9 +36,9 @@ describe('parseProtocolTrace', () => {
       'worker_response',
       'terminal',
     ]);
-    expect.soft(trace.events.map((event) => event.phase)).toEqual(['design', 'design', 'design', 'design', 'design', 'design']);
+    expect.soft(trace.events.map((event) => event.phase)).toEqual(['spec', 'spec', 'spec', 'spec', 'spec', 'spec']);
     expect.soft(trace.workerTurns).toHaveLength(2);
-    expect.soft(trace.workerTurns[0]?.prompt).toMatchObject({ voice: 'architect', ordinal: 1, tag: 'write-design', body: 'write prompt' });
+    expect.soft(trace.workerTurns[0]?.prompt).toMatchObject({ voice: 'architect', ordinal: 1, tag: 'write-spec', body: 'write prompt' });
     expect.soft(trace.workerTurns[0]?.terminal).toMatchObject({ kind: 'worker_response', sessionId: 'a1', body: 'wrote it', contextPercent: 12 });
     expect.soft(trace.events.at(-1)).toMatchObject({ kind: 'terminal', verb: 'advance_phase', body: 'ship the design' });
   });
@@ -46,7 +46,7 @@ describe('parseProtocolTrace', () => {
   test('extracts ask_human and delivered steers as protocol events', () => {
     const trace = parseProtocolTrace({
       orchestratorLog: [
-        entry(0, '◀ harness prompt (phase=design)', 'brief'),
+        entry(0, '◀ harness prompt (phase=spec)', 'brief'),
         entry(1, 'human steer delivered (staged 2026-07-07T09:59:00.000Z)', 'tighten scope'),
         entry(2, 'ask_human queued', 'Which way?'),
       ].join(''),
@@ -58,9 +58,9 @@ describe('parseProtocolTrace', () => {
       delivery: 'live',
       stagedAt: '2026-07-07T09:59:00.000Z',
       body: 'tighten scope',
-      phase: 'design',
+      phase: 'spec',
     });
-    expect.soft(trace.events[2]).toMatchObject({ kind: 'terminal', verb: 'ask_human', body: 'Which way?', phase: 'design' });
+    expect.soft(trace.events[2]).toMatchObject({ kind: 'terminal', verb: 'ask_human', body: 'Which way?', phase: 'spec' });
   });
 
   test('marks a near-simultaneous same-body multi-worker prompt as a fan-out', () => {
@@ -81,7 +81,7 @@ describe('parseProtocolTrace', () => {
   test('reports missing logs and unmatched worker turns as notes', () => {
     const trace = parseProtocolTrace({
       workerLogs: [
-        { voice: 'architect', log: entry(1, '◀ prompt (tag=write-design, from orchestrator)', 'no response') },
+        { voice: 'architect', log: entry(1, '◀ prompt (tag=write-spec, from orchestrator)', 'no response') },
         { voice: 'analyst' },
       ],
     });
@@ -94,12 +94,12 @@ describe('parseProtocolTrace', () => {
 
   test('captures non-response worker terminals instead of dropping them', () => {
     const trace = parseProtocolTrace({
-      orchestratorLog: [entry(0, '◀ harness prompt (phase=design)', 'brief')].join(''),
+      orchestratorLog: [entry(0, '◀ harness prompt (phase=spec)', 'brief')].join(''),
       workerLogs: [
         {
           voice: 'analyst',
           log: [
-            entry(1, '◀ prompt (tag=review-design, from orchestrator)', 'review'),
+            entry(1, '◀ prompt (tag=review-spec, from orchestrator)', 'review'),
             entry(2, '◼ budget-control stop: cap reached'),
           ].join(''),
         },

@@ -2,10 +2,10 @@
 Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in workflow order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).
 <phase_templates phase="implement">
 <snippet key="compact-for-impl">
-/compact Transitioning from design to implementation. The design is settled and committed on disk — the spec and plan files, or the single design doc — so compact for a **focused implementation window**: keep what the build turns on, drop the journey that produced the design.
+/compact Transitioning from design to implementation. The design is settled and committed on disk — the spec, plus the plan file when the run has one — so compact for a **focused implementation window**: keep what the build turns on, drop the journey that produced the design.
 
 **Preserve:**
-- The committed design documents as the source of truth — the problem, the settled approach, the slice breakdown or module boundaries, and the test cases or standards the build must honor.
+- The committed documents as the source of truth — the problem, the settled approach, the slice breakdown or module boundaries, and the test cases or standards the build must honor.
 - The load-bearing architectural direction: module/function names, the composition shape, the coupling decision, and the invariants the build must hold.
 - *Why* the design is shaped this way — the decisions the build has to honor — but not the alternatives that lost.
 
@@ -103,6 +103,7 @@ This is a guided map, **not a self-review** — don't grade your own work ("corr
 Code-review my implementation. **Read the actual code, not just commit messages.**
 
 **Lens:**
+- **Step back before judging locally.** The default reviewer failure is tactical: accept the implementation's framing and optimize inside it, converging on a local optimum — the adjusted argument, the patched conditional. First ask whether reshaping the design dissolves the problem: a new module or helper, a shared component extracted, a function redesigned around a different contract, modules wired differently. The local patch is the fallback, not the finding.
 - Implementation is fair game across the board — correctness, structure, test quality, performance, readability, edge cases, pattern consistency.
 - Plan ↔ code mismatches → flag silent deviations (missing planned tests, missing helpers, scope creep).
 - Spec/plan are settled — **don't relitigate approved decisions**. If a fundamental issue only surfaces from the code, say so explicitly; don't smuggle it in as a "small fix."
@@ -116,9 +117,11 @@ Code-review my implementation. **Read the actual code, not just commit messages.
 - **Structural quality — be ambitious, not just local:**
     - **Code-judo:** is there a reframing that makes whole branches, helpers, modes, conditionals, or layers disappear entirely — not just rearranges them? Don't stop at "this could be a bit cleaner."
     - **Spaghetti growth:** ad-hoc conditionals or special cases bolted into unrelated flows = design problem, not a stylistic nit. Push the logic behind its own abstraction.
-    - **Thin abstractions:** pass-through wrappers, identity helpers, abstractions that add indirection without buying clarity — flag them.
+    - **Thin abstractions:** pass-through wrappers, identity helpers, an interface nearly as complex as its implementation — apply the deletion test to a new module: does it concentrate complexity, or just relocate it?
     - **Boundary cleanliness:** casts, `any`, `unknown`, optionality papering over unclear invariants — push for an explicit contract.
     - **Canonical layer:** is the logic in the right module/package, or leaking across boundaries? Prefer existing canonical helpers over near-duplicates.
+    - **Preparatory refactoring** (when the diff includes one): behavior-preserving and proportionate — sized to this change, not a rewrite smuggled in alongside it.
+- **Right-sizing — over-building is the likelier failure:** defensive branches for states that can't occur, fallbacks the invariants already rule out, speculative features or config beyond the spec, abstractions pulled out before the pattern is real. Prefer making a bad state unrepresentable (a type, constructor, or enum) or validating at one boundary over more handling — and don't reflexively ask for more handling; that reflex is the slop we're avoiding.
 
 **Per issue:**
 - Severity: **critical** (blocks merge) / **moderate** (fix before merge) / **minor** (nice-to-have).

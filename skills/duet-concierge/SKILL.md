@@ -1,6 +1,6 @@
 ---
 name: duet-concierge
-description: Supervise a duet run remotely — brief the human at every stop, relay their decisions, answers, and steers verbatim, start runs from dictation, and watch with turn-ending reports. Usually paired with /remote-control.
+description: Courier for a duet run — read the run, brief the human at each stop, relay their words verbatim. Usually paired with /remote-control.
 disable-model-invocation: true
 allowed-tools: Bash(duet status:*), Bash(duet logs:*), Bash(duet runs:*)
 ---
@@ -14,7 +14,7 @@ duet is a command-line tool, installed on this machine, that runs a largely auto
 ```
 full:      frame → DIRECTION gate → spec → COMMIT-SPEC gate (default: walk away after here) → plan → PLAN gate (AFK handoff)
            → implement (build, review, reconcile docs; autonomous, often hours) → SHIP gate → finish (open the PR) → OPEN-PR gate → done
-blueprint: frame → DIRECTION gate (auto-crosses by default) → design (one design doc replaces spec + plan) → DESIGN gate (the default one attended stop; AFK handoff)
+blueprint: frame → DIRECTION gate (auto-crosses by default) → spec (one document; no separate plan) → COMMIT-SPEC gate (the default one attended stop; AFK handoff)
            → implement (autonomous) → SHIP gate → finish (open the PR) → OPEN-PR gate → done
 relay:     blueprint's shape with delivery criss-crossed — a fresh builder implements the doc,
            the judge reviews AND fixes directly, then owns the docs pass and the PR; its stops read identically to blueprint's from your seat
@@ -91,7 +91,7 @@ duet new --framing .duet/<name>.md                               # full workflow
 duet new --framing .duet/<name>.md --gates-at skip-plan          # full, walk away at spec approval
 duet new --framing .duet/<name>.md --gates-at overnight          # full, auto-cross after the spec
 duet new --framing .duet/<name>.md --gates-at afk                # full, walk away from the START — every gate pre-authorized, every net intact
-duet new --workflow blueprint --framing .duet/<name>.md          # one design doc, one attended gate, then AFK
+duet new --workflow blueprint --framing .duet/<name>.md          # one spec, one attended gate, then AFK
 duet new --workflow relay --framing .duet/<name>.md              # blueprint's shape, delivery criss-crossed (bind duties with --bind / bind.* / [duties.*])
 duet new --workflow short --framing .duet/<name>.md              # the lighter research → implement workflow
 duet new --workflow short --framing .duet/<name>.md --gates-at afk # short, run straight through to done (PR open)
@@ -99,9 +99,17 @@ duet new --workflow <custom> --framing .duet/<name>.md           # a project-def
 duet new --gateless --framing .duet/<name>.md                    # walk away from the START — every gate pre-authorized; consultant keeps its framing read + backstop, bet audits off
 ```
 
-Pick the workflow with `--workflow` (also settable as `workflow:` in the framing frontmatter; the flag wins) — the workflows themselves are described under "What duet is" above; the call here is which to *suggest*: **full** (the default) when the ceremony earns its keep; **blueprint** for serious work on a trusted frontier-model builder; **relay** for that same one-doc shape with delivery criss-crossed — bind the duties per run (`--bind builder=… --bind judge=…`, or `bind.*` framing keys / `[duties.*]` config); **short** for small, well-understood work. A project can also define its own workflows (`.duet/workflows/<name>.ts`, compiled and frozen into the run at creation) — `--workflow` takes those names too, and an unknown name errors back listing every available one. (`--spec <path>`, the draft entry that skips FRAME, takes a draft of the workflow's primary document — full's spec, or the design doc on blueprint and relay; short has none.)
+Pick the workflow with `--workflow` (also settable as `workflow:` in the framing frontmatter; the flag wins) — the workflows themselves are described under "What duet is" above; the call here is which to *suggest*: **full** (the default) when the ceremony earns its keep; **blueprint** for serious work on a trusted frontier-model builder; **relay** for that same one-document shape with delivery criss-crossed — bind the duties per run (`--bind builder=… --bind judge=…`, or `bind.*` framing keys / `[duties.*]` config); **short** for small, well-understood work. A project can also define its own workflows (`.duet/workflows/<name>.ts`, compiled and frozen into the run at creation) — `--workflow` takes those names too, and an unknown name errors back listing every available one. (`--spec <path>`, the draft entry that skips FRAME, takes a draft spec — every document-bearing workflow's first document is a spec; short has none.)
 
-`--gates-at` pre-authorizes the gates of unlisted phases (a phase list or a workflow-specific preset). For **full**, the default is `overnight` — attend Direction and Commit-spec, auto-cross the rest (plan, Ship, and the post-open PR all cross unattended), so a default run is already hands-off after the spec. Suggest a *more*-attended posture when the human wants to stay in the loop: `skip-plan` returns them at the Ship gate (verify the build before it ships) — suggest it when they don't fully trust the implementation yet; or list `finish` to add a post-open review stop on the opened PR (reject there amends it). For a *less*-attended one: `afk` pre-authorizes every gate from the start (walk away immediately) while keeping every safety net — including the consultant's bet audits, which `--gateless` drops; suggest it when they want to leave at once but still want all the checks. For **blueprint** and **relay**, the default is attend the DESIGN gate only — one interruption: the Direction gate auto-crosses, the human reads the design doc, taps once, and walks away; `afk` pre-authorizes that too. For **short**: `afk` pre-authorizes all three gates (Direction, Ship, Open-PR) and runs straight to done with the PR open — suggest it when the work is small and they want it hands-off. The *most* hands-off option, on any workflow, is `--gateless` (or `gateless:` in the framing): pre-authorize **every** gate so the run flows to an open PR with no attended stop, and — if a consultant is bound — keep only its **non-holding** work: its framing third-opinion still folds into the direction and the acceptance-contract verify still guards the build, with its mid-run bet audits off. Suggest it when the human has already settled the direction and just wants it run; a genuine product `high` or an unmet contract still stops it, and the merge stays theirs.
+`--gates-at` pre-authorizes the gates of unlisted phases (a phase list, or a workflow-specific preset). Every workflow ships a default; your call is when to suggest something else.
+
+- **full** — default `overnight`: attend Direction and Commit-spec; plan, Ship, and the post-open PR all cross unattended. A default run is already hands-off after the spec.
+  - *More attended:* `skip-plan` returns them at the Ship gate to verify the build before it ships — suggest it when they don't fully trust the implementation yet. Or list `finish` for a post-open review stop on the opened PR (reject there amends it).
+  - *Less attended:* `afk` pre-authorizes every gate from the start while keeping every safety net, including the consultant's bet audits — suggest it when they want to leave at once but still want all the checks.
+- **blueprint / relay** — default: attend the COMMIT-SPEC gate only. One interruption: Direction auto-crosses, the human reads the spec, taps once, walks away. `afk` pre-authorizes that too.
+- **short** — `afk` pre-authorizes all three gates (Direction, Ship, Open-PR) and runs straight to done with the PR open — suggest it when the work is small and they want it hands-off.
+
+The *most* hands-off option, on any workflow, is `--gateless` (or `gateless:` in the framing): pre-authorize **every** gate so the run flows to an open PR with no attended stop, and — if a consultant is bound — keep only its **non-holding** work (the framing third-opinion still folds into the direction; the acceptance-contract verify still guards the build; the mid-run bet audits drop). Suggest it when the human has already settled the direction and just wants it run. A genuine product `high` or an unmet contract still stops the run, and the merge stays theirs.
 
 ## Supervising
 

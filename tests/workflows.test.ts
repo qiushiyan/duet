@@ -126,7 +126,7 @@ describe('duet workflows check', () => {
       'deep-relay',
       workflowFile(
         'deep-relay',
-        "phases: [frame(), doc('design', { contract: true, rounds: 2 }), build({ review: 'fixer' }), finish()], attend: ['design'],",
+        "phases: [frame(), doc('spec', { contract: true, rounds: 2 }), build({ review: 'fixer' }), finish()], attend: ['spec'],",
       ),
     );
     const resolved = await resolveWorkflowSource(projectDir, 'deep-relay');
@@ -136,16 +136,16 @@ describe('duet workflows check', () => {
     expect.soft(out).toContain('workflow  deep-relay — deep-relay title');
     expect.soft(out).toContain('source    project · .duet/workflows/deep-relay.ts');
     expect.soft(out).toContain('phases (4)');
-    expect.soft(out).toContain('design     doc-loop (design)');
+    expect.soft(out).toContain('spec       doc-loop (spec)');
     // The gate line shows the compact "<X> gate" label, not the full packet heading.
-    expect.soft(out).toContain('-> DESIGN gate · 2 rounds');
+    expect.soft(out).toContain('-> SPEC gate · 2 rounds');
     expect.soft(out).not.toContain("the orchestrator's summary");
     // Rounds surface for the doc-loop only; the build phase's own review cap stays hidden.
     expect.soft(out).toMatch(/build \(fixer\)\s+-> SHIP gate$/m);
     expect.soft(out).toContain('authors the acceptance contract');
     expect.soft(out).toContain('delivery   builder + judge · structurally fresh');
-    expect.soft(out).toContain('default attended gates   design');
-    expect.soft(out).toContain('acceptance contract      authored at design, verified at implement (when a consultant is bound)');
+    expect.soft(out).toContain('default attended gates   spec');
+    expect.soft(out).toContain('acceptance contract      authored at spec, verified at implement (when a consultant is bound)');
   });
 
   test('enriches the summary with config-resolved bindings and per-phase consultant checkpoints (the same spine as duet graph)', async ({ projectDir }) => {
@@ -176,7 +176,7 @@ describe('duet workflows check', () => {
     // identifying token per failure case.
     writeProjectWorkflow(projectDir, 'full');
     writeProjectWorkflow(projectDir, 'mismatch', workflowFile('other-name'));
-    writeProjectWorkflow(projectDir, 'bad-world', workflowFile('bad-world', "phases: [frame(), doc('design'), build({ review: 'writable' }), finish()],"));
+    writeProjectWorkflow(projectDir, 'bad-world', workflowFile('bad-world', "phases: [frame(), doc('spec'), build({ review: 'writable' }), finish()],"));
     writeProjectWorkflow(projectDir, 'import-throws', "throw new Error('top-level boom');");
     const cases: Array<[name: string, token: string]> = [
       ['full', 'multiple layers'],
@@ -244,10 +244,10 @@ describe('workflow SDK rebuild pins — blueprint and short', () => {
   const rebuilds = {
     blueprint: defineWorkflow({
       name: 'blueprint',
-      title: 'Blueprint (frame → design doc → implement → ship → PR)',
-      attend: ['design'],
+      title: 'Blueprint (frame → spec → implement → ship → PR)',
+      attend: ['spec'],
       presets: { afk: [] },
-      phases: [frame(), doc('design', { contract: true }), build({ review: 'critique' }), finish()],
+      phases: [frame(), doc('spec', { rounds: 2, contract: true }), build({ review: 'critique' }), finish()],
     }),
     short: defineWorkflow({
       name: 'short',

@@ -1,8 +1,8 @@
 <snippet_library phase="implement">
 Showing this phase’s templates and the always-available helpers in full; the other phases are listed by key only, in workflow order. Call list_snippets with all=true for any snippet’s full body (use when you genuinely need a template from another phase).
 <phase_templates phase="implement">
-<snippet key="implement-design">
-Build the change from the committed design doc — it is the authority for what we're building and why: its product sections carry the goal and the boundaries, its technical sections the module shapes, seams, and test standards the build must honor. Execute the design; don't re-decide it. This prompt carries the *how*.
+<snippet key="implement-spec">
+Build the change from the committed spec — it is the authority for what we're building and why: its product sections carry the goal and the boundaries, its technical sections the module shapes, seams, target shape, and test standards the build must honor. Execute the design; don't re-decide it. This prompt carries the *how*.
 
 ## Read these first, then build
 Read each one and adapt it to this change — they're the bar, not optional background; don't go hunting them mid-build, and ask me for a path if one's missing.
@@ -13,7 +13,7 @@ Read each one and adapt it to this change — they're the bar, not optional back
 - `{{lessons_dir}}/testing/vitest.md` — Vitest APIs *(TS-Vitest projects only)*
 
 ## Before you write code
-- **Re-read the design doc** — the goals and non-goals bound the scope; the module boundaries and seams are the target shape.
+- **Re-read the spec** — the goals and non-goals bound the scope; the module boundaries, seams, and target shape are the shape to build. Where it records "Shapes considered", those alternatives were already weighed and rejected: build the chosen one rather than re-deriving it.
 - **Re-read the code you're about to touch** — trace the real data/control flow and the existing patterns, so the change fits what's already there.
 
 ## How to build it
@@ -38,7 +38,7 @@ A dependency weighty enough to be an architecture decision in its own right is m
 ### Tests
 The design's test standards name the behaviors that must be tested and the strategy for each — the specific cases are yours. Write each test against **real** behavior as you build its slice, not a batch up front against imagined shapes — behavior through the public interface, covering the critical paths and complex logic, not every edge case (skip UI tests unless asked). Before adding one, find where that behavior is already covered and assert only what's new: a second test proving what another already proves fails twice for one bug, and drifts when only one is updated. Skip the test that can't fail for a real reason — one pinning wording no caller depends on, or restating a constant — because coverage is feedback, never the goal. Apply red-green-refactor inside a slice when design is uncertain or behavior is subtle; test and code together is fine otherwise. Run them as you go and keep them green.
 
-If the design turns out wrong or underspecified once you're in the code, **stop and flag it** rather than guessing your way past it.
+If the spec turns out wrong or underspecified once you're in the code, **stop and flag it** rather than guessing your way past it.
 </snippet>
 <snippet key="midpoint-status">
 Pausing mid-implementation for a checkpoint review. Summarize the current state so a reviewer can pick it up cold — **status snapshot, not a self-review**.
@@ -112,9 +112,11 @@ This is a guided map, **not a self-review** — don't grade your own work ("corr
 - **Where to look hardest:** the riskiest, most complex, or least-certain changes — anything you're unsure about or that fought you. This is the part that earns its keep.
 </snippet>
 <snippet key="review-and-fix">
-Code-review this implementation — and resolve what you find. You review with write access: you didn't write this code, but you own getting it ship-ready. The bar is the committed design doc — its product sections carry the goal and the boundaries, its technical sections the module shapes, seams, and test standards the build was to honor. Review against the doc's intent, not a redesign of your own.
+Code-review this implementation — and resolve what you find. You review with write access: you didn't write this code, but you own getting it ship-ready. The bar is the committed spec — its product sections carry the goal and the boundaries, its technical sections the module shapes, seams, target shape, and test standards the build was to honor. Review against the spec's intent, not a redesign of your own.
 
 **First, understand what the builder did.** Read the actual code and commits, not just the handoff below. Where something looks wrong, work out what the builder was doing before judging it (Chesterton's fence: don't tear down what you don't yet know the purpose of) — an approach that reads oddly from outside often encodes a constraint you haven't hit yet, and where it is genuinely wrong, knowing the intent is what lets you fix it without breaking what the intent got right.
+
+**Then step back before judging locally.** The default reviewer failure is tactical: accept the implementation's framing and optimize inside it, converging on a local optimum — the adjusted argument, the patched conditional. First ask whether reshaping the design dissolves the problem: a new module or helper, a shared component extracted, a function redesigned around a different contract, modules wired differently. The local patch is the fallback, not the finding.
 
 **Lens — everything is fair game:**
 - **Correctness** — bugs, edge cases, failure modes.
@@ -266,6 +268,6 @@ Can't find a referenced skill? Tell me immediately for the exact path. **Don't s
 </coming_next>
 <already_done>
 <phase name="frame">think-holistic, compare-notes, consultant-frame</phase>
-<phase name="design">write-design, review-design, update-design, review-design-again, update-design-again, consultant-contract</phase>
+<phase name="spec">write-spec, review-spec, update-spec, review-spec-again, update-spec-again, consultant-contract</phase>
 </already_done>
 </snippet_library>

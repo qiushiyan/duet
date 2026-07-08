@@ -18,7 +18,7 @@ describe('scripts/corpus/replay-phase', () => {
     };
 
     const result = await runReplayPhaseCli(
-      ['--record', blueprintRun.runId, '--phase', 'design', '--out', replayOutDir, '--json'],
+      ['--record', blueprintRun.runId, '--phase', 'spec', '--out', replayOutDir, '--json'],
       {
         runTurn,
         stdout: (line) => lines.push(line),
@@ -34,7 +34,7 @@ describe('scripts/corpus/replay-phase', () => {
     expect.soft(result).toEqual({ gated: true });
     expect.soft(invoked).toBe(false);
     expect.soft(lines).toContain(`record: ${blueprintRun.runId}`);
-    expect.soft(lines).toContain('phase: design');
+    expect.soft(lines).toContain('phase: spec');
     expect.soft(lines).toContain(`output: ${replayOutDir}`);
     expect.soft(lines.join('\n')).toContain('fresh live orchestrator SDK session');
     expect.soft(lines.join('\n')).toContain('--yes');
@@ -45,7 +45,7 @@ describe('scripts/corpus/replay-phase', () => {
     writeFileSync(
       join(recordDir, 'orchestrator.log'),
       [
-        entry(0, '◀ harness prompt (phase=design)', 'RECORDED BRIEF'),
+        entry(0, '◀ harness prompt (phase=spec)', 'RECORDED BRIEF'),
         entry(1, 'human steer delivered (staged 2026-07-07T09:59:00.000Z)', 'tighten scope'),
       ].join(''),
     );
@@ -57,7 +57,7 @@ describe('scripts/corpus/replay-phase', () => {
     };
 
     const result = await runReplayPhaseCli(
-      ['--record', blueprintRun.runId, '--phase', 'design', '--out', replayOutDir, '--dry-run', '--json'],
+      ['--record', blueprintRun.runId, '--phase', 'spec', '--out', replayOutDir, '--dry-run', '--json'],
       {
         runTurn,
         stdout: (line) => lines.push(line),

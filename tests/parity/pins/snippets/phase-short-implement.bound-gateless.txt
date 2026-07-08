@@ -56,6 +56,7 @@ Code-review this implementation. **Read the actual code, not just commit message
 There's no spec or plan here — the bar is the **research decisions we settled and the actual goal behind them.** Review against those, not a document.
 
 **Lens:**
+- **Step back before judging locally.** The default reviewer failure is tactical: accept the implementation's framing and optimize inside it, converging on a local optimum — the adjusted argument, the patched conditional. First ask whether reshaping the design dissolves the problem: a new module or helper, a shared component extracted, a function redesigned around a different contract, modules wired differently. The local patch is the fallback, not the finding.
 - Everything is fair game — correctness, structure, test quality, performance, readability, edge cases, pattern consistency.
 - Decisions ↔ code mismatches → flag where the build drifted from what we agreed. If a decision turns out wrong now that it's real code, say so explicitly; don't smuggle it in as a "small fix."
 

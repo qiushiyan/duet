@@ -715,6 +715,11 @@ function normalizeRunState(state: RunState, runDir: string): RunState {
   try {
     workflowForRunDir(state, runDir);
   } catch (err) {
+    // The frozen-workflow boundary already refuses in prescriptive terms; wrapping
+    // its message again appends a SECOND, contradictory way out ("read them
+    // directly" then "finish manually with --resume"). Only an unrecognized throw
+    // needs the way out added.
+    if (err instanceof UnloadableRunError) throw err;
     throw new UnloadableRunError(
       state.runId,
       `${err instanceof Error ? err.message : String(err)} Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .duet/runs/${state.runId}.`,

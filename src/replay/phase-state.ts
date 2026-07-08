@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { phasesOf, phaseSpec, stageOf, stagesOf } from '../registry/workflows.ts';
+import { entryOf, phasesOf, phaseSpec, stageOf, stagesOf } from '../registry/workflows.ts';
 import type { CompiledWorkflow, Duty, PhaseName, StageName } from '../registry/workflows.ts';
 import { runDirOf, saveRunState } from '../run/store.ts';
 import type { RunState, SessionKey } from '../run/store.ts';
@@ -82,7 +82,7 @@ function clearPhaseProducedState(
   delete state.phaseSummaries[phase];
   if (state.terminalMarker?.phase === phase) delete state.terminalMarker;
 
-  if (state.specPath && phaseProducesSpecPath(state, phase, trace)) {
+  if (state.specPath && phaseProducesSpecPath(state, workflow, phase, trace)) {
     notes.push(`cleared specPath produced by ${phase}; phase-entry value was synthesized from terminal state`);
     delete state.specPath;
   }
@@ -99,8 +99,19 @@ function clearPhaseProducedState(
   }
 }
 
-function phaseProducesSpecPath(state: RunState, phase: PhaseName, trace: ProtocolTrace | undefined): boolean {
-  if (phase !== 'spec' && phase !== 'design') return false;
+/**
+ * Whether `phase` is the one that WROTE `specPath` (so a rewind to its entry must
+ * clear it). Derived from the workflow's entry route — `specSkipsTo` is the first
+ * doc-loop, the only phase that lands a spec path — rather than a hardcoded name
+ * list, which had to grow a member per artifact kind.
+ */
+function phaseProducesSpecPath(
+  state: RunState,
+  workflow: CompiledWorkflow,
+  phase: PhaseName,
+  trace: ProtocolTrace | undefined,
+): boolean {
+  if (phase !== entryOf(workflow).specSkipsTo) return false;
   if (!state.specPath) return false;
   const brief = trace?.events.find((event) => event.kind === 'phase_brief' && event.phase === phase);
   if (!brief) return true;

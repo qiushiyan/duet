@@ -183,8 +183,6 @@ export const ACTION_CATALOG: Record<string, ActionBehavior> = {
   'review-spec-again': { countsReviewRound: true },
   'review-plan': { countsReviewRound: true },
   'review-plan-again': { countsReviewRound: true },
-  'review-design': { countsReviewRound: true },
-  'review-design-again': { countsReviewRound: true },
   'review-implementation': { countsReviewRound: true },
   'review-implementation-again': { countsReviewRound: true },
   'review-direct': { countsReviewRound: true },

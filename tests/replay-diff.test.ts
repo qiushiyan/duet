@@ -8,7 +8,7 @@ import { entry } from './helpers/replay.ts';
 // Local by design (single consumer): a one-phase design trace in the shape diffReplay aligns against.
 function traceWith(workerLogs: Array<{ voice: string; tag: string; body: string }>, terminalBody = 'done') {
   return parseProtocolTrace({
-    orchestratorLog: [entry(0, '◀ harness prompt (phase=design)', 'brief'), entry(50, 'advance_phase (design)', terminalBody)].join(''),
+    orchestratorLog: [entry(0, '◀ harness prompt (phase=spec)', 'brief'), entry(50, 'advance_phase (spec)', terminalBody)].join(''),
     workerLogs: workerLogs.map((turn, index) => ({
       voice: turn.voice,
       log: [
@@ -25,9 +25,9 @@ const advance = (body = 'done'): CapturedToolEvent => ({ kind: 'terminal', verb:
 describe('diffReplay', () => {
   test('reports body-only changes as adaptation drift on aligned turns', () => {
     const diff = diffReplay({
-      original: traceWith([{ voice: 'architect', tag: 'write-design', body: 'write the draft' }]),
-      phase: 'design',
-      freshEvents: [send(['architect'], 'write-design', 'write the draft carefully'), advance()],
+      original: traceWith([{ voice: 'architect', tag: 'write-spec', body: 'write the draft' }]),
+      phase: 'spec',
+      freshEvents: [send(['architect'], 'write-spec', 'write the draft carefully'), advance()],
     });
 
     expect.soft(diff.firstStructuralDivergence).toBeUndefined();
@@ -43,8 +43,8 @@ describe('diffReplay', () => {
       orchestratorLog: [
         entry(0, '◀ harness prompt (phase=frame)', 'frame brief'),
         entry(5, 'advance_phase (frame)', 'frame done'),
-        entry(6, '◀ harness prompt (phase=design)', 'design brief'),
-        entry(50, 'advance_phase (design)', 'done'),
+        entry(6, '◀ harness prompt (phase=spec)', 'design brief'),
+        entry(50, 'advance_phase (spec)', 'done'),
       ].join(''),
       workerLogs: [
         {
@@ -52,7 +52,7 @@ describe('diffReplay', () => {
           log: [
             entry(1, '◀ prompt (tag=think-holistic, from orchestrator)', 'frame read'),
             entry(2, '▶ response (session architect-frame)', 'frame response'),
-            entry(7, '◀ prompt (tag=write-design, from orchestrator)', 'design write'),
+            entry(7, '◀ prompt (tag=write-spec, from orchestrator)', 'design write'),
             entry(8, '▶ response (session architect-design)', 'design response'),
           ].join(''),
         },
@@ -61,8 +61,8 @@ describe('diffReplay', () => {
 
     const diff = diffReplay({
       original,
-      phase: 'design',
-      freshEvents: [send(['architect'], 'write-design', 'design write'), advance()],
+      phase: 'spec',
+      freshEvents: [send(['architect'], 'write-spec', 'design write'), advance()],
     });
 
     expect.soft(diff.firstStructuralDivergence).toBeUndefined();
@@ -74,18 +74,18 @@ describe('diffReplay', () => {
   test('marks the first structural divergence and labels later body drift unanchored', () => {
     const diff = diffReplay({
       original: traceWith([
-        { voice: 'architect', tag: 'write-design', body: 'write' },
-        { voice: 'analyst', tag: 'review-design', body: 'review' },
+        { voice: 'architect', tag: 'write-spec', body: 'write' },
+        { voice: 'analyst', tag: 'review-spec', body: 'review' },
       ]),
-      phase: 'design',
+      phase: 'spec',
       freshEvents: [
-        send(['architect'], 'review-design', 'write'),
-        send(['analyst'], 'review-design', 'review with new wording'),
+        send(['architect'], 'review-spec', 'write'),
+        send(['analyst'], 'review-spec', 'review with new wording'),
         advance('fresh terminal after divergence'),
       ],
     });
 
-    expect.soft(diff.firstStructuralDivergence).toBe('send_prompt[0]: snippet tag changed from write-design to review-design');
+    expect.soft(diff.firstStructuralDivergence).toBe('send_prompt[0]: snippet tag changed from write-spec to review-spec');
     expect.soft(diff.unanchoredFromIndex).toBe(0);
     expect.soft(diff.sends[1]).toMatchObject({ unanchored: true });
     expect.soft(diff.sends[1]?.adaptation).toBeUndefined();
@@ -95,9 +95,9 @@ describe('diffReplay', () => {
 
   test('names single-duty routing changes as worker duty changes', () => {
     const diff = diffReplay({
-      original: traceWith([{ voice: 'architect', tag: 'write-design', body: 'write' }]),
-      phase: 'design',
-      freshEvents: [send(['analyst'], 'write-design', 'write'), advance()],
+      original: traceWith([{ voice: 'architect', tag: 'write-spec', body: 'write' }]),
+      phase: 'spec',
+      freshEvents: [send(['analyst'], 'write-spec', 'write'), advance()],
     });
 
     expect.soft(diff.firstStructuralDivergence).toBe('send_prompt[0]: worker duty changed from architect to analyst');
@@ -106,7 +106,7 @@ describe('diffReplay', () => {
   test('treats changed terminal verb and payload as structural drift', () => {
     const diff = diffReplay({
       original: traceWith([], 'ship it'),
-      phase: 'design',
+      phase: 'spec',
       freshEvents: [{ kind: 'terminal', verb: 'ask_human', body: 'Which scope?' }],
     });
 
@@ -120,7 +120,7 @@ describe('diffReplay', () => {
   test('reports fan-out membership changes as structural drift', () => {
     const diff = diffReplay({
       original: parseProtocolTrace({
-        orchestratorLog: [entry(0, '◀ harness prompt (phase=design)', 'brief'), entry(50, 'advance_phase (design)', 'done')].join(''),
+        orchestratorLog: [entry(0, '◀ harness prompt (phase=spec)', 'brief'), entry(50, 'advance_phase (spec)', 'done')].join(''),
         workerLogs: [
           {
             voice: 'architect',
@@ -132,7 +132,7 @@ describe('diffReplay', () => {
           },
         ],
       }),
-      phase: 'design',
+      phase: 'spec',
       freshEvents: [send(['architect'], 'think-holistic', 'same prompt'), advance()],
     });
 
@@ -145,9 +145,9 @@ describe('diffReplay', () => {
       { voice: 'architect', ordinal: 2, prompt: 'second', exhausted: true },
     ];
     const diff = diffReplay({
-      original: traceWith([{ voice: 'architect', tag: 'write-design', body: 'first' }]),
-      phase: 'design',
-      freshEvents: [send(['architect'], 'write-design', 'first'), send(['architect'], 'write-design', 'second'), advance()],
+      original: traceWith([{ voice: 'architect', tag: 'write-spec', body: 'first' }]),
+      phase: 'spec',
+      freshEvents: [send(['architect'], 'write-spec', 'first'), send(['architect'], 'write-spec', 'second'), advance()],
       scriptedCalls: calls,
     });
 
@@ -158,7 +158,7 @@ describe('diffReplay', () => {
   test('marks compact-bodied turns so the report can explain ordinal cascades', () => {
     const diff = diffReplay({
       original: traceWith([{ voice: 'analyst', tag: 'compact-inflight', body: '/compact\npreserve review context' }]),
-      phase: 'design',
+      phase: 'spec',
       freshEvents: [send(['analyst'], 'compact-inflight', '/compact\npreserve review context'), advance()],
     });
 

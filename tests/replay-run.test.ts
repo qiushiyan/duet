@@ -20,15 +20,15 @@ describe('replay phase kernel', () => {
     writeFileSync(
       join(recordDir, 'orchestrator.log'),
       [
-        entry(0, '◀ harness prompt (phase=design)', 'RECORDED BRIEF'),
+        entry(0, '◀ harness prompt (phase=spec)', 'RECORDED BRIEF'),
         entry(1, 'human steer delivered (staged 2026-07-07T09:59:00.000Z)', 'tighten scope'),
-        entry(9, 'advance_phase (design)', 'old summary'),
+        entry(9, 'advance_phase (spec)', 'old summary'),
       ].join(''),
     );
 
     const prepared = prepareReplayPhase({
       record: { runDir: recordDir, state: blueprintRun, workflow: workflowFor(blueprintRun) },
-      phase: 'design',
+      phase: 'spec',
       outputDir: replayOutDir,
       replayRunId: 'dry-run-replay',
     });
@@ -49,16 +49,16 @@ describe('replay phase kernel', () => {
   }) => {
     const recordDir = runDirOf(blueprintRun.cwd, blueprintRun.runId);
     blueprintRun.orchestratorSessionId = 'archived-orchestrator-session';
-    blueprintRun.rounds.design = 1;
-    blueprintRun.phaseSummaries.design = { summary: 'old summary', artifacts: ['docs/design.md'] };
+    blueprintRun.rounds.spec = 1;
+    blueprintRun.phaseSummaries.spec = { summary: 'old summary', artifacts: ['docs/spec.md'] };
     saveRunState(blueprintRun);
     writeFileSync(
       join(recordDir, 'orchestrator.log'),
-      [entry(0, '◀ harness prompt (phase=design)', 'RECORDED BRIEF'), entry(9, 'advance_phase (design)', 'old summary')].join(''),
+      [entry(0, '◀ harness prompt (phase=spec)', 'RECORDED BRIEF'), entry(9, 'advance_phase (spec)', 'old summary')].join(''),
     );
     writeFileSync(
       join(recordDir, 'analyst.log'),
-      [entry(1, '◀ prompt (tag=review-design, from orchestrator)', 'old review body'), entry(2, '▶ response (session analyst-1)', 'recorded review')].join(''),
+      [entry(1, '◀ prompt (tag=review-spec, from orchestrator)', 'old review body'), entry(2, '▶ response (session analyst-1)', 'recorded review')].join(''),
     );
     const beforeRecord = snapshotTree(recordDir);
     const beforeProviderStore = snapshotTree(providerStoreSentinel);
@@ -77,14 +77,14 @@ describe('replay phase kernel', () => {
       if (!task || !snippets || !send || !advance) throw new Error('missing replay tool');
       await expect(task.handler({}, {})).resolves.toMatchObject({ content: [{ type: 'text', text: 'RECORDED BRIEF' }] });
       await snippets.handler({}, {});
-      await send.handler({ duty: 'analyst', tag: 'review-design', body: 'fresh review body' }, {});
-      await advance.handler({ summary: 'fresh summary', artifacts: ['docs/design.md'], spec_path: 'docs/design.md' }, {});
+      await send.handler({ duty: 'analyst', tag: 'review-spec', body: 'fresh review body' }, {});
+      await advance.handler({ summary: 'fresh summary', artifacts: ['docs/spec.md'], spec_path: 'docs/spec.md' }, {});
       yield success();
     };
 
     const result = await runReplayPhase({
       record: { runDir: recordDir, state: blueprintRun, workflow: workflowFor(blueprintRun) },
-      phase: 'design',
+      phase: 'spec',
       outputDir: replayOutDir,
       replayRunId: 'fake-replay',
       runTurn,

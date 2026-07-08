@@ -17,18 +17,18 @@ const success = (): SDKMessage =>
 describe('scripted replay workers', () => {
   test('serve responses by duty ordinal and exhaust instead of matching prompt bodies', async ({ blueprintRun }) => {
     const trace = parseProtocolTrace({
-      orchestratorLog: [entry(0, '◀ harness prompt (phase=design)', 'brief')].join(''),
+      orchestratorLog: [entry(0, '◀ harness prompt (phase=spec)', 'brief')].join(''),
       workerLogs: [
         {
           voice: 'analyst',
           log: [
-            entry(1, '◀ prompt (tag=review-design, from orchestrator)', 'original prompt'),
+            entry(1, '◀ prompt (tag=review-spec, from orchestrator)', 'original prompt'),
             entry(2, '▶ response (session a1)', 'first response'),
           ].join(''),
         },
       ],
     });
-    const scripted = scriptedWorkersForTrace(blueprintRun, trace, 'design');
+    const scripted = scriptedWorkersForTrace(blueprintRun, trace, 'spec');
     const analyst = scripted.providers.analyst;
     if (!analyst) throw new Error('missing analyst provider');
 
@@ -44,12 +44,12 @@ describe('scripted replay workers', () => {
 describe('makeReplayHost', () => {
   test('serves the recorded brief, captures tool calls, and isolates SDK home', async ({ blueprintRun, replayOutDir }) => {
     const trace = parseProtocolTrace({
-      orchestratorLog: [entry(0, '◀ harness prompt (phase=design)', 'RECORDED BRIEF')].join(''),
+      orchestratorLog: [entry(0, '◀ harness prompt (phase=spec)', 'RECORDED BRIEF')].join(''),
       workerLogs: [
         {
           voice: 'analyst',
           log: [
-            entry(1, '◀ prompt (tag=review-design, from orchestrator)', 'original review'),
+            entry(1, '◀ prompt (tag=review-spec, from orchestrator)', 'original review'),
             entry(2, '▶ response (session analyst-1)', 'review response'),
           ].join(''),
         },
@@ -58,12 +58,12 @@ describe('makeReplayHost', () => {
     const rewound = rewindPhaseState({
       recordState: blueprintRun,
       workflow: workflowFor(blueprintRun),
-      phase: 'design',
+      phase: 'spec',
       outputDir: replayOutDir,
       trace,
-      replayRunId: 'replay-design',
+      replayRunId: 'replay-spec',
     });
-    const scripted = scriptedWorkersForTrace(rewound.state, trace, 'design');
+    const scripted = scriptedWorkersForTrace(rewound.state, trace, 'spec');
     const seen: { prompt?: string; home?: string; claudeConfigDir?: string; claudeHome?: string; resume?: string } = {};
     const runTurn: RunOrchestratorTurn = async function* (ctx) {
       seen.prompt = ctx.prompt;
@@ -77,8 +77,8 @@ describe('makeReplayHost', () => {
       if (!task || !send || !advance) throw new Error('missing replay tool');
       const taskResult = await task.handler({}, {});
       expect.soft(taskResult.content[0]).toMatchObject({ type: 'text', text: 'RECORDED BRIEF' });
-      await send.handler({ duty: 'analyst', tag: 'review-design', body: 'fresh review body' }, {});
-      await advance.handler({ summary: 'fresh summary', artifacts: ['docs/design.md'], spec_path: 'docs/design.md' }, {});
+      await send.handler({ duty: 'analyst', tag: 'review-spec', body: 'fresh review body' }, {});
+      await advance.handler({ summary: 'fresh summary', artifacts: ['docs/spec.md'], spec_path: 'docs/spec.md' }, {});
       yield success();
     };
     const { host, capture } = makeReplayHost({
@@ -88,7 +88,7 @@ describe('makeReplayHost', () => {
       runTurn,
     });
 
-    await expect(runHostedPhase({ cwd: rewound.state.cwd, runId: rewound.state.runId, phase: 'design' }, host)).resolves.toEqual({
+    await expect(runHostedPhase({ cwd: rewound.state.cwd, runId: rewound.state.runId, phase: 'spec' }, host)).resolves.toEqual({
       type: 'phase.advance',
     });
 
@@ -98,33 +98,33 @@ describe('makeReplayHost', () => {
     expect.soft(seen.claudeHome).toBe(join(replayOutDir, 'provider-home', '.claude'));
     expect.soft(seen.resume).toBeUndefined();
     expect.soft(capture.events).toEqual([
-      { kind: 'send_prompt', duty: ['analyst'], tag: 'review-design', body: 'fresh review body' },
+      { kind: 'send_prompt', duty: ['analyst'], tag: 'review-spec', body: 'fresh review body' },
       { kind: 'terminal', verb: 'advance_phase', body: 'fresh summary' },
     ]);
-    expect.soft(loadRunState(rewound.state.cwd, rewound.state.runId).terminalMarker).toEqual({ phase: 'design', kind: 'advance' });
+    expect.soft(loadRunState(rewound.state.cwd, rewound.state.runId).terminalMarker).toEqual({ phase: 'spec', kind: 'advance' });
   });
 
   test('keeps rail-refused send_prompt attempts out of aligned capture events', async ({ blueprintRun, replayOutDir }) => {
     const trace = parseProtocolTrace({
-      orchestratorLog: [entry(0, '◀ harness prompt (phase=design)', 'RECORDED BRIEF')].join(''),
+      orchestratorLog: [entry(0, '◀ harness prompt (phase=spec)', 'RECORDED BRIEF')].join(''),
       workerLogs: [],
     });
     const rewound = rewindPhaseState({
       recordState: blueprintRun,
       workflow: workflowFor(blueprintRun),
-      phase: 'design',
+      phase: 'spec',
       outputDir: replayOutDir,
       trace,
-      replayRunId: 'replay-design',
+      replayRunId: 'replay-spec',
     });
-    rewound.state.rounds.design = 99;
+    rewound.state.rounds.spec = 99;
     saveRunState(rewound.state);
-    const scripted = scriptedWorkersForTrace(rewound.state, trace, 'design');
+    const scripted = scriptedWorkersForTrace(rewound.state, trace, 'spec');
     const runTurn: RunOrchestratorTurn = async function* (ctx) {
       const send = ctx.tools.find((tool) => tool.name === 'send_prompt');
       const ask = ctx.tools.find((tool) => tool.name === 'ask_human');
       if (!send || !ask) throw new Error('missing replay tool');
-      const refused = await send.handler({ duty: 'analyst', tag: 'review-design', body: 'review anyway' }, {});
+      const refused = await send.handler({ duty: 'analyst', tag: 'review-spec', body: 'review anyway' }, {});
       expect.soft(refused.isError).toBe(true);
       await ask.handler({ question: 'review cap hit' }, {});
       yield success();
@@ -136,12 +136,12 @@ describe('makeReplayHost', () => {
       runTurn,
     });
 
-    await expect(runHostedPhase({ cwd: rewound.state.cwd, runId: rewound.state.runId, phase: 'design' }, host)).resolves.toEqual({
+    await expect(runHostedPhase({ cwd: rewound.state.cwd, runId: rewound.state.runId, phase: 'spec' }, host)).resolves.toEqual({
       type: 'phase.flag',
     });
 
     expect.soft(capture.events).toEqual([{ kind: 'terminal', verb: 'ask_human', body: 'review cap hit' }]);
-    expect.soft(capture.refusedSends).toMatchObject([{ duty: ['analyst'], tag: 'review-design', body: 'review anyway' }]);
+    expect.soft(capture.refusedSends).toMatchObject([{ duty: ['analyst'], tag: 'review-spec', body: 'review anyway' }]);
     expect.soft(capture.notes[0]).toContain('send_prompt returned a tool error and was excluded from aligned replay sends');
   });
 });

@@ -2,7 +2,7 @@
   "name": "duet",
   "version": "0.1.0",
   "private": true,
-  "description": "Compose your AI engineering workflow from opinionated building blocks and run it semi-AFK: a maker and a checker agent per stage, a read-only LLM orchestrator routing between them, and code-enforced human gates only you can cross.",
+  "description": "Opinionated blocks for AI coding workflows — spec loops, adversarial review, an autonomous build. Run it AFK with human gates.",
   "license": "MIT",
   "author": "qiushiyan <qiushi.yann@gmail.com>",
   "repository": {

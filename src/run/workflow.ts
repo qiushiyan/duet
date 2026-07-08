@@ -7,6 +7,7 @@ import {
   workflowDefinition,
 } from '../registry/workflows.ts';
 import type { CompiledWorkflow, WorkflowSpecInput } from '../registry/workflows.ts';
+import { UnloadableRunError } from './store.ts';
 import type { RunState } from './store.ts';
 import { mirrorFile } from './corpus.ts';
 
@@ -29,8 +30,32 @@ export function writeFrozenWorkflow(state: Pick<RunState, 'cwd' | 'runId' | 'wor
   mirrorFile(state, WORKFLOW_FILE);
 }
 
+/**
+ * duet keeps no backward compatibility for retired workflow vocabulary, so a
+ * frozen workflow that no longer validates IS a run duet can no longer speak —
+ * there is no second category to sort it into, and nothing to translate. The
+ * refusal is an `UnloadableRunError` so the listing surfaces REPORT it: a corpus
+ * record that silently vanished from `duet stats` / `grade` / `graph` would read
+ * as "you have no runs" when the truth is "your run no longer loads, and here is
+ * the way out".
+ *
+ * The validator's own message rides along as the evidence, naming whichever knob
+ * duet stopped speaking — a `design` artifact kind, a workflow-named build
+ * `examplesKey`, both retired 2026-07-08. The era is offered as the known cause
+ * and never asserted as the diagnosis, so a hand-corrupted file is not dated to
+ * a cohort it was never part of.
+ */
 function readWorkflowFile(state: Pick<RunState, 'runId' | 'workflow'>, path: string): CompiledWorkflow {
-  const workflow = validatedWorkflowSpec(JSON.parse(readFileSync(path, 'utf8')) as WorkflowSpecInput);
+  const parsed = JSON.parse(readFileSync(path, 'utf8')) as WorkflowSpecInput;
+  let workflow: CompiledWorkflow;
+  try {
+    workflow = validatedWorkflowSpec(parsed);
+  } catch (error) {
+    throw new UnloadableRunError(
+      state.runId,
+      `run ${state.runId} froze a workflow duet no longer speaks — ${error instanceof Error ? error.message : String(error)}. duet keeps no backward compatibility for retired workflow vocabulary; runs frozen before 2026-07-08 (when the spec and design documents unified into one spec doc-loop) are the known cohort. Its transcripts and logs are intact: read them directly, or remove .duet/runs/${state.runId}. Replay and grading of these runs is not supported.`,
+    );
+  }
   if (workflow.name !== state.workflow) {
     throw new Error(
       `run ${state.runId} state names workflow "${state.workflow}" but ${WORKFLOW_FILE} names "${workflow.name}" — restore the matching frozen workflow file or fix state.json`,

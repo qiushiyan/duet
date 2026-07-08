@@ -32,7 +32,7 @@ describe('voice policy helpers', () => {
   });
 
   test('phaseAddressesFor on relay: delivery pairs the builder with the judge', ({ relayRun }) => {
-    expect.soft(phaseAddressesFor(relayRun, 'design')).toEqual(['architect', 'analyst']);
+    expect.soft(phaseAddressesFor(relayRun, 'spec')).toEqual(['architect', 'analyst']);
     expect.soft(phaseAddressesFor(relayRun, 'implement')).toEqual(['builder', 'judge']);
   });
 
@@ -89,7 +89,7 @@ describe('voice policy helpers', () => {
     expect.soft(writeAuthorityFor(run, 'implement', 'critic', 'reconcile-docs')).toBe(false);
     expect.soft(writeAuthorityFor(run, 'finish', 'critic', 'pr-description')).toBe(false);
     expect.soft(writeAuthorityFor(shortRun, 'implement', 'critic', 'review-direct')).toBe(false);
-    expect.soft(writeAuthorityFor(blueprintRun, 'design', 'analyst', 'review-design')).toBe(false);
+    expect.soft(writeAuthorityFor(blueprintRun, 'spec', 'analyst', 'review-spec')).toBe(false);
     // The consultant's contract/verify relaxations are PROMPT-scoped — the
     // resolver never widens it, so author-never-commits holds mechanically.
     expect.soft(writeAuthorityFor(consultantRun, 'plan', 'consultant', 'consultant-contract')).toBe(false);
@@ -108,7 +108,7 @@ describe('voice policy helpers', () => {
     expect.soft(writeAuthorityFor(relayRun, 'implement', 'judge', 'review-midpoint')).toBe(false);
     expect.soft(writeAuthorityFor(relayRun, 'implement', 'judge', 'custom')).toBe(false);
     // And never in the planning stage — relay's analyst is critique-only pre-handoff.
-    expect.soft(writeAuthorityFor(relayRun, 'design', 'analyst', 'review-design')).toBe(false);
+    expect.soft(writeAuthorityFor(relayRun, 'spec', 'analyst', 'review-spec')).toBe(false);
     expect.soft(writeAuthorityFor(relayRun, 'frame', 'analyst', 'think-holistic')).toBe(false);
   });
 

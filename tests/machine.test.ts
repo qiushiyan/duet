@@ -96,8 +96,8 @@ describe('entry routing', () => {
     const { machine, calls } = scriptedMachine([{ type: 'phase.advance' }], 'blueprint');
     const actor = startActor(machine, true);
     const snap = await waitFor(actor, quiescent);
-    expect(snap.value).toBe('designGate');
-    expect(calls).toEqual(['design']);
+    expect(snap.value).toBe('commitSpecGate');
+    expect(calls).toEqual(['spec']);
   });
 });
 
@@ -314,12 +314,12 @@ describe('the full workflow', () => {
 });
 
 describe('the blueprint workflow', () => {
-  test('frame → Direction → design → Design → implement → Ship → finish → Open-PR → done; no spec/plan state leaks in', async () => {
+  test('frame → Direction → spec → Commit-spec → implement → Ship → finish → Open-PR → done; no plan state leaks in', async () => {
     const { machine, calls } = scriptedMachine(
       [
         { type: 'phase.advance' }, // frame → direction gate
-        { type: 'phase.advance' }, // design → design gate
-        { type: 'phase.advance' }, // design re-entry after gate reject → gate again
+        { type: 'phase.advance' }, // spec → commit-spec gate
+        { type: 'phase.advance' }, // spec re-entry after gate reject → gate again
         { type: 'phase.advance' }, // implement → ship gate
         { type: 'phase.advance' }, // finish (open the PR) → open-pr gate
       ],
@@ -332,12 +332,12 @@ describe('the blueprint workflow', () => {
 
     actor.send({ type: 'human.approve' });
     snap = await waitFor(actor, quiescent);
-    expect.soft(snap.value).toBe('designGate');
+    expect.soft(snap.value).toBe('commitSpecGate');
 
-    // Reject re-enters the design loop (the review-loop phase the gate gates).
+    // Reject re-enters the spec loop (the review-loop phase the gate gates).
     actor.send({ type: 'human.reject' });
     snap = await waitFor(actor, quiescent);
-    expect.soft(snap.value).toBe('designGate');
+    expect.soft(snap.value).toBe('commitSpecGate');
 
     actor.send({ type: 'human.approve' });
     snap = await waitFor(actor, quiescent);
@@ -351,10 +351,13 @@ describe('the blueprint workflow', () => {
     snap = await waitFor(actor, (s) => s.status === 'done');
     expect.soft(snap.value).toBe('done');
 
-    expect.soft(calls).toEqual(['frame', 'design', 'design', 'implement', 'finish']);
-    // No full-only artifact state leaks into the blueprint machine — the
-    // workflow's whole point is that spec and plan don't exist as phases here.
-    for (const s of ['specLoop', 'planLoop', 'commitSpecGate', 'planApprovalGate']) {
+    expect.soft(calls).toEqual(['frame', 'spec', 'spec', 'implement', 'finish']);
+    // blueprint IS full minus the plan phase: it keeps the spec loop and its gate,
+    // and only the plan's states are absent.
+    for (const s of ['specLoop', 'commitSpecGate']) {
+      expect.soft(machine.states[s], s).toBeDefined();
+    }
+    for (const s of ['planLoop', 'planApprovalGate']) {
       expect.soft(machine.states[s], s).toBeUndefined();
     }
   });

@@ -62,7 +62,7 @@ const allBlocks: readonly PhaseExpr[] = [
   frame({ name: 'triage' }),
   doc('spec'),
   doc('plan', { rounds: 2, contract: true, name: 'plan' }),
-  doc('design', { audit: false, name: 'design' }),
+  doc('spec', { audit: false, name: 'spec' }),
   build({ review: 'critique', audit: false, name: 'build' }),
   build({ review: 'writable', audit: true }),
   build({ review: 'fixer', name: 'judge' }),
@@ -124,6 +124,10 @@ describe('workflow source loader', () => {
     );
   });
 
+  // Spawns a real `node` to prove the loader hook resolves `duet/workflows` in a
+  // fresh process — node startup plus type-stripping plus the SDK import straddles
+  // vitest's 5s default, so the test flaked ~half the time under suite parallelism.
+  // The bound is raised, not removed: a genuine hang still fails here.
   test('the Node loader hook resolves duet/workflows for workflow files', async ({ projectDir }) => {
     const dir = projectWorkflowDir(projectDir);
     mkdirSync(dir, { recursive: true });
@@ -149,7 +153,7 @@ console.log(resolved.workflow.name + ':' + resolved.source.layer);
     const { stdout } = await execa(process.execPath, [script], { cwd: process.cwd() });
     expect(stdout).toBe('hooked:project');
     await execa('pnpm', ['exec', 'tsc', '-p', dir, '--noEmit'], { cwd: process.cwd() });
-  });
+  }, 30_000);
 
   test('resolves a project workflow file and compiles it once into the run inputs', async ({ projectDir }) => {
     writeProjectWorkflow(projectDir, 'instant');
@@ -205,6 +209,8 @@ console.log(resolved.workflow.name + ':' + resolved.source.layer);
     expect.soft(existsSync(userDirPath)).toBe(false);
   });
 
+  // Runs `tsc --noEmit` twice (the provisioned stub, then the real SDK surface);
+  // two typecheck processes never fit vitest's 5s default.
   test('provisioned duet-workflows.d.ts stays in sync with the real SDK surface', async ({ projectDir }) => {
     const provisionedDir = projectWorkflowDir(projectDir);
     provisionWorkflowDir(provisionedDir);
@@ -215,7 +221,7 @@ console.log(resolved.workflow.name + ':' + resolved.source.layer);
     writeRealSdkTsconfig(realSdkDir);
     writeFileSync(join(realSdkDir, 'surface.ts'), SDK_SURFACE_FIXTURE);
     await execa('pnpm', ['exec', 'tsc', '-p', realSdkDir, '--noEmit'], { cwd: process.cwd() });
-  });
+  }, 60_000);
 
   test('generated .d.ts stubs are never workflow definitions', async ({ projectDir }) => {
     const home = join(projectDir, 'home');
