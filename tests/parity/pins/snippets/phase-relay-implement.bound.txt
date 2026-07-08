@@ -36,7 +36,7 @@ Where the design already settled a layer or dependency choice, follow it. Where 
 A dependency weighty enough to be an architecture decision in its own right is mine to weigh — flag it rather than committing the repo to it.
 
 ### Tests
-The design's test standards name the behaviors that must be tested and the strategy for each — the specific cases are yours. Write each test against **real** behavior as you build its slice, not a batch up front against imagined shapes — behavior through the public interface, covering the critical paths and complex logic, not every edge case (skip UI tests unless asked). Apply red-green-refactor inside a slice when design is uncertain or behavior is subtle; test and code together is fine otherwise. Run them as you go and keep them green.
+The design's test standards name the behaviors that must be tested and the strategy for each — the specific cases are yours. Write each test against **real** behavior as you build its slice, not a batch up front against imagined shapes — behavior through the public interface, covering the critical paths and complex logic, not every edge case (skip UI tests unless asked). Before adding one, find where that behavior is already covered and assert only what's new: a second test proving what another already proves fails twice for one bug, and drifts when only one is updated. Skip the test that can't fail for a real reason — one pinning wording no caller depends on, or restating a constant — because coverage is feedback, never the goal. Apply red-green-refactor inside a slice when design is uncertain or behavior is subtle; test and code together is fine otherwise. Run them as you go and keep them green.
 
 If the design turns out wrong or underspecified once you're in the code, **stop and flag it** rather than guessing your way past it.
 </snippet>
@@ -119,7 +119,7 @@ Code-review this implementation — and resolve what you find. You review with w
 **Lens — everything is fair game:**
 - **Correctness** — bugs, edge cases, failure modes.
 - **Solves the problem** — does this achieve the goal behind the design, not just run?
-- **Test quality** — right altitude (behavior, not internals), covers the real cases, survives plausible refactors, uses project patterns. Flag tests of *shape* that pass when behavior breaks, and over-testing of edge cases instead of the critical paths.
+- **Test quality** — right altitude (behavior, not internals), covers the real cases, survives plausible refactors, uses project patterns. Flag tests of *shape* that pass when behavior breaks, tests pinning wording or constants no caller depends on, a second test re-proving what an existing one already owns, and over-testing of edge cases instead of the critical paths. Deleting a low-quality test is a legitimate fix — make it, rather than keeping it for the coverage.
 - **Structural quality — be ambitious, not just local:** a reframing that deletes whole branches/helpers/modes beats rearranging them; apply the **deletion test** to new modules; flag **shallow** ones (a thin pass-through wrapper, an interface nearly as complex as its implementation); keep logic in its canonical module.
 - **Right-sizing — over-building is the likelier failure:** defensive branches for states that can't occur, fallbacks the invariants rule out, speculative config beyond the design, abstractions pulled out before the pattern is real.
 
