@@ -133,7 +133,7 @@ duet new --gateless            # walk away from the START — every gate pre-aut
 duet new --retry-infra 2       # tune the bounded infra auto-retry budget (default 3 for new runs; 0 disables)
 ```
 
-Each workflow has a sensible hands-off default: **full** is `overnight` — approve the spec, then walk away (plan, Ship, and the Open-PR gate all auto-cross); **blueprint** and **relay** attend only their spec gate — one interruption for the whole run; **short** attends all three of its gates unless you say `afk`. `--gates-at` names the _complete_ set of gates you attend, not a delta: `--gates-at finish` attends **only** the Open-PR gate — everything else auto-crosses; to keep the usual stops _and_ add a post-open review, list them all.
+Each workflow has a sensible hands-off default: **full** is `overnight` — approve the spec, then walk away (plan, Ship, and the Open-PR gate all auto-cross); **blueprint** and **relay** attend only their spec gate — one interruption for the whole run; **short** attends only its Direction gate — approve the research direction and the rest runs to the open PR. `--gates-at` names the _complete_ set of gates you attend, not a delta: `--gates-at finish` attends **only** the Open-PR gate — everything else auto-crosses; to keep the usual stops _and_ add a post-open review, list them all.
 
 ## Everyday commands
 
