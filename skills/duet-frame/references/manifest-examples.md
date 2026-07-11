@@ -5,7 +5,7 @@ A framing's frontmatter is the **run manifest**: the workflow, the gate posture,
 - **Omission is part of the grammar.** Every key has a workflow default, and a manifest that says less is usually the better one — each example names what it deliberately leaves out and what the omission means.
 - **Precedence is per key: flags > framing > config > shipped defaults.** A framing that binds only the judge leaves every other voice on the user's config or the shipped defaults.
 
-The launch command never changes shape — `duet new --framing .duet/<slug>.md` (plus `--interactive` to drive the planning gates from the user's own session) — everything below rides the file, not the flags.
+The launch command never changes shape — `duet new --framing .duet/<slug>.md`, run from the user's own terminal (which brings up the interactive orchestrator by default) — everything below rides the file, not the flags.
 
 These framings are parsed by duet's real grammar in `tests/skill.test.ts`, so what you read here is exactly what duet accepts.
 
