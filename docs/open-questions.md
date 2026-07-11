@@ -16,6 +16,8 @@ Evidence cuts both ways. A full framing-to-ship run held triage cleanly — prod
 
 The read is no longer eyeballed from transcripts: `duet grade` records a plain right/wrong verdict on every reconstructed stop of a finished run, and `scripts/corpus/grade-precision.ts` aggregates the over-flag / under-flag rates by workflow and gate (`docs/corpus-runbook.md`). The question stays open until graded runs accumulate — the instrument only makes the false-positive/false-negative signal durable, it doesn't answer whether precision is good enough.
 
+The question's *presentation* half — a rightly-placed stop the human still can't decide from its text alone — has a standing rule rather than an open design (`docs/prompting-and-tool-design.md` §"Presenting to the human"), but whether it holds is unproven and rides the same loop: a stop that needed a follow-up question before the human could decide is a grade note / `notes.md` entry, and a recurring shape earns the next prompt edit.
+
 ## Worker output schema
 
 `schemas/agent-response.json` was the dumb router's protocol contract: `needs_human` and `disagree` were how judgment-free code detected exceptions. The orchestrator reads prose now, so the schema isn't load-bearing — but a minimal `{response_text}` envelope might still make routing cleaner than scraping chatty final messages.
