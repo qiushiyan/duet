@@ -116,7 +116,7 @@ The smoothest way to run duet is to let a Claude Code session sharpen your probl
    Your own Claude Code session becomes the orchestrator: you act at the early gates right in the chat — the spec and plan on full, the spec on blueprint, the direction on short.
 4. **Walk away.** At the planning stage's last gate — plan approval (full), spec approval (blueprint and relay), or Direction (short) — the session hands the run to a background driver, which implements semi-AFK, often for an hour or more. Under the hands-off defaults it then crosses the Ship gate and opens the PR, so you return to an opened pull request (with a CEO-style summary recorded for your morning review) — or a well-formed question waiting for you. Prefer to verify the build before it ships? Attend the Ship gate (`--gates-at skip-plan` on full).
 
-> **Prefer the terminal?** Skip `--interactive` and run a headless framing turn instead — `duet new` opens your editor on a framing draft, then the orchestrator runs in the background and you act at each gate with `duet continue`.
+> **Prefer headless?** Interactive is the default on a live terminal (a gateless or non-TTY launch stays headless) — pass `--no-interactive` for the background posture instead: `duet new` opens your editor on a framing draft, then the orchestrator runs detached and you act at each gate with `duet continue`.
 
 Common ways to start a run:
 
