@@ -252,6 +252,7 @@ describe('workflow SDK rebuild pins — blueprint and short', () => {
     short: defineWorkflow({
       name: 'short',
       title: 'Short (research → implement → ship → PR)',
+      attend: ['research'],
       presets: { afk: [] },
       phases: [frame({ name: 'research' }), build({ review: 'writable', audit: true }), finish()],
     }),

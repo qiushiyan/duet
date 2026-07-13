@@ -1517,10 +1517,10 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
 
     kernelTool(
       'ask_human',
-      'Flag a question for the human: product or direction calls, environment actions only they can take (deploys, credentials, migrations), or blockers you cannot route around. Route technical and content questions to a worker instead — the human is the editor-in-chief, not a third engineer. Asking always pauses the run until the answer arrives: minutes when the human is at the terminal, hours during the AFK phase — so make every question self-contained, and let questions that can wait for a gate wait.',
+      'Flag a question for the human: product or direction calls, environment actions only they can take (deploys, credentials, migrations), or blockers you cannot route around. Route technical and content questions to a worker instead — the human is the editor-in-chief, not a third engineer. Asking always pauses the run until the answer arrives: minutes when the human is at the terminal, hours during the AFK phase — so make every question decidable from its own text (the stakes, the options with their trade-offs as the workers laid them out, who recommends what), and let questions that can wait for a gate wait.',
       {
-        question: z.string().describe('The question, self-contained enough to answer from a phone.'),
-        context: z.string().optional().describe('One or two sentences of background the human needs to answer well.'),
+        question: z.string().describe('The decision, whole and answerable from a phone: why it reached the human, the options with each one’s consequence (as the workers laid them out, attributed), and who recommends what.'),
+        context: z.string().optional().describe('Where the run stands as this asks — what was underway, what is already settled. The question carries the decision; this locates it in the run.'),
       },
       async (args) => {
         if (stagedAnswer !== null) {
@@ -1593,7 +1593,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         summary: z
           .string()
           .describe(
-            'The gate packet the human decides from: what the checker flagged, what changed, rejections with rationale, and any open points. Follow the packet shape your phase’s brief specifies — it names what that phase’s gate packet should lead with (e.g. an implementation/ship packet’s review history, deviations, and test state).',
+            'The gate packet the human decides from: what the checker flagged, what changed, rejections with rationale, and any open points — each open point decidable from this text alone (its stakes, the options with trade-offs, who recommends what). Follow the packet shape your phase’s brief specifies — it names what that phase’s gate packet should lead with (e.g. an implementation/ship packet’s review history, deviations, and test state).',
           ),
         artifacts: z
           .array(z.string())

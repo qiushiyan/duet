@@ -5,11 +5,11 @@ A framing's frontmatter is the **run manifest**: the workflow, the gate posture,
 - **Omission is part of the grammar.** Every key has a workflow default, and a manifest that says less is usually the better one — each example names what it deliberately leaves out and what the omission means.
 - **Precedence is per key: flags > framing > config > shipped defaults.** A framing that binds only the judge leaves every other voice on the user's config or the shipped defaults.
 
-The launch command never changes shape — `duet new --framing .duet/<slug>.md` (plus `--interactive` to drive the planning gates from the user's own session) — everything below rides the file, not the flags.
+The launch command never changes shape — `duet new --framing .duet/<slug>.md`, run from the user's own terminal (which brings up the interactive orchestrator by default) — everything below rides the file, not the flags.
 
 These framings are parsed by duet's real grammar in `tests/skill.test.ts`, so what you read here is exactly what duet accepts.
 
-## 1 · "A small, well-understood fix — I'll be at the terminal."
+## 1 · "A small, well-understood fix — settle the direction with me, then just ship it."
 
 ```framing
 ---
@@ -23,7 +23,7 @@ workflow: short
 - Typecheck / tests: <commands>
 ```
 
-`workflow: short` is the one call worth recording: research → implement → PR, no document ceremony. **Omitted:** `gates_at` — short's default attends all three gates (`research`, `implement`, `finish`), which is exactly what "I'll be at the terminal" means; bindings — the shipped posture (claude makers, codex checkers) stands unless the user says otherwise. The frontmatter could even be empty (the default workflow is `full`) — every key here earns its line by recording a real decision.
+`workflow: short` is the one call worth recording: research → implement → PR, no document ceremony. **Omitted:** `gates_at` — short's default attends the Direction gate only: the user approves the research direction, then the build, Ship, and Open-PR auto-cross to a finished run with the PR open (a user who wants to verify before it ships says so — `gates_at: research,implement` returns them for the Ship gate); bindings — the shipped posture (claude makers, codex checkers) stands unless the user says otherwise. The frontmatter could even be empty (the default workflow is `full`) — every key here earns its line by recording a real decision.
 
 ## 2 · "Substantial work, but the technical depth can ride with the builder — I'll read one document, tap once, and walk away."
 

@@ -308,7 +308,8 @@ describe('run creation', () => {
 
   // gatesAt materialization — one behavior × {absent, explicit-[], explicit-list}.
   // Absent defers to the workflow's default posture (full materializes overnight;
-  // short's empty defaultPreAuthorized keeps it absent = the legacy attend-all);
+  // short its one-interruption ['research']; the empty-defaultPreAuthorized
+  // stays-absent branch is owned by phases.test.ts on the pure defaultPosture);
   // an explicit list — including the first-class [] attend-none — always wins,
   // and gates_at is the complete attend set, not a delta.
   type GatesAtCase = {
@@ -332,13 +333,13 @@ describe('run creation', () => {
       ],
     },
     {
-      name: 'absent on short (empty defaultPreAuthorized) ⇒ stays absent — the legacy attend-all, byte-for-byte',
+      name: "absent on short ⇒ materializes the one-interruption posture ['research'] — Ship and Open-PR auto-cross (2026-07-11 flip)",
       workflow: 'short',
-      persisted: undefined,
+      persisted: ['research'],
       attended: [
         ['research', true],
-        ['implement', true],
-        ['finish', true],
+        ['implement', false],
+        ['finish', false],
       ],
     },
     {

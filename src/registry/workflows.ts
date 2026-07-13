@@ -121,6 +121,11 @@ const SHIPPED_WORKFLOW_DEFINITIONS = {
   short: defineWorkflow({
     name: 'short',
     title: 'Short (research → implement → ship → PR)',
+    // One interruption, like blueprint/relay: attend Direction (the handoff gate —
+    // the research decisions ARE the design), walk away, return to the open PR.
+    // Flipped 2026-07-11 from attend-all: every live short run re-set this posture
+    // by hand (`duet afk` at Direction), so the default now encodes the promise.
+    attend: ['research'],
     presets: { afk: [] },
     phases: [frame({ name: 'research' }), build({ review: 'writable', audit: true }), finish()],
   }),

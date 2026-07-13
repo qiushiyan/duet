@@ -71,9 +71,9 @@ A framing can pre-authorize gates so the user can walk away. Before finalizing, 
 
 - **full** — tokens `frame, spec, plan, implement, finish`. Default **`overnight`** (= `frame,spec`): attend the first two, the rest auto-cross and the PR opens itself (the Open-PR gate sits _after_ the open). Also **`skip-plan`** (= `frame,spec,implement` — return for the Ship gate), **`afk`** (attend nothing, every safety net intact — the consultant's bet audits stay on, unlike `gateless` below), or a custom list (add `finish` for a post-open review stop; reject there amends the open PR).
 - **blueprint / relay** — tokens `frame, spec, implement, finish`. Default: **attend `spec` only** — the one-interruption promise (a contentious direction still stops the run: a high-stakes call at an auto-crossed gate converts it to an attended stop). Also `afk` or a custom list.
-- **short** — tokens `research, implement, finish`. Default: attend all three; `afk` runs straight through to done with the PR open.
+- **short** — tokens `research, implement, finish`. Default: **attend `research` only** — approve the direction, then the build, Ship, and Open-PR auto-cross to a finished run (the same one-interruption shape as blueprint); `afk` auto-crosses Direction too, or a custom list (e.g. `research,implement` to return for the Ship gate).
 
-**Walk away from the *start*:** `gateless: true` pre-authorizes *every* gate AND narrows a bound consultant to its non-holding work — the bet audits that could pause the run mid-flight drop, while its framing third-opinion and the acceptance-contract verify survive (a contract that can't be met still stops the run; `ask_human` and the merge always stay theirs). Offer it when the user says "just run it". It answers the posture question by itself — duet rejects it beside `gates_at`, and it's the opposite of interactive mode, so the two can't combine. The worked full-send is example 4 in the examples file.
+**Walk away from the *start*:** `gateless: true` pre-authorizes *every* gate AND narrows a bound consultant to its non-holding work — the bet audits that could pause the run mid-flight drop, while its framing third-opinion and the acceptance-contract verify survive (a contract that can't be met still stops the run; `ask_human` and the merge always stay theirs). Offer it when the user says "just run it". It answers the posture question by itself — duet rejects it beside `gates_at`, and it runs headless from the first prompt (overriding the terminal's interactive default; an explicit `interactive: true` beside it is rejected). The worked full-send is example 4 in the examples file.
 
 ## Consultant — an optional outside voice
 
@@ -92,7 +92,7 @@ Two frontmatter keys cover it: `bind.consultant: <provider[:model]>` binds one f
 
 ## Attach to this discussion (warm start)
 
-An interactive run brings up the orchestrator in its own Claude Code session. By default that's a _fresh_ session — but when the framing grew out of a real discussion in **this** session, you can warm-start the orchestrator by resuming this session instead, so it carries the understanding you just built rather than meeting the problem cold. It steps in as the senior engineer who settled the goals and now delegates the build and watches the run.
+A terminal-launched run brings up the orchestrator in its own Claude Code session (the interactive default). Normally that's a _fresh_ session — but when the framing grew out of a real discussion in **this** session, you can warm-start the orchestrator by resuming this session instead, so it carries the understanding you just built rather than meeting the problem cold. It steps in as the senior engineer who settled the goals and now delegates the build and watches the run.
 
 This only applies to interactive runs (it's meaningless for a headless `gateless` one). Offer it like the consultant — the user's call, not yours:
 
@@ -116,7 +116,7 @@ Frontmatter is optional and machine-parsed; everything else is prose sent to the
 workflow: short            # optional: full (default), blueprint, relay, short, or a .duet/workflows/<name>.ts definition
 gates_at: afk              # optional: omit for the workflow's default posture; a workflow-specific preset or a phase list (see Gate posture above)
 gateless: true             # optional: walk away from the START — pre-authorize every gate (conflicts with gates_at and interactive)
-interactive: true          # optional: drive the planning gates from your own session (the --interactive flag by another door; for a template's launch hint)
+interactive: false         # optional: force headless orchestration — a live terminal already defaults to interactive, so only the opt-out earns a line
 consultant: on             # optional: on | off toggle for a config-bound consultant
 bind.consultant: claude    # optional: bind the consultant for this run (implies on)
 bind.builder: codex        # optional: bind any duty as provider[:model][@effort] — e.g. codex:gpt-5-codex@high (codex takes an inline model; effort low|medium|high|xhigh, +claude max / codex minimal). architect / analyst (planning), builder / critic or judge (delivery); a duty names its stage. Native args (claude_args / codex_config) are config-only, not a bind.* key
@@ -203,18 +203,18 @@ User: "requests sometimes time out on a slow network." AVOID writing "add a boun
 Before handing off, check the framing against the user's original words: **every** piece of their intent and scope present, nothing invented, no solutioning, and **every Finding citing something you actually read**. Then get their sign-off on the drafted file, fold in their edits, and emit:
 
 ```
-duet new --interactive --workflow <workflow-name> --framing .duet/<slug>.md
+duet new --workflow <workflow-name> --framing .duet/<slug>.md
 ```
 
-Use the workflow you settled on (omit `--workflow` when the frontmatter carries it, or to take the default `full`). Bindings the user chose — a consultant, relay's builder/judge pair — ride the frontmatter `bind.*` keys you already wrote, so the command needs no extra flags for them. Tell them to run it in their own terminal — `--interactive` hands the terminal to a live orchestrator session, so it can't be launched for them from a non-interactive session.
+Use the workflow you settled on (omit `--workflow` when the frontmatter carries it, or to take the default `full`). Bindings the user chose — a consultant, relay's builder/judge pair — ride the frontmatter `bind.*` keys you already wrote, so the command needs no extra flags for them. Tell them to run it in their own terminal: launched from a live terminal, the command hands it to an interactive orchestrator session by default (the reason it can't be launched for them from here), and the planning gates happen in that chat.
 
 If the user chose to warm-start from this session (see "Attach to this discussion"), add the captured id and remind them to quit this session before running it:
 
 ```
-duet new --interactive --resume-session <session-id> --workflow <workflow-name> --framing .duet/<slug>.md
+duet new --resume-session <session-id> --workflow <workflow-name> --framing .duet/<slug>.md
 ```
 
-If the user chose to walk away from the start (gateless), drop `--interactive` and use `--gateless` instead — the two are mutually exclusive, and a gateless run is headless from the first prompt:
+If the user chose to walk away from the start (gateless), use `--gateless` — a gateless run is headless from the first prompt, overriding the terminal's interactive default:
 
 ```
 duet new --gateless --workflow <workflow-name> --framing .duet/<slug>.md

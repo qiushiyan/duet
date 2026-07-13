@@ -43,7 +43,7 @@ Every workflow shares the same AFK implementation phase and ends by opening a re
 The gates are enforced in code (a statechart), not by a prompt an agent could be talked out of. Between stops a detached background process drives the phase; nothing runs while a run is parked, and you get a desktop notification at every stop. Three things worth knowing about how a run ends:
 
 - Docs are reconciled as the last step of implementation, so the **SHIP** gate reviews code and docs together; `finish` just writes the description and opens the PR.
-- The **OPEN-PR** gate sits _after_ the PR opens. Under the hands-off defaults it auto-crosses to done; to stop and review the opened PR, list `finish` in `--gates-at` (rejecting there amends the PR in place). A bare short run still attends all of its gates.
+- The **OPEN-PR** gate sits _after_ the PR opens. Under the hands-off defaults it auto-crosses to done; to stop and review the opened PR, list `finish` in `--gates-at` (rejecting there amends the PR in place).
 - A pre-authorized gate auto-crosses only on a clean packet: a `high`-severity decision in it holds the run for you instead, and an `ask_human` question stops the run under any posture. The merge is always yours.
 
 Each phase runs a handful of prompt templates — **snippets** — that carry the workflow's conventions. The stage's maker drafts each artifact from one: the architect from `write-spec` in spec and `start-plan` in plan; the builder from `implement-spec` on blueprint and relay, or `implement-direct` on short. The checker critiques through altitude-tuned lenses like `review-spec` (the analyst) and `review-implementation` (the critic), while relay's judge works from `review-and-fix` — the same lens, plus the authority to fix what it finds. Read any of them with `duet snippets show <key>`. The snippets are the substance of the workflow, and the part you can reshape to your own methodology — see [Customizing the snippets](#customizing-the-snippets), or the [snippet reference](docs/snippets.md).
@@ -111,12 +111,12 @@ The smoothest way to run duet is to let a Claude Code session sharpen your probl
 2. **Shape it with `/duet-frame`.** In a Claude Code session, run `/duet-frame`. It turns the rough problem into a sharp **framing** — using your project's real names, structure, and gate posture — without changing what you asked for or proposing how to build it, and hands you the launch command.
 3. **Launch the interactive run** in your terminal:
    ```bash
-   duet new --interactive --framing .duet/<your-framing>.md
+   duet new --framing .duet/<your-framing>.md
    ```
    Your own Claude Code session becomes the orchestrator: you act at the early gates right in the chat — the spec and plan on full, the spec on blueprint, the direction on short.
 4. **Walk away.** At the planning stage's last gate — plan approval (full), spec approval (blueprint and relay), or Direction (short) — the session hands the run to a background driver, which implements semi-AFK, often for an hour or more. Under the hands-off defaults it then crosses the Ship gate and opens the PR, so you return to an opened pull request (with a CEO-style summary recorded for your morning review) — or a well-formed question waiting for you. Prefer to verify the build before it ships? Attend the Ship gate (`--gates-at skip-plan` on full).
 
-> **Prefer the terminal?** Skip `--interactive` and run a headless framing turn instead — `duet new` opens your editor on a framing draft, then the orchestrator runs in the background and you act at each gate with `duet continue`.
+> **Prefer headless?** Interactive is the default on a live terminal (a gateless or non-TTY launch stays headless) — pass `--no-interactive` for the background posture instead: `duet new` opens your editor on a framing draft, then the orchestrator runs detached and you act at each gate with `duet continue`.
 
 Common ways to start a run:
 
@@ -133,7 +133,7 @@ duet new --gateless            # walk away from the START — every gate pre-aut
 duet new --retry-infra 2       # tune the bounded infra auto-retry budget (default 3 for new runs; 0 disables)
 ```
 
-Each workflow has a sensible hands-off default: **full** is `overnight` — approve the spec, then walk away (plan, Ship, and the Open-PR gate all auto-cross); **blueprint** and **relay** attend only their spec gate — one interruption for the whole run; **short** attends all three of its gates unless you say `afk`. `--gates-at` names the _complete_ set of gates you attend, not a delta: `--gates-at finish` attends **only** the Open-PR gate — everything else auto-crosses; to keep the usual stops _and_ add a post-open review, list them all.
+Each workflow has a sensible hands-off default: **full** is `overnight` — approve the spec, then walk away (plan, Ship, and the Open-PR gate all auto-cross); **blueprint** and **relay** attend only their spec gate — one interruption for the whole run; **short** attends only its Direction gate — approve the research direction and the rest runs to the open PR. `--gates-at` names the _complete_ set of gates you attend, not a delta: `--gates-at finish` attends **only** the Open-PR gate — everything else auto-crosses; to keep the usual stops _and_ add a post-open review, list them all.
 
 ## Everyday commands
 

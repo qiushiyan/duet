@@ -93,8 +93,8 @@ duet new --framing .duet/<name>.md --gates-at overnight          # full, auto-cr
 duet new --framing .duet/<name>.md --gates-at afk                # full, walk away from the START — every gate pre-authorized, every net intact
 duet new --workflow blueprint --framing .duet/<name>.md          # one spec, one attended gate, then AFK
 duet new --workflow relay --framing .duet/<name>.md              # blueprint's shape, delivery criss-crossed (bind duties with --bind / bind.* / [duties.*])
-duet new --workflow short --framing .duet/<name>.md              # the lighter research → implement workflow
-duet new --workflow short --framing .duet/<name>.md --gates-at afk # short, run straight through to done (PR open)
+duet new --workflow short --framing .duet/<name>.md              # the lighter research → implement workflow (one attended gate by default)
+duet new --workflow short --framing .duet/<name>.md --gates-at afk # short with Direction pre-authorized too — no attended stop at all
 duet new --workflow <custom> --framing .duet/<name>.md           # a project-defined workflow (.duet/workflows/<custom>.ts), frozen at creation
 duet new --gateless --framing .duet/<name>.md                    # walk away from the START — every gate pre-authorized; consultant keeps its framing read + backstop, bet audits off
 ```
@@ -107,7 +107,7 @@ Pick the workflow with `--workflow` (also settable as `workflow:` in the framing
   - *More attended:* `skip-plan` returns them at the Ship gate to verify the build before it ships — suggest it when they don't fully trust the implementation yet. Or list `finish` for a post-open review stop on the opened PR (reject there amends it).
   - *Less attended:* `afk` pre-authorizes every gate from the start while keeping every safety net, including the consultant's bet audits — suggest it when they want to leave at once but still want all the checks.
 - **blueprint / relay** — default: attend the COMMIT-SPEC gate only. One interruption: Direction auto-crosses, the human reads the spec, taps once, walks away. `afk` pre-authorizes that too.
-- **short** — `afk` pre-authorizes all three gates (Direction, Ship, Open-PR) and runs straight to done with the PR open — suggest it when the work is small and they want it hands-off.
+- **short** — default: attend the DIRECTION gate only. The same one-interruption shape: approve the research direction, then Ship and Open-PR auto-cross to done with the PR open. `afk` pre-authorizes Direction too; suggest `research,implement` when they want to verify the build before it ships.
 
 The *most* hands-off option, on any workflow, is `--gateless` (or `gateless:` in the framing): pre-authorize **every** gate so the run flows to an open PR with no attended stop, and — if a consultant is bound — keep only its **non-holding** work (the framing third-opinion still folds into the direction; the acceptance-contract verify still guards the build; the mid-run bet audits drop). Suggest it when the human has already settled the direction and just wants it run. A genuine product `high` or an unmet contract still stops the run, and the merge stays theirs.
 

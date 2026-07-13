@@ -61,11 +61,12 @@ describe('structuralSpine — the shared structural projection', () => {
     expect(delivery.continuity).toEqual({});
   });
 
-  test('short: no spec/plan, a single build stage, no default-pre-authorized posture', () => {
+  test('short: no spec/plan, a single build stage, a one-interruption default posture', () => {
     const spine = structuralSpine(WORKFLOWS.short);
     expect(spine.phases.map((p) => p.name)).toEqual(['research', 'implement', 'finish']);
-    // short pre-authorizes nothing by default ⇒ attend-all ⇒ undefined posture.
-    expect(spine.defaultPosture).toBeUndefined();
+    // short's default attends Direction only (the handoff gate) — blueprint/relay's
+    // one-interruption shape (flipped 2026-07-11 from attend-all).
+    expect(spine.defaultPosture).toEqual(['research']);
   });
 
   test('full: defaultPosture is the attended set (frame, spec) — the Open-PR gate is pre-authorized', () => {

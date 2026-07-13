@@ -331,9 +331,9 @@ program
     "walk away from the START: pre-authorize every gate so the run flows to an open PR, AND narrow the consultant to its NON-HOLDING work — its framing third-opinion still informs the direction and the acceptance-contract verify still self-heals and holds a contract that stays broken, but its holding bet audits don't fire. A genuine product/direction high (or a missing contract) can still stop the run; ask_human and the merge stay yours. Conflicts with --gates-at; also settable via a gateless: framing key (flag wins)",
   )
   .option('--tmux', 'open a tmux viewer: one live pane per voice, tailing the run logs')
-  .option('--interactive', "orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over the planning stage up to its handoff gate (full: the plan gate; blueprint/relay: the spec gate; short: the Direction gate); delivery runs headless after that handoff")
-  .option('--no-interactive', 'force headless orchestration even when the framing carries interactive: true (the flag wins over the frontmatter)')
-  .option('--resume-session <id>', 'warm-start the interactive orchestrator from an existing Claude Code session: resume that session (its discussion context intact) as this run’s orchestrator instead of opening a fresh one. Needs --interactive; capture the id with `printenv CLAUDE_CODE_SESSION_ID` inside the session you want to continue')
+  .option('--interactive', "orchestrate this run from your own interactive Claude Code session instead of the headless driver — brings up the wired session over the planning stage up to its handoff gate (full: the plan gate; blueprint/relay: the spec gate; short: the Direction gate); delivery runs headless after that handoff. This is the DEFAULT on a live terminal (a non-TTY or gateless run defaults headless); the flag forces it explicitly")
+  .option('--no-interactive', 'force headless orchestration — overrides the live-terminal default and a framing interactive: true')
+  .option('--resume-session <id>', 'warm-start the interactive orchestrator from an existing Claude Code session: resume that session (its discussion context intact) as this run’s orchestrator instead of opening a fresh one. Needs an interactive run (the live-terminal default); capture the id with `printenv CLAUDE_CODE_SESSION_ID` inside the session you want to continue')
   .action(async (opts: { spec?: string; framing?: string; template?: string; workflow?: string; gatesAt?: string; retryInfra?: string; budget?: string; bind: string[]; consultant: boolean; gateless?: boolean; tmux?: boolean; interactive?: boolean; resumeSession?: string }) => {
     const cwd = process.cwd();
 
@@ -352,15 +352,20 @@ program
     const { framingFile, interactive: framingInteractive, consultantToggle, binds: framingBinds, ...runInputs } = inputs;
     // Flags win over the frontmatter: an explicit --interactive/--no-interactive
     // (true/false) overrides; only an absent flag (undefined) defers to the framing.
-    const interactive = opts.interactive ?? framingInteractive ?? false;
-    if (interactive && runInputs.gateless) {
+    // With neither stated, a live terminal defaults to the interactive orchestrator
+    // (the daily-driver posture, 2026-07-11 — every attended run opted in) while a
+    // gateless or non-TTY launch defaults headless, so the derived default can
+    // never strand a run without a session or fight a walk-away-from-the-start.
+    const explicitInteractive = opts.interactive ?? framingInteractive;
+    const interactive = explicitInteractive ?? (Boolean(process.stdin.isTTY) && !runInputs.gateless);
+    if (explicitInteractive && runInputs.gateless) {
       fail(
         'gateless means walk away from the START, which is incoherent with --interactive (you drive the planning gates in-session). Use `duet new --gateless` for a headless full-send, or `duet new --interactive` then `duet afk --gateless` to walk away mid-run.',
       );
     }
     if (opts.resumeSession && !interactive) {
       fail(
-        '--resume-session warm-starts the interactive orchestrator from an existing session, so it needs --interactive (a headless run has no orchestrator session to resume).',
+        '--resume-session warm-starts the interactive orchestrator from an existing session, so it cannot ride a headless run (here: --no-interactive, gateless, or a non-TTY launch). Drop the headless posture, or drop --resume-session.',
       );
     }
     // Interactive orchestration drives a live terminal session (it spawns claude
