@@ -253,10 +253,9 @@ The _structural_ gates are code and can't be forged from a prompt; what an overr
 The `docs/` folder is the real design record. Suggested reading order:
 
 1. [`docs/observed-pattern.md`](docs/observed-pattern.md) — the manual workflow this automates, from a real session
-2. [`docs/workflow-model.md`](docs/workflow-model.md) — that pattern abstracted into phases and vocabulary
-3. [`docs/automation-design.md`](docs/automation-design.md) — the design: voices, layers, gates, policies
-4. [`docs/open-questions.md`](docs/open-questions.md) — what's decided, what's open, and the evidence
-5. [`docs/engineering.md`](docs/engineering.md) — how the code is shaped (read before changing it)
+2. [`docs/automation-design.md`](docs/automation-design.md) — the design spine: voices, layers, workflows, gates, policies (mechanism satellites: `run-operations`, `afk-resilience`, `consultant`, `voices-and-providers`)
+3. [`docs/open-questions.md`](docs/open-questions.md) — what's decided, what's open, and the evidence
+4. [`docs/engineering.md`](docs/engineering.md) — how the code is shaped (read before changing it)
 
 Two Claude Code skills ship with duet (installed with `npx skills add` above): **duet-frame** authors a run's framing — the workflow above — and **duet-concierge** lets you start and supervise a run from a chat session, duet's "remote control" from your phone, without duet building any remote infrastructure of its own.
 

@@ -50,7 +50,7 @@ Asked to update docs more than once in a session? Don't re-diff the whole range 
 
 ## Step 2 — Read existing docs
 
-Read `docs/documentation-standards.md` first, then read every doc that overlaps the changed areas end-to-end — usually a subset of `automation-design.md`, `engineering.md`, `prompting-and-tool-design.md`, `workflow-model.md`, and `CLAUDE.md`. Understand the current narrative before modifying it.
+Read `docs/documentation-standards.md` first, then read every doc that overlaps the changed areas end-to-end — usually a subset of the spine (`automation-design.md`, `engineering.md`), the satellites (`run-operations.md`, `afk-resilience.md`, `consultant.md`, `voices-and-providers.md`), `prompting-and-tool-design.md`, and `CLAUDE.md`. Understand the current narrative before modifying it.
 
 Also scan for **stale content** the change may have outdated: a verified-vs-not status line in the README that should flip, an `open-questions.md` entry a run just resolved, a `docs/specs/` or `docs/plans/` proposal that shipped and should distill into a design doc.
 
@@ -115,7 +115,8 @@ Write to the standards in `documentation-standards.md` rather than restating the
 5. Confirm evidence claims stay tagged **(observed)** vs **(general)** and nothing unverified slipped into the present tense.
 6. Grep across `docs/`, `CLAUDE.md`, and `README.md` for the basenames of any file you moved, renamed, or deleted — every hit should resolve.
 7. Spotlight check: no new live count ("N seams"), and any new table row or list item is load-bearing — a secondary change folded into an existing entry instead of growing the table.
-8. Check: *"If a teammate reads this cold, do the docs give them the mental model without reading every file?"*
+8. Budget check: `wc -c CLAUDE.md CONTEXT.md docs/automation-design.md docs/engineering.md` — the Phase-1 always-read set stays under the ~100KB budget in `documentation-standards.md`. Over it, name the doc that grew and the section that should move to a satellite; that flag goes in the output even if the split itself is deferred.
+9. Check: *"If a teammate reads this cold, do the docs give them the mental model without reading every file?"*
 
 ## Step 7 — Assess the skills and the invariants
 

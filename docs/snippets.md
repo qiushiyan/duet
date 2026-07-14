@@ -75,7 +75,7 @@ The methodology snippets cite duet's vendored lessons, and **read depth is a dec
 
 ## Beyond the phase snippets
 
-**Anytime helpers** (`snippets/anytime.toml`) are reachable in any phase and shown in full by `list_snippets` — `reread-context` (reread the touched code before continuing), `recover-context` (the post-compact fresh-session re-anchor, prescribed when a `/compact` is killed and the worker's session resets — `automation-design.md` §"Resilience for the AFK window"), `compact-inflight` (the mid-work compaction: where the boundary compacts keep what the *next* stage consumes, this one keeps the in-flight state), and a handful of investigation aids. They aren't customization targets.
+**Anytime helpers** (`snippets/anytime.toml`) are reachable in any phase and shown in full by `list_snippets` — `reread-context` (reread the touched code before continuing), `recover-context` (the post-compact fresh-session re-anchor, prescribed when a `/compact` is killed and the worker's session resets — `afk-resilience.md`), `compact-inflight` (the mid-work compaction: where the boundary compacts keep what the *next* stage consumes, this one keeps the in-flight state), and a handful of investigation aids. They aren't customization targets.
 
 **Consultant prompts** (`snippets/consultant.toml`) are enabled only when a consultant is bound, and a run sees only the checkpoints its own workflow fires (`automation-design.md` §"Consultant checkpoints"). An unbound run's snippet surface reads byte-for-byte as if they didn't ship.
 

@@ -153,7 +153,7 @@ Tool design is eval-driven; duet's analogue of an eval is the spike/live runs pl
 
 ## Binding conventions for duet
 
-The rules every duet prompt and tool must follow. **This list intentionally duplicates the rulebook's core rules** — the checklist form of the highest-stakes principles, deliberately repeated; the condensed copy in `docs/automation-design.md` §"Prompting and tool-surface conventions" must stay in sync with it.
+The rules every duet prompt and tool must follow. **This list intentionally duplicates the rulebook's core rules** — the checklist form of the highest-stakes principles, deliberately repeated. This is the one home: `docs/automation-design.md` points here rather than carrying a copy.
 
 1. Artifacts first, task last, XML-tagged.
 2. Thinking framework with motivation over bare prohibition; no aggressive emphasis.

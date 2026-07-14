@@ -13,10 +13,13 @@ CLAUDE.md                       always-loaded mental model + conventions; the do
 README.md                       orientation + the verified-vs-not status line
 snippets/                       the orchestrator's snippet library, block-named files
 docs/
-  automation-design.md          THE design — voices, layers, stages/phases/gates, triage, policy
+  automation-design.md          the design spine — voices, layers, workflows/gates, triage, policy
   engineering.md                the codebase mental model — module map, seams, patterns
+  run-operations.md             satellite — CLI surface, run lifecycle, viewer/telemetry, supervision
+  afk-resilience.md             satellite — the AFK resilience model + worker compaction
+  consultant.md                 satellite — consultant checkpoints, acceptance contract, verify chain
+  voices-and-providers.md       satellite — binding grammar + worker-driving mechanics
   prompting-and-tool-design.md  the binding prompt/tool conventions
-  workflow-model.md             the abstracted snippet protocol
   observed-pattern.md           the evidence sessions the protocol is drawn from
   open-questions.md             the design questions still open, and what would settle them
   future-directions.md          the product-direction ledger
@@ -26,7 +29,7 @@ docs/
 
 Three kinds, three jobs:
 
-- **Design docs** (`automation-design.md`, `engineering.md`, `prompting-and-tool-design.md`, `workflow-model.md`) describe **what is true today**. Durable — updated in place, never appended to. Present tense; future tense ("we will…") is a smell.
+- **Design docs** describe **what is true today**. Durable — updated in place, never appended to. Present tense; future tense ("we will…") is a smell. They come in two tiers: the **spine** (`automation-design.md`, `engineering.md`) is read at the start of every session, so it carries the mental model — principles, vocabulary, the workflows, the invariants; the **satellites** (`run-operations.md`, `afk-resilience.md`, `consultant.md`, `voices-and-providers.md`, `prompting-and-tool-design.md`) carry topic mechanics and load on demand — the onboarding skill's Phase 2 routes to them. Mechanism belongs in a satellite; a spine section that grows past its mental model is a split waiting to happen.
 - **Rationale & evidence** (`open-questions.md`, `observed-pattern.md`) record **why**, and the runs that proved it. `open-questions.md` keeps only the questions still genuinely open, in topical (unnumbered) sections cited by name; when one settles, its answer moves into the design doc it shaped and the entry goes — the deliberations stay in git.
 - **Direction & specs** (`future-directions.md`, `interactive-transport.md`, `docs/specs/`, `docs/plans/`) are **proposals** — what we might build and why. When one ships, distill its surviving content into the design doc it touches, in present tense, then prune the proposal.
 
@@ -122,6 +125,8 @@ A doc that gains 10 lines of new content should usually shed 5–10 of redundanc
 - **Phase 2 — topic deep dive:** the design doc(s) and code for the topic. CLAUDE.md indexes the docs, and the `engineering.md` module map is the source of truth for code; the skill's topic table only turns a phrase into a focus.
 
 Keep it lean. Phase 1 is for what an agent *cannot* skip, not what's merely interesting. Litmus: *"Would an agent on a typical duet task produce wrong code without reading this?"* If not, it's Phase 2.
+
+**The always-read set has a budget.** Phase 1 (`CLAUDE.md`, `CONTEXT.md`, `docs/automation-design.md`, `docs/engineering.md`) is paid at the start of every session — keep the set **under ~100KB total** (`wc -c`; roughly 25k tokens). When growth pushes it over, the move is a split, not a shrug: the spine keeps the mental model and the mechanism moves to a satellite that Phase 2 routes to by topic. Exceeding the budget is allowed only as a decision recorded here with its why — never as drift.
 
 **Update the skill when** a new top-level doc appears that the topic table doesn't route to, a Phase 1 doc is renamed or split, or a deep-dive anchor drifts. Routine edits inside an existing doc don't touch the skill — it already points at the doc.
 
