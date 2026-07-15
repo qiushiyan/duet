@@ -71,7 +71,7 @@ When revising a snippet, match its phase's mindset. An "optimization" that colla
 
 ### What the reading list encodes
 
-The methodology snippets cite duet's vendored lessons, and **read depth is a decision, not a union**: read a lesson deeply where its decisions get made, skim its `## The bar` where they are only constrained. `write-spec` reads the design lessons closely — it commits the module structure, the interfaces, and the seams — and skims the testing bars, because it names *which* behaviors matter and what gets faked where, not how to write the tests. `start-plan` and the build seeds invert that. A snippet that cites everything has stopped deciding.
+The methodology snippets cite duet's vendored lessons, and **read depth is a decision, not a union**: read a lesson deeply where its decisions get made, skim its `## The bar` where they are only constrained. `write-spec` reads the design lessons closely — it commits the module structure, the interfaces, and the seams — and skims the testing bars, because it names *which* behaviors matter and what gets faked where, not how to write the tests. `start-plan` and the build seeds invert that. `review-implementation` skims the design bar only — the reviewer judges a shape it didn't decide, so the lesson is its lens and the vocabulary its findings are written in, which is also what lets the snippet's structural checklist stay two axes (seam cleanliness, preparatory refactoring) instead of restating the lesson. A snippet that cites everything has stopped deciding.
 
 ## Beyond the phase snippets
 

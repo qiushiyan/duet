@@ -26,7 +26,7 @@ For code, start there or run `/onboarding [topic]` (`statechart` · `providers` 
 **Other docs, by what they answer:**
 
 - prompts / tools / errors → `docs/prompting-and-tool-design.md` (the binding conventions; consult for any prompt or tool surface).
-- the snippet library → the block-named `snippets/` files (source of truth) + `docs/snippets.md` (catalog); the PLAN snippets cite the vendored `lessons/` methodology (`pnpm vendor-lessons` re-syncs it).
+- the snippet library → the block-named `snippets/` files (source of truth) + `docs/snippets.md` (catalog); the methodology snippets cite the vendored `lessons/` (`pnpm vendor-lessons` re-syncs it).
 - the workflow vocabulary (grammar vs knobs, the relay workflow) → `docs/automation-design.md` §"The workflow vocabulary"; the single-world prompt rule → `docs/prompting-and-tool-design.md`.
 - the interactive-Claude transport → `docs/interactive-transport.md` (opt-in, flat-quota billing).
 - the protocol's evidence → `docs/observed-pattern.md`.
