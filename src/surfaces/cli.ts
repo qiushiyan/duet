@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { VERSION } from '../package-root.ts';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { Command } from 'commander';
@@ -268,7 +269,7 @@ program
   .description(
     'Opinionated blocks for AI coding workflows — spec loops, adversarial review, an autonomous build. Run it AFK with human gates.',
   )
-  .version('0.1.0')
+  .version(VERSION)
   .addHelpText(
     'after',
     `

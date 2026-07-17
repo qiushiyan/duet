@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -21,6 +21,18 @@ import { fileURLToPath } from 'node:url';
  */
 export const PACKAGE_ROOT = findPackageRoot(dirname(fileURLToPath(import.meta.url)));
 
+/**
+ * The running package's version — read from `package.json`, never written down
+ * a second time. `--version`, the corpus era stamp, and the generated workflow
+ * `.d.ts` header all report this one value.
+ *
+ * The rule exists because the alternative shipped: `cli.ts` carried a literal
+ * `.version('0.1.0')` that no release step knew about, so `greenflag --version`
+ * kept reporting 0.1.0 from an installed 0.1.1. A version string that changesets
+ * cannot see is a version string that will be wrong.
+ */
+export const VERSION = readVersion();
+
 function findPackageRoot(from: string): string {
   let dir = from;
   for (;;) {
@@ -28,5 +40,14 @@ function findPackageRoot(from: string): string {
     const parent = dirname(dir);
     if (parent === dir) throw new Error(`greenflag: no package.json found above ${from}`);
     dir = parent;
+  }
+}
+
+function readVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf8')) as { version?: string };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
   }
 }

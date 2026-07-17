@@ -1,5 +1,18 @@
 # greenflag
 
+## 0.1.2
+
+### Patch Changes
+
+- Fix `greenflag --version`, which reported a hardcoded `0.1.0` regardless of the
+  installed version.
+
+  The CLI carried the version as a literal that no release step could see, so
+  changesets bumped `package.json` while `--version` kept answering 0.1.0. The
+  version is now read from `package.json` at startup through a single `VERSION`
+  export, which `--version`, the corpus era stamp, and the generated workflow
+  `.d.ts` header all share — the same one-owner rule that fixed asset resolution.
+
 ## 0.1.1
 
 ### Patch Changes

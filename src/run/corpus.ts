@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { PACKAGE_ROOT } from '../package-root.ts';
+import { VERSION } from '../package-root.ts';
 import type { RunState } from './store.ts';
 
 /**
@@ -21,17 +21,9 @@ import type { RunState } from './store.ts';
 
 const CORPUS_STAMP = 'corpus.json';
 const TRANSCRIPTS_DIR = 'transcripts';
-// Resolved from greenflag's own package.json so the era stamp can't drift from
-// the released version. Anchored on PACKAGE_ROOT, which is correct in both the
-// dev tree and the published bundle (src/package-root.ts).
-const GREENFLAG_VERSION = (() => {
-  try {
-    const pkg = JSON.parse(readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf8')) as { version?: string };
-    return pkg.version ?? 'unknown';
-  } catch {
-    return 'unknown';
-  }
-})();
+// The era stamp is the running version, read once from package.json so it can
+// never drift from the released one (src/package-root.ts).
+const GREENFLAG_VERSION = VERSION;
 
 type CorpusState = Pick<RunState, 'runId' | 'cwd' | 'corpusDir'>;
 
