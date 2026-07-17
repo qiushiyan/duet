@@ -16,7 +16,7 @@ function main(): void {
   const opts = parseCorpusCliArgs(process.argv.slice(2));
   const corpusRoot = opts.corpusDir ?? configuredCorpusDir();
   if (!corpusRoot) {
-    throw new Error('no corpus dir configured — add [corpus] dir to ~/.config/duet/config.toml or pass --corpus <dir>');
+    throw new Error('no corpus dir configured — add [corpus] dir to ~/.config/greenflag/config.toml or pass --corpus <dir>');
   }
   const roots = opts.sweepRoots.length > 0 ? opts.sweepRoots : defaultSweepRoots();
   const dirs = findLiveRunDirs(roots);

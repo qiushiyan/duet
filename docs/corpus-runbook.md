@@ -1,10 +1,10 @@
 # The corpus runbook — analyzing runs and evaluating changes
 
-The operating manual for duet's evidence loop: where run data lives, how to read it, how to judge whether a prompt / snippet / workflow change helped, and where replay stands. The system design is `automation-design.md`; the code's mental model is `engineering.md`; what's next is `future-directions.md`. This doc is for future us, sitting down to answer *"what does the field data say?"*
+The operating manual for greenflag's evidence loop: where run data lives, how to read it, how to judge whether a prompt / snippet / workflow change helped, and where replay stands. The system design is `automation-design.md`; the code's mental model is `engineering.md`; what's next is `future-directions.md`. This doc is for future us, sitting down to answer *"what does the field data say?"*
 
 ## The corpus
 
-Every run already writes a protocol-complete, plain-text record into its project's `.duet/runs/<id>/` — the full phase briefs, every worker prompt with its snippet tag and body, every response, the terminal calls, and the state ledgers. That location dies with its worktree. With `[corpus] dir` set in `~/.config/duet/config.toml`, the record **also mirrors, as it happens, into one central archive** that outlives the worktree — and the provider transcripts (which the CLIs prune on their own schedule) are captured into it gzipped when the run ends.
+Every run already writes a protocol-complete, plain-text record into its project's `.greenflag/runs/<id>/` — the full phase briefs, every worker prompt with its snippet tag and body, every response, the terminal calls, and the state ledgers. That location dies with its worktree. With `[corpus] dir` set in `~/.config/greenflag/config.toml`, the record **also mirrors, as it happens, into one central archive** that outlives the worktree — and the provider transcripts (which the CLIs prune on their own schedule) are captured into it gzipped when the run ends.
 
 The guarantees, in order of how much they bite:
 
@@ -12,13 +12,13 @@ The guarantees, in order of how much they bite:
 - **Fail-soft is absolute.** A corpus write never affects a run — any failure (missing dir, full disk, unavailable synced volume) drops silently. The local run dir stays the working truth; every live surface (`status`, `doctor`, takeover, tmux) reads only it.
 - **A record is an analysis archive, not a backup.** There is no restore path; live mechanics (`scratch/`, `driver.pid`, the interactive lease) are excluded.
 - **The destination freezes per run at creation** (`RunState.corpusDir`) — changing config never re-points a live run, and runs created before the key existed never mirror.
-- **A record outlives its worktree, not every vocabulary.** duet keeps no backward compatibility for retired vocabulary: a record whose frozen `workflow.json` speaks one is refused at the load boundary (`UnloadableRunError`, surfaced not skipped), never translated. Its transcripts and logs stay readable by hand; it simply leaves `stats`, `grade`, `graph`, and replay. **No `workflow.json` frozen before 2026-07-08 still loads** — the whole cohort, not only its document-bearing runs. Two vocabularies retired together: the `design` document phase (when the spec and design artifacts unified) and the workflow-named build examples keys (`impl`, `short-impl`, …), so even a `short` run that never had a design doc is refused. The 2026-07-07 blueprint and relay series is in that cohort. Its findings live in `docs/researches/`. When a vocabulary retires, expect the analysis surfaces to lose that cohort and say so here, rather than growing a translation shim the next reader would have to trust.
+- **A record outlives its worktree, not every vocabulary.** greenflag keeps no backward compatibility for retired vocabulary: a record whose frozen `workflow.json` speaks one is refused at the load boundary (`UnloadableRunError`, surfaced not skipped), never translated. Its transcripts and logs stay readable by hand; it simply leaves `stats`, `grade`, `graph`, and replay. **No `workflow.json` frozen before 2026-07-08 still loads** — the whole cohort, not only its document-bearing runs. Two vocabularies retired together: the `design` document phase (when the spec and design artifacts unified) and the workflow-named build examples keys (`impl`, `short-impl`, …), so even a `short` run that never had a design doc is refused. The 2026-07-07 blueprint and relay series is in that cohort. Its findings live in `docs/researches/`. When a vocabulary retires, expect the analysis surfaces to lose that cohort and say so here, rather than growing a translation shim the next reader would have to trust.
 
 One archived record:
 
 ```
 <corpusDir>/<runId>/
-  corpus.json           # era stamp: duet version, source cwd, creation time
+  corpus.json           # era stamp: greenflag version, source cwd, creation time
   state.json            # the full ledger set: rounds, phaseSummaries + humanDecisions,
                         #   contextEvents, autoRetries, autoApprovals, grades, bindings, sessions
   workflow.json         # the run's frozen compiled workflow
@@ -28,14 +28,14 @@ One archived record:
   transcripts/<voice>.<session-id>.jsonl.gz   # captured at done / abandon / purge
 ```
 
-Data arrives by three paths: **append-through** during the run (voice logs, notes — a worktree deleted mid-phase loses nothing already logged), a **reconcile sweep** at every quiescent stop (self-heals any drifted file, catches `driver.log` and `steers/`), and **transcript capture** at terminal events — including the top of `duet abandon --purge`, before it deletes the originals.
+Data arrives by three paths: **append-through** during the run (voice logs, notes — a worktree deleted mid-phase loses nothing already logged), a **reconcile sweep** at every quiescent stop (self-heals any drifted file, catches `driver.log` and `steers/`), and **transcript capture** at terminal events — including the top of `greenflag abandon --purge`, before it deletes the originals.
 
 ## Setting up a machine
 
 ```toml
-# ~/.config/duet/config.toml
+# ~/.config/greenflag/config.toml
 [corpus]
-dir = "~/duet-corpus"   # presence enables the mirror; use an absolute or ~ path
+dir = "~/greenflag-corpus"   # presence enables the mirror; use an absolute or ~ path
 ```
 
 One trap to check by hand: the mirror is fail-soft in every direction, so a configured `[corpus] dir` whose directory doesn't exist means every run **silently skips mirroring** — create the directory and confirm the first run's record lands **(observed: exactly this silent-off state, caught 2026-07-07)**.
@@ -43,14 +43,14 @@ One trap to check by hand: the mirror is fail-soft in every direction, so a conf
 Then adopt whatever still exists on disk (idempotent; never modifies source run dirs):
 
 ```bash
-node scripts/corpus/backfill.ts        # from the duet repo
+node scripts/corpus/backfill.ts        # from the greenflag repo
 ```
 
-For more than one machine, point `dir` at a folder your own sync tool carries — duet builds no sync (the standing remote constraint), and grouping across machines is a query over each record's `state.json` (`cwd`, `branch`, `workflow`), not a directory layout.
+For more than one machine, point `dir` at a folder your own sync tool carries — greenflag builds no sync (the standing remote constraint), and grouping across machines is a query over each record's `state.json` (`cwd`, `branch`, `workflow`), not a directory layout.
 
 ## Reading the corpus
 
-For **one run in its project**, three product surfaces read its record. `duet stats <runId>` is the effort surface — per-phase elapsed/worker time and the by-tag breakdown. `duet grade <runId>` is the **calibration ritual**: a 60-second end-of-run walkthrough of the run's reconstructed decision points — gate stops (attended / auto-crossed / held-high) and queued questions — each presented with enough inline context to take a plain **right/wrong** verdict (was the stop worth the interruption; should the auto-cross have stopped you). The human also asserts **missed stops** — a stop that should have happened but left no trace. Verdicts persist as the additive `grades` ledger and mirror like every other; `--list` previews the points read-only. Both are read-time reconstructions over the same state-ledger-plus-log discipline — the grading core reads state first and the log only where state is silent — and neither ever lets a missing log silently shrink coverage: a degradation is a surfaced note, not a rosy rate. And `duet framings` is the archive's browse surface: the corpus merged with the project's local runs, deduped and scoped to the current repo by each record's repo-identity stamp (so a record still groups with its project after the creating worktree is a dead path), with `duet framings show <runId>` reprinting one archived framing verbatim — it earned the CLI under the same graduation rule, since retrieving a past run's framing is a per-run, user-facing need.
+For **one run in its project**, three product surfaces read its record. `greenflag stats <runId>` is the effort surface — per-phase elapsed/worker time and the by-tag breakdown. `greenflag grade <runId>` is the **calibration ritual**: a 60-second end-of-run walkthrough of the run's reconstructed decision points — gate stops (attended / auto-crossed / held-high) and queued questions — each presented with enough inline context to take a plain **right/wrong** verdict (was the stop worth the interruption; should the auto-cross have stopped you). The human also asserts **missed stops** — a stop that should have happened but left no trace. Verdicts persist as the additive `grades` ledger and mirror like every other; `--list` previews the points read-only. Both are read-time reconstructions over the same state-ledger-plus-log discipline — the grading core reads state first and the log only where state is silent — and neither ever lets a missing log silently shrink coverage: a degradation is a surfaced note, not a rosy rate. And `greenflag framings` is the archive's browse surface: the corpus merged with the project's local runs, deduped and scoped to the current repo by each record's repo-identity stamp (so a record still groups with its project after the creating worktree is a dead path), with `greenflag framings show <runId>` reprinting one archived framing verbatim — it earned the CLI under the same graduation rule, since retrieving a past run's framing is a per-run, user-facing need.
 
 Everything corpus-wide is deliberately *scripts, not CLI* (the graduation rule: a per-run, in-project, user-facing need earns a CLI surface; author-side analytics doesn't):
 
@@ -71,10 +71,10 @@ The metric glossary and its caveats — span/busy/orchGap definitions, wall-cloc
 
 Replay answers one-phase policy questions; broader evaluation is still cohort comparison over the archive plus judgment over transcripts. The recipe:
 
-1. **Pin the boundary.** The commit (and date) the prompt / snippet / workflow change shipped. Records carry `createdAt` and `corpus.json` carries the duet version, so the cohort split is mechanical.
+1. **Pin the boundary.** The commit (and date) the prompt / snippet / workflow change shipped. Records carry `createdAt` and `corpus.json` carries the greenflag version, so the cohort split is mechanical.
 2. **Build the cohorts.** Filter records by workflow, bindings, and date (`state.json` has all three). Like-for-like matters more than volume — a full run on Opus tells you little about a relay change.
 3. **Compare the mechanical signals first** — these need no judgment: rounds per loop (`state.rounds` — did the spec loop stop marching to its cap?), turn durations by tag (`turn-stats` — did update turns shrink?), holds and their outcomes (`phaseSummaries[].humanDecisions`, `autoApprovals`), `contextEvents` (are cutoffs firing despite the 75% nudge?), `autoRetries`, verify self-heal loops, and — where the runs were graded — the human's right/wrong verdicts on each stop (`grades`, aggregated by `grade-precision.ts` into the over-flag / under-flag rates that `open-questions.md` §"Triage precision" names).
-4. **Read for the judgment signals.** Critique altitude, whether a routed rework actually converged, the texture behind a triage verdict — these live in the voice logs and the gzipped transcripts (`zless`, or `gunzip -c | jq`). Vibes are a legitimate instrument here; the discipline is writing them down (and, for a stop, into a `duet grade` verdict).
+4. **Read for the judgment signals.** Critique altitude, whether a routed rework actually converged, the texture behind a triage verdict — these live in the voice logs and the gzipped transcripts (`zless`, or `gunzip -c | jq`). Vibes are a legitimate instrument here; the discipline is writing them down (and, for a stop, into a `greenflag grade` verdict).
 5. **Snapshot what you conclude** into a dated findings doc, evidence-tagged **(observed)** with run ids. Corpus records are prunable; findings docs are the permanent layer — the AFK-resilience findings are the model.
 
 Standing caveats: the corpus is small — read medians and maxima, not tight percentiles; durations are wall-clock, so cross-check a giant turn against the heartbeat cadence before calling it slow; and several open calibration questions (`open-questions.md`: triage precision, context bands, the consultant's value) name exactly which of these signals would settle them — check whether your cohort read moves one.
@@ -87,7 +87,7 @@ Run it from the repo:
 
 ```bash
 node scripts/corpus/replay-phase.ts \
-  --corpus ~/duet-corpus \
+  --corpus ~/greenflag-corpus \
   --record <run-id> \
   --phase <phase> \
   --out <out-dir> \
@@ -102,4 +102,4 @@ Records are read-only instruments. Replay writes only under `--out`: its synthes
 
 ## Era notes
 
-`corpus.json` stamps each record's duet version at creation. Readers tolerate mixed eras by **skipping with a count**, never aborting; there are deliberately no era adapters — a record the current codecs refuse (everything pre-dating the 2026-07-04 remodel) stays refused, and that era's load-bearing conclusions live in its findings docs, not the corpus.
+`corpus.json` stamps each record's greenflag version at creation. Readers tolerate mixed eras by **skipping with a count**, never aborting; there are deliberately no era adapters — a record the current codecs refuse (everything pre-dating the 2026-07-04 remodel) stays refused, and that era's load-bearing conclusions live in its findings docs, not the corpus.

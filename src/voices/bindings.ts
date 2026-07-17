@@ -6,9 +6,9 @@ import { DUTIES, continuityEdgeFor, stageOfDuty, stageOfDutyLane, stagesOf } fro
 import type { Duty, WorkflowRef } from '../registry/workflows.ts';
 
 /**
- * Voice bindings — the one config duet ships (docs/automation-design.md
- * §"Roles are decoupled from providers"; the duty-keyed shape is the domain
- * remodel, docs/specs/2026-07-04-domain-remodel.md). Scoped to voice→provider/
+ * Voice bindings — the one config greenflag ships (docs/automation-design.md
+ * §"Roles are decoupled from providers"; the duty-keyed shape is the 2026-07-04
+ * domain remodel). Scoped to voice→provider/
  * model bindings AND account/billing posture (transport, budget) — and nothing
  * else; project knowledge never goes here. If a key that isn't a binding or
  * billing posture is about to land in this file, that's the design failing.
@@ -39,7 +39,7 @@ export interface Binding {
   /** Provider-native config-only passthrough. Shape is routed, contents are provider-owned. */
   native?: BindingNative;
   /**
-   * How duet talks to a claude worker: "headless" (default) is `claude -p`,
+   * How greenflag talks to a claude worker: "headless" (default) is `claude -p`,
    * which draws the metered Agent-SDK credit pool; "interactive" drives the
    * interactive `claude` TUI so the work bills the flat subscription quota.
    * Config-file only (the `--bind` grammar can't express it). Meaningless for
@@ -73,7 +73,7 @@ export interface VoiceBindings {
  */
 export const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-8';
 
-export const CONFIG_PATH = join(homedir(), '.config', 'duet', 'config.toml');
+export const CONFIG_PATH = join(homedir(), '.config', 'greenflag', 'config.toml');
 
 const PROVIDER_CAPS: Record<
   Provider,
@@ -195,7 +195,7 @@ function defaultedModel(provider: Provider, model: string | undefined): string |
 }
 
 /**
- * Validate the provider + duet-owned knobs — shared by the spec grammar and the
+ * Validate the provider + greenflag-owned knobs — shared by the spec grammar and the
  * config tables. Returns exactly what the user supplied (no model default): the
  * claude fallback is applied later, at resolution, so an omitted model can carry
  * forward. Rejects an empty model string (a stray trailing ":").
@@ -341,8 +341,8 @@ function parseCorpusRoot(raw: unknown): string {
   }
   const expanded = expandConfigPath(dir.trim());
   // A central archive shared across projects must resolve to one place — a
-  // relative dir would bind to whatever cwd read it (the project at `duet new`,
-  // the duet repo when a script runs), silently fragmenting the archive.
+  // relative dir would bind to whatever cwd read it (the project at `greenflag new`,
+  // the greenflag repo when a script runs), silently fragmenting the archive.
   if (!isAbsolute(expanded)) {
     throw new Error(
       `config: [corpus].dir must be an absolute path or start with ~ (it names a central archive shared across projects), got ${JSON.stringify(dir)}`,
@@ -423,7 +423,7 @@ export interface DegradedEdge {
 /**
  * The registry edges these frozen bindings DEGRADE to fresh — a legitimate
  * configuration (plan-on-claude / build-on-codex on full is expressible and
- * kept), so never an error; never silent either (`duet new` echoes it, the
+ * kept), so never an error; never silent either (`greenflag new` echoes it, the
  * run notes it). Pure: derivable from the frozen state anywhere, so the
  * decision is one source with no persisted copy.
  */

@@ -15,8 +15,8 @@ import { workflowFor } from '../../run/workflow.ts';
  * the current stage's duty pair, the consultant when bound — each running
  * `tail -n +1 -F` on that voice's log — `-n +1` replays the full transcript
  * in a late-opened pane, and BSD tail's -F waits for logs that don't exist
- * yet (verified on this machine). Duet never lives inside tmux: killing the
- * viewer doesn't touch agents, killing duet leaves the panes tailing.
+ * yet (verified on this machine). Greenflag never lives inside tmux: killing the
+ * viewer doesn't touch agents, killing greenflag leaves the panes tailing.
  *
  * Same philosophy as notify.ts — best-effort, never allowed to affect the
  * run. Every failure degrades to a one-line note; the logs themselves are
@@ -194,7 +194,7 @@ async function layoutPanes(state: RunState, orchestratorPane: string, displayWid
   // Color each border title by role, keyed on the title's leading glyph —
   // tmux has no per-pane border-style, but the border format can branch.
   // The context suffix is a #(cat) of the role's plain-text sidecar
-  // (.duet/runs/<id>/context/<voice>, e.g. "41%"), written by the harness at
+  // (.greenflag/runs/<id>/context/<voice>, e.g. "41%"), written by the harness at
   // each turn boundary and re-read by tmux at its status refresh interval —
   // a cat per interval, nothing parsed at view time. Missing file = no
   // reading yet = empty. The orchestrator pane additionally prepends the
@@ -210,13 +210,13 @@ async function layoutPanes(state: RunState, orchestratorPane: string, displayWid
 }
 
 export async function openTmuxView(state: RunState, opts: { here?: boolean } = {}): Promise<void> {
-  const name = `duet-${state.runId}`;
+  const name = `greenflag-${state.runId}`;
   try {
     if (opts.here && process.env['TMUX'] && process.env['TMUX_PANE']) {
       // --here: replace the current pane with the viewer (ephemeral, no new
       // window or session). Split the OTHER voices off the current pane first —
       // all the fallible layout work — so a failure here leaves the pane intact
-      // (duet view just exits to its shell). Then respawn the current pane into
+      // (greenflag view just exits to its shell). Then respawn the current pane into
       // the orchestrator tail LAST: respawn-pane -k replaces THIS process, and
       // by then every other pane is already placed, so the self-kill races
       // nothing. layoutPanes splits off and titles the anchor regardless of the
@@ -228,7 +228,7 @@ export async function openTmuxView(state: RunState, opts: { here?: boolean } = {
       return;
     }
     if (opts.here) {
-      console.log('duet view --here needs a current tmux pane to replace — opening the usual viewer instead');
+      console.log('greenflag view --here needs a current tmux pane to replace — opening the usual viewer instead');
     }
     if (process.env['TMUX']) {
       // Inside tmux: a new window in the current session, created without
@@ -259,6 +259,6 @@ export async function openTmuxView(state: RunState, opts: { here?: boolean } = {
     }
   } catch (err) {
     const detail = err instanceof Error ? err.message.split('\n')[0] : String(err);
-    console.log(`tmux viewer unavailable (${detail}) — the same lines stream here and live in .duet/runs/${state.runId}/`);
+    console.log(`tmux viewer unavailable (${detail}) — the same lines stream here and live in .greenflag/runs/${state.runId}/`);
   }
 }

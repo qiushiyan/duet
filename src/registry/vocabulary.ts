@@ -27,10 +27,10 @@
 export type ConsultantCheckpoint = 'frame' | 'specGate' | 'implGate' | 'contract' | 'verify';
 
 /**
- * The workflow vocabulary (docs/specs/2026-07-03-workflow-vocabulary.md): each
+ * The workflow vocabulary (docs/automation-design.md §"The workflow vocabulary"): each
  * phase row names WHICH BLOCK it is and the knob values that configure it, as
  * one grouped sub-object — never scattered booleans. The vocabulary is CLOSED:
- * a knob value exists only when duet ships hand-written prompt support for it
+ * a knob value exists only when greenflag ships hand-written prompt support for it
  * and a shipped arc exercises it, so these unions grow only with a shipping
  * arc (relay adds `fixer`/`fresh-seed` with its own commit). The grouping is
  * the clean compile target for a deferred external-arc compiler; values below
@@ -446,7 +446,7 @@ export interface PhaseSpec {
   snippets: readonly string[];
   /**
    * The gate this phase exits through: its machine state name and the
-   * human-facing copy `duet status` renders. Non-null — every phase in both
+   * human-facing copy `greenflag status` renders. Non-null — every phase in both
    * arcs gates.
    */
   gate: {

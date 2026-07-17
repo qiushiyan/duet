@@ -1,36 +1,36 @@
-# duet CLI companion (for the concierge)
+# greenflag CLI companion (for the concierge)
 
-The CLI documents itself: `duet --help` prints the run model and every command, and `duet <command> --help` prints that command's flags, defaults, and gotchas. Read the help **just-in-time** — before an unfamiliar invocation, not from memory — and treat it as the source of truth for anything flag-shaped; this file deliberately re-documents none of it. What it carries is the concierge's own layer, the three things the help cannot say: which verbs are yours, the `status --json` schema you read, and the framing skeleton for run starts from dictation.
+The CLI documents itself: `greenflag --help` prints the run model and every command, and `greenflag <command> --help` prints that command's flags, defaults, and gotchas. Read the help **just-in-time** — before an unfamiliar invocation, not from memory — and treat it as the source of truth for anything flag-shaped; this file deliberately re-documents none of it. What it carries is the concierge's own layer, the three things the help cannot say: which verbs are yours, the `status --json` schema you read, and the framing skeleton for run starts from dictation.
 
 ## The verb map — whose verb is it?
 
 Every command defaults to the project's latest run; pass the run id explicitly (before any flag) once more than one exists.
 
-**Yours, pre-approved** — read-only, run freely: `duet status` · `duet logs` · `duet runs`.
+**Yours, pre-approved** — read-only, run freely: `greenflag status` · `greenflag logs` · `greenflag runs`.
 
 **Yours, prompt-normally** — read-only and safe whenever the human's question needs them; the permission prompt is routine, not a warning:
 
-- `duet doctor` — per-voice health plus a connectivity probe; the answer to "is it stuck or thinking?"
-- `duet stats` — effort per phase from the voice logs (`--trace` adds the interleaved turn timeline)
-- `duet graph` — the pipeline drawn as a workflow blueprint (`--workflow <name>`) or the live run view
-- `duet grade --list` — the reconstructed decision points, read-only; records nothing
-- `duet framings` — archived framings; `duet workflows` — available workflow definitions; `duet snippets` — the prompt library
+- `greenflag doctor` — per-voice health plus a connectivity probe; the answer to "is it stuck or thinking?"
+- `greenflag stats` — effort per phase from the voice logs (`--trace` adds the interleaved turn timeline)
+- `greenflag graph` — the pipeline drawn as a workflow blueprint (`--workflow <name>`) or the live run view
+- `greenflag grade --list` — the reconstructed decision points, read-only; records nothing
+- `greenflag framings` — archived framings; `greenflag workflows` — available workflow definitions; `greenflag snippets` — the prompt library
 
-**The human's decisions, relayed verbatim** — the ask-rule permission prompt is the deliberate second gate, never friction to engineer around: `duet continue` (approve / reject / answer), `duet steer` (a mid-phase note).
+**The human's decisions, relayed verbatim** — the ask-rule permission prompt is the deliberate second gate, never friction to engineer around: `greenflag continue` (approve / reject / answer), `greenflag steer` (a mid-phase note).
 
-**Run lifecycle, only on their explicit word**: `duet new` (start a run), `duet abandon` (stop one — destructive, though revivable; `--purge` also deletes the session transcripts, irreversible), and `duet grade` with `--set` / `--note` / `--missed` (records the human's verdicts — never write one they didn't utter).
+**Run lifecycle, only on their explicit word**: `greenflag new` (start a run), `greenflag abandon` (stop one — destructive, though revivable; `--purge` also deletes the session transcripts, irreversible), and `greenflag grade` with `--set` / `--note` / `--missed` (records the human's verdicts — never write one they didn't utter).
 
-**Never yours — they take the human's keyboard**: `duet takeover`, `duet orchestrate`, `duet afk`, `duet view`. Worth knowing what two of them mean for you: a run driven by the human's interactive orchestrator session hands off to the headless driver at planning's last gate, and `duet afk` is their one-tap version of that handoff — after either, it is an ordinary headless run you supervise like any other.
+**Never yours — they take the human's keyboard**: `greenflag takeover`, `greenflag orchestrate`, `greenflag afk`, `greenflag view`. Worth knowing what two of them mean for you: a run driven by the human's interactive orchestrator session hands off to the headless driver at planning's last gate, and `greenflag afk` is their one-tap version of that handoff — after either, it is an ordinary headless run you supervise like any other.
 
 ## Defaults that shape your suggestions
 
 The few resolved defaults worth holding when translating intent (anything else: read the help):
 
 - **Gate posture** (`--gates-at` / a `gates_at:` framing key): **full** defaults to `overnight` — attend frame and spec, hands-off after the spec; its other presets are `skip-plan` (return at the Ship gate to verify before it ships) and `afk` (attend none). **blueprint** and **relay** attend `spec` only; **short** attends `research` only — so every default run continues to an auto-opened PR. Add `finish` to a gates list for a post-open review stop on the PR; `--gateless` is attend-none *plus* narrowing a bound consultant to its non-holding work.
-- **Infra auto-retry**: `duet new --retry-infra <n>` — default 3 for a new run, `0` disables; exhaustion still stops on a flag.
-- **From your shell, `duet new` runs headless.** Interactive orchestration is a live-terminal default; your Bash session is not a terminal, so runs you start are the detached-driver runs SKILL.md describes.
+- **Infra auto-retry**: `greenflag new --retry-infra <n>` — default 3 for a new run, `0` disables; exhaustion still stops on a flag.
+- **From your shell, `greenflag new` runs headless.** Interactive orchestration is a live-terminal default; your Bash session is not a terminal, so runs you start are the detached-driver runs SKILL.md describes.
 
-## `duet status --json` — the StatusModel
+## `greenflag status --json` — the StatusModel
 
 The schema is **additive-only** — fields are never renamed or removed, new ones may appear; present what serves the human and ignore what you don't recognize. The load-bearing fields:
 
@@ -49,7 +49,7 @@ The schema is **additive-only** — fields are never renamed or removed, new one
 
 ### `stop`, by `kind`
 
-**`running`** — a phase is live; nothing is owed. `duet steer` is the channel for guidance.
+**`running`** — a phase is live; nothing is owed. `greenflag steer` is the channel for guidance.
 
 ```json
 { "kind": "running", "pid": 4242, "phase": "implement" }
@@ -68,13 +68,13 @@ The schema is **additive-only** — fields are never renamed or removed, new one
     "humanDecisions": [{ "title": "Billing-gate the export?", "severity": "high" }]
   },
   "commands": {
-    "approve": "duet continue <run-id> --approve",
-    "reject": "duet continue <run-id> --reject \"<feedback>\""
+    "approve": "greenflag continue <run-id> --approve",
+    "reject": "greenflag continue <run-id> --reject \"<feedback>\""
   }
 }
 ```
 
-**`flag`** — the run is paused on a queued question. Present `question` and `context` whole. `cause` routes your handling: `human` (a real product/environment call — relay it), `budget` (a cost cap was hit — resumable: raise the budget or resume, not an outage), or `infra` (an environment failure, with an `errorClass` like `network` / `auth` / `quota-billing` — report it as broken, not as a question; `duet doctor` shows what).
+**`flag`** — the run is paused on a queued question. Present `question` and `context` whole. `cause` routes your handling: `human` (a real product/environment call — relay it), `budget` (a cost cap was hit — resumable: raise the budget or resume, not an outage), or `infra` (an environment failure, with an `errorClass` like `network` / `auth` / `quota-billing` — report it as broken, not as a question; `greenflag doctor` shows what).
 
 ```json
 {
@@ -82,19 +82,19 @@ The schema is **additive-only** — fields are never renamed or removed, new one
   "question": "Should the export be billing-gated?",
   "context": "The analyst flagged it as a product call.",
   "cause": "human",
-  "command": "duet continue <run-id> --answer \"<your answer>\""
+  "command": "greenflag continue <run-id> --answer \"<your answer>\""
 }
 ```
 
 **`crashed`** — the phase died mid-flight (infrastructure, not content). Report it; on the human's go-ahead, `command` re-enters from the transcripts.
 
-**`abandoned`** — stopped on purpose with `duet abandon`, not failed; `revive` names the resume command, `purge` the irreversible cleanup.
+**`abandoned`** — stopped on purpose with `greenflag abandon`, not failed; `revive` names the resume command, `purge` the irreversible cleanup.
 
 **`done`** — complete; `summary` leads with the PR URL (every workflow opens a PR).
 
 ## The framing skeleton (run starts from dictation)
 
-A framing is one markdown file: an optional machine-parsed frontmatter block, then prose each worker reads alone, cold, as its own briefing. The frontmatter keys mirror `duet new`'s flags — `workflow`, `gates_at`, `spec`, `gateless`, `interactive`, a `consultant` on/off toggle, and `bind.<duty>` binding keys — so `duet new --help` is their reference; a flag wins over its key, and an omitted key takes the workflow's default. Everything judgment-weighed belongs in the prose, never the frontmatter.
+A framing is one markdown file: an optional machine-parsed frontmatter block, then prose each worker reads alone, cold, as its own briefing. The frontmatter keys mirror `greenflag new`'s flags — `workflow`, `gates_at`, `spec`, `gateless`, `interactive`, a `consultant` on/off toggle, and `bind.<duty>` binding keys — so `greenflag new --help` is their reference; a flag wins over its key, and an omitted key takes the workflow's default. Everything judgment-weighed belongs in the prose, never the frontmatter.
 
 Write the prose to its single reader: speak as "you" and pair each action with the knowledge behind it ("read X to understand Y, then build Z"), the way good onboarding does. Draft from this skeleton, filling what the human's dictation gives you and asking for what it doesn't — a thin framing produces hours of misdirected autonomous work:
 

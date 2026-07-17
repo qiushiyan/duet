@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+import { PACKAGE_ROOT } from '../../package-root.ts';
 import { consultantIdentityClause } from '../briefs.ts';
 import { loadRunState, runDirOf, saveRunState } from '../../run/store.ts';
 import type { RunState } from '../../run/store.ts';
@@ -9,14 +9,14 @@ import { workflowFor } from '../../run/workflow.ts';
 import { locateSessionTranscripts } from '../../voices/sessions.ts';
 
 /**
- * The `duet orchestrate <runId>` launcher (Stage 1) — the one place that brings
+ * The `greenflag orchestrate <runId>` launcher (Stage 1) — the one place that brings
  * up the human's interactive Claude Code session wired to drive a run over its
  * attended arc up to the workflow's handoff gate (full: FRAME → PLAN; short:
  * RESEARCH → Direction), and the one place that applies the single gate-safety
  * permission rule. The orchestrator role can't be installed by a slash command
  * (a skill can't do launch-time wiring — the runId is dynamic), so the launcher
  * feeds `prompts/orchestrator-identity.md` to the session as a system prompt
- * (`--append-system-prompt-file`) instead — there is no `/duet` command.
+ * (`--append-system-prompt-file`) instead — there is no `/greenflag` command.
  *
  * The process spawn is the Environment seam (modeled on providers/pane.ts'
  * PaneFactory): runOrchestrate takes an injectable ClaudeLauncher so tests
@@ -26,13 +26,13 @@ import { locateSessionTranscripts } from '../../voices/sessions.ts';
 // The orchestrator identity fed to the session as system-prompt-strength text
 // (durable across compaction, unlike a skill body). It is a prompt asset, not a
 // skill — no SKILL.md, fed as a file by the launcher — so it lives under
-// prompts/, not skills/. Resolved package-relative from this module like
-// snippets.ts resolves snippets/ — and, like snippets/, shipped only
+// prompts/, not skills/. Anchored on PACKAGE_ROOT (src/package-root.ts) like
+// library.ts resolves snippets/ — and, like snippets/, shipped only
 // because the `prompts` entry is in package.json `files` (tests/skill.test.ts
 // pins this target into the publish surface). Drop `prompts` from `files` and a
 // packed build points --append-system-prompt-file at a missing file.
 // (docs/engineering.md §Build.)
-export const IDENTITY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'prompts', 'orchestrator-identity.md');
+export const IDENTITY_PATH = join(PACKAGE_ROOT, 'prompts', 'orchestrator-identity.md');
 
 /**
  * Where the per-run COMPOSED identity lives when a consultant is bound: the
@@ -50,17 +50,17 @@ function composedIdentityPath(state: RunState): string {
 }
 
 /**
- * The single gate-safety rule: an `ask` prompt on `duet continue`. It survives
+ * The single gate-safety rule: an `ask` prompt on `greenflag continue`. It survives
  * `bypassPermissions` — deny/ask rules apply in every permission mode, only
  * `allow` becomes a no-op under bypass — so the one tap protects the gate even
  * when the human launches every session with permissions bypassed.
  *
  * Colon prefix form, matching the documented Claude Code rule shape
- * (`Bash(git status:*)`) and the shipped concierge's `Bash(duet status:*)`
- * (skills/duet-concierge/SKILL.md, pinned by tests/skill.test.ts) — so no
+ * (`Bash(git status:*)`) and the shipped concierge's `Bash(greenflag status:*)`
+ * (skills/greenflag-concierge/SKILL.md, pinned by tests/skill.test.ts) — so no
  * concierge migration is needed.
  */
-export const GATE_ASK_RULE = 'Bash(duet continue:*)';
+export const GATE_ASK_RULE = 'Bash(greenflag continue:*)';
 
 /**
  * Family A — the first user turn, seeded so the wired session opens *working*
@@ -88,7 +88,7 @@ export const KICKOFF_PROMPT =
  * both use the re-anchoring KICKOFF_PROMPT above.
  */
 export const RESUME_KICKOFF_PROMPT =
-  "We've turned everything we worked through in this discussion into a duet framing, so the thinking is settled — and from here your job changes. You're the orchestrator for this run now: the senior engineer who hands the drafting to the architect and the critiquing to the analyst, keeps the run on track, and holds it to the product goals we just agreed on.\n\n" +
+  "We've turned everything we worked through in this discussion into a greenflag framing, so the thinking is settled — and from here your job changes. You're the orchestrator for this run now: the senior engineer who hands the drafting to the architect and the critiquing to the analyst, keeps the run on track, and holds it to the product goals we just agreed on.\n\n" +
   "First, read get_task to see where the run really stands — the phase, the framing, the brief. That's the source of truth to work from; our conversation is the shared understanding behind it. Then give me a one-paragraph plan of attack, and wait for my go before you send the first worker prompt.\n\n" +
   'What we worked out here stays useful the whole way through — for briefing the workers well, and for judging what comes back against what we were actually trying to build.';
 
@@ -99,7 +99,7 @@ export interface LaunchSpec {
 
 /**
  * The current CLI's own executable + entry, so the MCP server is launched as the
- * SAME duet that is running — not whatever `duet` happens to be on PATH (a
+ * SAME greenflag that is running — not whatever `greenflag` happens to be on PATH (a
  * missing link, a different checkout, a version skew). Mirrors spawnDrive
  * (lifecycle.ts), which self-references the detached driver the same way.
  * Injectable so buildLaunchSpec stays a pure argv builder under test.
@@ -124,15 +124,15 @@ const currentSelfRef = (): CliSelfRef => ({ exec: process.execPath, entry: proce
  */
 export function buildLaunchSpec(state: RunState, self: CliSelfRef = currentSelfRef(), opts: { warmStart?: boolean } = {}): LaunchSpec {
   // The MCP server is THIS cli's own executable + entry (self.exec self.entry),
-  // not a bare `duet` PATH lookup — so the kernel the session attaches is the
-  // same duet that launched it (the spawnDrive pattern, lifecycle.ts). The runId
+  // not a bare `greenflag` PATH lookup — so the kernel the session attaches is the
+  // same greenflag that launched it (the spawnDrive pattern, lifecycle.ts). The runId
   // is baked into the args at launch — what a static project .mcp.json or a
   // mid-session skill cannot do. No `cwd` field: the Claude Code stdio MCP schema
   // is command/args/env only, so the server inherits claude's launch cwd (the
-  // project dir, where the human runs `duet orchestrate`); `_mcp` reads
+  // project dir, where the human runs `greenflag orchestrate`); `_mcp` reads
   // process.cwd() from there.
   const mcpConfig = JSON.stringify({
-    mcpServers: { duet: { command: self.exec, args: [self.entry, '_mcp', state.runId] } },
+    mcpServers: { greenflag: { command: self.exec, args: [self.entry, '_mcp', state.runId] } },
   });
   const settings = JSON.stringify({ permissions: { ask: [GATE_ASK_RULE] } });
   return {
@@ -143,7 +143,7 @@ export function buildLaunchSpec(state: RunState, self: CliSelfRef = currentSelfR
       // is the human's own session, so the orchestrator keeps its conversation.
       ...(state.interactiveOrchestratorSessionId ? ['--resume', state.interactiveOrchestratorSessionId] : []),
       '--mcp-config', mcpConfig,
-      // The session's MCP surface is exactly the duet kernel — no user/global
+      // The session's MCP surface is exactly the greenflag kernel — no user/global
       // MCP leakage, the hygiene the headless host gets from strictMcpConfig.
       // On a resume this also drops the discussion session's other MCP servers,
       // which is the wanted clean surface (their old tool calls stay inert in
@@ -179,7 +179,7 @@ export type ClaudeLauncher = (spec: { command: string; args: string[]; env: Node
 
 const defaultLauncher: ClaudeLauncher = (spec) => {
   // spawnSync hands the terminal fully to claude and blocks until it exits — the
-  // right shape for an interactive handoff (duet returns when the session ends),
+  // right shape for an interactive handoff (greenflag returns when the session ends),
   // and synchronous like the seam. result.error is the spawn-layer failure
   // (ENOENT etc.); result.status is the session's exit code, which we ignore —
   // a real session that exits non-zero is not a launch failure.
@@ -211,7 +211,7 @@ export function gateAskRuleLive(spec: LaunchSpec): boolean {
  *  - LAUNCH error, after marking: an immediate spawn failure (ENOENT etc.) means
  *    no session started, so RESTORE the pre-call state — a fresh launch reverts
  *    to unmarked, but a failed relaunch of an already-interactive run keeps its
- *    valid interactive rest and any real prior spend, so `duet status` stays
+ *    valid interactive rest and any real prior spend, so `greenflag status` stays
  *    honest either way.
  *
  * The ask-rule self-check is a WARNING, not a failure: it warns loudly (to
@@ -255,7 +255,7 @@ export function runOrchestrate(
   if (!existsSync(identityPath)) {
     return {
       error: new Error(
-        `the orchestrator identity file is missing (${identityPath}) — the interactive orchestrator session would launch without its role. This is a broken install: confirm duet's prompts/ shipped (it is in package.json "files"), then retry: duet orchestrate ${state.runId}. The run is unchanged.`,
+        `the orchestrator identity file is missing (${identityPath}) — the interactive orchestrator session would launch without its role. This is a broken install: confirm greenflag's prompts/ shipped (it is in package.json "files"), then retry: greenflag orchestrate ${state.runId}. The run is unchanged.`,
       ),
     };
   }
@@ -293,7 +293,7 @@ export function runOrchestrate(
   // Capture the pre-marking state so an immediate launch failure can RESTORE it
   // rather than blanket-clear it. A fresh launch has {host absent, partial
   // false}, so restore == clear; but a failed RELAUNCH of an already-interactive
-  // run (the spec's crash-recovery path is "relaunch duet orchestrate") must
+  // run (the spec's crash-recovery path is "relaunch greenflag orchestrate") must
   // keep its valid interactive rest and any real prior interactive spend —
   // clearing the host would flip probeRunPosition's phase-loop snapshot into
   // headless-crash semantics, and zeroing the partial flag would lie about cost.
@@ -317,7 +317,7 @@ export function runOrchestrate(
   // this is skipped and the shipped identity is fed directly — byte-for-byte the
   // pre-consultant launch. A leftover composed file from a failed launch is
   // harmless: it lives under the self-ignored run dir, is overwritten next
-  // launch, and is removed by `duet abandon --purge`.
+  // launch, and is removed by `greenflag abandon --purge`.
   if (state.bindings.consultant) {
     const base = readFileSync(identityPath, 'utf8');
     writeFileSync(composedIdentityPath(state), `${base.trimEnd()}\n\n${consultantIdentityClause(workflowFor(state))}\n`);
@@ -326,7 +326,7 @@ export function runOrchestrate(
   const spec = buildSpec(state, { warmStart });
   if (!gateAskRuleLive(spec)) {
     log(
-      `[orchestrate] WARNING: the gate-safety ask rule (${GATE_ASK_RULE}) is missing from the launch settings — a "duet continue" could cross a gate WITHOUT a permission prompt. Apply it manually before trusting this session for gate decisions.`,
+      `[orchestrate] WARNING: the gate-safety ask rule (${GATE_ASK_RULE}) is missing from the launch settings — a "greenflag continue" could cross a gate WITHOUT a permission prompt. Apply it manually before trusting this session for gate decisions.`,
     );
   }
 
@@ -350,8 +350,8 @@ export function runOrchestrate(
       ...result,
       error: new Error(
         enoent
-          ? `could not launch "claude" — it was not found on PATH. Install Claude Code (or put it on PATH), then retry: duet orchestrate ${state.runId}. The run is unchanged.`
-          : `the interactive session failed to launch (${result.error.message}). The run is unchanged; fix the cause, then retry: duet orchestrate ${state.runId}.`,
+          ? `could not launch "claude" — it was not found on PATH. Install Claude Code (or put it on PATH), then retry: greenflag orchestrate ${state.runId}. The run is unchanged.`
+          : `the interactive session failed to launch (${result.error.message}). The run is unchanged; fix the cause, then retry: greenflag orchestrate ${state.runId}.`,
       ),
     };
   }

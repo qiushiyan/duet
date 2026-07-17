@@ -9,7 +9,7 @@ import { test } from './helpers/fixtures.ts';
 import { plantClaudeTranscript } from './helpers/transcripts.ts';
 
 /**
- * The `duet orchestrate` launcher — over the process-spawn seam, so no test ever
+ * The `greenflag orchestrate` launcher — over the process-spawn seam, so no test ever
  * launches claude. buildLaunchSpec is pure (argv assertions); runOrchestrate is
  * driven with a recording ClaudeLauncher that captures the spec.
  */
@@ -29,10 +29,10 @@ describe('buildLaunchSpec — the wired claude argv', () => {
     const spec = buildLaunchSpec(run, self);
     const args = spec.args;
     const mcp = JSON.parse(args[args.indexOf('--mcp-config') + 1]!);
-    // The MCP server is THIS cli's exec + entry, not a bare `duet` PATH lookup —
-    // so the kernel that attaches is the same duet that launched (the spawnDrive
+    // The MCP server is THIS cli's exec + entry, not a bare `greenflag` PATH lookup —
+    // so the kernel that attaches is the same greenflag that launched (the spawnDrive
     // pattern). The runId is baked into the args (no phase — resolved per call).
-    expect.soft(mcp.mcpServers.duet).toEqual({
+    expect.soft(mcp.mcpServers.greenflag).toEqual({
       command: self.exec,
       args: [self.entry, '_mcp', run.runId],
     });
@@ -41,11 +41,11 @@ describe('buildLaunchSpec — the wired claude argv', () => {
   test('the default self-reference is the live process exec + entry, never a PATH lookup', ({ run }) => {
     const spec = buildLaunchSpec(run);
     const args = spec.args;
-    const duet = JSON.parse(args[args.indexOf('--mcp-config') + 1]!).mcpServers.duet;
+    const greenflag = JSON.parse(args[args.indexOf('--mcp-config') + 1]!).mcpServers.greenflag;
     // Mirrors spawnDrive (lifecycle.ts): process.execPath runs process.argv[1].
-    expect.soft(duet.command).toBe(process.execPath);
-    expect.soft(duet.args).toEqual([process.argv[1], '_mcp', run.runId]);
-    expect.soft(duet.command).not.toBe('duet'); // the bug this replaced
+    expect.soft(greenflag.command).toBe(process.execPath);
+    expect.soft(greenflag.args).toEqual([process.argv[1], '_mcp', run.runId]);
+    expect.soft(greenflag.command).not.toBe('greenflag'); // the bug this replaced
   });
 
   test('carries hygiene + identity + the ask rule', ({ run }) => {
@@ -61,7 +61,7 @@ describe('buildLaunchSpec — the wired claude argv', () => {
     // The single gate-safety ask rule, colon prefix form.
     expect.soft(gateAskRuleLive(spec)).toBe(true);
     expect.soft(JSON.parse(args[args.indexOf('--settings') + 1]!)).toEqual({
-      permissions: { ask: ['Bash(duet continue:*)'] },
+      permissions: { ask: ['Bash(greenflag continue:*)'] },
     });
   });
 
@@ -243,7 +243,7 @@ describe('runOrchestrate — marks the run and launches over the seam', () => {
   }) => {
     // The run is already interactively orchestrated, with real prior interactive
     // spend recorded (orchestratorCostPartial true). The spec's crash-recovery
-    // path is "relaunch duet orchestrate", so a relaunch whose spawn fails must
+    // path is "relaunch greenflag orchestrate", so a relaunch whose spawn fails must
     // NOT discard that valid state.
     run.orchestrationHost = 'interactive';
     run.costs.orchestratorCostPartial = true;

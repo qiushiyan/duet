@@ -1,6 +1,6 @@
 # Vendored methodology lessons (`lessons/`)
 
-These are **vendored snapshots**, not authored here. They are duet's quality
+These are **vendored snapshots**, not authored here. They are greenflag's quality
 opinion for the planning and build phases — what counts as good design (deep
 modules, seams, the deletion test, illegal states) and good implementation (TDD
 discipline, mocking strategy, the Vitest toolkit). The planning and build
@@ -38,17 +38,17 @@ mattpocock/skills          ← upstream
    │                          .upstream/ pins the Matt snapshot it forked from)
    │  (vendor: pin a snapshot)
    ▼
-duet/lessons/              ← this vendored, shippable copy ({{lessons_dir}})
+greenflag/lessons/              ← this vendored, shippable copy ({{lessons_dir}})
 ```
 
 - **Canonical (authoring) source:** `~/.config/lessons/{codebase-design,testing}`
   — a neutral, tool-agnostic lessons directory the author manages with Stow,
   also read live by tabtype's snippets. Evolved there, not here.
-- **This copy:** a frozen snapshot duet packages and workers read at runtime.
+- **This copy:** a frozen snapshot greenflag packages and workers read at runtime.
   The source's `.upstream/` diff baseline is **not** vendored — it is the
   author's diff anchor, never read by a worker.
 - **Refresh:** `pnpm vendor-lessons` (copies the two topic dirs in wholesale;
-  `--dry-run` to preview; `DUET_LESSONS_DIR` overrides the source). Re-vendoring
+  `--dry-run` to preview; `GREENFLAG_LESSONS_DIR` overrides the source). Re-vendoring
   is a deliberate manual step — the mirror of the snippets ⟷ tabtype
   hand-sync, which runs the opposite direction (repo → tabtype). The provenance
   audit is `git diff` on this directory. **Do not hand-edit files here:** edit

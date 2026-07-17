@@ -10,7 +10,7 @@ import { defaultBindingsFor } from '../src/voices/bindings.ts';
 import { runPhase } from '../src/orchestrator/hosts/driver.ts';
 import type { RunOrchestratorTurn } from '../src/orchestrator/hosts/driver.ts';
 import type { PhaseInput } from '../src/orchestrator/hosts/host-runner.ts';
-import { duetMachine, interactiveMachine } from '../src/run/machine.ts';
+import { greenflagMachine, interactiveMachine } from '../src/run/machine.ts';
 import type { PhaseEvent } from '../src/run/phase-events.ts';
 import {
   caffeinateCommand,
@@ -52,7 +52,7 @@ function recordingNotify() {
 const advanced: PhaseEvent = { type: 'phase.advance' };
 
 /**
- * The duetMachine driving the REAL runPhase (with the SDK turn faked), rather
+ * The greenflagMachine driving the REAL runPhase (with the SDK turn faked), rather
  * than a scripted phase event. scriptedMachine's driver sends a phase.* event
  * directly and so bypasses runPhase's terminal-marker entry short-circuit —
  * the exact path the spent-marker guard protects. This helper keeps that
@@ -61,13 +61,13 @@ const advanced: PhaseEvent = { type: 'phase.advance' };
  */
 function realDriverMachine(
   turn: (ctx: Parameters<RunOrchestratorTurn>[0]) => Promise<SDKMessage[]>,
-): { machine: typeof duetMachine; calls: string[] } {
+): { machine: typeof greenflagMachine; calls: string[] } {
   const calls: string[] = [];
   const runTurn: RunOrchestratorTurn = async function* (ctx) {
     calls.push(ctx.prompt);
     yield* await turn(ctx);
   };
-  const machine = duetMachine.provide({
+  const machine = greenflagMachine.provide({
     actors: {
       phaseDriver: fromCallback<EventObject, PhaseInput>(({ input, sendBack }) => {
         runPhase(input, runTurn)
@@ -258,7 +258,7 @@ describe('the quiescence soft-fail (S4 — a hung phase parks, never strands)', 
     expect.soft(fresh.machineState).toBe('frameFlagWait');
     expect.soft(probeRunPosition(fresh)).toEqual({ kind: 'flag', phase: 'frame' });
     expect.soft(fresh.pendingQuestion?.cause).toBe('infra');
-    expect.soft(fresh.pendingQuestion?.question).toMatch(/duet continue/);
+    expect.soft(fresh.pendingQuestion?.question).toMatch(/greenflag continue/);
   });
 
   test('it preserves a question the orchestrator already queued (first-question-wins), still parking in flag-wait', async ({
@@ -420,7 +420,7 @@ describe('crossInteractive + the interactive continue model (Slice 4)', () => {
   });
 });
 
-describe('waitForRunStop (the supervision primitive behind duet status --wait)', () => {
+describe('waitForRunStop (the supervision primitive behind greenflag status --wait)', () => {
   test('returns immediately when the run is already at a stop', async ({ projectDir, run }) => {
     const position = await waitForRunStop(projectDir, run.runId, { intervalMs: 10 });
     expect(position.kind).toBe('crashed'); // no snapshot, no driver — already stopped
@@ -549,7 +549,7 @@ describe('gate pre-authorization (gates_at)', () => {
     const quiet = recordingNotify();
     await driveToQuiescence(run, undefined, { machine: first.machine, notify: quiet.notify });
 
-    // The persisted snapshot is what a later `duet continue --approve` restores.
+    // The persisted snapshot is what a later `greenflag continue --approve` restores.
     const second = scriptedMachine([advanced]);
     const resumed = await driveToQuiescence(
       run,
@@ -637,7 +637,7 @@ describe('enterAfk — the mid-session AFK handoff (#1)', () => {
     projectDir,
     interactiveRun,
   }) => {
-    // The forensics gap: `duet afk` crossed the parked gate without a ledger
+    // The forensics gap: `greenflag afk` crossed the parked gate without a ledger
     // entry, so the morning review of a handed-off run under-counted by one.
     // Bare afk is a NON-explicit crossing (the class the severity hold guards
     // and this ledger exists for) → recorded; --gateless is the explicit
@@ -810,8 +810,8 @@ describe('freezeContractAt — the acceptance contract freeze at the contract ga
 
   const initGit = async (dir: string): Promise<void> => {
     await execa('git', ['init', '-q'], { cwd: dir });
-    await execa('git', ['config', 'user.email', 'duet-test@example.com'], { cwd: dir });
-    await execa('git', ['config', 'user.name', 'duet test'], { cwd: dir });
+    await execa('git', ['config', 'user.email', 'greenflag-test@example.com'], { cwd: dir });
+    await execa('git', ['config', 'user.name', 'greenflag test'], { cwd: dir });
     writeFileSync(join(dir, 'README.md'), '# repo\n');
     await execa('git', ['add', '-A'], { cwd: dir });
     await execa('git', ['commit', '-qm', 'initial'], { cwd: dir });

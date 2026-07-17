@@ -1,5 +1,5 @@
 /**
- * `duet graph` — the render-on-demand visualization surface. This module owns the
+ * `greenflag graph` — the render-on-demand visualization surface. This module owns the
  * RENDERERS (ANSI pipeline, `--json`, `--mermaid`) and the thin CLI-facing
  * composers that resolve inputs and build a `GraphModel`; the model itself (the
  * shared spine + overlays) lives in `graph-model.ts`. Read-only throughout: the
@@ -124,7 +124,7 @@ function renderBlueprint(model: GraphModel & { mode: 'blueprint' }): string {
   lines.push('', 'stages');
   for (const stage of spine.stages) lines.push(stageLine(stage));
 
-  lines.push('', 'bindings — defaults, resolved against ~/.config/duet/config.toml (a run re-resolves and freezes at creation)');
+  lines.push('', 'bindings — defaults, resolved against ~/.config/greenflag/config.toml (a run re-resolves and freezes at creation)');
   for (const row of bindingRowsInOrder(model.bindings)) lines.push(`  ${row.address.padEnd(13)} ${row.label}`);
   if (model.degradedEdges.length > 0) {
     const edges = model.degradedEdges.map((e) => `${e.into}←${e.from} (${e.reason})`).join(', ');

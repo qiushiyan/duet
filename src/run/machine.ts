@@ -154,7 +154,7 @@ function buildStates(spec: WorkflowSpecInput): Record<string, object> {
 }
 
 /** The shared machine setup — types, the hasSpec guard, and a driver-less phaseDriver slot. */
-const duetSetup = setup({
+const greenflagSetup = setup({
   types: {} as {
     context: MachineInput;
     input: MachineInput;
@@ -189,13 +189,13 @@ const duetSetup = setup({
  * values are `string`, not a literal union) — the lifecycle hydrates any run
  * through `machineFor(state.workflow)` with no per-workflow typing.
  */
-export function machineFor(workflow: WorkflowRef): ReturnType<typeof createDuetMachine> {
-  return createDuetMachine(workflowDefinition(workflow));
+export function machineFor(workflow: WorkflowRef): ReturnType<typeof createGreenflagMachine> {
+  return createGreenflagMachine(workflowDefinition(workflow));
 }
 
-function createDuetMachine(spec: WorkflowSpecInput) {
-  return duetSetup.createMachine({
-    id: 'duet',
+function createGreenflagMachine(spec: WorkflowSpecInput) {
+  return greenflagSetup.createMachine({
+    id: 'greenflag',
     context: ({ input }) => input,
     initial: 'route',
     states: buildStates(spec),
@@ -203,11 +203,11 @@ function createDuetMachine(spec: WorkflowSpecInput) {
 }
 
 /** The Full arc's machine — the canonical type for `LifecycleDeps.machine` etc. */
-export const duetMachine = machineFor('full');
+export const greenflagMachine = machineFor('full');
 
 /**
  * The interactive variant — Stage 1's host, where the human's Claude Code
- * session drives each phase by calling kernel tools and `duet continue`
+ * session drives each phase by calling kernel tools and `greenflag continue`
  * (crossInteractive) applies the gate events. The phaseDriver is replaced via
  * the same `machine.provide` seam stdioPhaseMachine and the test scriptedMachine
  * use, but with an INERT actor: it runs no session and never sendBacks a
@@ -222,7 +222,7 @@ export const duetMachine = machineFor('full');
  * phase loop a legitimate RESTING state for an interactive run (for the real
  * driver the same snapshot would be mid-flight, hence never persisted).
  */
-export function interactiveMachineFor(workflow: WorkflowRef): typeof duetMachine {
+export function interactiveMachineFor(workflow: WorkflowRef): typeof greenflagMachine {
   return machineFor(workflow).provide({
     actors: {
       phaseDriver: fromCallback<EventObject, PhaseInput>(() => {
@@ -234,4 +234,4 @@ export function interactiveMachineFor(workflow: WorkflowRef): typeof duetMachine
 }
 
 /** The Full arc's interactive machine — kept as a named export. */
-export const interactiveMachine: typeof duetMachine = interactiveMachineFor('full');
+export const interactiveMachine: typeof greenflagMachine = interactiveMachineFor('full');

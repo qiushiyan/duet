@@ -1,6 +1,8 @@
-# duet
+# greenflag
 
-duet is a semi-AFK orchestrator: a run executes one workflow (full · blueprint · relay · short) on one branch, the orchestrator routing a snippet protocol between each stage's two duty voices, phase by phase, inside a code-enforced statechart whose gates only the human can cross. This glossary is the ubiquitous language — aligned with AI-orchestration and CI industry terms where a standard exists (resolved 2026-07-04), duet-specific where duet is the standard.
+greenflag is a semi-AFK orchestrator: a run executes one workflow (full · blueprint · relay · short) on one branch, the orchestrator routing a snippet protocol between each stage's two duty voices, phase by phase, inside a code-enforced statechart whose gates only the human can cross. This glossary is the ubiquitous language — aligned with AI-orchestration and CI industry terms where a standard exists (resolved 2026-07-04), greenflag-specific where greenflag is the standard.
+
+**The name, and the one collision it creates.** The voices work at speed and unattended; the human's authority reaches them the way a marshal's reaches a driver — as a flag. The product is the **green** flag: the human's go, the only thing that crosses a gate. A bare **flag** in this glossary is the opposite direction — the run raising its hand (`ask_human`) to stop and wait for the human. The two are disambiguated by **color, never by context**: write "green flag" (or "gate crossing") for the go and a bare "flag" for the interrupt, and never the reverse. The product name is not a domain term: it names only the tool's own surfaces — the command, its config dir, the machine and MCP-server ids — and never a concept in this glossary. No duty, phase, event, artifact, or tool is a "greenflag".
 
 ## Workflow structure
 
@@ -9,7 +11,7 @@ A named process shape a run executes, expressed as an ordered list of stages. Th
 _Avoid_: arc, pipeline; "design" and "rir" (retired names)
 
 **Workflow definition**:
-An authored SDK expression (`defineWorkflow({ phases: [...] })`) that composes the closed block vocabulary into a named workflow. It may be shipped by duet or live in a user/project workflow file; it is input, not what a run executes directly.
+An authored SDK expression (`defineWorkflow({ phases: [...] })`) that composes the closed block vocabulary into a named workflow. It may be shipped by greenflag or live in a user/project workflow file; it is input, not what a run executes directly.
 _Avoid_: workflow config, workflow script, pipeline file
 
 **Compiled workflow**:
@@ -33,15 +35,15 @@ A phase-kind — frame, doc-loop, build, or finish — the reusable primitive of
 _Avoid_: operator, template, node type
 
 **Knob**:
-A named, closed-vocabulary parameter on a block (artifact kind, review posture, entry seed, tail owner, …). A knob value exists only when duet ships prompt support for it and a shipped workflow exercises it.
+A named, closed-vocabulary parameter on a block (artifact kind, review posture, entry seed, tail owner, …). A knob value exists only when greenflag ships prompt support for it and a shipped workflow exercises it.
 _Avoid_: option, setting
 
 **Run**:
-One execution of a workflow on one branch, persisted under `.duet/runs/<id>/`.
+One execution of a workflow on one branch, persisted under `.greenflag/runs/<id>/`.
 _Avoid_: session (that's a provider transcript), job
 
 **Gate**:
-A human approval stop at a phase's exit. Only a `human.*` event crosses one; tools can park a run at a gate but never cross it. Pre-authorization grants the authority in advance; the stop still happens and is recorded.
+A human approval stop at a phase's exit. Only a `human.*` event crosses one; tools can park a run at a gate but never cross it — crossing is the **green flag**, and it is the human's alone. Pre-authorization grants the authority in advance; the stop still happens and is recorded.
 _Avoid_: checkpoint, approval step, breakpoint
 
 **Stage boundary**:
@@ -53,19 +55,19 @@ The host transfer only — an interactively-orchestrated run passing to the head
 _Avoid_: handoff gate as a binding concept
 
 **Flag**:
-A queued `ask_human` question parking the run until the human answers — duet's human-in-the-loop interrupt. Crash = flag: infrastructure failures land here, never in a silent state.
-_Avoid_: interrupt, suspension, exception
+A queued `ask_human` question parking the run until the human answers — the human-in-the-loop interrupt. Crash = flag: infrastructure failures land here, never in a silent state. Unqualified, "flag" is always this — the run stopping itself to ask. It never means the human's go (that is the **green flag**, i.e. a gate crossing), and the product name is never shorthand for it.
+_Avoid_: interrupt, suspension, exception; "green flag" for this sense (it is the opposite direction)
 
 **Steer**:
 The human's mid-phase note into a live run, delivered on the orchestrator's next phase-continuing tool result. Processed, not answered; never a pause.
 _Avoid_: message, hint
 
 **Severity hold**:
-A `high` human-decision entry on a gate packet that withholds a non-explicit crossing — duet's automated hold signal (what Azure calls a "gate"), distinct from the human's approval.
+A `high` human-decision entry on a gate packet that withholds a non-explicit crossing — greenflag's automated hold signal (what Azure calls a "gate"), distinct from the human's approval.
 _Avoid_: block (verb overload), veto
 
 **Posture**:
-A run's declared attendance plan — which gates the human attends (`gates_at`, presets like overnight and afk, gateless). Fixed at run creation; `duet afk` is the one mid-run re-set.
+A run's declared attendance plan — which gates the human attends (`gates_at`, presets like overnight and afk, gateless). Fixed at run creation; `greenflag afk` is the one mid-run re-set.
 _Avoid_: mode, profile
 
 ## Voices and execution
@@ -113,11 +115,11 @@ The two documents a doc-loop phase can produce, and the whole artifact vocabular
 _Avoid_: design doc, blueprint (that's a workflow), technical spec
 
 **Snippet**:
-A prompt template in duet's shipped library, the workflow's substance — adapted per turn by the orchestrator, overridable per key by users.
+A prompt template in greenflag's shipped library, the workflow's substance — adapted per turn by the orchestrator, overridable per key by users.
 _Avoid_: template (claimed by seed templates), prompt
 
 **Seed template**:
-A project's pre-baked framing under `.duet/templates/` — parsed and archived as the framing itself, not config.
+A project's pre-baked framing under `.greenflag/templates/` — parsed and archived as the framing itself, not config.
 _Avoid_: framing template, profile
 
 **Brief**:
@@ -133,5 +135,5 @@ The consultant-authored, human-ratifiable, harness-frozen list of falsifiable as
 _Avoid_: spec (a different artifact), test plan
 
 **Consultant checkpoint**:
-A gate-adjacent point where a bound consultant fires (frame, bet audit, contract, verify). Unrelated to persistence checkpoints/snapshots — duet persists the statechart as a snapshot, never called a checkpoint.
+A gate-adjacent point where a bound consultant fires (frame, bet audit, contract, verify). Unrelated to persistence checkpoints/snapshots — greenflag persists the statechart as a snapshot, never called a checkpoint.
 _Avoid_: touchpoint, checkpoint (unqualified)

@@ -60,8 +60,8 @@ export function orphanRecoveryFor(address: VoiceAddress): 'takeover' | 'discard-
 }
 
 /**
- * Whether duet resumes an address's session (`persistent`) or seeds a fresh
- * one each turn (`ephemeral`). The discriminator `duet takeover` reads to
+ * Whether greenflag resumes an address's session (`persistent`) or seeds a fresh
+ * one each turn (`ephemeral`). The discriminator `greenflag takeover` reads to
  * decide resume-vs-inspect: the latest ephemeral checkpoint is inspectable
  * but never a resume target, since the next turn starts clean.
  */
@@ -126,7 +126,7 @@ export function sessionRecordFor(state: RunState, address: VoiceAddress): Worker
  * drop (the wedged-past-its-ceiling case).
  *
  * The stated trade: clearing the planning slot forfeits that era's RECORD —
- * `duet takeover` of the planning duty finds no session afterward, and a
+ * `greenflag takeover` of the planning duty finds no session afterward, and a
  * later `--purge` no longer locates that transcript (the transcript itself
  * stays on disk in the provider's tree). Accepted deliberately: state.json is
  * a hint and the transcripts are truth, so losing the hint beats a

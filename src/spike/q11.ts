@@ -1,7 +1,7 @@
 /**
  * Q11 substrate spike (docs/open-questions.md Q11).
  *
- * Verifies, end to end, that the Claude Agent SDK can host duet's
+ * Verifies, end to end, that the Claude Agent SDK can host greenflag's
  * orchestrator role:
  *
  *   1. A read-only orchestrator agent whose ONLY tools are `send_prompt`
@@ -47,7 +47,7 @@ import { CodexWorker } from '../voices/providers/codex.ts';
 import type { WorkerProvider } from '../voices/providers/types.ts';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const STATE_DIR = join(REPO_ROOT, '.duet', 'spike-q11');
+const STATE_DIR = join(REPO_ROOT, '.greenflag', 'spike-q11');
 const STATE_FILE = join(STATE_DIR, 'state.json');
 const ORCHESTRATOR_MODEL = 'claude-opus-4-8';
 

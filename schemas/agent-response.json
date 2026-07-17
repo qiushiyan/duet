@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "duet agent response",
+  "title": "greenflag agent response",
   "description": "The structured response shape that every orchestrator-routed turn produces. Used with `claude --json-schema` and `codex exec --output-schema` on every cross-agent routing call. OpenAI-strict-compliant: every property in `properties` appears in `required`, and optional fields are nullable via `anyOf`. Empirically verified 2026-05-26 against claude-haiku-4-5 and codex gpt-5.5.",
   "type": "object",
   "required": ["response_text", "needs_human", "disagree"],

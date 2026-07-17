@@ -15,10 +15,10 @@ import { workflowFor } from '../run/workflow.ts';
 /**
  * Locating the providers' standard-location session transcripts for a run.
  *
- * This is the ONE place duet reaches OUTSIDE `.duet/` into the user's own
- * `~/.claude` and `~/.codex` — `duet abandon --purge` deletes what it finds
- * here (`purgeRun` below). Everything else duet writes lives under
- * the self-ignored `.duet/`; these transcripts are the user's normal CLI
+ * This is the ONE place greenflag reaches OUTSIDE `.greenflag/` into the user's own
+ * `~/.claude` and `~/.codex` — `greenflag abandon --purge` deletes what it finds
+ * here (`purgeRun` below). Everything else greenflag writes lives under
+ * the self-ignored `.greenflag/`; these transcripts are the user's normal CLI
  * artifacts (augmentation principle), so deletion is opt-in and location is by
  * EXACT session-id match — never a directory sweep that could catch an
  * unrelated session.
@@ -217,7 +217,7 @@ export function readTranscriptTailAtPath(
 }
 
 export interface PurgeResult {
-  /** The `.duet/runs/<id>/` dir that was removed. */
+  /** The `.greenflag/runs/<id>/` dir that was removed. */
   runDir: string;
   /** The provider session transcripts that were removed — one per tracked slot (the orchestrator, each duty's record, the consultant's latest) that located a file. */
   transcripts: string[];
@@ -229,12 +229,12 @@ export interface PurgeResult {
  * that spans both lives HERE, on the voices side, importing runDirOf
  * downward).
  *
- * Delete everything a run created: its `.duet/runs/<id>/` dir AND every
+ * Delete everything a run created: its `.greenflag/runs/<id>/` dir AND every
  * tracked session's transcript (the orchestrator, each duty's record, the
  * consultant's latest checkpoint), located by exact session-id match
- * (locateSessionTranscripts above). This is the one duet operation that
+ * (locateSessionTranscripts above). This is the one greenflag operation that
  * removes the user's standard-location CLI artifacts — hence opt-in
- * (`duet abandon --purge`) — so it returns exactly what it removed for the
+ * (`greenflag abandon --purge`) — so it returns exactly what it removed for the
  * caller to echo. Idempotent and provider-aware: each transcript is located
  * under the provider its own RECORD names (never a binding — a record is its
  * own provider source), and missing files are simply absent from the result.

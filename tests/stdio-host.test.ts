@@ -8,7 +8,7 @@ import { test } from './helpers/fixtures.ts';
 
 /**
  * Behavioral parity over the boundary — the risk this work exists to retire.
- * The orchestrator's tools run in a REAL `duet _mcp` subprocess (a genuine
+ * The orchestrator's tools run in a REAL `greenflag _mcp` subprocess (a genuine
  * separate stdio peer), driven by a scripted MCP client; the kernel parks,
  * persists, and converts failure exactly as the in-process path does. The
  * client is the orchestrator-client seam (Stage 1 = the interactive session);

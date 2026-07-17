@@ -35,7 +35,7 @@ describe('claudePaneLaunchCommand (S2 — the forced watchdog on the interactive
     expect.soft(cmd).toContain('sess-9');
   });
 
-  test('carries effort and appends native argv after duet-owned launch flags', () => {
+  test('carries effort and appends native argv after greenflag-owned launch flags', () => {
     const cmd = claudePaneLaunchCommand({ model: 'm', effort: 'xhigh', nativeArgs: ['--append-system-prompt', 'extra'] });
     expect.soft(cmd[cmd.indexOf('--effort') + 1]).toBe('xhigh');
     expect.soft(cmd.slice(-2)).toEqual(['--append-system-prompt', 'extra']);
@@ -131,7 +131,7 @@ describe('InteractiveClaudeWorker (driving over FakePane + a tmpdir, no live aut
       vi.useRealTimers();
     }
   };
-  const tmpRoot = (): string => mkdtempSync(join(tmpdir(), 'duet-iclaude-'));
+  const tmpRoot = (): string => mkdtempSync(join(tmpdir(), 'greenflag-iclaude-'));
 
   /** Wire a worker over a tmpdir root and a captured FakePane (spawn-per-turn → one pane). */
   const wire = (
@@ -165,7 +165,7 @@ describe('InteractiveClaudeWorker (driving over FakePane + a tmpdir, no live aut
       expect.soft(pane().submitted).toHaveLength(1);
       expect.soft(pane().events.indexOf('submit')).toBeGreaterThan(pane().events.indexOf('ready:true'));
       expect.soft(pane().submitted[0]).toContain('do the thing');
-      expect.soft(pane().submitted[0]).toMatch(/\[duet-turn:[0-9a-f]{16}\]/);
+      expect.soft(pane().submitted[0]).toMatch(/\[greenflag-turn:[0-9a-f]{16}\]/);
       rmSync(dir, { recursive: true, force: true });
     }));
 
@@ -440,6 +440,6 @@ describe('InteractiveClaudeWorker (driving over FakePane + a tmpdir, no live aut
 
 describe('claudeProjectSlug', () => {
   test("maps a cwd to Claude Code's project-dir name (known case; Slice 5 confirms the rule)", () => {
-    expect(claudeProjectSlug('/Users/qiushi/dev/duet')).toBe('-Users-qiushi-dev-duet');
+    expect(claudeProjectSlug('/Users/qiushi/dev/greenflag')).toBe('-Users-qiushi-dev-greenflag');
   });
 });

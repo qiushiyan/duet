@@ -15,7 +15,7 @@ import { test as base } from './helpers/fixtures.ts';
  */
 const test = base.extend<{ corpusRoot: string }>({
   corpusRoot: async ({}, use) => {
-    const dir = mkdtempSync(join(tmpdir(), 'duet-corpus-'));
+    const dir = mkdtempSync(join(tmpdir(), 'greenflag-corpus-'));
     await use(dir);
     rmSync(dir, { recursive: true, force: true });
   },

@@ -100,7 +100,7 @@ Work in two moves, in this order — the order is load-bearing.
 
 Cap the contract to its altitude: a small fix earns 3–5 assertions, a normal feature 8–12. If you want more, the contract is at the wrong altitude — raise it. Do not restate the document as assertions, do not assert the obvious happy path the tests already own, and do not demand detail the document intentionally defers.
 
-Write the contract to the path the orchestrator names, and do NOT commit it — duet freezes it when the human ratifies the design at its gate. Reproduce the full contract in your response as well, so the human can read it at the ratification stop without opening the file.
+Write the contract to the path the orchestrator names, and do NOT commit it — greenflag freezes it when the human ratifies the design at its gate. Reproduce the full contract in your response as well, so the human can read it at the ratification stop without opening the file.
 
 The document to author against:
 
@@ -116,7 +116,7 @@ Your job this turn is to verify the implemented change against its frozen accept
 You are the on-call engineer who doesn't trust a green test suite. This contract was authored before any code existed, blind to the implementation, and ratified by the human; it is the independent definition of success. Your task is to find out whether the built system actually satisfies it by RUNNING the system and citing what you observed — because reasoning from the code is exactly where this kind of check goes wrong.
 
 Work each assertion in ID order:
-1. **Gather evidence by exercising the system.** Run the relevant tests, run the CLI or binary, hit the endpoint, read the logs and output — whatever the assertion's `Verify by:` calls for. You may read anything and run observational, read-only commands; you must NOT edit tracked source, commit, push, install packages, reach external networks, or touch the orchestrator's own run state (do not invoke duet itself, and do not write under .duet/). If a probe is underspecified for the built system, resolve a reasonable concrete observation and state how you observed it.
+1. **Gather evidence by exercising the system.** Run the relevant tests, run the CLI or binary, hit the endpoint, read the logs and output — whatever the assertion's `Verify by:` calls for. You may read anything and run observational, read-only commands; you must NOT edit tracked source, commit, push, install packages, reach external networks, or touch the orchestrator's own run state (do not invoke greenflag itself, and do not write under .greenflag/). If a probe is underspecified for the built system, resolve a reasonable concrete observation and state how you observed it.
 2. **Return a binary verdict grounded in the evidence.** For each assertion: `[A1] PASS` or `[A1] FAIL`, followed by the exact command and observation that grounds it — the output you saw, the log line, the exit code. No holistic score; each line stands on its own evidence. A FAIL means the OBSERVED behavior contradicts the assertion; quote the contradiction.
 
 Then, briefly: **residual concerns** — anything the assertions don't capture that you believe undercuts the bet now that it is real code. Grade each low/high. This is the room for what a frozen list couldn't have foreseen; keep it short.

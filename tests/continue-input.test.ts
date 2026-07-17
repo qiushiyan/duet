@@ -123,7 +123,7 @@ describe('stageContinueText — file and stdin forms relay verbatim', () => {
   });
 });
 
-describe('duet steer — non-TTY fail-fast (command level)', () => {
+describe('greenflag steer — non-TTY fail-fast (command level)', () => {
   test('a bare steer off a TTY fails fast naming the inline form', async ({ run, projectDir }) => {
     // Drive the real command: a fresh run probes to a crashed position, so steer
     // reaches resolveHumanText, which off a TTY (vitest is non-interactive)
@@ -134,7 +134,7 @@ describe('duet steer — non-TTY fail-fast (command level)', () => {
       // Bare steer (no positionals): `steer [text] [runId]` — passing a runId
       // would land as the note text, so target the fixture run via latestRun.
       expect.soft(run.runId).toBeTruthy();
-      await expect(program.parseAsync(['node', 'duet', 'steer'])).rejects.toThrow(
+      await expect(program.parseAsync(['node', 'greenflag', 'steer'])).rejects.toThrow(
         /non-interactive shell — pass it inline/,
       );
     } finally {
@@ -151,7 +151,7 @@ describe('takeover — resolving an interrupted (orphaned) turn', () => {
       // An orphan with no captured session id (its turn died before settle).
       run.pendingTurns = { analyst: { tag: 'review-spec', startedAt: 't', status: 'running' } };
       saveRunState(run);
-      await program.parseAsync(['node', 'duet', 'takeover', 'analyst', run.runId]);
+      await program.parseAsync(['node', 'greenflag', 'takeover', 'analyst', run.runId]);
       // The orphan is cleared (role re-opened); no provider was spawned, no fail.
       expect(loadRunState(projectDir, run.runId).pendingTurns?.analyst).toBeUndefined();
     } finally {
@@ -163,7 +163,7 @@ describe('takeover — resolving an interrupted (orphaned) turn', () => {
     const cwd = process.cwd();
     process.chdir(projectDir);
     try {
-      await expect(program.parseAsync(['node', 'duet', 'takeover', 'analyst', run.runId])).rejects.toThrow(
+      await expect(program.parseAsync(['node', 'greenflag', 'takeover', 'analyst', run.runId])).rejects.toThrow(
         /no session yet/,
       );
     } finally {

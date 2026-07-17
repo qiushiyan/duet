@@ -27,7 +27,7 @@ function hasSpecPhase(workflow: WorkflowRef): boolean {
 /**
  * Status — one derivation, two renderers. `buildStatusModel` joins the run
  * state with the position probe into the StatusModel; the human renderer
- * (`renderStatus`) and `duet status --json` (`JSON.stringify` of the model,
+ * (`renderStatus`) and `greenflag status --json` (`JSON.stringify` of the model,
  * verbatim) both consume it. Everything here is pure string/object building:
  * no fs, no process table, no xstate — the caller gathers the position and
  * the pending steers and passes them in.
@@ -43,14 +43,14 @@ function hasSpecPhase(workflow: WorkflowRef): boolean {
  * strings are also what the concierge skill's reference documents.
  */
 const continueCommand = {
-  approve: (runId: string) => `duet continue ${runId} --approve`,
-  reject: (runId: string) => `duet continue ${runId} --reject "<feedback>"`,
-  answer: (runId: string) => `duet continue ${runId} --answer "<your answer>"`,
-  resume: (runId: string) => `duet continue ${runId}`,
+  approve: (runId: string) => `greenflag continue ${runId} --approve`,
+  reject: (runId: string) => `greenflag continue ${runId} --reject "<feedback>"`,
+  answer: (runId: string) => `greenflag continue ${runId} --answer "<your answer>"`,
+  resume: (runId: string) => `greenflag continue ${runId}`,
 };
 
 /**
- * Why `duet steer` is refused at this position, or undefined when steering
+ * Why `greenflag steer` is refused at this position, or undefined when steering
  * is legal (a live or crashed phase). Quiescent stops have their own
  * channel, and the copy names it — gates stay explicit.
  */
@@ -73,16 +73,16 @@ export function steerRefusal(workflow: WorkflowRef, position: RunPosition, runId
       );
     case 'interactive':
       // The behaviour is correct — there is no headless driver to deliver a
-      // staged steer to — but the channel is the interactive orchestrator session (chat), not duet steer.
+      // staged steer to — but the channel is the interactive orchestrator session (chat), not greenflag steer.
       return (
         `run ${runId} is orchestrated in your interactive orchestrator session — steer it there in chat, ` +
         `as your editor-in-chief voice (the conversation is the channel, no relay). ` +
-        `duet steer is for the headless phases.`
+        `greenflag steer is for the headless phases.`
       );
     case 'abandoned':
-      return `run ${runId} was abandoned — there is no live phase to steer. Revive it with ${continueCommand.resume(runId)}, or start fresh with duet new.`;
+      return `run ${runId} was abandoned — there is no live phase to steer. Revive it with ${continueCommand.resume(runId)}, or start fresh with greenflag new.`;
     case 'done':
-      return `run ${runId} is complete — there is no phase to steer. A new run starts with duet new.`;
+      return `run ${runId} is complete — there is no phase to steer. A new run starts with greenflag new.`;
   }
 }
 
@@ -135,7 +135,7 @@ export interface StatusModel {
    * The cheap exact session map (#1): each known voice's `{ voice, provider,
    * sessionId }`, a state-only read (no transcript scan, even under --wait).
    * Always present ([] when no session yet); the resolved path + verdicts are
-   * `duet doctor`'s job, off this hot path. Known sessions only.
+   * `greenflag doctor`'s job, off this hot path. Known sessions only.
    */
   sessions: SessionRef[];
   gatesAt?: GatePhase[];
@@ -154,7 +154,7 @@ export interface StatusModel {
    * Interactive-host worker turns in flight or settled-uncollected (the async
    * send_prompt lifecycle). Present only when `state.pendingTurns` has entries;
    * a `ready`/`failed` turn signals "collect with check_turns" and is what
-   * `duet status --wait` (slice 5) wakes on. Additive (schema-additive-only).
+   * `greenflag status --wait` (slice 5) wakes on. Additive (schema-additive-only).
    */
   pendingTurns?: Array<{ duty: VoiceAddress; tag: string; status: 'running' | 'ready' | 'failed'; startedAt: string }>;
   /** Queued library edits (rationale only — full bodies stay in state.json). */
@@ -255,7 +255,7 @@ function stopModel(state: RunState, position: RunPosition): StopModel {
         kind: 'abandoned',
         at: state.abandoned?.at ?? '',
         revive: continueCommand.resume(state.runId),
-        purge: `duet abandon ${state.runId} --purge`,
+        purge: `greenflag abandon ${state.runId} --purge`,
       };
     case 'done': {
       // The run's last phase carries the completion summary — Full's `finish`,
@@ -312,8 +312,8 @@ export function displayState(stop: StopModel, machineState?: string): string {
 
 /**
  * The gate-posture sentence ("attending X — … pre-authorized"), the single
- * source for the three surfaces that build it — `duet status`, `duet new`,
- * `duet afk`. They share the attending-vs-none SHAPE but not the copy: the
+ * source for the three surfaces that build it — `greenflag status`, `greenflag new`,
+ * `greenflag afk`. They share the attending-vs-none SHAPE but not the copy: the
  * label/padding, the attended suffix (afk threads its explicit pre-authorized
  * list; the others say "other gates"), and the trailing parenthetical differ
  * per surface. The shape lives here; each caller supplies its own copy, so the
@@ -353,7 +353,7 @@ function contextEventLine(e: ContextEvent): string {
 
 export function renderStatus(model: StatusModel): string {
   const lines: string[] = [];
-  lines.push(`\n━━━ duet run ${model.runId} ━━━`);
+  lines.push(`\n━━━ greenflag run ${model.runId} ━━━`);
   lines.push(`workflow: ${model.workflowDisplayName}`);
   lines.push(`state:    ${displayState(model.stop, model.machineState)}`);
   if (model.stop.kind === 'running') {
@@ -424,7 +424,7 @@ export function renderStatus(model: StatusModel): string {
     for (const a of model.autoApprovals) {
       lines.push(`  ✓ ${a.gate}  ${fmtStamp(a.at)}  ${a.headline}`);
     }
-    lines.push(`  full packets: duet logs ${model.runId}`);
+    lines.push(`  full packets: greenflag logs ${model.runId}`);
   }
 
   if (model.awayRetries.length > 0) {
@@ -510,10 +510,10 @@ export function renderStatus(model: StatusModel): string {
         for (const p of model.snippetProposals) {
           lines.push(`\n• ${p.snippetKey} — ${p.rationale}`);
         }
-        lines.push(`\nfull bodies in .duet/runs/${model.runId}/state.json; apply the ones you accept to the owning snippets/ file.`);
+        lines.push(`\nfull bodies in .greenflag/runs/${model.runId}/state.json; apply the ones you accept to the owning snippets/ file.`);
       }
-      lines.push(`\ntranscripts: .duet/runs/${model.runId}/*.log (and the providers' standard session locations)`);
-      lines.push(`nothing is running${model.workflowDetail.opensPr ? ' — merge the PR on GitHub' : ''}. To remove this run's local artifacts and session transcripts: duet abandon ${model.runId} --purge`);
+      lines.push(`\ntranscripts: .greenflag/runs/${model.runId}/*.log (and the providers' standard session locations)`);
+      lines.push(`nothing is running${model.workflowDetail.opensPr ? ' — merge the PR on GitHub' : ''}. To remove this run's local artifacts and session transcripts: greenflag abandon ${model.runId} --purge`);
       break;
     default: {
       const _exhaustive: never = stop;
@@ -614,7 +614,7 @@ export function buildBrief(model: StatusModel): BriefModel {
 /** The lean human render of the digest — a few lines, not the full packet. */
 export function renderBrief(brief: BriefModel): string {
   const lines: string[] = [];
-  lines.push(`duet ${brief.runId} — ${brief.displayState} [${brief.stopKind}]`);
+  lines.push(`greenflag ${brief.runId} — ${brief.displayState} [${brief.stopKind}]`);
   lines.push(brief.headline);
   if (brief.humanDecisions && brief.humanDecisions.length > 0) {
     const anyHigh = brief.humanDecisions.some((d) => d.severity === 'high');

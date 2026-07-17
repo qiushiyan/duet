@@ -1,11 +1,11 @@
 # 2026-07-07 live-run series — findings
 
-The permanent record of the three-run experiment series pre-registered in `docs/experiments/2026-07-live-run-series/plan.md`: three staggered runs on the duet repo itself, each pairing a real feature with a verification hole, under a series-long cohort freeze (no snippet/template/brief edits). Every claim here is **(observed)** against the named runs; the full records — logs, state ledgers, gzipped transcripts, grades — are in the corpus archive.
+The permanent record of the three-run experiment series pre-registered in `docs/experiments/2026-07-live-run-series/plan.md`: three staggered runs on the greenflag repo itself, each pairing a real feature with a verification hole, under a series-long cohort freeze (no snippet/template/brief edits). Every claim here is **(observed)** against the named runs; the full records — logs, state ledgers, gzipped transcripts, grades — are in the corpus archive.
 
 | Run | Workflow · lanes | Feature | Result |
 | --- | --- | --- | --- |
-| `20260707-0545-d43b` (A) | blueprint · Opus maker / GPT-5.5 checker · consultant claude | `duet graph` + `stats --trace` | PR #36, 2h52m |
-| `20260707-0647-0dbb` (B) | relay · GPT-5.5 builder / Opus judge @xhigh · **no consultant** | `duet grade` | PR #35, ~2h |
+| `20260707-0545-d43b` (A) | blueprint · Opus maker / GPT-5.5 checker · consultant claude | `greenflag graph` + `stats --trace` | PR #36, 2h52m |
+| `20260707-0647-0dbb` (B) | relay · GPT-5.5 builder / Opus judge @xhigh · **no consultant** | `greenflag grade` | PR #35, ~2h |
 | `20260707-0828-8860` (C) | blueprint · lanes flipped (GPT-5.5 maker / Opus checker) · consultant codex | corpus replay, first slice | PR #37, 2h27m |
 
 Follow-ons in the same window: the framings gatherer (PR #38, agent-built in a parallel worktree) and the grade classification fix (PR #39, below).
@@ -14,7 +14,7 @@ Follow-ons in the same window: the framings gatherer (PR #38, agent-built in a p
 
 - **blueprint** ran live twice (A, C), framing → one design doc → AFK build → auto-opened PR, with exactly the designed single interruption each (plus held highs, below). **relay** ran live once (B) end to end: fresh cold-start delivery, judge review-and-fix, judge-owned docs + PR tails, one correctly-triaged environment question.
 - **The consultant chain** exercised twice more: contracts authored blind at the Design gate, frozen at crossing, and independently verified — A's 12 assertions and C's 12 assertions all passed on the first verify, no self-heal needed. C's contract-observability class (the rewind fix) was caught in design review *before* the contract would have been blind to it.
-- **The evaluation instruments shipped and were used the same day**: all three series records mirrored live into the corpus (its first post-remodel records); all three runs graded (`duet grade`'s first real sessions); `duet graph` rendered the series' own runs; replay's dry-run reconstruction ran on run B's real record. The live driven-replay diff remains pending API-key auth (below).
+- **The evaluation instruments shipped and were used the same day**: all three series records mirrored live into the corpus (its first post-remodel records); all three runs graded (`greenflag grade`'s first real sessions); `greenflag graph` rendered the series' own runs; replay's dry-run reconstruction ran on run B's real record. The live driven-replay diff remains pending API-key auth (below).
 - **Inline provider tuning** (per-binding models, normalized effort, preflight) carried every framing in the series — 14 explicit bindings preflighted at creation, zero mid-run binding failures.
 
 ## Hold calibration — the product thesis, first instrumented numbers
@@ -27,13 +27,13 @@ Follow-ons in the same window: the framings gatherer (PR #38, agent-built in a p
 
 ## The contract lesson — relay's "under-checked?" watch item answered
 
-The series' **only post-ship defect** — `autoApprovals` gate-*state* names compared against gate-*phase* names in `duet grade`'s discovery, misclassifying every auto-crossing as an attended stop (PR #39) — shipped from the **one run with no consultant and therefore no acceptance contract**. Run A's contract carried literally the assertion class that catches this (`A4: ledgered ⇒ auto-crossed`); run B had no contract to carry it. The judge and 1354 green tests both missed it because the **test fixtures encoded the same wrong assumption** (`gate: 'plan'`, a shape the real writer never produces — the lifecycle writes `machineState`): fixtures pinned the bug, not the behavior.
+The series' **only post-ship defect** — `autoApprovals` gate-*state* names compared against gate-*phase* names in `greenflag grade`'s discovery, misclassifying every auto-crossing as an attended stop (PR #39) — shipped from the **one run with no consultant and therefore no acceptance contract**. Run A's contract carried literally the assertion class that catches this (`A4: ledgered ⇒ auto-crossed`); run B had no contract to carry it. The judge and 1354 green tests both missed it because the **test fixtures encoded the same wrong assumption** (`gate: 'plan'`, a shape the real writer never produces — the lifecycle writes `machineState`): fixtures pinned the bug, not the behavior.
 
 Three durable lessons:
 
 1. **An independent acceptance contract catches a class the embedded checker structurally shares blind spots on.** Direct evidence for binding the consultant on relay work (a posture recommendation, not a mechanism change — relay's economics still hold with one).
 2. **Fixture shapes must come from the real writer**, never from the reader's assumption — the same-wrong-assumption failure is invisible to any green suite.
-3. **The instruments pay for themselves immediately**: the bug was caught within the hour by dogfooding `duet grade` on a sibling run's record — a structurally impossible matrix (TP 4 / TN 0 against two ledgered auto-crossings) read as wrong at a glance.
+3. **The instruments pay for themselves immediately**: the bug was caught within the hour by dogfooding `greenflag grade` on a sibling run's record — a structurally impossible matrix (TP 4 / TN 0 against two ledgered auto-crossings) read as wrong at a glance.
 
 ## Loop convergence — the pre-series concern did not reproduce
 
@@ -45,7 +45,7 @@ Same workflow, full lane swap: A (Opus maker) ~$64 claude / 2h52m; C (GPT-5.5 ma
 
 ## Ops notes
 
-- **Corpus silent-off incident**: `[corpus] dir` configured but the directory absent — fail-soft meant every prior run silently skipped mirroring. Fixed and documented (runbook caution, 2026-07-07); a `duet doctor` corpus-writability probe is a named candidate.
+- **Corpus silent-off incident**: `[corpus] dir` configured but the directory absent — fail-soft meant every prior run silently skipped mirroring. Fixed and documented (runbook caution, 2026-07-07); a `greenflag doctor` corpus-writability probe is a named candidate.
 - **Context pressure lived on the checker lane during frame fan-outs** (codex analyst 63–90%, codex architect 79–80%): every event auto-compacted and ledgered, zero cutoffs, zero salvage — the first real quiet-ledger evidence for the context-band calibration question.
 - **Blueprint's continuity edges are visible in the archive**: A's record holds 4 transcripts (builder continued architect's session, critic the analyst's); relay-B's fresh delivery holds 5.
 
@@ -54,7 +54,7 @@ Same workflow, full lane swap: A (Opus maker) ~$64 claude / 2h52m; C (GPT-5.5 ma
 - **Snippet/brief** — second occurrence met: the PR-base merge-target divergence (A silent, B flagged) earns an environment-triage example naming "merge target is the human's call" in the finish-phase surface. The one prompt edit this series justifies.
 - **Posture** — bind the consultant on relay runs (see the contract lesson); recorded as a recommendation, not a default change.
 - **Constants** — none: the context bands held under real load.
-- **Docs** — run A placed its design doc at top-level `docs/visualization-surface.md` while B and C followed the dated `docs/specs/` convention (C's architect read `documentation-standards.md` and said so); a placement tidy is owed. The `duet framings` all-"Problem" title column is cosmetic and waits for annoyance (#38).
+- **Docs** — run A placed its design doc at top-level `docs/visualization-surface.md` while B and C followed the dated `docs/specs/` convention (C's architect read `documentation-standards.md` and said so); a placement tidy is owed. The `greenflag framings` all-"Problem" title column is cosmetic and waits for annoyance (#38).
 - **Nowhere** — everything single-instance.
 
 ## What stays open

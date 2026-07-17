@@ -1,6 +1,6 @@
 /**
  * The workflow-spine — the one structural projection of a `CompiledWorkflow`
- * that both `duet graph` views and `duet workflows check` lean on, so none of
+ * that both `greenflag graph` views and `greenflag workflows check` lean on, so none of
  * them re-derive the pipeline from the raw resolvers independently (the deletion
  * test: delete `structuralSpine` and blueprint + run + check each re-join
  * phase→gate→stage→cap→edge→checkpoint by hand).

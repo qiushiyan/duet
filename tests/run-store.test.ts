@@ -150,22 +150,22 @@ describe('the contextEvents ledger — interventions stamped with their pre-fill
   });
 });
 
-describe('a vanished .duet self-heals on the next harness write (ensureRunDir)', () => {
+describe('a vanished .greenflag self-heals on the next harness write (ensureRunDir)', () => {
   // Regression for the observed failure: an architect cleaning its scratch ran
-  // `rm -rf .duet` mid-run, and the next voice-log append threw ENOENT, ending
+  // `rm -rf .greenflag` mid-run, and the next voice-log append threw ENOENT, ending
   // the phase with no advance and no flag. The write must now recover the dir.
-  test('appendVoiceLog recreates a deleted .duet (with its .gitignore) and writes', ({ projectDir, run }) => {
-    rmSync(join(projectDir, '.duet'), { recursive: true, force: true });
-    expect(existsSync(join(projectDir, '.duet'))).toBe(false);
+  test('appendVoiceLog recreates a deleted .greenflag (with its .gitignore) and writes', ({ projectDir, run }) => {
+    rmSync(join(projectDir, '.greenflag'), { recursive: true, force: true });
+    expect(existsSync(join(projectDir, '.greenflag'))).toBe(false);
 
     appendVoiceLog(run, 'architect', 'build complete'); // would have thrown ENOENT before the fix
     const log = join(runDirOf(projectDir, run.runId), 'architect.log');
     expect.soft(readFileSync(log, 'utf8')).toContain('build complete');
-    expect.soft(readFileSync(join(projectDir, '.duet', '.gitignore'), 'utf8')).toBe('*\n'); // self-ignore restored
+    expect.soft(readFileSync(join(projectDir, '.greenflag', '.gitignore'), 'utf8')).toBe('*\n'); // self-ignore restored
   });
 
   test('saveRunState recreates the dir and round-trips after a deletion', ({ projectDir, run }) => {
-    rmSync(join(projectDir, '.duet'), { recursive: true, force: true });
+    rmSync(join(projectDir, '.greenflag'), { recursive: true, force: true });
     saveRunState(run);
     expect(loadRunState(projectDir, run.runId)).toEqual(run);
   });
@@ -180,10 +180,10 @@ describe('a vanished .duet self-heals on the next harness write (ensureRunDir)',
     run,
   }) => {
     const snapshot: Snapshot<unknown> = { status: 'active', output: undefined, error: undefined };
-    rmSync(join(projectDir, '.duet'), { recursive: true, force: true });
+    rmSync(join(projectDir, '.greenflag'), { recursive: true, force: true });
     saveMachineSnapshot(run, snapshot); // would throw ENOENT on machine.json.tmp before the fix
     expect.soft(loadMachineSnapshot(run)).toEqual(snapshot);
-    expect.soft(readFileSync(join(projectDir, '.duet', '.gitignore'), 'utf8')).toBe('*\n'); // self-ignore restored
+    expect.soft(readFileSync(join(projectDir, '.greenflag', '.gitignore'), 'utf8')).toBe('*\n'); // self-ignore restored
   });
 });
 
@@ -238,19 +238,19 @@ describe('run creation', () => {
     expect(archived).toContain('gates_at: frame');
   });
 
-  test('.duet self-ignores without touching the project gitignore', ({ projectDir, run }) => {
-    expect(run.cwd).toBe(projectDir); // the run fixture created .duet here
-    expect(readFileSync(join(projectDir, '.duet', '.gitignore'), 'utf8')).toBe('*\n');
+  test('.greenflag self-ignores without touching the project gitignore', ({ projectDir, run }) => {
+    expect(run.cwd).toBe(projectDir); // the run fixture created .greenflag here
+    expect(readFileSync(join(projectDir, '.greenflag', '.gitignore'), 'utf8')).toBe('*\n');
     expect(existsSync(join(projectDir, '.gitignore'))).toBe(false);
   });
 
-  test('the run-scoped scratch dir is pre-created under the run dir, not a top-level .duet/scratch', ({
+  test('the run-scoped scratch dir is pre-created under the run dir, not a top-level .greenflag/scratch', ({
     projectDir,
     run,
   }) => {
     expect.soft(scratchDirOf(projectDir, run.runId)).toBe(join(runDirOf(projectDir, run.runId), 'scratch'));
     expect.soft(existsSync(scratchDirOf(projectDir, run.runId))).toBe(true); // ready for the impl turn
-    expect.soft(existsSync(join(projectDir, '.duet', 'scratch'))).toBe(false); // the old shared-parent location is gone
+    expect.soft(existsSync(join(projectDir, '.greenflag', 'scratch'))).toBe(false); // the old shared-parent location is gone
   });
 
   test('loading an unknown run names the path and the likely mistake', ({ projectDir }) => {
@@ -343,7 +343,7 @@ describe('run creation', () => {
       ],
     },
     {
-      name: 'explicit [] ⇒ persisted as first-class attend-none (bare duet afk relies on it), never coerced to absent',
+      name: 'explicit [] ⇒ persisted as first-class attend-none (bare greenflag afk relies on it), never coerced to absent',
       workflow: 'full',
       gatesAt: [],
       persisted: [],
@@ -577,7 +577,7 @@ describe('run creation', () => {
   });
 
   // The deliberate break: runs frozen before 2026-07-08 carry a `design`
-  // doc-loop, a vocabulary duet no longer speaks. They must fail LOUD and
+  // doc-loop, a vocabulary greenflag no longer speaks. They must fail LOUD and
   // ACTIONABLE — an UnloadableRunError the listing surfaces report, naming the
   // retired knob, the era, and a way out — never by silently vanishing from the
   // run list. The validator's own words carry the knob; the boundary adds the rest.
@@ -603,11 +603,11 @@ describe('run creation', () => {
     expect.soft(message, 'says plainly that replay/grading of these runs is gone').toMatch(/replay and grading/i);
   });
 
-  // The refusal carries the validator's own reason, so it works for a knob duet
-  // retired AND a knob duet never spoke — no second category, nothing to translate.
+  // The refusal carries the validator's own reason, so it works for a knob greenflag
+  // retired AND a knob greenflag never spoke — no second category, nothing to translate.
   // The era rides as the known cause, never as the diagnosis: a corrupt file must
   // not be told it belongs to a cohort it was never part of.
-  test('a frozen doc-loop duet cannot parse is refused with the reason, not a guess at its era', ({ projectDir }) => {
+  test('a frozen doc-loop greenflag cannot parse is refused with the reason, not a guess at its era', ({ projectDir }) => {
     for (const artifactKind of ['memo', undefined]) {
       const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('blueprint'), workflow: 'blueprint' });
       const path = workflowPath(projectDir, created.runId);
@@ -699,7 +699,7 @@ describe('run creation', () => {
     rmSync(runDirOf(projectDir, created.runId), { recursive: true, force: true });
 
     // The record still loads, resolving its non-shipped workflow from the record
-    // dir it was handed — NOT the deleted state.cwd/.duet/runs path.
+    // dir it was handed — NOT the deleted state.cwd/.greenflag/runs path.
     const loaded = loadRunStateFromDir(record);
     expect.soft(loaded.workflow).toBe('custom-short');
     expect.soft(workflowForRunDir(loaded, record).displayName).toBe('Custom Short');
@@ -910,8 +910,8 @@ describe('budgetFor — the opt-in knob', () => {
 
 describe('run listing', () => {
   test('lists newest first and skips non-run directories', ({ projectDir, run }) => {
-    mkdirSync(join(projectDir, '.duet', 'runs', 'junk'));
-    writeFileSync(join(projectDir, '.duet', 'runs', 'junk-file'), 'not a dir');
+    mkdirSync(join(projectDir, '.greenflag', 'runs', 'junk'));
+    writeFileSync(join(projectDir, '.greenflag', 'runs', 'junk-file'), 'not a dir');
 
     const newer = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full') });
     newer.createdAt = new Date(Date.now() + 60_000).toISOString();
@@ -930,13 +930,13 @@ describe('run listing', () => {
     const oldState = JSON.parse(readFileSync(join(runDirOf(projectDir, old.runId), 'state.json'), 'utf8'));
     delete oldState.bindings.duties;
     writeFileSync(join(runDirOf(projectDir, old.runId), 'state.json'), JSON.stringify(oldState, null, 2));
-    mkdirSync(join(projectDir, '.duet', 'runs', 'corrupt'));
-    writeFileSync(join(projectDir, '.duet', 'runs', 'corrupt', 'state.json'), 'not json at all');
+    mkdirSync(join(projectDir, '.greenflag', 'runs', 'corrupt'));
+    writeFileSync(join(projectDir, '.greenflag', 'runs', 'corrupt', 'state.json'), 'not json at all');
 
     const { runs, unloadable } = scanRuns(projectDir);
     expect.soft(runs.map((r) => r.runId)).toEqual([run.runId]);
     // The refusal carries the run id and the prescriptive way out, so a listing
-    // surface can print it verbatim — a post-upgrade `duet status` must never
+    // surface can print it verbatim — a post-upgrade `greenflag status` must never
     // read as "no runs" when the truth is "your run no longer loads".
     expect.soft(unloadable).toHaveLength(1);
     expect.soft(unloadable[0]?.runId).toBe(old.runId);

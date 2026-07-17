@@ -35,7 +35,7 @@ describe('the snippet library', () => {
     }
   });
 
-  // The PLAN snippets and the RIR build snippet (implement-direct) cite duet's
+  // The PLAN snippets and the RIR build snippet (implement-direct) cite greenflag's
   // methodology by a {{lessons_dir}}/… token that resolves to the vendored
   // lessons/ copy at serve time — so the discipline ships with the package
   // instead of pointing at the author's machine. These five layers guard that the
@@ -80,7 +80,7 @@ describe('the snippet library', () => {
       // a newly-vendored topic is scanned automatically — the whole point of this
       // guard is that the leak must not move one level down, and a fixed list goes
       // blind exactly when a new topic ships. The dir filter also excludes the
-      // top-level lessons/README.md (a file), duet-authored provenance that
+      // top-level lessons/README.md (a file), greenflag-authored provenance that
       // legitimately names the source.
       const topics = readdirSync(LESSONS_DIR, { withFileTypes: true })
         .filter((e) => e.isDirectory())
@@ -108,7 +108,7 @@ describe('the snippet library', () => {
    * It used to reproduce nine bodies verbatim; nothing pinned them, so they
    * silently rotted — the doc described a `write-design` snippet months after
    * the artifact merged into `write-spec`. The bodies now live in exactly two
-   * places (`snippets/*.toml`, and `duet snippets show <key>` for the effective
+   * places (`snippets/*.toml`, and `greenflag snippets show <key>` for the effective
    * one), and these guards keep it that way: a snippet the doc names must exist,
    * and a pasted body announces itself by the token only bodies carry.
    */
@@ -134,7 +134,7 @@ describe('the snippet library', () => {
       for (const s of loadSnippets()) {
         const firstLine = s.expand.trim().split('\n')[0]!;
         if (firstLine.length < 40) continue;
-        expect.soft(text, `docs/snippets.md reproduces the shipped body of "${s.key}" — cite \`duet snippets show ${s.key}\` instead`).not.toContain(
+        expect.soft(text, `docs/snippets.md reproduces the shipped body of "${s.key}" — cite \`greenflag snippets show ${s.key}\` instead`).not.toContain(
           firstLine,
         );
       }
@@ -180,7 +180,7 @@ describe('the snippet library', () => {
   });
 
   test('the review-loop polish contract: reviewers batch wording fixes as replacements, updaters apply without re-analysis', () => {
-    // The polish revision (docs/specs/2026-07-02-design-arc.md Part 2): a review
+    // The polish revision: a review
     // template ends with an "Optional polish" section of exact before → after
     // replacements, and the matching update template licenses applying them
     // without re-analysis (the measured 7-minute reread was a conscientious
@@ -392,7 +392,7 @@ describe('the snippet library', () => {
   });
 
   // Binding convention 7 (docs/prompting-and-tool-design.md): a worker reads its
-  // prompt cold and holds none of duet's vocabulary. The doc-loop family is the
+  // prompt cold and holds none of greenflag's vocabulary. The doc-loop family is the
   // one place that vocabulary keeps trying to creep back in — "the builder" reads
   // as plain English to whoever wrote it and as a stranger to whoever reads it.
   // The leak's actual shape is the NOUN — "the builder starts out holding your
@@ -400,12 +400,12 @@ describe('the snippet library', () => {
   // stranger to the worker reading it cold. Match on the article so the guard
   // catches that and leaves the English verbs alone ("judge it there", "review
   // critically", "if architectural, say so").
-  test("the spec doc-loop snippets carry none of duet's duty names", () => {
+  test("the spec doc-loop snippets carry none of greenflag's duty names", () => {
     const DUTY_NOUN = /\b(?:the|a|an|your|its)\s+(architect|analyst|builder|critic|judge|orchestrator|consultant)s?\b/i;
     for (const key of ['write-spec', 'review-spec', 'update-spec', 'review-spec-again', 'update-spec-again']) {
       const body = getSnippet(key)?.expand ?? '';
       const hit = DUTY_NOUN.exec(body);
-      expect.soft(hit?.[1], `snippet "${key}" names a duet duty — a worker reads its prompt cold`).toBeUndefined();
+      expect.soft(hit?.[1], `snippet "${key}" names a greenflag duty — a worker reads its prompt cold`).toBeUndefined();
     }
   });
 
@@ -601,7 +601,7 @@ describe('the snippet library', () => {
 });
 
 // ── Custom snippet override layers (feat/custom-snippets) ──────────────────
-// A user (`~/.config/duet/snippets.toml`) and a project (`<cwd>/.duet/snippets.toml`)
+// A user (`~/.config/greenflag/snippets.toml`) and a project (`<cwd>/.greenflag/snippets.toml`)
 // override file may replace individual snippet BODIES, stacked on the shipped
 // base, project winning. Whole-body per key, fail-closed on unknown keys, and —
 // with no override file present — byte-for-byte today's served library.
@@ -617,7 +617,7 @@ afterEach(() => {
   for (const d of tmpDirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 function tmpEmpty(): string {
-  const d = mkdtempSync(join(tmpdir(), 'duet-snip-'));
+  const d = mkdtempSync(join(tmpdir(), 'greenflag-snip-'));
   tmpDirs.push(d);
   return d;
 }
@@ -627,11 +627,11 @@ function withUserSnippets(toml: string): string {
   writeFileSync(join(d, 'snippets.toml'), toml);
   return d;
 }
-/** A project root holding a project-layer .duet/snippets.toml. */
+/** A project root holding a project-layer .greenflag/snippets.toml. */
 function withProjectSnippets(toml: string): string {
   const d = tmpEmpty();
-  mkdirSync(join(d, '.duet'), { recursive: true });
-  writeFileSync(join(d, '.duet', 'snippets.toml'), toml);
+  mkdirSync(join(d, '.greenflag'), { recursive: true });
+  writeFileSync(join(d, '.greenflag', 'snippets.toml'), toml);
   return d;
 }
 
@@ -751,20 +751,20 @@ describe('loadEffectiveSnippets — contextual resolution over real files', () =
 describe('the contextual API takes explicit dirs — no ambient home read', () => {
   test('an empty context (no fields) is shipped-only, every element shipped (the honest contract)', () => {
     // Point 4: loadEffectiveSnippets({}) must NOT default the config dir to the
-    // real ~/.config/duet — with neither field it is the shipped base verbatim.
+    // real ~/.config/greenflag — with neither field it is the shipped base verbatim.
     const eff = loadEffectiveSnippets({});
     expect.soft(eff.map((s) => ({ key: s.key, expand: s.expand }))).toEqual(loadSnippets());
     expect.soft(eff.every((s) => s.source === 'shipped')).toBe(true);
   });
 
-  test('runtimeLibraryContext points configDir at <home>/.config/duet and resolves the user layer there', () => {
+  test('runtimeLibraryContext points configDir at <home>/.config/greenflag and resolves the user layer there', () => {
     // The production path (the ONE place home is read), tested with an explicit
     // home arg — no env mutation needed.
     const home = tmpEmpty();
-    mkdirSync(join(home, '.config', 'duet'), { recursive: true });
-    writeFileSync(join(home, '.config', 'duet', 'snippets.toml'), overrideToml([['write-spec', 'HOME user override']]));
+    mkdirSync(join(home, '.config', 'greenflag'), { recursive: true });
+    writeFileSync(join(home, '.config', 'greenflag', 'snippets.toml'), overrideToml([['write-spec', 'HOME user override']]));
     const ctx = runtimeLibraryContext(tmpEmpty(), home);
-    expect.soft(ctx.configDir).toBe(join(home, '.config', 'duet'));
+    expect.soft(ctx.configDir).toBe(join(home, '.config', 'greenflag'));
     expect.soft(loadEffectiveSnippets(ctx).find((s) => s.key === 'write-spec')).toEqual({
       key: 'write-spec',
       expand: 'HOME user override',
@@ -815,7 +815,7 @@ describe('overrides serve through the render path (provenance never leaks to wor
   });
 });
 
-describe('getEffectiveSnippet — the `duet snippets show` data path', () => {
+describe('getEffectiveSnippet — the `greenflag snippets show` data path', () => {
   test('returns the effective body + provenance for an overridden key', () => {
     const configDir = withUserSnippets(overrideToml([['review-spec', 'USER review-spec']]));
     expect(getEffectiveSnippet('review-spec', { cwd: tmpEmpty(), configDir })).toEqual({

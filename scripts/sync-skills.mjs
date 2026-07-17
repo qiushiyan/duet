@@ -8,7 +8,7 @@
 //
 // Links are relative (matching the convention already in the dotfiles skills
 // dir). Destination defaults to the dotfiles-managed skills dir; override with
-// DUET_SKILLS_DIR if your Claude config lives elsewhere.
+// GREENFLAG_SKILLS_DIR if your Claude config lives elsewhere.
 
 import { existsSync, lstatSync, readdirSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
@@ -19,14 +19,14 @@ const isSkill = (dir) => existsSync(path.join(dir, "SKILL.md"));
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const srcDir = path.join(repoRoot, "skills");
 const destDir =
-  process.env.DUET_SKILLS_DIR ?? path.join(homedir(), "dotfiles", "claude", ".claude", "skills");
+  process.env.GREENFLAG_SKILLS_DIR ?? path.join(homedir(), "dotfiles", "claude", ".claude", "skills");
 
 const dryRun = process.argv.includes("--dry-run");
 
 if (!existsSync(destDir)) {
   console.error(
     `destination skills dir not found: ${destDir}\n` +
-      `set DUET_SKILLS_DIR to your Claude Code skills directory`,
+      `set GREENFLAG_SKILLS_DIR to your Claude Code skills directory`,
   );
   process.exit(1);
 }
@@ -79,9 +79,9 @@ for (const name of skills) {
 }
 
 // Prune stale skill links: a skill we used to link that has since been renamed or
-// retired (e.g. /duet -> /duet-frame) leaves a dangling-or-wrong symlink behind.
+// retired (e.g. /greenflag -> /greenflag-frame) leaves a dangling-or-wrong symlink behind.
 // Only touch links inside our own namespace — a symlink whose target lives in a
-// `dev/duet*/skills/` worktree — and only when its target is no longer a valid
+// `dev/greenflag*/skills/` worktree — and only when its target is no longer a valid
 // skill (missing SKILL.md). Real skills and unrelated links are never considered.
 for (const entry of readdirSync(destDir)) {
   if (skills.includes(entry)) continue; // a link we just (re)created this run
@@ -91,7 +91,7 @@ for (const entry of readdirSync(destDir)) {
   const resolved = path.resolve(destDir, readlinkSync(link));
   const skillsDir = path.dirname(resolved);
   const ours =
-    path.basename(skillsDir) === "skills" && path.basename(path.dirname(skillsDir)).startsWith("duet");
+    path.basename(skillsDir) === "skills" && path.basename(path.dirname(skillsDir)).startsWith("greenflag");
   if (!ours || isSkill(resolved)) continue; // not ours, or still a valid skill
 
   console.log(`  ${dryRun ? "would " : ""}${"prune".padEnd(7)} ${entry} (retired skill)`);

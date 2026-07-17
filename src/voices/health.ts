@@ -1,13 +1,13 @@
 /**
- * Worker health — the pure substrate behind `duet doctor` (#1), the enriched
+ * Worker health — the pure substrate behind `greenflag doctor` (#1), the enriched
  * heartbeat (#2), and infra crash classification (#4a). Given a transcript's
  * JSONL text and an injected `now`, it answers two questions honestly:
  *
  *   1. classifyError / scanTerminalErrors — what TERMINAL API errors does this
  *      transcript carry, and what class is each? (Ported from
- *      `.duet/proto/errscan.py`.)
+ *      `.greenflag/proto/errscan.py`.)
  *   2. probeRole — is this role idle / working / long-inference / retrying /
- *      silent-stuck / crashed right now? (Ported from `.duet/proto/doctor.py`.)
+ *      silent-stuck / crashed right now? (Ported from `.greenflag/proto/doctor.py`.)
  *
  * It is PURE BY DESIGN — string in, value out, no fs, no clock, no imports of
  * `lifecycle`/`status`. That purity is load-bearing: `lifecycle.ts`
@@ -58,7 +58,7 @@ export const RETRY_WINDOW_MS = 120_000; // the orchestrator's approximate in-fli
 const TAXONOMY: ReadonlyArray<{ cls: ErrorClass; patterns: RegExp[] }> = [
   {
     // The Anthropic API's over-window rejection, as the CLI relays it ("Prompt is
-    // too long", sometimes with a `N tokens > M maximum` tail), plus duet's own
+    // too long", sometimes with a `N tokens > M maximum` tail), plus greenflag's own
     // context-deadline cut (ContextDeadlineExceededError's "context-window cap"
     // phrasing). Matched first: unambiguous, and misreading it as transient infra
     // sent an orchestrator into two futile retries and a 10-hour park (the

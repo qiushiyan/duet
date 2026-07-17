@@ -118,7 +118,7 @@ describe('the stdio-MCP adapter over the kernel registry', () => {
   });
 });
 
-describe('duet _mcp refuses a run/phase it cannot host', () => {
+describe('greenflag _mcp refuses a run/phase it cannot host', () => {
   test('a phase not in the run’s workflow is refused with a prescribed-recovery error', ({ projectDir, run }) => {
     // Validated against THIS run's workflow (full), naming its legal phases.
     expect(() => buildKernelTools(projectDir, run.runId, 'fraem')).toThrow(
@@ -287,7 +287,7 @@ describe('the run-scoped, phase-less kernel server (Stage 1)', () => {
     expect((await kernel.callTool('send_prompt', t, {})).isError).toBe(true);
   });
 
-  test('a live connection sees a cross-process duet continue --reject and folds the feedback on its next get_task', async ({
+  test('a live connection sees a cross-process greenflag continue --reject and folds the feedback on its next get_task', async ({
     projectDir,
     interactiveRun,
   }) => {
@@ -302,7 +302,7 @@ describe('the run-scoped, phase-less kernel server (Stage 1)', () => {
     // Parked: get_task reports the park, not a fresh brief.
     expect.soft(textOf(await kernel.callTool('get_task', {}, {}))).toContain('parked at its gate');
 
-    // Simulate `duet continue --reject "..."` from the CLI process — a SEPARATE
+    // Simulate `greenflag continue --reject "..."` from the CLI process — a SEPARATE
     // writer stages the feedback and crosses inline.
     const cli = loadRunState(projectDir, interactiveRun.runId);
     stageHumanInput(cli, { kind: 'feedback', text: 'invert the data model' });
@@ -403,7 +403,7 @@ describe('the run-scoped, phase-less kernel server (Stage 1)', () => {
   });
 
   test(
-    'phase-less duet _mcp over a real subprocess enumerates the surface and answers list_snippets at zero worker cost',
+    'phase-less greenflag _mcp over a real subprocess enumerates the surface and answers list_snippets at zero worker cost',
     async ({ projectDir, interactiveRun }) => {
       const transport = new StdioClientTransport({
         command: process.execPath,

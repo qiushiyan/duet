@@ -112,7 +112,7 @@ describe('probeRunPosition', () => {
     crashed.phaseStarted.spec = true;
     saveRunState(crashed);
 
-    // What bare `duet continue` does at a crashed position: re-utter the event.
+    // What bare `greenflag continue` does at a crashed position: re-utter the event.
     const position = probeRunPosition(crashed);
     expect(position.kind).toBe('crashed');
     const second = scriptedMachine([advanced]);
@@ -253,7 +253,7 @@ describe('probeRunPosition — the interactive resting model', () => {
     saveRunState(handed);
 
     // No live driver yet → a mid-phase crash AT the handed-off phase (impl), which
-    // bare `duet continue` re-enters from this very snapshot — not the entry phase.
+    // bare `greenflag continue` re-enters from this very snapshot — not the entry phase.
     expect.soft(probeRunPosition(loadRunState(projectDir, interactiveRun.runId))).toEqual({
       kind: 'crashed',
       phase: 'implement',

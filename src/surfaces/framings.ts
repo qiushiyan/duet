@@ -10,9 +10,9 @@ import { parseFramingFile } from './framing.ts';
 import { localStamp } from '../view/timefmt.ts';
 
 /**
- * `duet framings` — the framings browser. A run's framing is the one document
+ * `greenflag framings` — the framings browser. A run's framing is the one document
  * the human writes per run; its archive copy lives in the git-ignored run dir
- * (`.duet/runs/<id>/framing.md`) and dies with the worktree, while the opt-in
+ * (`.greenflag/runs/<id>/framing.md`) and dies with the worktree, while the opt-in
  * corpus archive (docs/corpus-runbook.md) keeps a durable copy. This surface
  * merges the two — the configured corpus archive plus the current project's
  * local runs, deduped by runId with the corpus copy winning — and scopes the
@@ -59,7 +59,7 @@ export interface FramingsModel {
   records: FramingRecordModel[];
 }
 
-const CORPUS_KEY_HINT = '[corpus] dir in ~/.config/duet/config.toml (docs/corpus-runbook.md)';
+const CORPUS_KEY_HINT = '[corpus] dir in ~/.config/greenflag/config.toml (docs/corpus-runbook.md)';
 
 /**
  * Resolve the configured corpus root, fail-soft. The corpus is never required:
@@ -91,7 +91,7 @@ interface GatheredRecord {
 }
 
 /**
- * The merged record set: corpus records first, then the local `.duet/runs`
+ * The merged record set: corpus records first, then the local `.greenflag/runs`
  * scan, deduped by runId (the corpus copy wins — it is the durable one),
  * newest first. Unloadable records count into `skipped` on both sides.
  */
@@ -185,7 +185,7 @@ function toRecordModel({ state, runDir, source }: GatheredRecord): FramingRecord
   };
 }
 
-/** Build the `duet framings` model. `configPath` is injectable for tests; the CLI takes the account default. */
+/** Build the `greenflag framings` model. `configPath` is injectable for tests; the CLI takes the account default. */
 export function buildFramingsModel(cwd: string, opts: { all?: boolean; configPath?: string } = {}): FramingsModel {
   const { corpusDir, note } = resolveCorpus(opts.configPath);
   const { records, skipped } = gatherRecords(cwd, corpusDir);
@@ -206,7 +206,7 @@ export function buildFramingsModel(cwd: string, opts: { all?: boolean; configPat
 }
 
 /**
- * `duet framings show <runId>` — the archived framing, verbatim (the caller
+ * `greenflag framings show <runId>` — the archived framing, verbatim (the caller
  * writes the exact bytes to stdout: no color, no added newline — it is for
  * piping and reference). Searches the same merged set the list draws from,
  * unscoped — an explicit run id is its own scope — with the corpus copy
@@ -220,7 +220,7 @@ export function readArchivedFraming(
   const { corpusDir } = resolveCorpus(opts.configPath);
   const record = gatherRecords(cwd, corpusDir).records.find((r) => r.state.runId === runId);
   if (!record) {
-    return { error: `no record of run ${runId} in the corpus archive or this project's .duet/runs — duet framings --all lists every known record` };
+    return { error: `no record of run ${runId} in the corpus archive or this project's .greenflag/runs — greenflag framings --all lists every known record` };
   }
   const path = join(record.runDir, 'framing.md');
   if (!existsSync(path)) {
@@ -243,7 +243,7 @@ export function shortenHome(path: string, home: string = homedir()): string {
 export function renderFramingsList(model: FramingsModel, home: string = homedir()): string {
   const lines: string[] = [];
   const scopeLabel = model.scope === 'repo' ? "this repo's records (--all for every record)" : 'all records';
-  const sourceLabel = model.corpusDir ? `corpus ${shortenHome(model.corpusDir, home)} + local .duet/runs` : 'local .duet/runs only';
+  const sourceLabel = model.corpusDir ? `corpus ${shortenHome(model.corpusDir, home)} + local .greenflag/runs` : 'local .greenflag/runs only';
   lines.push(`${model.records.length} framing record(s) — ${scopeLabel}; ${sourceLabel}`);
   if (model.note) lines.push(model.note);
   if (model.skipped > 0) lines.push(`(${model.skipped} record(s) skipped — refused era or foreign dir)`);
@@ -270,6 +270,6 @@ export function renderFramingsList(model: FramingsModel, home: string = homedir(
     lines.push(`${r.runId.padEnd(w.runId)}  ${r.created.padEnd(w.created)}  ${r.workflow.padEnd(w.workflow)}  ${r.repo.padEnd(w.repo)}  ${title}`);
   }
   lines.push('');
-  lines.push('read one verbatim: duet framings show <runId>');
+  lines.push('read one verbatim: greenflag framings show <runId>');
   return lines.join('\n');
 }

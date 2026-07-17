@@ -73,14 +73,14 @@ function shQuote(token: string): string {
  * as src/surfaces/view/tmux.ts (a subprocess to tmux). ALL the driving logic lives above
  * it in InteractiveClaudeWorker and is tested via FakePane; this class only owns
  * the terminal mechanics. Its run-scoped session is distinct from the viewer's
- * `duet-<run_id>` — a separate failure domain by design.
+ * `greenflag-<run_id>` — a separate failure domain by design.
  *
  * The exact interactive-claude launch flags, the readiness marker, and the paste
  * mechanics are confirmable only against a real session (the plan's Slice 5):
  * this is a plausible first cut, corrected there.
  */
 export class TmuxPane implements PaneController {
-  private readonly session = `duet-iclaude-${randomBytes(3).toString('hex')}`;
+  private readonly session = `greenflag-iclaude-${randomBytes(3).toString('hex')}`;
   private readonly config: PaneConfig;
 
   constructor(config: PaneConfig) {

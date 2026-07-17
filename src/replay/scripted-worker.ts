@@ -5,7 +5,7 @@ import type { ProtocolTrace, WorkerResponseEvent, WorkerTerminalEvent } from './
 import { phaseAddressesFor } from '../voices/policy.ts';
 import type { PhaseName } from '../registry/workflows.ts';
 
-export const SCRIPT_EXHAUSTED_TEXT = '[duet replay] scripted worker exhausted: no recorded response for this duty ordinal.';
+export const SCRIPT_EXHAUSTED_TEXT = '[greenflag replay] scripted worker exhausted: no recorded response for this duty ordinal.';
 
 export interface ScriptedWorkerCall {
   readonly voice: VoiceAddress;
@@ -68,6 +68,6 @@ class ScriptedRecordWorker implements WorkerProvider {
     if (expected.kind === 'worker_response') {
       return { text: expected.body, sessionId: `replay-${this.voice}-${this.ordinal}` };
     }
-    return { text: `[duet replay] recorded worker terminal: ${expected.status}\n${expected.body}`, sessionId: `replay-${this.voice}-${this.ordinal}` };
+    return { text: `[greenflag replay] recorded worker terminal: ${expected.status}\n${expected.body}`, sessionId: `replay-${this.voice}-${this.ordinal}` };
   }
 }

@@ -5,9 +5,9 @@ A framing's frontmatter is the **run manifest**: the workflow, the gate posture,
 - **Omission is part of the grammar.** Every key has a workflow default, and a manifest that says less is usually the better one — each example names what it deliberately leaves out and what the omission means.
 - **Precedence is per key: flags > framing > config > shipped defaults.** A framing that binds only the judge leaves every other voice on the user's config or the shipped defaults.
 
-The launch command never changes shape — `duet new --framing .duet/<slug>.md`, run from the user's own terminal (which brings up the interactive orchestrator by default) — everything below rides the file, not the flags.
+The launch command never changes shape — `greenflag new --framing .greenflag/<slug>.md`, run from the user's own terminal (which brings up the interactive orchestrator by default) — everything below rides the file, not the flags.
 
-These framings are parsed by duet's real grammar in `tests/skill.test.ts`, so what you read here is exactly what duet accepts.
+These framings are parsed by greenflag's real grammar in `tests/skill.test.ts`, so what you read here is exactly what greenflag accepts.
 
 ## 1 · "A small, well-understood fix — settle the direction with me, then just ship it."
 
@@ -69,11 +69,11 @@ bind.consultant: claude
 <a settled direction the user has already decided to bet on>
 ```
 
-`gateless: true` pre-authorizes **every** gate — the run flows to an open PR with no attended stop — and narrows a bound consultant to its non-holding work: the bet audits that could pause the run mid-flight drop, while the framing third-opinion and the **acceptance contract** survive (authored at the spec gate, verified against the built system before Ship — a contract that stays broken still stops the run, which is the net this sentence keeps). `bind.consultant: claude` binds the outside voice and by itself implies it is on. **Omitted / rejected:** `gates_at` — gateless already answers the posture question, and duet rejects the two side by side; `interactive` — gateless is its opposite (nothing to attend), so they don't combine.
+`gateless: true` pre-authorizes **every** gate — the run flows to an open PR with no attended stop — and narrows a bound consultant to its non-holding work: the bet audits that could pause the run mid-flight drop, while the framing third-opinion and the **acceptance contract** survive (authored at the spec gate, verified against the built system before Ship — a contract that stays broken still stops the run, which is the net this sentence keeps). `bind.consultant: claude` binds the outside voice and by itself implies it is on. **Omitted / rejected:** `gates_at` — gateless already answers the posture question, and greenflag rejects the two side by side; `interactive` — gateless is its opposite (nothing to attend), so they don't combine.
 
 ## 5 · "This is a hotfix lane: triage once, patch once, open the PR."
 
-When the shipped names do not describe the process shape cleanly, define a project workflow first — the `hotfix` definition at `.duet/workflows/hotfix.ts` is worked example 3 in [workflow-definitions.md](workflow-definitions.md). Then select it from the framing:
+When the shipped names do not describe the process shape cleanly, define a project workflow first — the `hotfix` definition at `.greenflag/workflows/hotfix.ts` is worked example 3 in [workflow-definitions.md](workflow-definitions.md). Then select it from the framing:
 
 ```framing
 ---
@@ -84,4 +84,4 @@ workflow: hotfix
 <a small urgent fix where the user wants one attended triage gate, then a single writable patch pass>
 ```
 
-`workflow: hotfix` is an open identity, resolved from `.duet/workflows/hotfix.ts` at run creation. The workflow file is compiled and frozen into the run; editing it later does not change the live run. **Omitted:** `gates_at` — the definition's `attend: ['triage']` already says the only attended gate; bindings — the shipped duty defaults stand unless the user asks for a different model.
+`workflow: hotfix` is an open identity, resolved from `.greenflag/workflows/hotfix.ts` at run creation. The workflow file is compiled and frozen into the run; editing it later does not change the live run. **Omitted:** `gates_at` — the definition's `attend: ['triage']` already says the only attended gate; bindings — the shipped duty defaults stand unless the user asks for a different model.

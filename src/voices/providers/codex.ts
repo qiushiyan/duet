@@ -15,7 +15,7 @@ import type { Effort } from '../bindings.ts';
  * Deliberately no model key AND no sandbox flag: the user's own
  * `~/.codex/config.toml` governs model, reasoning effort, AND the sandbox /
  * approval posture (docs/automation-design.md §"Roles are decoupled from
- * providers"). See `codexThreadOptions` for why duet imposes no `--sandbox`.
+ * providers"). See `codexThreadOptions` for why greenflag imposes no `--sandbox`.
  */
 
 /**
@@ -58,7 +58,7 @@ const TAIL_BYTES = 64 * 1024;
  * It deliberately sets NO `sandboxMode`: the `@openai/codex-sdk` appends
  * `--sandbox <mode>` to the CLI argv only when `sandboxMode` is truthy, so
  * omitting it lets the user's `~/.codex/config.toml` (or active profile)
- * govern the sandbox + approval posture — the same way duet already defers
+ * govern the sandbox + approval posture — the same way greenflag already defers
  * the model and reasoning effort to that file.
  *
  * This reversed a derived `opts.readOnly ? 'read-only' : 'workspace-write'`
@@ -83,7 +83,7 @@ export function codexThreadOptions(opts: { cwd?: string }, config: { model?: str
  * Drain a codex event stream into the turn's final text + usage, announcing the
  * session id on the first `thread.started` event (the earliest a FRESH thread
  * knows it). This is exactly the reduction the SDK's own non-streaming `run()`
- * performs over the same events — lifted out so duet can observe the id mid-turn
+ * performs over the same events — lifted out so greenflag can observe the id mid-turn
  * (run() surfaces it only after the whole turn resolves) and can be tested
  * against a synthetic event stream, the parseClaudeTurn-style provider seam. A
  * `turn.failed` throws its message, matching run()'s own behavior.

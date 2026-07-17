@@ -7,7 +7,7 @@ import { parseBindAddress, parseBindingSpec } from "../voices/bindings.ts";
 import type { BindAddress } from "../voices/bindings.ts";
 import { WORKFLOWS, entryOf, gatePhasesOf, isShippedWorkflowName, workflowDefinition } from "../registry/workflows.ts";
 import type { CompiledWorkflow, GatePhase, WorkflowName, WorkflowRef } from "../registry/workflows.ts";
-import { ensureDuetDir } from "../run/store.ts";
+import { ensureGreenflagDir } from "../run/store.ts";
 import type { WorkflowSource } from "../run/store.ts";
 import { resolveWorkflowSource } from "./workflow-source.ts";
 
@@ -15,7 +15,7 @@ import { resolveWorkflowSource } from "./workflow-source.ts";
  * The framing — the one file the human writes per run, and the only place
  * project knowledge enters the system. This module owns its whole journey:
  * the seed template (the built-in default, or a project's own
- * `.duet/templates/<name>.md` selected with `--template`), the bare-`duet new`
+ * `.greenflag/templates/<name>.md` selected with `--template`), the bare-`greenflag new`
  * editor flow, the machine/prose frontmatter boundary, and the resolution of
  * CLI flags against frontmatter into a run's inputs. A template is just
  * pre-baked framing — it seeds the editor draft and is then parsed and
@@ -34,23 +34,23 @@ import { resolveWorkflowSource } from "./workflow-source.ts";
  * Current keys: `gates_at`, `spec`. Pre-approved for later: `budget_usd`,
  * if open-questions Q19 resolves in favor of a run-level budget model.
  *
- * Frontmatter is parsed at `duet new` and STRIPPED before the framing body
+ * Frontmatter is parsed at `greenflag new` and STRIPPED before the framing body
  * is embedded in the orchestrator's prompt — the orchestrator sees only the
  * rendered posture instructions, never the raw config, so there is exactly
  * one source of truth in its context.
  */
 
-export const DEFAULT_FRAMING_FILE = join(".duet", "framing-draft.md");
+export const DEFAULT_FRAMING_FILE = join(".greenflag", "framing-draft.md");
 
 /**
  * Where a project keeps its own framing seed templates, mirroring
- * `.github/ISSUE_TEMPLATE/`. Self-ignored like the rest of `.duet/` — a
+ * `.github/ISSUE_TEMPLATE/`. Self-ignored like the rest of `.greenflag/` — a
  * template is the human's own convenience for composing the framing turn,
  * not a tracked artifact of the host repo (augment, never lock in). Commit
- * them by carving `!/templates/` into `.duet/.gitignore` if you want them
+ * them by carving `!/templates/` into `.greenflag/.gitignore` if you want them
  * shared across worktrees.
  */
-export const TEMPLATES_DIR = join(".duet", "templates");
+export const TEMPLATES_DIR = join(".greenflag", "templates");
 
 export const FRAMING_TEMPLATE = `---
 # Machine-parsed options (fixed values the harness acts on; judgment-weighed
@@ -156,10 +156,10 @@ function availableTemplatesHint(dir: string): string {
  * framings — a full framing file (frontmatter + prose), parsed normally at run
  * time, so a template can pre-set `gates_at` as well as the prose skeleton.
  *
- * A named template (`--template <name>`) reads `.duet/templates/<name>.md` and
+ * A named template (`--template <name>`) reads `.greenflag/templates/<name>.md` and
  * fails loudly, listing what's available, when it's missing — a typo'd name
  * must never silently fall back to the built-in and start the wrong run. With
- * no name, a project's own `.duet/templates/default.md` overrides the built-in
+ * no name, a project's own `.greenflag/templates/default.md` overrides the built-in
  * when present; otherwise the built-in FRAMING_TEMPLATE.
  */
 export function resolveTemplateSeed(cwd: string, templateName?: string): string {
@@ -179,20 +179,20 @@ export function resolveTemplateSeed(cwd: string, templateName?: string): string 
 }
 
 /**
- * The bare `duet new` entry: open the user's editor on a draft framing file
- * under .duet/ (seeding it from `resolveTemplateSeed` when the file doesn't
+ * The bare `greenflag new` entry: open the user's editor on a draft framing file
+ * under .greenflag/ (seeding it from `resolveTemplateSeed` when the file doesn't
  * exist), block until it closes, and return the file name to run with. Throws
  * when the user wrote nothing — an empty or untouched template means "don't
  * start the run"; an aborted edit leaves the draft in place for next time.
  */
 export async function editFramingForRun(cwd: string, templateName?: string): Promise<string> {
-  ensureDuetDir(cwd);
+  ensureGreenflagDir(cwd);
   const path = join(cwd, DEFAULT_FRAMING_FILE);
   const seed = resolveTemplateSeed(cwd, templateName);
   // An explicit --template is a deliberate "start from this template": it
   // (re)seeds the draft even over a stale one (with a note, since that
   // discards it). The bare path leaves an existing draft alone, so aborted
-  // work survives to the next `duet new`.
+  // work survives to the next `greenflag new`.
   if (templateName !== undefined) {
     if (existsSync(path))
       console.log(
@@ -244,7 +244,7 @@ export async function editFramingForRun(cwd: string, templateName?: string): Pro
  * life is the staging handshake it feeds.
  */
 export async function composeInEditor(instructions: string): Promise<string> {
-  const dir = mkdtempSync(join(tmpdir(), "duet-compose-"));
+  const dir = mkdtempSync(join(tmpdir(), "greenflag-compose-"));
   const path = join(dir, "message.md");
   writeFileSync(
     path,
@@ -364,7 +364,7 @@ export function parseConsultantToggle(value: string): "on" | "off" {
 export function parseWorkflow(value: string): WorkflowName {
   const names = Object.keys(WORKFLOWS) as WorkflowName[];
   if (!(names as string[]).includes(value.trim())) {
-    throw new Error(`workflow: "${value}" is not a duet workflow — choose one of {${names.join(", ")}}.`);
+    throw new Error(`workflow: "${value}" is not a greenflag workflow — choose one of {${names.join(", ")}}.`);
   }
   return value.trim() as WorkflowName;
 }
@@ -512,7 +512,7 @@ export function parseFramingFile(content: string): { meta: FramingFrontmatter; b
   return { meta, body };
 }
 
-/** A run's resolved inputs — what `duet new` hands to createRun. */
+/** A run's resolved inputs — what `greenflag new` hands to createRun. */
 export interface RunInputs {
   /** The framing prose body (frontmatter stripped) — what the orchestrator sees. */
   framing?: string;
@@ -546,7 +546,7 @@ export interface RunInputs {
 }
 
 /**
- * Resolve `duet new`'s inputs: with neither --spec nor --framing, run the
+ * Resolve `greenflag new`'s inputs: with neither --spec nor --framing, run the
  * editor flow (seeded from --template or the project default); parse the
  * framing's frontmatter; apply flag-over-frontmatter precedence for gates_at
  * and spec; validate the spec file exists. Throws with actionable messages —
@@ -558,7 +558,7 @@ export async function resolveRunInputs(
 ): Promise<RunInputs> {
   if (opts.template !== undefined && (opts.spec || opts.framing)) {
     throw new Error(
-      "--template seeds the editor draft for the bare `duet new` flow — it conflicts with --spec/--framing, which supply the framing directly",
+      "--template seeds the editor draft for the bare `greenflag new` flow — it conflicts with --spec/--framing, which supply the framing directly",
     );
   }
   let framingFile = opts.framing;

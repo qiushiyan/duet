@@ -17,11 +17,11 @@ import {
 } from '../voices/health.ts';
 
 /**
- * `duet doctor` — the health/liveness/connectivity view, the ONE composer that
- * reads transcripts and the network (status stays cheap and `.duet/`-local).
+ * `greenflag doctor` — the health/liveness/connectivity view, the ONE composer that
+ * reads transcripts and the network (status stays cheap and `.greenflag/`-local).
  * It joins three sources: the cheap session map (`resolveSessions`), each role's
  * transcript tail + probe (`worker-health`, via `sessions.readRoleTranscriptTail`),
- * and the duet-side liveness (`aliveDriverPid` + `probeRunPosition`). Only
+ * and the greenflag-side liveness (`aliveDriverPid` + `probeRunPosition`). Only
  * `cli.ts` imports this module, so importing `lifecycle` here closes no cycle —
  * the composition lives here precisely to keep `worker-health.ts` pure.
  *
@@ -45,7 +45,7 @@ export interface VoiceHealthRow {
   lastActivityAgeMs?: number;
   retries: number;
   recentErrors: TerminalError[];
-  /** Whether duet believes this voice is mid-turn right now (drives the verdict). */
+  /** Whether greenflag believes this voice is mid-turn right now (drives the verdict). */
   inFlight: boolean;
 }
 

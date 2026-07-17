@@ -1,4 +1,4 @@
-# duet runtime artifacts are local-only by default (run dirs, framing drafts).
+# greenflag runtime artifacts are local-only by default (run dirs, framing drafts).
 # Exception: framing seed templates and a project snippet-override library are
 # tracked so they travel across worktrees and clones (docs/automation-design.md
 # §"State persistence").

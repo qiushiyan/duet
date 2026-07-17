@@ -14,7 +14,7 @@ import { test } from './helpers/fixtures.ts';
 import { scriptedMachine } from './helpers/scripted-machine.ts';
 
 /**
- * `duet abandon` — stop a run for good. Two separable effects: kill the live
+ * `greenflag abandon` — stop a run for good. Two separable effects: kill the live
  * driver (always), and (with --purge) delete the run dir and the providers'
  * session transcripts. The marker keeps a deliberate stop from reading as a
  * crash, and abandonment stays reversible (the transcripts are kept).
@@ -25,7 +25,7 @@ const quiet = async () => {};
 
 /** A throwaway $HOME with the providers' transcript dirs laid out. */
 function fakeHome(): string {
-  return mkdtempSync(join(tmpdir(), 'duet-home-'));
+  return mkdtempSync(join(tmpdir(), 'greenflag-home-'));
 }
 function writeClaudeTranscript(home: string, projectDir: string, sessionId: string): string {
   const dir = join(home, '.claude', 'projects', projectDir);
@@ -93,7 +93,7 @@ describe('markAbandoned + probeRunPosition', () => {
     markAbandoned(parked);
     expect.soft(probeRunPosition(loadRunState(projectDir, run.runId))).toEqual({ kind: 'abandoned' });
 
-    // Reviving (what `duet continue` does) clears the marker — the parked gate
+    // Reviving (what `greenflag continue` does) clears the marker — the parked gate
     // re-derives from the snapshot that was kept all along.
     const revived = loadRunState(projectDir, run.runId);
     delete revived.abandoned;

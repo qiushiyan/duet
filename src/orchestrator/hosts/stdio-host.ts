@@ -7,7 +7,7 @@ import { loadRunState } from '../../run/store.ts';
 import { classifyError } from '../../voices/health.ts';
 import { runHostedPhase } from './host-runner.ts';
 import type { HostedSession, PhaseHost, PhaseInput, TurnOutcome } from './host-runner.ts';
-import { duetMachine } from '../../run/machine.ts';
+import { greenflagMachine } from '../../run/machine.ts';
 import { markerToEvent } from '../../run/phase-events.ts';
 import type { PhaseEvent } from '../../run/phase-events.ts';
 
@@ -15,7 +15,7 @@ import type { PhaseEvent } from '../../run/phase-events.ts';
  * The stdio host — the SDK-over-stdio sibling of the in-process driver, and the
  * stdio `PhaseHost` adapter over the shared run loop (`runHostedPhase`,
  * src/orchestrator/hosts/host-runner.ts). `openSession` connects an orchestrator client to a
- * real `duet _mcp <runId> <phase>` subprocess (the kernel tool server); each
+ * real `greenflag _mcp <runId> <phase>` subprocess (the kernel tool server); each
  * `driveTurn` runs the external orchestrator over that boundary, then reads the
  * terminal marker the subprocess wrote and maps it to a TurnOutcome — the same
  * channel the in-process driver uses (src/run/phase-events.ts), never
@@ -84,7 +84,7 @@ function makeStdioHost(orchestrate: Orchestrate): PhaseHost {
         cwd,
         stderr: 'inherit', // the subprocess narrates to its stderr; stdout is the JSON-RPC channel
       });
-      const client = new Client({ name: 'duet-stdio-host', version: '0.1.0' });
+      const client = new Client({ name: 'greenflag-stdio-host', version: '0.1.0' });
       const killPeer = () => {
         if (transport.pid) {
           try {
@@ -131,13 +131,13 @@ function makeStdioHost(orchestrate: Orchestrate): PhaseHost {
 }
 
 /**
- * The duetMachine with its phase driver running over the stdio boundary instead
+ * The greenflagMachine with its phase driver running over the stdio boundary instead
  * of in-process — the same machine.provide seam scriptedMachine and the real
  * in-process driver use, so the lifecycle (driveToQuiescence: park, persist,
  * gates_at auto-cross, deliver-before-clear marker handling) is reused unchanged.
  */
-export function stdioPhaseMachine(orchestrate: Orchestrate): typeof duetMachine {
-  return duetMachine.provide({
+export function stdioPhaseMachine(orchestrate: Orchestrate): typeof greenflagMachine {
+  return greenflagMachine.provide({
     actors: {
       phaseDriver: fromCallback<EventObject, PhaseInput>(({ input, sendBack }) => {
         runPhaseOverStdio(input, orchestrate)

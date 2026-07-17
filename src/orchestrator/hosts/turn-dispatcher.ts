@@ -37,7 +37,7 @@ import { contextCapFor, noteEdgeContinuation, renderTurnResult, settleTurn, stag
  * leaseHeld wrapper (a faulting lease check reads as "not held", so finalize and
  * failSafe cannot throw on it), any launch/finalize fault is caught into a
  * terminal failSafe that flips the in-memory record `failed` (so the role is
- * never stranded `running` — check_turns / `duet status --wait` read `running`
+ * never stranded `running` — check_turns / `greenflag status --wait` read `running`
  * as "still going"), the heartbeat is stopped in a finally, and collect isolates
  * each record so one role's fault never aborts the batch or half-collects
  * another. A stranded record under AFK would hang supervision forever, so this
@@ -132,7 +132,7 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
 
   // The lifecycle's terminal backstop: the launch, the synchronous dispatch
   // setup, or a finalize step threw — a disk fault, say. A role must NEVER be
-  // left stranded `running`: check_turns and `duet status --wait` both read
+  // left stranded `running`: check_turns and `greenflag status --wait` both read
   // `running` as "still going", so a stuck record hangs them forever under AFK.
   // The in-memory flip cannot throw, so it unsticks the role even if disk writes
   // keep faulting; the disk flip + activeTurns clear are best-effort and

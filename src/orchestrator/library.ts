@@ -1,14 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { z } from 'zod';
+import { PACKAGE_ROOT } from '../package-root.ts';
 import { ANYTIME_SNIPPETS, CONSULTANT_SNIPPETS, GATELESS_CONSULTANT_SNIPPETS, consultantSnippetsForWorkflow, phaseSnippetsFor, phasesOf } from '../registry/workflows.ts';
 import type { PhaseName, WorkflowRef } from '../registry/workflows.ts';
 
 /**
- * Duet's snippet library — the `snippets/` directory at the repo root, one
+ * Greenflag's snippet library — the `snippets/` directory at the repo root, one
  * block-named TOML file per vocabulary block (frame · doc-loop artifacts ·
  * build · finish, plus the anytime helpers and the consultant checkpoints),
  * seeded from the user's tabtype config plus the documented `ceo-summary`.
@@ -24,7 +24,7 @@ export interface Snippet {
 
 /**
  * Where an effective snippet resolved from: the shipped base library, or one of
- * the two override layers. Provenance is a `duet snippets` display concern only
+ * the two override layers. Provenance is a `greenflag snippets` display concern only
  * — the library SERVED to workers carries no source marker (that is exactly what
  * the byte-for-byte-identity guarantee requires).
  */
@@ -39,14 +39,14 @@ export interface EffectiveSnippet extends Snippet {
  * Where to discover override layers when resolving the effective library. Both
  * fields optional and explicit: `configDir` holds the USER override
  * `snippets.toml`; `cwd` (the project root) holds the PROJECT override at
- * `<cwd>/.duet/snippets.toml`. An absent field skips that layer's discovery — so
+ * `<cwd>/.greenflag/snippets.toml`. An absent field skips that layer's discovery — so
  * with neither, resolution is the shipped base verbatim, and there is NO ambient
  * read of the OS home here. Production callers build the real context through
  * `runtimeLibraryContext` (the one place the home is read); tests pass explicit
  * dirs, so the contextual core stays environment-independent.
  */
 export interface SnippetLibraryContext {
-  /** Project root — its `.duet/snippets.toml` is the project override layer. Absent ⇒ no project layer. */
+  /** Project root — its `.greenflag/snippets.toml` is the project override layer. Absent ⇒ no project layer. */
   cwd?: string;
   /** User config dir — its `snippets.toml` is the user override layer. Absent ⇒ no user layer. */
   configDir?: string;
@@ -84,7 +84,7 @@ export function mergeSnippetLayers(base: Snippet[], overrides: SnippetOverrideLa
       const target = byKey.get(override.key);
       if (!target) {
         throw new Error(
-          `snippet override at ${layer.path} names unknown key "${override.key}". Overrides can only replace existing duet snippets — run "duet snippets" to list valid keys, fix the key, or remove that [[snippets]] entry.`,
+          `snippet override at ${layer.path} names unknown key "${override.key}". Overrides can only replace existing greenflag snippets — run "greenflag snippets" to list valid keys, fix the key, or remove that [[snippets]] entry.`,
         );
       }
       target.expand = override.expand;
@@ -94,7 +94,6 @@ export function mergeSnippetLayers(base: Snippet[], overrides: SnippetOverrideLa
   return merged;
 }
 
-const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SNIPPETS_DIR = join(PACKAGE_ROOT, 'snippets');
 
 /**
@@ -117,12 +116,12 @@ const SNIPPET_FILES = [
 ] as const;
 
 /**
- * The vendored methodology lessons (`lessons/`) — duet's PLAN-phase quality
+ * The vendored methodology lessons (`lessons/`) — greenflag's PLAN-phase quality
  * opinion, shipped in the package (`files` includes `lessons`). Snippet bodies
  * cite these with a `{{lessons_dir}}/…` token that `snippetBlock` resolves to
  * this absolute dir at serve time, so a worker on any install reads the real
- * files. Same package-relative resolution as `SNIPPETS_DIR` — `src/` and
- * `dist/` both sit one level below the root, so it survives the published build.
+ * files. Anchored on `PACKAGE_ROOT` like `SNIPPETS_DIR`, so it resolves in both
+ * the dev tree and the published bundle (`src/package-root.ts`).
  * A frozen snapshot of the author's `~/.config/lessons`, refreshed by hand via
  * `pnpm vendor-lessons` — which writes to this same path, so keep the two in sync
  * if the vendored dir ever moves. Exported for the snippet guard (`tests/snippets.test.ts`).
@@ -225,7 +224,7 @@ function loadOverrideLayer(path: string, source: Exclude<SnippetLayer, 'shipped'
 
 /**
  * Resolve the effective library in a run/project context: the shipped base with
- * the user (`<configDir>/snippets.toml`) and project (`<cwd>/.duet/snippets.toml`)
+ * the user (`<configDir>/snippets.toml`) and project (`<cwd>/.greenflag/snippets.toml`)
  * override layers stacked on top, project winning. THE contextual entry point —
  * `loadSnippets`/`getSnippet` stay shipped-only and context-free (their only
  * non-render caller does an existence check, and the key set is override-invariant
@@ -240,7 +239,7 @@ export function loadEffectiveSnippets(ctx: SnippetLibraryContext = {}): Effectiv
     if (userLayer) layers.push(userLayer);
   }
   if (ctx.cwd !== undefined) {
-    const projectLayer = loadOverrideLayer(join(ctx.cwd, '.duet', 'snippets.toml'), 'project');
+    const projectLayer = loadOverrideLayer(join(ctx.cwd, '.greenflag', 'snippets.toml'), 'project');
     if (projectLayer) layers.push(projectLayer);
   }
   return mergeSnippetLayers(loadSnippets(), layers);
@@ -248,21 +247,21 @@ export function loadEffectiveSnippets(ctx: SnippetLibraryContext = {}): Effectiv
 
 /**
  * The real runtime library context for a project root: the project override at
- * `<cwd>/.duet/snippets.toml` and the user override at
- * `<home>/.config/duet/snippets.toml`. The ONE place the OS home is read for
- * snippets (mirroring config.ts's `~/.config/duet` location), so production gets
+ * `<cwd>/.greenflag/snippets.toml` and the user override at
+ * `<home>/.config/greenflag/snippets.toml`. The ONE place the OS home is read for
+ * snippets (mirroring config.ts's `~/.config/greenflag` location), so production gets
  * the real home while `loadEffectiveSnippets` itself stays environment-free.
  * `home` defaults to `homedir()`; the test suite isolates it by pointing `$HOME`
  * at an empty fixture (tests/helpers/home-isolation.ts), so no run picks up the
  * developer's own override.
  */
 export function runtimeLibraryContext(cwd: string, home: string = homedir()): SnippetLibraryContext {
-  return { cwd, configDir: join(home, '.config', 'duet') };
+  return { cwd, configDir: join(home, '.config', 'greenflag') };
 }
 
 /**
  * One snippet's effective (merged) form plus its provenance — for
- * `duet snippets show <key>`. STORED form: the `{{lessons_dir}}` token is left
+ * `greenflag snippets show <key>`. STORED form: the `{{lessons_dir}}` token is left
  * unresolved, matching `getSnippet`.
  */
 export function getEffectiveSnippet(key: string, ctx: SnippetLibraryContext = {}): EffectiveSnippet | undefined {

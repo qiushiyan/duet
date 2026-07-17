@@ -19,7 +19,7 @@ describe('formatGatePosture (the single source for the three posture surfaces)',
     expect(formatGatePosture([], copy)).toBe('gates:    attending none — all gates pre-authorized');
   });
   // The function has exactly two branches (attended-list / none), both covered above.
-  // Each surface's actual copy — duet status / new / afk — is pinned at its real call
+  // Each surface's actual copy — greenflag status / new / afk — is pinned at its real call
   // site (the renderStatus suite below; the cli.ts new/afk paths), not by re-running
   // this formatter with hand-supplied literals.
 });
@@ -130,14 +130,14 @@ describe('steerRefusal (the steer channel gate)', () => {
   test('a gate refuses toward the gate decision', () => {
     const copy = steerRefusal('full', { kind: 'gate', phase: 'implement' }, 'r1');
     expect.soft(copy).toContain('shipGate');
-    expect.soft(copy).toContain('duet continue r1 --approve');
+    expect.soft(copy).toContain('greenflag continue r1 --approve');
     expect.soft(copy).toContain('--reject');
   });
 
   test('a flag refuses toward the answer', () => {
     const copy = steerRefusal('full', { kind: 'flag', phase: 'implement' }, 'r1');
     expect.soft(copy).toContain('queued question');
-    expect.soft(copy).toContain('duet continue r1 --answer');
+    expect.soft(copy).toContain('greenflag continue r1 --answer');
   });
 
   test('an interactive run points to the interactive orchestrator session, not a staged steer', () => {
@@ -172,8 +172,8 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
       gate: 'commitSpecGate',
       packet: { summary: 'spec summary', artifacts: ['docs/spec.md'] },
       commands: {
-        approve: `duet continue ${run.runId} --approve`,
-        reject: `duet continue ${run.runId} --reject "<feedback>"`,
+        approve: `greenflag continue ${run.runId} --approve`,
+        reject: `greenflag continue ${run.runId} --reject "<feedback>"`,
       },
     });
 
@@ -182,7 +182,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
       kind: 'flag',
       question: 'migrate?',
       context: 'slice 3',
-      command: `duet continue ${run.runId} --answer "<your answer>"`,
+      command: `greenflag continue ${run.runId} --answer "<your answer>"`,
     });
 
     expect.soft(buildStatusModel(run, { kind: 'running', pid: 7, phase: 'implement' }, []).stop).toEqual({
@@ -194,7 +194,7 @@ describe('buildStatusModel (the one derivation both renderers and --json consume
     expect.soft(buildStatusModel(run, { kind: 'crashed', phase: 'implement' }, []).stop).toEqual({
       kind: 'crashed',
       phase: 'implement',
-      command: `duet continue ${run.runId}`,
+      command: `greenflag continue ${run.runId}`,
     });
 
     expect.soft(buildStatusModel(run, { kind: 'done' }, []).stop).toEqual({
@@ -461,8 +461,8 @@ describe('renderStatus', () => {
     expect.soft(out).toContain('SPEC gate'); // the load-bearing tokens, not the box-drawing decoration
     expect.soft(out).toContain('analyst flagged the data model; fixed');
     expect.soft(out).toContain('artifacts: docs/spec.md');
-    expect.soft(out).toContain(`duet continue ${run.runId} --approve`);
-    expect.soft(out).toContain(`duet continue ${run.runId} --reject "<feedback>"`);
+    expect.soft(out).toContain(`greenflag continue ${run.runId} --approve`);
+    expect.soft(out).toContain(`greenflag continue ${run.runId} --reject "<feedback>"`);
   });
 
   test('gates with verification stakes carry their hint', ({ run }) => {
@@ -481,7 +481,7 @@ describe('renderStatus', () => {
     expect.soft(out).toContain('QUEUED QUESTION'); // the section's identifying keyword
     expect.soft(out).toContain('migrate now?');
     expect.soft(out).toContain('schema change in slice 3');
-    expect.soft(out).toContain(`duet continue ${run.runId} --answer`);
+    expect.soft(out).toContain(`greenflag continue ${run.runId} --answer`);
     expect.soft(out).not.toContain('decide with:');
   });
 
@@ -644,7 +644,7 @@ describe('renderStatus', () => {
 
     expect.soft(out).toContain('implement phase'); // the crash notice names the phase…
     expect.soft(out).toContain('mid-flight'); // …and its kind; the sentence is wording
-    expect.soft(out).toContain(`duet continue ${run.runId}`); // the resume command is contract
+    expect.soft(out).toContain(`greenflag continue ${run.runId}`); // the resume command is contract
   });
 
   test('an interactive stop names the phase the interactive orchestrator session is driving', ({ run }) => {
@@ -664,25 +664,25 @@ describe('status at an abandoned / done stop', () => {
     expect.soft(model.stop).toMatchObject({
       kind: 'abandoned',
       at: '2026-06-17T09:00:00.000Z',
-      revive: `duet continue ${run.runId}`,
-      purge: `duet abandon ${run.runId} --purge`,
+      revive: `greenflag continue ${run.runId}`,
+      purge: `greenflag abandon ${run.runId} --purge`,
     });
     const text = renderStatus(model);
     expect.soft(text).toContain('abandoned');
-    expect.soft(text).toContain(`duet continue ${run.runId}`);
-    expect.soft(text).toContain(`duet abandon ${run.runId} --purge`);
+    expect.soft(text).toContain(`greenflag continue ${run.runId}`);
+    expect.soft(text).toContain(`greenflag abandon ${run.runId} --purge`);
   });
 
   test('steering an abandoned run is refused toward revive/new', ({ run }) => {
     const copy = steerRefusal('full', { kind: 'abandoned' }, run.runId);
     expect.soft(copy).toContain('abandoned');
-    expect.soft(copy).toContain(`duet continue ${run.runId}`);
+    expect.soft(copy).toContain(`greenflag continue ${run.runId}`);
   });
 
   test('a done run points at GitHub merge and the purge cleanup', ({ run }) => {
     const text = render(run, { kind: 'done' });
     expect.soft(text).toContain('merge'); // the next manual action's keyword; the phrasing is wording
-    expect.soft(text).toContain(`duet abandon ${run.runId} --purge`); // the cleanup command is contract
+    expect.soft(text).toContain(`greenflag abandon ${run.runId} --purge`); // the cleanup command is contract
   });
 });
 

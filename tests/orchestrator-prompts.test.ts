@@ -44,24 +44,24 @@ describe('gateless drops the consultant bet-audit in the phase briefs, keeping f
 });
 
 // The impl/implement briefs put a worker's scratch in the run-scoped dir and
-// forbid deleting under .duet/ — the regression guard for an implementer that
-// ran `rm -rf .duet` cleaning its scratch and deleted the live run mid-build.
-// The old top-level `.duet/scratch/` and its "delete before handoff" step (the
+// forbid deleting under .greenflag/ — the regression guard for an implementer that
+// ran `rm -rf .greenflag` cleaning its scratch and deleted the live run mid-build.
+// The old top-level `.greenflag/scratch/` and its "delete before handoff" step (the
 // trigger) are gone; scratch now rides the run's own lifecycle.
 describe('the scratch guardrail keeps a worker out of the live run state', () => {
-  test('full impl: per-run scratch path, no cleanup step, deleting under .duet/ forbidden', ({ projectDir }) => {
+  test('full impl: per-run scratch path, no cleanup step, deleting under .greenflag/ forbidden', ({ projectDir }) => {
     const run = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), framing: 'x' });
     const brief = buildPhaseBrief(run, 'implement');
-    expect.soft(brief).toContain(`.duet/runs/${run.runId}/scratch/`); // inside the run dir, not a shared parent
-    expect.soft(brief).toContain('never delete .duet/'); // the hard guardrail, with its reason in the brief
-    expect.soft(brief).not.toContain('.duet/scratch/'); // the old top-level location is gone
+    expect.soft(brief).toContain(`.greenflag/runs/${run.runId}/scratch/`); // inside the run dir, not a shared parent
+    expect.soft(brief).toContain('never delete .greenflag/'); // the hard guardrail, with its reason in the brief
+    expect.soft(brief).not.toContain('.greenflag/scratch/'); // the old top-level location is gone
     expect.soft(brief).not.toContain('delete them before handoff'); // and the cleanup step that triggered the rm
   });
 
   test('short implement: same guardrail and per-run scratch path', ({ shortRun }) => {
     const brief = buildPhaseBrief(shortRun, 'implement');
-    expect.soft(brief).toContain(`.duet/runs/${shortRun.runId}/scratch/`);
-    expect.soft(brief).toContain('never delete .duet/');
+    expect.soft(brief).toContain(`.greenflag/runs/${shortRun.runId}/scratch/`);
+    expect.soft(brief).toContain('never delete .greenflag/');
     expect.soft(brief).not.toContain('delete them before handoff');
   });
 });

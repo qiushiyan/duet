@@ -1,8 +1,8 @@
 /**
  * View-time timestamp helpers. Stored logs and `status --json` keep raw UTC ISO
- * — they are the inspectable-without-duet / machine-consumed artifacts — so a
+ * — they are the inspectable-without-greenflag / machine-consumed artifacts — so a
  * raw `…Z` is never a bug to a reader. Only HUMAN-TEXT renders localize: the
- * status lists, the doctor rows, and the tmux/`duet logs` voice lines. These are
+ * status lists, the doctor rows, and the tmux/`greenflag logs` voice lines. These are
  * pure string transforms that read the local clock at call time (fine at view
  * time, never persisted). Each passes a malformed timestamp through unchanged so
  * a half-written log line never throws into a viewer.
@@ -10,7 +10,7 @@
 
 const pad = (n: number): string => String(n).padStart(2, '0');
 
-/** A duration in ms → a coarse `Hh Mm` / `Mm` / `<1m` label, for `duet stats`.
+/** A duration in ms → a coarse `Hh Mm` / `Mm` / `<1m` label, for `greenflag stats`.
  *  h/m granularity is the right altitude for phase-level effort (seconds are
  *  noise across a multi-hour run). A negative or non-finite input renders `—`
  *  rather than throwing, so a half-parsed log can't crash the view. */

@@ -16,7 +16,7 @@ import { upsertGrade } from '../src/run/store.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**
- * `duet stats` derives effort from the voice logs at view time. The pure core
+ * `greenflag stats` derives effort from the voice logs at view time. The pure core
  * (`buildStats`) is tested on real log-line strings — phase windows from the
  * orchestrator log, worker turns from the worker logs, attributed and aggregated
  * — and on its fail-soft degradations. The fs composer (`buildStatsModel`) gets
@@ -287,7 +287,7 @@ describe('buildStatsModel — the fs composer over real appendVoiceLog output', 
     expect.soft(model.phases.map((p) => p.phase)).toEqual(['spec']);
     expect.soft(model.phases[0]?.turns).toBe(1);
     expect.soft(model.tags.map((t) => t.tag)).toEqual(['write-spec']);
-    expect.soft(renderStats(model)).toContain('━━━ duet stats');
+    expect.soft(renderStats(model)).toContain('━━━ greenflag stats');
   });
 
   test('labels each phase with the model that ran it — the architect through planning, the builder in delivery', ({ run }) => {

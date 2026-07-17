@@ -404,7 +404,7 @@ export function claudeArgs(
     args.push('--max-budget-usd', String(config.maxBudgetUsd));
   }
   // Both workers launch with full permissions — headless -p mode has no
-  // permission prompt, and duet deliberately does not make its coding agents
+  // permission prompt, and greenflag deliberately does not make its coding agents
   // more restricted than the user's own manual workflow (the user's posture for
   // their own repos: 2026-06-11 for the writing worker, extended to the checker
   // 2026-06-22, superseding the per-voice read-only/bypass split). A checker's

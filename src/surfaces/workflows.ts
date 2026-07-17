@@ -91,7 +91,7 @@ export function renderWorkflowList(model: WorkflowListModel): string {
       const sources = row.sources
         .map((source) => (source.path ? `${source.layer} (${source.path})` : source.layer))
         .join(' + ');
-      sections.push(`  ${row.name.padEnd(width)}  ${sources} — remove the duplicate; duet rejects shadowing`);
+      sections.push(`  ${row.name.padEnd(width)}  ${sources} — remove the duplicate; greenflag rejects shadowing`);
     }
   }
 
@@ -118,8 +118,8 @@ function bindingRowsInOrder(rows: BindingRow[]): BindingRow[] {
 }
 
 /**
- * The `duet workflows check` summary, rendered over the SAME blueprint spine
- * `duet graph --workflow` uses — the structural join (phases, gates, stages,
+ * The `greenflag workflows check` summary, rendered over the SAME blueprint spine
+ * `greenflag graph --workflow` uses — the structural join (phases, gates, stages,
  * continuity, posture) is read off the spine, not re-derived, and the summary
  * ADDS the two things the graph blueprint surfaces that this command omitted:
  * the config-resolved default bindings and the per-phase consultant checkpoints.
@@ -153,7 +153,7 @@ export function renderWorkflowCheck(model: GraphModel & { mode: 'blueprint' }, c
   }
 
   // The config-resolved default bindings (labeled as defaults, like the graph blueprint).
-  lines.push('', 'bindings (defaults · resolved from ~/.config/duet/config.toml)');
+  lines.push('', 'bindings (defaults · resolved from ~/.config/greenflag/config.toml)');
   for (const row of bindingRowsInOrder(model.bindings)) lines.push(`  ${row.address.padEnd(13)} ${row.label}`);
   if (model.degradedEdges.length > 0) {
     lines.push(`  degraded edges: ${model.degradedEdges.map((e) => `${e.into}<-${e.from} (${e.reason})`).join(', ')}`);
@@ -186,14 +186,14 @@ function validateNewWorkflowName(name: string): void {
 }
 
 function workflowStarter(name: string): string {
-  return `import { build, defineWorkflow, finish, frame } from 'duet/workflows';
+  return `import { build, defineWorkflow, finish, frame } from 'greenflag/workflows';
 
 export default defineWorkflow({
   name: '${name}',
   title: '${name} workflow',
   phases: [
     // frame() gathers direction, build({ review: 'writable' }) runs one writable delivery pass, and finish() opens the PR.
-    // For other complete shapes, use the worked examples in skills/duet-frame/references/workflow-definitions.md.
+    // For other complete shapes, use the worked examples in skills/greenflag-frame/references/workflow-definitions.md.
     frame(),
     build({ review: 'writable' }),
     finish(),
@@ -208,7 +208,7 @@ export function initWorkflowDefinition(cwd: string, name: string, opts: { home?:
   const existing = definedWorkflowSources(cwd, name, opts);
   if (existing.length > 0) {
     throw new Error(
-      `workflow "${name}" already resolves from ${existing.map((source) => formatWorkflowSource(source, cwd)).join(', ')} — choose a new name; duet rejects workflow shadowing.`,
+      `workflow "${name}" already resolves from ${existing.map((source) => formatWorkflowSource(source, cwd)).join(', ')} — choose a new name; greenflag rejects workflow shadowing.`,
     );
   }
 
@@ -225,8 +225,8 @@ export function renderWorkflowInit(result: InitializedWorkflow, cwd: string): st
   const path = displayPath(result.path, cwd);
   return [
     `created ${path}`,
-    `check it: duet workflows check ${result.name}`,
-    `run it:   duet new --workflow ${result.name}`,
-    'share it by carving !/workflows/ into .duet/.gitignore when this project definition should be committed',
+    `check it: greenflag workflows check ${result.name}`,
+    `run it:   greenflag new --workflow ${result.name}`,
+    'share it by carving !/workflows/ into .greenflag/.gitignore when this project definition should be committed',
   ].join('\n');
 }

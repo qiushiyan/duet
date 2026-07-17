@@ -10,7 +10,7 @@ import { parseRecords } from './health.ts';
  * Why it exists (the 20260701 wedge): a claude session grew 17% → 98% of its
  * 1M window inside one two-hour turn and wedged — every subsequent send
  * bounced off "Prompt is too long" and the run parked ten hours for a
- * mechanical recovery. Headless claude never auto-compacts, so duet owns the
+ * mechanical recovery. Headless claude never auto-compacts, so greenflag owns the
  * bands that keep a persistent session away from its ceiling. Claude-only by
  * design: codex auto-compacts and is never sent `/compact`.
  *
@@ -47,7 +47,7 @@ export function contextBand(safetyPercent: number | undefined): ContextBand {
 
 /**
  * The generic instructions for a SALVAGE `/compact` — the automatic recovery
- * duet runs itself when a session is already rejecting prompts, so no
+ * greenflag runs itself when a session is already rejecting prompts, so no
  * orchestrator-authored compaction can reach it. Deliberately mechanical:
  * proactive compaction stays orchestrator-authored (choosing what survives is
  * editorial), but a wedged session has no editorial choice left — only

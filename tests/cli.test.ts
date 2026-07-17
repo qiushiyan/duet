@@ -3,34 +3,34 @@ import { newRunInputOpts, renderSnippetListing, resolveAfkArgs, takeoverPlan } f
 import { test } from './helpers/fixtures.ts';
 
 /**
- * The `duet new` / `duet afk` argument plumbing, tested at its pure seam — the
+ * The `greenflag new` / `greenflag afk` argument plumbing, tested at its pure seam — the
  * action bodies are thin wiring (they spawn drivers), so the disambiguation and
  * forwarding logic is extracted into helpers that carry the decisions.
  */
 
-describe('resolveAfkArgs — duet afk positional disambiguation (#2)', () => {
+describe('resolveAfkArgs — greenflag afk positional disambiguation (#2)', () => {
   test('a lone arg that names an existing run is the runId (bare posture for that run)', ({ projectDir, run }) => {
-    // `duet afk <runId>` — previously impossible: the run id parsed as a preset.
+    // `greenflag afk <runId>` — previously impossible: the run id parsed as a preset.
     expect(resolveAfkArgs(projectDir, run.runId, undefined)).toEqual({ runId: run.runId });
   });
 
   test('a preset + an explicit runId pass through unchanged', ({ projectDir, run }) => {
-    // `duet afk overnight <runId>`
+    // `greenflag afk overnight <runId>`
     expect(resolveAfkArgs(projectDir, 'overnight', run.runId)).toEqual({ preset: 'overnight', runId: run.runId });
   });
 
   test('a lone arg that is NOT a run dir stays the preset (posture for the latest run)', ({ projectDir }) => {
-    // `duet afk overnight` — "overnight" is a preset, not a run id.
+    // `greenflag afk overnight` — "overnight" is a preset, not a run id.
     expect(resolveAfkArgs(projectDir, 'overnight', undefined)).toEqual({ preset: 'overnight' });
   });
 
   test('no args is the bare attend-none posture for the latest run', ({ projectDir }) => {
-    // `duet afk`
+    // `greenflag afk`
     expect(resolveAfkArgs(projectDir, undefined, undefined)).toEqual({});
   });
 });
 
-describe('newRunInputOpts — duet new flag forwarding (#3)', () => {
+describe('newRunInputOpts — greenflag new flag forwarding (#3)', () => {
   test('an explicit empty --gates-at is forwarded KEY-PRESENT, not dropped', () => {
     // The CLI must hand "" to resolveRunInputs so the parser rejects it as empty
     // (framing.ts), rather than truthy-dropping it to attend-all.
@@ -69,7 +69,7 @@ describe('takeoverPlan — the takeover decision (resume vs inspect vs clear-orp
     expect(takeoverPlan(run, 'builder')).toEqual({ kind: 'open', sessionId: 'arch-1', provider: 'claude', ephemeral: false });
   });
 
-  test('the consultant with a captured session opens to INSPECT — ephemeral, duet will not resume it', ({ consultantRun }) => {
+  test('the consultant with a captured session opens to INSPECT — ephemeral, greenflag will not resume it', ({ consultantRun }) => {
     consultantRun.sessions = { consultant: { provider: 'claude', id: 'c-1' } };
     expect(takeoverPlan(consultantRun, 'consultant')).toEqual({ kind: 'open', sessionId: 'c-1', provider: 'claude', ephemeral: true });
   });
@@ -90,7 +90,7 @@ describe('takeoverPlan — the takeover decision (resume vs inspect vs clear-orp
   });
 });
 
-describe('renderSnippetListing — the `duet snippets` provenance view', () => {
+describe('renderSnippetListing — the `greenflag snippets` provenance view', () => {
   test('all shipped → a no-overrides summary, no layer counts', () => {
     const out = renderSnippetListing([
       { key: 'write-spec', expand: 'x', source: 'shipped' },

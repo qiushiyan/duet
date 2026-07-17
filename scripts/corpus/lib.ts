@@ -80,7 +80,7 @@ function corpusRecordDirs(root: string): string[] {
 }
 
 function isLiveRunDir(path: string): boolean {
-  return basename(dirname(path)) === 'runs' && basename(dirname(dirname(path))) === '.duet' && existsSync(join(path, 'state.json'));
+  return basename(dirname(path)) === 'runs' && basename(dirname(dirname(path))) === '.greenflag' && existsSync(join(path, 'state.json'));
 }
 
 function walkForRunDirs(root: string): string[] {

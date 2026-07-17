@@ -23,13 +23,13 @@ import { deriveRepoIdentity } from './repo.ts';
 import type { RepoIdentity } from './repo.ts';
 
 /**
- * Per-run working data under `.duet/runs/<run_id>/` in the target project —
+ * Per-run working data under `.greenflag/runs/<run_id>/` in the target project —
  * the one module that reads and writes it.
  *
  * The state file is a fast-access HINT — the source of truth is the provider
  * JSONL transcripts in their standard locations (augmentation principle).
  * Everything here must stay human-readable and survivable: the
- * user can stop duet mid-run, continue manually with `claude --resume` /
+ * user can stop greenflag mid-run, continue manually with `claude --resume` /
  * `codex exec resume`, and come back (or never).
  *
  * Concurrency model: at most one process writes at a time (the CLI stages
@@ -49,9 +49,9 @@ export type Voice = 'orchestrator' | VoiceAddress;
  * product/direction call the human must make; `low` = notable, not blocking.
  *
  * A `high` WITHHOLDS a non-explicit crossing (consultant spec, slice 5): the
- * headless `driveToQuiescence` auto-cross and the one-tap `duet afk` handoff both
+ * headless `driveToQuiescence` auto-cross and the one-tap `greenflag afk` handoff both
  * refuse to manufacture an approval over a `high`, converting it to an attended
- * stop. An EXPLICIT human approval (`duet continue --approve`, crossInteractive)
+ * stop. An EXPLICIT human approval (`greenflag continue --approve`, crossInteractive)
  * always crosses — blocking the human's own tap would fight the gate model. `low`
  * stays advisory and rides the packet. The single resolver `highDecisionsAt`
  * (beside gateAttended) is what every consumer reads; advance_phase itself stays
@@ -130,7 +130,7 @@ export interface RunState {
    * `root` is the primary checkout path (for a run created in a linked worktree
    * it names the MAIN checkout — the point), `remote` the origin URL when one
    * exists. The durable group key for archived records: `cwd` names a worktree
-   * that dies at merge, while root/remote outlive it, so `duet framings` can
+   * that dies at merge, while root/remote outlive it, so `greenflag framings` can
    * scope the corpus to "this repo" after the creating worktree is a dead path.
    * ADDITIVE and best-effort: any git failure leaves it absent (a git-less dir
    * still creates runs), and no run mechanics read it — a grouping stamp, not
@@ -226,20 +226,20 @@ export interface RunState {
    */
   gateless?: true;
   /**
-   * Set by `duet abandon`: the human deliberately stopped this run. The marker
+   * Set by `greenflag abandon`: the human deliberately stopped this run. The marker
    * exists so a deliberate kill isn't read as a crash — `probeRunPosition`
    * short-circuits to an `abandoned` position instead of `crashed`. The
-   * transcripts stay intact, so the run is still revivable (`duet continue`
-   * clears the marker; `duet takeover` is unaffected) — abandonment is
+   * transcripts stay intact, so the run is still revivable (`greenflag continue`
+   * clears the marker; `greenflag takeover` is unaffected) — abandonment is
    * reversible, per docs/automation-design.md §"Ending a run". `--purge`
    * removes the run outright instead of marking it.
    */
   abandoned?: { at: string };
   /**
-   * Set by `duet orchestrate` when the human's interactive Claude Code session
+   * Set by `greenflag orchestrate` when the human's interactive Claude Code session
    * is the orchestrator for this run (the planning stage, up to its handoff
    * gate). A run-level marker, NOT a binding (src/voices/bindings.ts stays
-   * voice→provider/model only). Two readers: `duet continue` chooses the
+   * voice→provider/model only). Two readers: `greenflag continue` chooses the
    * interactive rest-vs-handoff path from it, and `probeRunPosition` reads a
    * resting phase-loop snapshot as interactive-active rather than crashed.
    * Cleared at the stage-boundary handoff to the headless driver (and the
@@ -249,7 +249,7 @@ export interface RunState {
    */
   orchestrationHost?: 'interactive';
 
-  /** Mirror of the machine's state value, for humans and `duet status`. */
+  /** Mirror of the machine's state value, for humans and `greenflag status`. */
   machineState?: string;
   orchestratorSessionId?: string;
   /**
@@ -257,7 +257,7 @@ export interface RunState {
    * session that hosts the orchestrator over the attended arc. Set by
    * runOrchestrate: from `--resume-session <id>` on a warm start (the user
    * attaches the discussion session the framing grew out of), then carried
-   * forward so a later `duet orchestrate <runId>` re-attaches the SAME session
+   * forward so a later `greenflag orchestrate <runId>` re-attaches the SAME session
    * after a drop instead of starting cold. buildLaunchSpec resumes from it
    * (`claude --resume`); a warm start also flips the kickoff to its transition
    * variant.
@@ -327,7 +327,7 @@ export interface RunState {
   /**
    * Persisted hint: which worker has a turn in flight right now, set at a
    * send_prompt turn's start and cleared in its `finally`. A SEPARATE process
-   * (`duet doctor`) reads it to tell `long-inference` from `idle`, reconciled
+   * (`greenflag doctor`) reads it to tell `long-inference` from `idle`, reconciled
    * against driver liveness — an entry under a dead driver is an interrupted
    * turn, not a live one. Distinct from the in-memory `turnsInFlight`
    * concurrency guard, which never persists. A hint like everything here:
@@ -347,7 +347,7 @@ export interface RunState {
    * (removed at collect). Distinct from `activeTurns` (which stays doctor's
    * running/idle health hint): this carries a STATUS and is the durable signal
    * the same-role guard, the phase-exit gate, the reconnect-orphan detection,
-   * and `duet status --wait` all read. Written only by the lease-holding
+   * and `greenflag status --wait` all read. Written only by the lease-holding
    * run-scoped server, via the markPendingTurn / settlePendingTurn /
    * clearPendingTurn mutators (the fresh-load → mutate-this-role → save
    * discipline of markTurnActive). Absent on the headless host, which never
@@ -365,7 +365,7 @@ export interface RunState {
    */
   workerDispatched?: true;
   /**
-   * A queued flag awaiting `duet continue --answer`. `cause` distinguishes the
+   * A queued flag awaiting `greenflag continue --answer`. `cause` distinguishes the
    * supervisor's actual decision — escalate vs resume/retry: `human` (an
    * ask_human-originated question — product, environment, blocker, or
    * "asked twice" escalation, all human-owned), `infra` (a caught infrastructure
@@ -492,13 +492,13 @@ export function budgetFor(
 }
 
 /**
- * Create `.duet/` with a self-ignoring `.gitignore` (`*`) so duet's runtime
+ * Create `.greenflag/` with a self-ignoring `.gitignore` (`*`) so greenflag's runtime
  * artifacts never show up in the project's git status. The user's own
  * .gitignore is never touched (augmentation principle); committing a run
  * record deliberately stays possible with `git add -f`.
  */
-export function ensureDuetDir(cwd: string): string {
-  const dir = join(cwd, '.duet');
+export function ensureGreenflagDir(cwd: string): string {
+  const dir = join(cwd, '.greenflag');
   mkdirSync(dir, { recursive: true });
   const ignore = join(dir, '.gitignore');
   if (!existsSync(ignore)) writeFileSync(ignore, '*\n');
@@ -506,7 +506,7 @@ export function ensureDuetDir(cwd: string): string {
 }
 
 export function runsRoot(cwd: string): string {
-  return join(cwd, '.duet', 'runs');
+  return join(cwd, '.greenflag', 'runs');
 }
 
 export function runDirOf(cwd: string, runId: string): string {
@@ -516,11 +516,11 @@ export function runDirOf(cwd: string, runId: string): string {
 /**
  * The run's scratch dir for a worker's ephemeral verification harnesses
  * (throwaway tsconfigs, probe scripts). It lives *inside* the run dir — not a
- * top-level `.duet/scratch/` — so it shares the run's lifecycle: gitignored
- * like everything under `.duet/`, and torn down by `--purge` with the rest of
+ * top-level `.greenflag/scratch/` — so it shares the run's lifecycle: gitignored
+ * like everything under `.greenflag/`, and torn down by `--purge` with the rest of
  * the run. That ownership is what lets the impl brief drop the old "delete it
  * before handoff" step: there is nothing for a worker to clean up, so a worker
- * is never asked to `rm` anything under `.duet/` (see ensureRunDir for why that
+ * is never asked to `rm` anything under `.greenflag/` (see ensureRunDir for why that
  * matters).
  */
 export function scratchDirOf(cwd: string, runId: string): string {
@@ -528,17 +528,17 @@ export function scratchDirOf(cwd: string, runId: string): string {
 }
 
 /**
- * Re-ensure `.duet/` (with its self-ignore) and the run dir exist, then return
+ * Re-ensure `.greenflag/` (with its self-ignore) and the run dir exist, then return
  * the run dir. Every run-dir write routes through here so a stray deletion of
- * `.duet/` mid-run self-heals instead of stranding the run: a worker runs with
+ * `.greenflag/` mid-run self-heals instead of stranding the run: a worker runs with
  * full permissions in the run's own cwd, and one *did* delete the live run —
- * a builder cleaning its scratch ran `rm -rf .duet` and the next voice-log
+ * a builder cleaning its scratch ran `rm -rf .greenflag` and the next voice-log
  * append threw ENOENT, ending the phase with no advance and no flag (the missing
  * docs/PR were downstream of exactly that). Restoring the dir (and its
  * `.gitignore`) here turns that into a recovered write, not a silent death.
  */
 export function ensureRunDir(cwd: string, runId: string): string {
-  ensureDuetDir(cwd);
+  ensureGreenflagDir(cwd);
   const dir = runDirOf(cwd, runId);
   mkdirSync(dir, { recursive: true });
   return dir;
@@ -561,7 +561,7 @@ function atomicWrite(path: string, content: string): void {
 /**
  * The default infra auto-retry budget materialized for a NEW run (#4b). Three
  * attempts recover a transient network/server/rate-limit blip in ≤14 s of
- * duet-added backoff before flagging. Materialized at createRun (the gatesAt
+ * greenflag-added backoff before flagging. Materialized at createRun (the gatesAt
  * discipline), so an absent/old `retryInfra` on a loaded state.json stays OFF
  * byte-for-byte — only newly-created runs get the default; `--retry-infra 0` is
  * the explicit opt-out.
@@ -695,7 +695,7 @@ function normalizeRunState(state: RunState, runDir: string): RunState {
   if ((state.bindings as { duties?: unknown } | undefined)?.duties === undefined || legacy.workerSessions !== undefined) {
     throw new UnloadableRunError(
       state.runId,
-      `run ${state.runId} predates the duty-keyed remodel (its state binds implementer/reviewer seats) — duet no longer loads it. Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .duet/runs/${state.runId}.`,
+      `run ${state.runId} predates the duty-keyed remodel (its state binds implementer/reviewer seats) — greenflag no longer loads it. Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .greenflag/runs/${state.runId}.`,
     );
   }
   // A persisted workflow with neither a frozen spec (in THIS dir — `runDir`, not
@@ -705,7 +705,7 @@ function normalizeRunState(state: RunState, runDir: string): RunState {
   if (legacy.workflow !== undefined && !isShippedWorkflowName(legacy.workflow) && !existsSync(join(runDir, WORKFLOW_FILE))) {
     throw new UnloadableRunError(
       state.runId,
-      `run ${state.runId} names workflow "${legacy.workflow}" but has no frozen workflow.json and it is not in the shipped registry (${Object.keys(WORKFLOWS).join(' · ')}) — project/user workflow files are read only at duet new, so this run cannot be reconstructed. Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .duet/runs/${state.runId}.`,
+      `run ${state.runId} names workflow "${legacy.workflow}" but has no frozen workflow.json and it is not in the shipped registry (${Object.keys(WORKFLOWS).join(' · ')}) — project/user workflow files are read only at greenflag new, so this run cannot be reconstructed. Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .greenflag/runs/${state.runId}.`,
     );
   }
   // Materialized at createRun since the remodel's follow-up; a state file from
@@ -722,7 +722,7 @@ function normalizeRunState(state: RunState, runDir: string): RunState {
     if (err instanceof UnloadableRunError) throw err;
     throw new UnloadableRunError(
       state.runId,
-      `${err instanceof Error ? err.message : String(err)} Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .duet/runs/${state.runId}.`,
+      `${err instanceof Error ? err.message : String(err)} Its transcripts are intact: finish manually with \`claude --resume\` / \`codex resume\`, or remove .greenflag/runs/${state.runId}.`,
     );
   }
   state.sessions ??= {};
@@ -873,7 +873,7 @@ export function markWorkerDispatched(state: RunState): void {
  * Set the run's gate posture mid-run (#1/0b — the one mutable-posture write).
  * Through `mutate`, so a step that saved the whole RunState between the caller's
  * load and here (a staged approval rider) is not clobbered. The cross-process
- * race (a live headless driver) does not apply: the only caller is `duet afk`,
+ * race (a live headless driver) does not apply: the only caller is `greenflag afk`,
  * which runs during the interactive arc and spawns the driver only AFTER this write.
  */
 export function setGatesAt(state: RunState, gatesAt: GatePhase[]): void {
@@ -933,7 +933,7 @@ export function holdsMcpOwner(state: RunState, nonce: string): boolean {
 }
 
 /**
- * Mark a run as deliberately abandoned by the human (`duet abandon`). Stops
+ * Mark a run as deliberately abandoned by the human (`greenflag abandon`). Stops
  * the position probe from reading the now-dead driver as a crash; the
  * transcripts are left intact so `continue`/`takeover` can still revive it
  * (abandonment is reversible — docs/automation-design.md §"Ending a run").
@@ -952,7 +952,7 @@ export function contextPercent(usage: ContextUsage): number {
 
 /**
  * Compact token count for display: 2_000_000 → "2.0M", 1_500 → "2k", else the
- * number. Shared by `duet status` (status.ts) and the per-turn footer
+ * number. Shared by `greenflag status` (status.ts) and the per-turn footer
  * (orchestrator/tools.ts) so the two render Codex tokens identically.
  */
 export function fmtTokens(n: number): string {
@@ -1092,7 +1092,7 @@ export function loadMachineSnapshot(state: RunState): Snapshot<unknown> | undefi
 
 /**
  * One append-only log per voice (docs/automation-design.md §"Visualization").
- * Plain text, inspectable without duet; `--tmux` (src/surfaces/view/tmux.ts) opens
+ * Plain text, inspectable without greenflag; `--tmux` (src/surfaces/view/tmux.ts) opens
  * panes running `tail -n +1 -F` on these files.
  */
 export function appendVoiceLog(state: RunState, voice: Voice, header: string, body?: string): void {
@@ -1116,7 +1116,7 @@ export function appendNote(state: RunState, author: 'human' | 'orchestrator', no
  * ones (newest first), `unloadable` the dirs the boundary RECOGNIZED and
  * refused (UnloadableRunError — a pre-remodel run, an unloadable workflow),
  * each carrying its prescriptive reason so listing surfaces can report the
- * refusal instead of silently hiding the run (a post-upgrade `duet status`
+ * refusal instead of silently hiding the run (a post-upgrade `greenflag status`
  * must never read as "you have no runs" when the truth is "your run no longer
  * loads, and here is the way out"). A genuinely corrupt or foreign dir is
  * still skipped quietly — there is nothing prescriptive to say about it.

@@ -32,7 +32,7 @@ import { reconcileRecord } from '../run/corpus.ts';
 import { drivenMachineFor } from '../orchestrator/hosts/driver.ts';
 import { aliveDriverPid, describeStop, phaseLoopOf, probeRunPosition } from '../run/position.ts';
 import type { RunPosition } from '../run/position.ts';
-import { duetMachine, flagWaitStateOf, interactiveMachineFor } from '../run/machine.ts';
+import { greenflagMachine, flagWaitStateOf, interactiveMachineFor } from '../run/machine.ts';
 import { markerToEvent } from '../run/phase-events.ts';
 import { workflowFor } from '../run/workflow.ts';
 import { captureRunTranscripts } from '../voices/sessions.ts';
@@ -41,7 +41,7 @@ import { captureRunTranscripts } from '../voices/sessions.ts';
  * The run lifecycle — how phases actually execute (docs/automation-design.md
  * §"Not a daemon — but alive through a phase"). `new` and gate-crossing
  * `continue` invocations return immediately: spawnDrive starts a detached
- * per-phase child (`duet _drive`) whose body is driveToQuiescence — it runs
+ * per-phase child (`greenflag _drive`) whose body is driveToQuiescence — it runs
  * the statechart to the next quiescent state (a gate, a queued flag, or
  * done), persists, notifies, and exits. Nothing runs between quiescent
  * stops; the pid file is how a second driver is refused.
@@ -103,7 +103,7 @@ function defaultSpawnSleepPreventer(driverPid: number): void {
 
 /**
  * Spawn the detached phase driver and return its pid. Its stdout/stderr go
- * to `.duet/runs/<id>/driver.log` (crash evidence lives there); the pid file
+ * to `.greenflag/runs/<id>/driver.log` (crash evidence lives there); the pid file
  * is how later invocations refuse to start a second concurrent driver. On
  * darwin it also fires a best-effort `caffeinate` scoped to the driver pid.
  */
@@ -141,7 +141,7 @@ function pidAlive(pid: number): boolean {
  * driver was running. Only the driver pid is signalled — an in-flight worker
  * turn is left to finish harmlessly into its own transcript
  * (docs/automation-design.md §"Ending a run"), not killed with the group. The
- * caller (`duet abandon`) then marks or purges the run with the driver already
+ * caller (`greenflag abandon`) then marks or purges the run with the driver already
  * dead, so its state writes can't race the marker.
  */
 export async function killDriver(
@@ -173,7 +173,7 @@ export async function killDriver(
 
 /**
  * Block until the run reaches a stop — any position but `running` — polling
- * the probe on fresh state each round. The wait side of `duet status --wait`:
+ * the probe on fresh state each round. The wait side of `greenflag status --wait`:
  * the one deterministic supervision cycle, owned by the CLI so watchers (the
  * concierge skill, a shell loop, a human) never reinvent polling. Read-only;
  * interrupting it cannot affect the run.
@@ -191,11 +191,11 @@ export async function waitForRunStop(
   }
 }
 
-/** A pending worker turn settled — what `duet status --wait` wakes on, beside a run stop. */
+/** A pending worker turn settled — what `greenflag status --wait` wakes on, beside a run stop. */
 export type TurnReady = { kind: 'turn-ready'; roles: VoiceAddress[] };
 
 /**
- * The turn-aware wait behind `duet status --wait`: wake on a worker turn
+ * The turn-aware wait behind `greenflag status --wait`: wake on a worker turn
  * settling (interactive host) OR a run stop, whichever comes first. Stop-only
  * polling (waitForRunStop) is wrong for the interactive host — an interactive
  * run probes as `interactive`, never `running`, so it would wake instantly on
@@ -217,7 +217,7 @@ export async function waitForTurnOrStop(
   for (;;) {
     const state = loadRunState(cwd, runId);
     // Every pending-turn record on disk, whatever its address — a dispatched
-    // consultant turn wakes `duet status --wait` like any duty's.
+    // consultant turn wakes `greenflag status --wait` like any duty's.
     const pending = state.pendingTurns ?? {};
     const addresses = Object.keys(pending) as VoiceAddress[];
     const ready = addresses.filter((r) => pending[r]?.status === 'ready' || pending[r]?.status === 'failed');
@@ -231,8 +231,8 @@ export async function waitForTurnOrStop(
 }
 
 export interface LifecycleDeps {
-  /** Injectable for tests: a duetMachine with a scripted phaseDriver. */
-  machine?: typeof duetMachine;
+  /** Injectable for tests: a greenflagMachine with a scripted phaseDriver. */
+  machine?: typeof greenflagMachine;
   notify?: typeof desktopNotify;
   /** The outer per-phase quiescence bound; injectable so a test trips the soft-fail fast. Defaults to QUIESCENCE_TIMEOUT_MS (12 h). */
   quiescenceTimeoutMs?: number;
@@ -346,15 +346,15 @@ export async function driveToQuiescence(
       const hours = Math.round(quiescenceTimeoutMs / 3_600_000);
       if (!fresh.pendingQuestion) {
         fresh.pendingQuestion = {
-          question: `the ${phase} phase ran past its outer time bound (~${hours}h) and was parked — check .duet/runs/${fresh.runId}/driver.log or run \`duet doctor\`, then resume with \`duet continue\`.`,
+          question: `the ${phase} phase ran past its outer time bound (~${hours}h) and was parked — check .greenflag/runs/${fresh.runId}/driver.log or run \`greenflag doctor\`, then resume with \`greenflag continue\`.`,
           cause: 'infra',
         };
       }
       saveRunState(fresh);
       reconcileRecord(fresh);
       await notify(
-        `duet ${fresh.runId}`,
-        `${phase} phase parked — it ran past its ~${hours}h outer bound; resume with duet continue`,
+        `greenflag ${fresh.runId}`,
+        `${phase} phase parked — it ran past its ~${hours}h outer bound; resume with greenflag continue`,
       );
       return { snapshot: parked, state: fresh, wedged: true };
     }
@@ -397,7 +397,7 @@ export async function driveToQuiescence(
       saveRunState(fresh);
       reconcileRecord(fresh);
       console.log(`[gate] ${fresh.machineState} auto-approved — pre-authorized at run start (packet recorded)`);
-      await notify(`duet ${fresh.runId}`, `${fresh.machineState} auto-approved (pre-authorized) — run continues`);
+      await notify(`greenflag ${fresh.runId}`, `${fresh.machineState} auto-approved (pre-authorized) — run continues`);
       actor.send({ type: 'human.approve' });
       continue;
     }
@@ -410,10 +410,10 @@ export async function driveToQuiescence(
       // A pre-authorized gate that did NOT auto-cross because of a `high` — name
       // the held decision so the human sees why the overnight run stopped here.
       console.log(`[gate] ${fresh.machineState} held — a high human decision withheld the pre-authorized auto-cross`);
-      await notify(`duet ${fresh.runId}`, `${fresh.machineState} held for you — a high decision needs you: ${held.map((d) => d.title).join('; ')}`);
+      await notify(`greenflag ${fresh.runId}`, `${fresh.machineState} held for you — a high decision needs you: ${held.map((d) => d.title).join('; ')}`);
       return { snapshot, state: fresh };
     }
-    await notify(`duet ${fresh.runId}`, describeStop(fresh, snapshot.status === 'done'));
+    await notify(`greenflag ${fresh.runId}`, describeStop(fresh, snapshot.status === 'done'));
     return { snapshot, state: fresh };
   }
 }
@@ -428,7 +428,7 @@ export async function driveToQuiescence(
  *
  * The consultant authors but never commits — single-writer-by-construction keeps
  * the orphan-safe discard-and-reseed premise (the consultant touches no git
- * history). So duet commits the authored file here, PATH-SCOPED so the in-progress
+ * history). So greenflag commits the authored file here, PATH-SCOPED so the in-progress
  * plan in the same worktree stays uncommitted, and records the freezing commit for
  * the impl verify checkpoint. Idempotent: a crash-recovery re-cross with the
  * contract already frozen is a no-op, and the commit sha is resolved from the
@@ -538,18 +538,18 @@ export async function enterAfk(
 ): Promise<{ attended: GatePhase[]; preAuthorized: GatePhase[] }> {
   if (state.orchestrationHost !== 'interactive') {
     throw new Error(
-      `run ${state.runId} is not orchestrated interactively — duet afk hands off from an interactive gate; a headless run already runs unattended.`,
+      `run ${state.runId} is not orchestrated interactively — greenflag afk hands off from an interactive gate; a headless run already runs unattended.`,
     );
   }
   const position = probeRunPosition(state);
   if (position.kind !== 'gate') {
     const why = validateInteractiveCrossing(position, 'approve') ?? "isn't parked at a gate";
-    throw new Error(`run ${state.runId} ${why} — duet afk hands off only from a gate (steer a live phase, or answer a flag).`);
+    throw new Error(`run ${state.runId} ${why} — greenflag afk hands off only from a gate (steer a live phase, or answer a flag).`);
   }
-  // The severity hold on the present→away transition: a BARE `duet afk` is a
+  // The severity hold on the present→away transition: a BARE `greenflag afk` is a
   // blanket walk-away that must not silently turn a `high` into an unattended
   // approval — refuse it over a `high`, directing the human to the explicit
-  // substitute. `duet afk --gateless` IS that explicit substitute: a deliberate
+  // substitute. `greenflag afk --gateless` IS that explicit substitute: a deliberate
   // full-send the human chose having pre-decided the direction the bet/product
   // highs concern, so it crosses them exactly as an explicit `--approve` does —
   // except for the correctness backstop, preserved just below.
@@ -559,11 +559,11 @@ export async function enterAfk(
       throw new Error(
         `run ${state.runId} can't hand off to AFK from this gate — it carries a high human decision that needs you (${held
           .map((d) => d.title)
-          .join('; ')}). duet afk would approve it unattended; approve this gate explicitly and then hand off (duet continue --approve --headless), or full-send with duet afk --gateless if you accept the call.`,
+          .join('; ')}). greenflag afk would approve it unattended; approve this gate explicitly and then hand off (greenflag continue --approve --headless), or full-send with greenflag afk --gateless if you accept the call.`,
       );
     }
   }
-  // Freeze the contract before this gate is crossed away — `duet afk` from the
+  // Freeze the contract before this gate is crossed away — `greenflag afk` from the
   // plan gate is an approve-crossing of the contract gate (no-op elsewhere). The
   // backstop is preserved even under gateless, so this freezes regardless.
   await freezeContractAt(state, position.phase);
@@ -573,7 +573,7 @@ export async function enterAfk(
   // (authoring failed), there is nothing for the impl verify to hold the run
   // against — handing off would ship past an unset target, the very protection
   // gateless promises to keep. Refuse it, pointing at the explicit override. (The
-  // headless `duet new --gateless` path holds here on the same missing-contract
+  // headless `greenflag new --gateless` path holds here on the same missing-contract
   // high via the untouched severity hold; this is its afk-path equivalent.)
   if (
     opts.gateless &&
@@ -582,7 +582,7 @@ export async function enterAfk(
     !state.acceptanceContract
   ) {
     throw new Error(
-      `run ${state.runId}: gateless preserves the acceptance-contract backstop, but no contract was authored at this gate, so the impl verify would have nothing to hold the run against. Re-run the consultant's contract author first, or — if you accept shipping with no frozen target — approve explicitly: duet continue --approve --headless.`,
+      `run ${state.runId}: gateless preserves the acceptance-contract backstop, but no contract was authored at this gate, so the impl verify would have nothing to hold the run against. Re-run the consultant's contract author first, or — if you accept shipping with no frozen target — approve explicitly: greenflag continue --approve --headless.`,
     );
   }
   setGatesAt(state, posture);
@@ -595,7 +595,7 @@ export async function enterAfk(
   // A bare afk's crossing of THIS gate is a non-explicit crossing — the same
   // class the severity hold guards and the morning ledger exists for — so
   // record it like any pre-authorized auto-cross (it was the ledger's missing
-  // first entry: a run handed off with `duet afk` under-counted by one).
+  // first entry: a run handed off with `greenflag afk` under-counted by one).
   // `--gateless` is the explicit full-send substitute and, like an explicit
   // --approve, is not ledgered.
   if (!opts.gateless) {

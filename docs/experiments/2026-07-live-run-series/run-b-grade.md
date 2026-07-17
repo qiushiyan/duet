@@ -8,11 +8,11 @@ bind.judge: claude:claude-opus-4-8@xhigh
 
 # Problem
 
-duet records every human decision a run produces — attended gate crossings, auto-crossings under standing authority, holds, queued questions — but captures nothing about whether each stop was *right*. That ground truth is the missing input for every calibration question the project tracks (`docs/open-questions.md` §"Triage precision" above all), and it cannot be reconstructed later: only the human, close to the run, knows whether a stop was worth it. Build the grading layer.
+greenflag records every human decision a run produces — attended gate crossings, auto-crossings under standing authority, holds, queued questions — but captures nothing about whether each stop was *right*. That ground truth is the missing input for every calibration question the project tracks (`docs/open-questions.md` §"Triage precision" above all), and it cannot be reconstructed later: only the human, close to the run, knows whether a stop was worth it. Build the grading layer.
 
-- **`duet grade [runId]`** (default: the most recently finished run): an interactive walkthrough of the run's decision points. Each point is presented with enough inline context to judge it in seconds — the gate packet's summary, the queued question's text, the hold's finding, and what the human actually did — and takes a verdict: **right-stop** or **wrong-stop**, with an optional short note. The walkthrough also accepts **missed-stop** entries: a stop that *should* have happened but didn't, keyed to a phase, described free-form. Auto-crossed gates are gradeable too ("should that have stopped me?"). Re-grading is idempotent — a later pass revises verdicts, never duplicates them.
+- **`greenflag grade [runId]`** (default: the most recently finished run): an interactive walkthrough of the run's decision points. Each point is presented with enough inline context to judge it in seconds — the gate packet's summary, the queued question's text, the hold's finding, and what the human actually did — and takes a verdict: **right-stop** or **wrong-stop**, with an optional short note. The walkthrough also accepts **missed-stop** entries: a stop that *should* have happened but didn't, keyed to a phase, described free-form. Auto-crossed gates are gradeable too ("should that have stopped me?"). Re-grading is idempotent — a later pass revises verdicts, never duplicates them.
 - **The ledger**: verdicts persist on the run record as a new additive section, mirrored to the corpus like every other ledger.
-- **Read surfaces**: a grades section in `duet stats <runId>`, and a corpus script under `scripts/corpus/` aggregating verdicts across archived runs — stop precision over time, sliceable by workflow and by gate. The aggregation should output the signals the triage-precision question names, so a cohort read can actually move that dial.
+- **Read surfaces**: a grades section in `greenflag stats <runId>`, and a corpus script under `scripts/corpus/` aggregating verdicts across archived runs — stop precision over time, sliceable by workflow and by gate. The aggregation should output the signals the triage-precision question names, so a cohort read can actually move that dial.
 
 Be ambitious about walkthrough quality: the target is a 60-second end-of-run ritual, not an archaeology session. Assembling the right context for each decision point — the packet text, the question, the hold reason, from the run record — is most of this feature's value.
 
@@ -35,7 +35,7 @@ Read first: `CLAUDE.md`, then `docs/engineering.md` (the module map, the seams t
 
 # Scope boundary
 
-In: the command, the ledger, the `duet stats` section, the aggregation script, tests, and doc updates per `docs/documentation-standards.md`. Out: automatic grading, notification or reminder machinery, any change to when gates fire or how decisions are recorded at run time.
+In: the command, the ledger, the `greenflag stats` section, the aggregation script, tests, and doc updates per `docs/documentation-standards.md`. Out: automatic grading, notification or reminder machinery, any change to when gates fire or how decisions are recorded at run time.
 
 # Verification
 

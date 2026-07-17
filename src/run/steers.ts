@@ -5,7 +5,7 @@ import { appendVoiceLog, runDirOf } from './store.ts';
 import type { RunState } from './store.ts';
 
 /**
- * The steer store — the human's mid-phase notes (`duet steer`), staged for
+ * The steer store — the human's mid-phase notes (`greenflag steer`), staged for
  * delivery to the orchestrator. A different crash contract from `state.json`:
  * append-once, deliver-by-rename. Steers live OUTSIDE state.json because they
  * arrive while a driver is live and holds its in-memory RunState (saving at

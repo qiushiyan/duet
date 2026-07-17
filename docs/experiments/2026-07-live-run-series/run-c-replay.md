@@ -17,7 +17,7 @@ The corpus archives every run's full protocol record; nothing yet *replays* one.
 
 Output: a per-phase diff report, human-readable text plus a JSON form. **Scoring is explicitly out of scope** — this slice produces the diff; judging whether a divergence is better or worse stays with the human reading it.
 
-Fixtures: the corpus archive at `~/duet-corpus` holds this series' earlier records (runs A and B — the graph and grade features). Use one of their phases as the worked example. The record already carries what this slice needs: the full phase brief arrives as the logged harness prompt, and every prompt body, tag, response, and terminal call is in the voice logs.
+Fixtures: the corpus archive at `~/greenflag-corpus` holds this series' earlier records (runs A and B — the graph and grade features). Use one of their phases as the worked example. The record already carries what this slice needs: the full phase brief arrives as the logged harness prompt, and every prompt body, tag, response, and terminal call is in the voice logs.
 
 The ambition target is **honest reconstruction**: the replayed orchestrator sees byte-identical inputs — brief, snippet bodies, steers — wherever the record carries them, and the report *names* anything it could not reconstruct rather than silently approximating. An honest narrow replay beats a broad lossy one.
 

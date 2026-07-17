@@ -45,7 +45,7 @@
 import { InteractiveClaudeWorker } from '../voices/providers/interactive-claude.ts';
 import type { WorkerTurn } from '../voices/providers/types.ts';
 
-const MODEL = process.env['DUET_SPIKE_MODEL'] ?? 'claude-opus-4-8';
+const MODEL = process.env['GREENFLAG_SPIKE_MODEL'] ?? 'claude-opus-4-8';
 const TIMEOUT_MS = 10 * 60_000;
 
 function show(label: string, turn: WorkerTurn): void {

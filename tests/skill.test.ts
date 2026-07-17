@@ -15,15 +15,15 @@ import { IDENTITY_PATH } from '../src/orchestrator/hosts/orchestrate.ts';
 import { WORKFLOWS } from '../src/registry/workflows.ts';
 
 /**
- * Coherence guard for the shipped concierge skill (skills/duet-concierge/):
- * every duet verb and flag the skill or its reference names must exist on
+ * Coherence guard for the shipped concierge skill (skills/greenflag-concierge/):
+ * every greenflag verb and flag the skill or its reference names must exist on
  * the real command table, and the skill must pre-approve read verbs only.
  * A renamed flag fails here in five seconds, not in a phone session.
  * (Importing the program is itself the guard that cli.ts stays side-effect
  * free under import — parsing runs only under import.meta.main.)
  */
 
-const skillDir = new URL('../skills/duet-concierge/', import.meta.url);
+const skillDir = new URL('../skills/greenflag-concierge/', import.meta.url);
 const skillMd = readFileSync(new URL('SKILL.md', skillDir), 'utf8');
 const referenceMd = readFileSync(new URL('references/cli-reference.md', skillDir), 'utf8');
 
@@ -48,25 +48,25 @@ function frontmatterOf(markdown: string): Record<string, string> {
 }
 
 describe('the binding flags exist on the command table', () => {
-  // Voices bind per-run via the repeatable `duet new --bind <duty>=<spec>`;
+  // Voices bind per-run via the repeatable `greenflag new --bind <duty>=<spec>`;
   // `--no-consultant` disables a config-bound consultant. Pin both onto the
   // real command table so a rename fails here, not at run time (the generic
   // doc-scan guards below only cover flags the shipped skill docs name).
-  test('duet new advertises --bind and --no-consultant', () => {
+  test('greenflag new advertises --bind and --no-consultant', () => {
     const longs = new Set((publicCommands.get('new')?.options ?? []).map((o) => o.long));
     expect.soft(longs.has('--bind')).toBe(true);
     expect.soft(longs.has('--no-consultant')).toBe(true);
   });
 });
 
-describe('the duet-concierge skill coheres with the CLI', () => {
+describe('the greenflag-concierge skill coheres with the CLI', () => {
   test('SKILL.md frontmatter is complete and pre-approves read verbs only', () => {
     const fm = frontmatterOf(skillMd);
-    expect.soft(fm['name']).toBe('duet-concierge');
+    expect.soft(fm['name']).toBe('greenflag-concierge');
     expect.soft(fm['description']).toBeTruthy();
     // Explicit invocation only: auto-triggering would load the relay role
     // into any session that merely mentions runs and gates — including
-    // sessions developing duet itself.
+    // sessions developing greenflag itself.
     expect.soft(fm['disable-model-invocation']).toBe('true');
 
     const tools = (fm['allowed-tools'] ?? '').split(',').map((t) => t.trim());
@@ -74,21 +74,21 @@ describe('the duet-concierge skill coheres with the CLI', () => {
     for (const tool of tools) {
       // The rogue-concierge property: gate verbs (continue), run starts (new),
       // and steers must never be silently pre-approved.
-      expect.soft(tool, 'only read verbs may be pre-approved').toMatch(/^Bash\(duet (status|logs|runs):\*\)$/);
+      expect.soft(tool, 'only read verbs may be pre-approved').toMatch(/^Bash\(greenflag (status|logs|runs):\*\)$/);
     }
   });
 
   test.for([
     ['SKILL.md', skillMd],
     ['references/cli-reference.md', referenceMd],
-  ] as const)('every duet verb and flag named in %s exists on the CLI', ([, markdown]) => {
+  ] as const)('every greenflag verb and flag named in %s exists on the CLI', ([, markdown]) => {
     expect.hasAssertions();
     for (const line of codeLines(markdown)) {
-      const verbs = [...line.matchAll(/\bduet\s+([a-z_]+)/g)].map((m) => m[1]!);
+      const verbs = [...line.matchAll(/\bgreenflag\s+([a-z_]+)/g)].map((m) => m[1]!);
       if (verbs.length === 0) continue;
 
       for (const verb of verbs) {
-        expect.soft(publicCommands.has(verb), `"duet ${verb}" in: ${line.trim()}`).toBe(true);
+        expect.soft(publicCommands.has(verb), `"greenflag ${verb}" in: ${line.trim()}`).toBe(true);
       }
 
       const command = publicCommands.get(verbs[0]!);
@@ -96,14 +96,14 @@ describe('the duet-concierge skill coheres with the CLI', () => {
       const longs = new Set(command.options.map((o) => o.long));
       longs.add('--help'); // commander provides it on every command
       for (const [flag] of line.matchAll(/--[a-z][a-z-]*/g)) {
-        expect.soft(longs.has(flag), `"${flag}" is not a flag of "duet ${verbs[0]}" in: ${line.trim()}`).toBe(true);
+        expect.soft(longs.has(flag), `"${flag}" is not a flag of "greenflag ${verbs[0]}" in: ${line.trim()}`).toBe(true);
       }
     }
   });
 
   test('the reference documents every public command', () => {
     for (const name of publicCommands.keys()) {
-      expect.soft(referenceMd, `duet ${name} is missing from the reference`).toContain(`duet ${name}`);
+      expect.soft(referenceMd, `greenflag ${name} is missing from the reference`).toContain(`greenflag ${name}`);
     }
   });
 
@@ -113,7 +113,7 @@ describe('the duet-concierge skill coheres with the CLI', () => {
   ] as const)('%s documents the run-start workflow surface (every arc)', ([, markdown]) => {
     // The concierge starts runs from dictation, so its run-start surface must
     // name the arc selector and every arc — not just the Full arc. --workflow is
-    // also pinned to exist on `duet new` by the per-file verb/flag guard above.
+    // also pinned to exist on `greenflag new` by the per-file verb/flag guard above.
     expect.soft(markdown).toContain('--workflow');
     expect.soft(markdown).toContain('workflow:'); // the framing frontmatter key
     expect.soft(markdown.toLowerCase()).toContain('short');
@@ -122,16 +122,16 @@ describe('the duet-concierge skill coheres with the CLI', () => {
   });
 });
 
-const duetIdentityMd = readFileSync(new URL('../prompts/orchestrator-identity.md', import.meta.url), 'utf8');
+const greenflagIdentityMd = readFileSync(new URL('../prompts/orchestrator-identity.md', import.meta.url), 'utf8');
 
 // The orchestrator identity is a prompt asset, not a skill: the launcher feeds
 // prompts/orchestrator-identity.md as the session's system prompt
-// (--append-system-prompt-file). There is no `/duet` slash command — the
-// orchestrator role is brought up by `duet orchestrate` / `duet new
+// (--append-system-prompt-file). There is no `/greenflag` slash command — the
+// orchestrator role is brought up by `greenflag orchestrate` / `greenflag new
 // --interactive`, never a manual invocation (which would load the role with no
 // kernel tools). So this block guards the identity file and the launcher command,
 // not a SKILL.md.
-describe('the duet orchestrator identity coheres with the CLI', () => {
+describe('the greenflag orchestrator identity coheres with the CLI', () => {
   test('orchestrate is a public command — the launcher that feeds the identity', () => {
     expect(publicCommands.has('orchestrate')).toBe(true);
   });
@@ -153,17 +153,17 @@ describe('the duet orchestrator identity coheres with the CLI', () => {
     expect.soft(shipped, `${rel} is not covered by package.json files: ${files.join(', ')}`).toBe(true);
   });
 
-  test('every duet verb and flag named in identity.md exists on the CLI', () => {
+  test('every greenflag verb and flag named in identity.md exists on the CLI', () => {
     expect.hasAssertions();
-    for (const line of codeLines(duetIdentityMd)) {
-      // Only `duet <verb>` spans are CLI verbs; kernel tool names (get_task,
+    for (const line of codeLines(greenflagIdentityMd)) {
+      // Only `greenflag <verb>` spans are CLI verbs; kernel tool names (get_task,
       // send_prompt, advance_phase, …) appear in spans too but are never
-      // preceded by "duet ", so the extractor skips them.
-      const verbs = [...line.matchAll(/\bduet\s+([a-z_]+)/g)].map((m) => m[1]!);
+      // preceded by "greenflag ", so the extractor skips them.
+      const verbs = [...line.matchAll(/\bgreenflag\s+([a-z_]+)/g)].map((m) => m[1]!);
       if (verbs.length === 0) continue;
 
       for (const verb of verbs) {
-        expect.soft(publicCommands.has(verb), `"duet ${verb}" in: ${line.trim()}`).toBe(true);
+        expect.soft(publicCommands.has(verb), `"greenflag ${verb}" in: ${line.trim()}`).toBe(true);
       }
 
       const command = publicCommands.get(verbs[0]!);
@@ -171,7 +171,7 @@ describe('the duet orchestrator identity coheres with the CLI', () => {
       const longs = new Set(command.options.map((o) => o.long));
       longs.add('--help');
       for (const [flag] of line.matchAll(/--[a-z][a-z-]*/g)) {
-        expect.soft(longs.has(flag), `"${flag}" is not a flag of "duet ${verbs[0]}" in: ${line.trim()}`).toBe(true);
+        expect.soft(longs.has(flag), `"${flag}" is not a flag of "greenflag ${verbs[0]}" in: ${line.trim()}`).toBe(true);
       }
     }
   });
@@ -180,36 +180,36 @@ describe('the duet orchestrator identity coheres with the CLI', () => {
     // Slice 4 made it arc-neutral: it must not name a fixed phase arc (the old
     // "FRAME → SPEC → PLAN") and must point the session at get_task + a generic
     // handoff gate, so a RIR session isn't told it's in the Full arc.
-    expect.soft(duetIdentityMd).not.toMatch(/FRAME\s*→\s*SPEC\s*→\s*PLAN/);
-    expect.soft(duetIdentityMd).not.toContain('plan-approval gate, the human');
-    expect.soft(duetIdentityMd).toContain('get_task');
-    expect.soft(duetIdentityMd).toContain('handoff gate');
+    expect.soft(greenflagIdentityMd).not.toMatch(/FRAME\s*→\s*SPEC\s*→\s*PLAN/);
+    expect.soft(greenflagIdentityMd).not.toContain('plan-approval gate, the human');
+    expect.soft(greenflagIdentityMd).toContain('get_task');
+    expect.soft(greenflagIdentityMd).toContain('handoff gate');
   });
 });
 
-const duetFrameDir = new URL('../skills/duet-frame/', import.meta.url);
-const duetFrameMd = readFileSync(new URL('SKILL.md', duetFrameDir), 'utf8');
-const frameExamplesMd = readFileSync(new URL('references/manifest-examples.md', duetFrameDir), 'utf8');
-const workflowDefsMd = readFileSync(new URL('references/workflow-definitions.md', duetFrameDir), 'utf8');
+const greenflagFrameDir = new URL('../skills/greenflag-frame/', import.meta.url);
+const greenflagFrameMd = readFileSync(new URL('SKILL.md', greenflagFrameDir), 'utf8');
+const frameExamplesMd = readFileSync(new URL('references/manifest-examples.md', greenflagFrameDir), 'utf8');
+const workflowDefsMd = readFileSync(new URL('references/workflow-definitions.md', greenflagFrameDir), 'utf8');
 
-describe('the duet-frame skill coheres with the CLI', () => {
+describe('the greenflag-frame skill coheres with the CLI', () => {
   test('SKILL.md frontmatter names the skill and is explicit-invocation only', () => {
-    const fm = frontmatterOf(duetFrameMd);
-    expect.soft(fm['name']).toBe('duet-frame');
+    const fm = frontmatterOf(greenflagFrameMd);
+    expect.soft(fm['name']).toBe('greenflag-frame');
     expect.soft(fm['description']).toBeTruthy();
     // Explicit invocation only — a session shouldn't auto-adopt the framing-author
     // role (mirrors the concierge and the orchestrator identity).
     expect.soft(fm['disable-model-invocation']).toBe('true');
   });
 
-  test('every duet verb and flag named in SKILL.md and the reference files exists on the CLI', () => {
+  test('every greenflag verb and flag named in SKILL.md and the reference files exists on the CLI', () => {
     expect.hasAssertions();
-    for (const line of [duetFrameMd, frameExamplesMd, workflowDefsMd].flatMap(codeLines)) {
-      const verbs = [...line.matchAll(/\bduet\s+([a-z_]+)/g)].map((m) => m[1]!);
+    for (const line of [greenflagFrameMd, frameExamplesMd, workflowDefsMd].flatMap(codeLines)) {
+      const verbs = [...line.matchAll(/\bgreenflag\s+([a-z_]+)/g)].map((m) => m[1]!);
       if (verbs.length === 0) continue;
 
       for (const verb of verbs) {
-        expect.soft(publicCommands.has(verb), `"duet ${verb}" in: ${line.trim()}`).toBe(true);
+        expect.soft(publicCommands.has(verb), `"greenflag ${verb}" in: ${line.trim()}`).toBe(true);
       }
 
       const command = publicCommands.get(verbs[0]!);
@@ -217,32 +217,32 @@ describe('the duet-frame skill coheres with the CLI', () => {
       const longs = new Set(command.options.map((o) => o.long));
       longs.add('--help');
       for (const [flag] of line.matchAll(/--[a-z][a-z-]*/g)) {
-        expect.soft(longs.has(flag), `"${flag}" is not a flag of "duet ${verbs[0]}" in: ${line.trim()}`).toBe(true);
+        expect.soft(longs.has(flag), `"${flag}" is not a flag of "greenflag ${verbs[0]}" in: ${line.trim()}`).toBe(true);
       }
     }
   });
 
   test('the framing author picks the workflow and emits the --workflow selector', () => {
-    // duet-frame settles the workflow and emits it; --workflow must be a real
-    // flag of `duet new`, and the skill must name every workflow so the author
+    // greenflag-frame settles the workflow and emits it; --workflow must be a real
+    // flag of `greenflag new`, and the skill must name every workflow so the author
     // can choose between them.
-    expect.soft(duetFrameMd).toContain('--workflow');
+    expect.soft(greenflagFrameMd).toContain('--workflow');
     expect.soft(publicCommands.get('new')?.options.some((o) => o.long === '--workflow')).toBe(true);
-    expect.soft(duetFrameMd.toLowerCase()).toContain('short');
-    expect.soft(duetFrameMd).toContain('`blueprint`'); // the middle workflow, named as choosable
-    expect.soft(duetFrameMd).toContain('`relay`'); // the criss-crossed delivery, with its bind.* economy
-    expect.soft(duetFrameMd).toContain('bind.'); // the frontmatter binding grammar the author records
-    expect.soft(duetFrameMd).toContain('afk'); // the walk-away preset
+    expect.soft(greenflagFrameMd.toLowerCase()).toContain('short');
+    expect.soft(greenflagFrameMd).toContain('`blueprint`'); // the middle workflow, named as choosable
+    expect.soft(greenflagFrameMd).toContain('`relay`'); // the criss-crossed delivery, with its bind.* economy
+    expect.soft(greenflagFrameMd).toContain('bind.'); // the frontmatter binding grammar the author records
+    expect.soft(greenflagFrameMd).toContain('afk'); // the walk-away preset
     // The worked intent→manifest translations live in the reference; the skill
     // must route the author there before any frontmatter is written.
-    expect.soft(duetFrameMd).toContain('references/manifest-examples.md');
+    expect.soft(greenflagFrameMd).toContain('references/manifest-examples.md');
     // Same for the SDK: the skill must route the author to the worked workflow
     // definitions before any custom workflow file is written.
-    expect.soft(duetFrameMd).toContain('references/workflow-definitions.md');
+    expect.soft(greenflagFrameMd).toContain('references/workflow-definitions.md');
   });
 });
 
-describe('the duet-frame manifest examples are EXECUTABLE — parsed by the real grammar', () => {
+describe('the greenflag-frame manifest examples are EXECUTABLE — parsed by the real grammar', () => {
   // Each ```framing fence in the manifest reference is a complete file the
   // skill might emit, and each ```workflow-ts fence in the SDK reference is a
   // complete definition it might write. Static examples rot when the grammar
@@ -255,8 +255,8 @@ describe('the duet-frame manifest examples are EXECUTABLE — parsed by the real
   const framings = [...frameExamplesMd.matchAll(/```framing\n([\s\S]*?)```/g)].map((m) => m[1]!);
   const workflowDefinitions = [...workflowDefsMd.matchAll(/```workflow-ts\n([\s\S]*?)```/g)].map((m) => m[1]!);
   // A path that exists on no machine: the freeze must resolve from the example
-  // alone, never from the developer's own ~/.config/duet/config.toml.
-  const noConfig = '/nonexistent/duet-skill-test-config.toml';
+  // alone, never from the developer's own ~/.config/greenflag/config.toml.
+  const noConfig = '/nonexistent/greenflag-skill-test-config.toml';
 
   test('the references carry the five worked framings and three workflow definitions', () => {
     expect.soft(framings).toHaveLength(5);
@@ -271,11 +271,11 @@ describe('the duet-frame manifest examples are EXECUTABLE — parsed by the real
     ['relay', 0],
     ['full', 1],
   ] as const)('sdk example: the %s rebuild compiles byte-identical to the shipped registry row', async ([name, index]) => {
-    const dir = mkdtempSync(join(tmpdir(), 'duet-frame-skill-'));
+    const dir = mkdtempSync(join(tmpdir(), 'greenflag-frame-skill-'));
     try {
       const sdk = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'workflows.ts')).href;
       const file = join(dir, `${name}.ts`);
-      writeFileSync(file, workflowDefinitions[index]!.replace("'duet/workflows'", JSON.stringify(sdk)));
+      writeFileSync(file, workflowDefinitions[index]!.replace("'greenflag/workflows'", JSON.stringify(sdk)));
       const definition = ((await import(pathToFileURL(file).href)) as { default: WorkflowDefinition }).default;
       expect(JSON.stringify(compileWorkflow(definition), null, 2)).toBe(JSON.stringify(WORKFLOWS[name], null, 2));
     } finally {
@@ -320,12 +320,12 @@ describe('the duet-frame manifest examples are EXECUTABLE — parsed by the real
   });
 
   test('5 · a custom project workflow is selected by frontmatter and frozen at createRun', async () => {
-    const projectDir = mkdtempSync(join(tmpdir(), 'duet-frame-skill-'));
+    const projectDir = mkdtempSync(join(tmpdir(), 'greenflag-frame-skill-'));
     try {
       const workflowDir = projectWorkflowDir(projectDir);
       mkdirSync(workflowDir, { recursive: true });
       const sdk = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'workflows.ts')).href;
-      const workflowDefinition = workflowDefinitions[2]!.replace("'duet/workflows'", JSON.stringify(sdk));
+      const workflowDefinition = workflowDefinitions[2]!.replace("'greenflag/workflows'", JSON.stringify(sdk));
       writeFileSync(join(workflowDir, 'hotfix.ts'), workflowDefinition);
       writeFileSync(join(projectDir, 'brief.md'), framings[4]!);
       const inputs = await resolveRunInputs(projectDir, { framing: 'brief.md' });
@@ -391,9 +391,9 @@ describe('no CLI help / template copy carries a Full-only-arc claim', () => {
     const surfaces = [
       ...cliCopyStrings(),
       { label: 'framing seed template', text: FRAMING_TEMPLATE },
-      { label: 'duet-frame SKILL.md', text: duetFrameMd },
-      { label: 'duet-frame manifest-examples.md', text: frameExamplesMd },
-      { label: 'duet-frame workflow-definitions.md', text: workflowDefsMd },
+      { label: 'greenflag-frame SKILL.md', text: greenflagFrameMd },
+      { label: 'greenflag-frame manifest-examples.md', text: frameExamplesMd },
+      { label: 'greenflag-frame workflow-definitions.md', text: workflowDefsMd },
       { label: 'concierge SKILL.md', text: skillMd },
       { label: 'concierge cli-reference.md', text: referenceMd },
     ];
@@ -446,7 +446,7 @@ describe('shipped gate-posture copy teaches the overnight-default, post-open fin
   // All three shipped prose surfaces — including the root concierge SKILL.md the
   // round-1 guard missed (round 2).
   const shippedDocs = [
-    ['duet-frame SKILL.md', duetFrameMd],
+    ['greenflag-frame SKILL.md', greenflagFrameMd],
     ['concierge SKILL.md', skillMd],
     ['concierge cli-reference.md', referenceMd],
   ] as const;

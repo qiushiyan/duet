@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { PACKAGE_ROOT } from '../package-root.ts';
 import type { RunState } from './store.ts';
 
 /**
@@ -20,11 +21,12 @@ import type { RunState } from './store.ts';
 
 const CORPUS_STAMP = 'corpus.json';
 const TRANSCRIPTS_DIR = 'transcripts';
-// Resolved from duet's own package.json so the era stamp can't drift from the
-// released version (the import.meta.url hop is depth-sensitive — re-count on move).
-const DUET_VERSION = (() => {
+// Resolved from greenflag's own package.json so the era stamp can't drift from
+// the released version. Anchored on PACKAGE_ROOT, which is correct in both the
+// dev tree and the published bundle (src/package-root.ts).
+const GREENFLAG_VERSION = (() => {
   try {
-    const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version?: string };
+    const pkg = JSON.parse(readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf8')) as { version?: string };
     return pkg.version ?? 'unknown';
   } catch {
     return 'unknown';
@@ -34,7 +36,7 @@ const DUET_VERSION = (() => {
 type CorpusState = Pick<RunState, 'runId' | 'cwd' | 'corpusDir'>;
 
 function runDirOfState(state: Pick<RunState, 'cwd' | 'runId'>): string {
-  return join(state.cwd, '.duet', 'runs', state.runId);
+  return join(state.cwd, '.greenflag', 'runs', state.runId);
 }
 
 function sameRecord(path: string, runId: string, cwd: string): boolean {
@@ -72,7 +74,7 @@ export function ensureCorpusRecord(state: CorpusState): string | undefined {
         stamp,
         JSON.stringify(
           {
-            duetVersion: DUET_VERSION,
+            greenflagVersion: GREENFLAG_VERSION,
             runId: state.runId,
             sourceCwd: state.cwd,
             mirroredAt: new Date().toISOString(),

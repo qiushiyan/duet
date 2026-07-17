@@ -49,7 +49,7 @@ describe('renderGraphMermaid — the static blueprint flowchart', () => {
   });
 
   test('a project phase name with a space is safe — it never becomes a bare Mermaid id', async ({ projectDir }) => {
-    const dir = join(projectDir, '.duet', 'workflows');
+    const dir = join(projectDir, '.greenflag', 'workflows');
     mkdirSync(dir, { recursive: true });
     const sdk = join(process.cwd(), 'src', 'workflows.ts');
     writeFileSync(
@@ -110,7 +110,7 @@ describe('buildBlueprintModel — read-only resolve + config-resolved bindings',
   });
 
   test('resolves a project-composed workflow read-only (no provisioning side effects)', async ({ projectDir }) => {
-    const dir = join(projectDir, '.duet', 'workflows');
+    const dir = join(projectDir, '.greenflag', 'workflows');
     mkdirSync(dir, { recursive: true });
     const sdk = join(process.cwd(), 'src', 'workflows.ts');
     writeFileSync(

@@ -61,7 +61,7 @@ import { captureRunTranscripts, purgeRun } from '../voices/sessions.ts';
 import { listPendingSteers, stageSteer } from '../run/steers.ts';
 
 /**
- * duet — the command surface. Parsing and validation live here; everything
+ * greenflag — the command surface. Parsing and validation live here; everything
  * with behavior lives behind it: the run store (src/run/store.ts), the
  * process lifecycle (src/surfaces/lifecycle.ts), status rendering
  * (src/surfaces/status.ts), and the viewer (src/surfaces/view/tmux.ts). Commands return
@@ -82,14 +82,14 @@ function showStatus(state: RunState, json = false, brief = false): void {
 
 function printWatchHints(state: RunState, pid: number, phaseLabel: string): void {
   console.log(`${phaseLabel} running in the background (pid ${pid})`);
-  console.log(`  inline logs:  duet logs ${state.runId}`);
-  console.log(`  tmux panes:   duet view ${state.runId}`);
-  console.log(`  status:       duet status ${state.runId}`);
+  console.log(`  inline logs:  greenflag logs ${state.runId}`);
+  console.log(`  tmux panes:   greenflag view ${state.runId}`);
+  console.log(`  status:       greenflag status ${state.runId}`);
   console.log(`you'll get a notification at the next gate or queued question`);
 }
 
 /**
- * Render the `duet snippets` listing: a summary line, then every effective key
+ * Render the `greenflag snippets` listing: a summary line, then every effective key
  * in shipped order with the layer it resolved from (shipped / user / project).
  * Pure (the `console.log` is the thin action body), so it is tested directly.
  * Provenance lives ONLY here — the library served to workers carries no source
@@ -124,7 +124,7 @@ function fail(message: string): never {
 /**
  * Resolve the run a command targets: the named `runId`, or the latest run in
  * `cwd`. Fails with the caller-supplied not-found message — it varies per
- * command (some point at `duet new`, some at the bare "no runs found"), so it is
+ * command (some point at `greenflag new`, some at the bare "no runs found"), so it is
  * passed in to keep every byte identical. A function declaration so `fail`'s
  * `never` narrows the result to non-null at the call site.
  */
@@ -182,7 +182,7 @@ function restoreFacts(state: RunState): RestoredFacts | null {
 }
 
 /**
- * Build `resolveRunInputs`'s option object from `duet new`'s raw flags. The one
+ * Build `resolveRunInputs`'s option object from `greenflag new`'s raw flags. The one
  * subtlety the bare spread got wrong: `gatesAt` is forwarded KEY-PRESENT, not
  * truthy, so an explicit `--gates-at ""` reaches the parser and is rejected as
  * empty (its documented contract, framing.ts) instead of being silently dropped
@@ -211,8 +211,8 @@ export function newRunInputOpts(opts: {
 }
 
 /**
- * Disambiguate `duet afk`'s two optional positionals. `duet afk <runId>` (bare
- * attend-none posture for a specific run) and `duet afk <preset>` (a posture for
+ * Disambiguate `greenflag afk`'s two optional positionals. `greenflag afk <runId>` (bare
+ * attend-none posture for a specific run) and `greenflag afk <preset>` (a posture for
  * the latest run) are indistinguishable to commander when only one is given, so
  * resolve here: a lone first arg that names an existing run dir is the runId;
  * otherwise it is the preset/list. Run ids (YYYYMMDD-HHMM-hhhh) and preset/phase
@@ -264,7 +264,7 @@ export function takeoverPlan(state: RunState, voice: Voice): TakeoverPlan {
   return { kind: 'open', sessionId: session.id, provider: session.provider, ephemeral };
 }
 program
-  .name('duet')
+  .name('greenflag')
   .description(
     'Opinionated blocks for AI coding workflows — spec loops, adversarial review, an autonomous build. Run it AFK with human gates.',
   )
@@ -272,7 +272,7 @@ program
   .addHelpText(
     'after',
     `
-The shape of a run (pick the workflow with --workflow on duet new):
+The shape of a run (pick the workflow with --workflow on greenflag new):
   full:      frame → DIRECTION gate → spec → COMMIT-SPEC gate → plan → PLAN gate (walk away)
              → implement (AFK, often hours) → SHIP gate → finish (reconcile docs → PR) → OPEN-PR gate → done
   blueprint: frame → DIRECTION gate → spec → COMMIT-SPEC gate (walk away)
@@ -287,17 +287,17 @@ The shape of a run (pick the workflow with --workflow on duet new):
 Each phase runs in a detached background driver; every command above returns
 immediately, and nothing runs between stops. A stop is a gate (decision), a
 queued question, a mid-phase crash, or completion — and every stop names its
-next command in duet status.
+next command in greenflag status.
 
 Acting on a run:
-  at a gate           duet continue --approve | --reject "<feedback>"
-  at a question       duet continue --answer "<text>"
-  into a live phase   duet steer "<note>"     (delivered to the orchestrator mid-flight)
-  after a crash       duet continue           (re-enters from the transcripts)
-  done with a run     duet abandon            (stops a live driver; --purge also deletes the sessions)
+  at a gate           greenflag continue --approve | --reject "<feedback>"
+  at a question       greenflag continue --answer "<text>"
+  into a live phase   greenflag steer "<note>"     (delivered to the orchestrator mid-flight)
+  after a crash       greenflag continue           (re-enters from the transcripts)
+  done with a run     greenflag abandon            (stops a live driver; --purge also deletes the sessions)
 
-Watching:  duet status [--json] [--wait] · duet logs · duet view (tmux panes)
-Run state: .duet/runs/<id>/ — state.json is a hint; the JSONL transcripts are truth.`,
+Watching:  greenflag status [--json] [--wait] · greenflag logs · greenflag view (tmux panes)
+Run state: .greenflag/runs/<id>/ — state.json is a hint; the JSONL transcripts are truth.`,
   );
 
 program
@@ -305,7 +305,7 @@ program
   .description('Start a run on the chosen workflow (--workflow): full (spec → plan → implement → ship → PR), blueprint (full minus the plan phase), relay (blueprint plus a judge that fixes findings and owns the PR), or short (research → implement → ship — no document).')
   .option('--spec <path>', 'path to a draft spec — every document-bearing workflow starts from one; omit to start from the framing alone (the FRAME phase drafts it)')
   .option('--framing <file>', 'project briefing file — the only place project knowledge enters; omit both flags to write it in your editor')
-  .option('--template <name>', 'seed the editor draft from .duet/templates/<name>.md (bare `duet new` uses .duet/templates/default.md when present); conflicts with --spec/--framing')
+  .option('--template <name>', 'seed the editor draft from .greenflag/templates/<name>.md (bare `greenflag new` uses .greenflag/templates/default.md when present); conflicts with --spec/--framing')
   .option('--workflow <name>', 'which workflow to run: full (spec → plan → implement → ship → PR), blueprint (full minus the plan phase), relay (blueprint + a judge that fixes findings and owns the PR), or short (research → implement — no document); default full. Also settable via a workflow: framing key (flag wins)')
   .option(
     '--gates-at <phases>',
@@ -360,7 +360,7 @@ program
     const interactive = explicitInteractive ?? (Boolean(process.stdin.isTTY) && !runInputs.gateless);
     if (explicitInteractive && runInputs.gateless) {
       fail(
-        'gateless means walk away from the START, which is incoherent with --interactive (you drive the planning gates in-session). Use `duet new --gateless` for a headless full-send, or `duet new --interactive` then `duet afk --gateless` to walk away mid-run.',
+        'gateless means walk away from the START, which is incoherent with --interactive (you drive the planning gates in-session). Use `greenflag new --gateless` for a headless full-send, or `greenflag new --interactive` then `greenflag afk --gateless` to walk away mid-run.',
       );
     }
     if (opts.resumeSession && !interactive) {
@@ -428,7 +428,7 @@ program
       ...(corpusRoot !== undefined ? { corpusRoot } : {}),
     });
     // The editor draft is archived into the run dir by createRun; the
-    // staging file is consumed so the next bare `duet new` starts fresh.
+    // staging file is consumed so the next bare `greenflag new` starts fresh.
     if (framingFile === DEFAULT_FRAMING_FILE) unlinkSync(join(cwd, DEFAULT_FRAMING_FILE));
     console.log(`run ${state.runId} created`);
     if (opts.tmux) await openTmuxView(state);
@@ -492,7 +492,7 @@ program
   .option('--resume-session <id>', 'warm-start from an existing Claude Code session: resume it (its context intact) as this run’s orchestrator. Capture the id with `printenv CLAUDE_CODE_SESSION_ID` inside that session. Omit to reconnect the orchestrator’s own session after a drop (its id is remembered) or to open a fresh one')
   .action((runId: string | undefined, opts: { resumeSession?: string }) => {
     const cwd = process.cwd();
-    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with duet new --interactive');
+    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with greenflag new --interactive');
     console.log(`bringing up the interactive orchestrator for run ${state.runId} …`);
     const launched = runOrchestrate(state, { ...(opts.resumeSession ? { resumeSessionId: opts.resumeSession } : {}) });
     if (launched.error) fail(launched.error.message);
@@ -611,7 +611,7 @@ export async function stageContinueText(
         env,
       );
       if (rider === undefined) {
-        fail('--edit opens an editor to compose a rider, but this is a non-interactive shell — pass it inline instead: duet continue --approve "<text>".');
+        fail('--edit opens an editor to compose a rider, but this is a non-interactive shell — pass it inline instead: greenflag continue --approve "<text>".');
       }
     }
     // bare --approve (no --edit) → no rider; an empty editor result → no rider.
@@ -630,7 +630,7 @@ export async function stageContinueText(
       );
     }
     if (!answer.trim()) {
-      fail('answer aborted — nothing written. The queued question is still waiting; answer it with duet continue --answer "<text>".');
+      fail('answer aborted — nothing written. The queued question is still waiting; answer it with greenflag continue --answer "<text>".');
     }
     stageHumanInput(state, { kind: 'answer', text: answer });
   }
@@ -638,7 +638,7 @@ export async function stageContinueText(
 
 /**
  * Catch the certain mistake where an optional-value flag swallowed a run id as
- * its text (`duet continue --approve <runId>`): a run id parsed as flag text is
+ * its text (`greenflag continue --approve <runId>`): a run id parsed as flag text is
  * never what the human meant.
  */
 function guardRunIdAsText(
@@ -648,7 +648,7 @@ function guardRunIdAsText(
   for (const value of [opts.approve, opts.reject, opts.answer]) {
     if (typeof value === 'string' && listRuns(cwd).some((r) => r.runId === value)) {
       fail(
-        `"${value}" is a run id, but it was parsed as the flag's text — put the run id before the flag (duet continue ${value} --approve), or quote the text if you really meant it.`,
+        `"${value}" is a run id, but it was parsed as the flag's text — put the run id before the flag (greenflag continue ${value} --approve), or quote the text if you really meant it.`,
       );
     }
   }
@@ -667,16 +667,16 @@ program
   )
   .action(async (preset: string | undefined, runId: string | undefined, options: { gateless?: boolean }) => {
     const cwd = process.cwd();
-    // `duet afk <runId>` (bare posture, specific run) and `duet afk <preset>`
+    // `greenflag afk <runId>` (bare posture, specific run) and `greenflag afk <preset>`
     // (posture, latest run) share the first positional — resolveAfkArgs sorts it.
     const { preset: presetArg, runId: runIdArg } = resolveAfkArgs(cwd, preset, runId);
-    const state = resolveRun(cwd, runIdArg, 'no runs found in this project — start one with duet new');
+    const state = resolveRun(cwd, runIdArg, 'no runs found in this project — start one with greenflag new');
     let split;
     try {
       // --gateless pre-authorizes everything downstream, so a posture argument is
-      // a contradiction — reject it, mirroring `duet new --gateless`.
+      // a contradiction — reject it, mirroring `greenflag new --gateless`.
       if (options.gateless && presetArg) {
-        fail('duet afk --gateless attends no gates downstream — drop the posture argument (gateless pre-authorizes everything).');
+        fail('greenflag afk --gateless attends no gates downstream — drop the posture argument (gateless pre-authorizes everything).');
       }
       // Bare afk → the empty "attend none" posture; a named arg → an existing
       // preset/list (no new presets). parseGatesAt validates against the workflow.
@@ -695,7 +695,7 @@ program
     );
     if (state.gateless) console.log(gatelessNote(state, 'rest'));
     const pid = spawnDrive(state);
-    printWatchHints(state, pid, 'handed off to headless (duet afk)');
+    printWatchHints(state, pid, 'handed off to headless (greenflag afk)');
   });
 
 program
@@ -733,7 +733,7 @@ program
   .option('--tmux', 'open (or reuse) the tmux viewer for this run')
   .action(async (runId: string | undefined, opts: ContinueTextOpts & { headless?: boolean; tmux?: boolean }) => {
     const cwd = process.cwd();
-    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
+    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with greenflag new (bare opens your editor on a framing draft)');
     if (opts.tmux) await openTmuxView(state);
 
     // Reviving an abandoned run — abandonment is reversible by design
@@ -762,11 +762,11 @@ program
     if (runningPid !== undefined) {
       if (chosen.length > 0) {
         fail(
-          `the phase is still running (pid ${runningPid}) — there's no gate or flag to act on yet; watch with: duet view ${state.runId}`,
+          `the phase is still running (pid ${runningPid}) — there's no gate or flag to act on yet; watch with: greenflag view ${state.runId}`,
         );
       }
       showStatus(state);
-      console.log(`\nphase running in the background (pid ${runningPid}) — live logs: duet view ${state.runId}`);
+      console.log(`\nphase running in the background (pid ${runningPid}) — live logs: greenflag view ${state.runId}`);
       return;
     }
 
@@ -878,7 +878,7 @@ const driveCommand = new Command('_drive')
 program.addCommand(driveCommand, { hidden: true });
 
 // Internal harness: serve a run's kernel tool surface over stdio MCP, so a
-// client process outside duet can call the orchestrator tools. Two modes:
+// client process outside greenflag can call the orchestrator tools. Two modes:
 // with an explicit <phase>, a single-phase server (the Stage-0 boundary/test
 // path); without it, the run-scoped phase-less server the Stage-1 interactive
 // session connects to — it resolves the active phase from disk per call and
@@ -901,7 +901,7 @@ program.addCommand(mcpCommand, { hidden: true });
 program
   .command('steer')
   .description(
-    'Send a mid-phase note to the orchestrator — delivered on its next tool result, as your voice. Only legal while a phase is live (or down mid-phase); at a gate or flag, duet continue is the channel.',
+    'Send a mid-phase note to the orchestrator — delivered on its next tool result, as your voice. Only legal while a phase is live (or down mid-phase); at a gate or flag, greenflag continue is the channel.',
   )
   .argument('[text]', 'the note, verbatim — it reaches the orchestrator unparaphrased; omit it to compose the note in $EDITOR')
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
@@ -916,32 +916,32 @@ program
       text,
       'Steering the live phase: write the note for the orchestrator. It reaches it verbatim, as your editor-in-chief voice, on the next tool result.',
     );
-    // Off a TTY a bare `duet steer` resolves to the sentinel (resolveHumanText
+    // Off a TTY a bare `greenflag steer` resolves to the sentinel (resolveHumanText
     // won't open an editor a headless caller can't drive) — fail fast naming the
     // inline form, the same non-TTY treatment continue's reject/answer get.
     if (note === undefined) {
-      fail('no note written and this is a non-interactive shell — pass it inline: duet steer "<note>".');
+      fail('no note written and this is a non-interactive shell — pass it inline: greenflag steer "<note>".');
     }
     if (!note.trim()) {
-      fail('steer aborted — nothing written. A steer is your voice mid-phase; send one with duet steer "<note>".');
+      fail('steer aborted — nothing written. A steer is your voice mid-phase; send one with greenflag steer "<note>".');
     }
     stageSteer(state, note, position.phase);
     console.log(
       position.kind === 'running'
-        ? `steer staged — delivered on the orchestrator's next tool result (usually within minutes; watch with: duet logs ${state.runId})`
-        : `steer staged — the ${position.phase} phase is down; the note rides the recovery prompt when the run re-enters (resume with: duet continue ${state.runId})`,
+        ? `steer staged — delivered on the orchestrator's next tool result (usually within minutes; watch with: greenflag logs ${state.runId})`
+        : `steer staged — the ${position.phase} phase is down; the note rides the recovery prompt when the run re-enters (resume with: greenflag continue ${state.runId})`,
     );
   });
 
 program
   .command('abandon')
   .description(
-    'Stop a run for good: kill its live driver if one is running, and mark it abandoned. The transcripts stay, so duet continue/takeover still revive it. With --purge, also delete the run dir and every tracked session transcript (irreversible).',
+    'Stop a run for good: kill its live driver if one is running, and mark it abandoned. The transcripts stay, so greenflag continue/takeover still revive it. With --purge, also delete the run dir and every tracked session transcript (irreversible).',
   )
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
   .option(
     '--purge',
-    'also delete .duet/runs/<id>/ and the orchestrator + worker session transcripts in ~/.claude and ~/.codex — irreversible',
+    'also delete .greenflag/runs/<id>/ and the orchestrator + worker session transcripts in ~/.claude and ~/.codex — irreversible',
   )
   .action(async (runId: string | undefined, opts: { purge?: boolean }) => {
     const cwd = process.cwd();
@@ -971,7 +971,7 @@ program
     reconcileRecord(fresh);
     captureRunTranscripts(fresh);
     console.log(
-      `run ${fresh.runId} abandoned — transcripts kept (revive with: duet continue ${fresh.runId}, or wipe with: duet abandon ${fresh.runId} --purge)`,
+      `run ${fresh.runId} abandoned — transcripts kept (revive with: greenflag continue ${fresh.runId}, or wipe with: greenflag abandon ${fresh.runId} --purge)`,
     );
   });
 
@@ -992,7 +992,7 @@ program
 
 program
   .command('takeover')
-  .description('Hand a voice’s session to you: opens the provider’s interactive CLI resumed on that session. Duet stays out until you return; your turns land in the same transcript the orchestrator continues from.')
+  .description('Hand a voice’s session to you: opens the provider’s interactive CLI resumed on that session. Greenflag stays out until you return; your turns land in the same transcript the orchestrator continues from.')
   .argument('<voice>', 'a duty (architect | analyst | builder | critic | judge), the orchestrator, or the consultant')
   .argument('[runId]', 'run id (defaults to the latest run in this project)')
   .action(async (voiceArg: string, runId: string | undefined) => {
@@ -1031,21 +1031,21 @@ program
       return;
     }
 
-    // §4 — a captured session exists. A persistent role RESUMES it (duet picks the
+    // §4 — a captured session exists. A persistent role RESUMES it (greenflag picks the
     // session back up); the ephemeral consultant only INSPECTS its latest
-    // checkpoint — duet will not resume it, so the messaging must not imply
+    // checkpoint — greenflag will not resume it, so the messaging must not imply
     // continuity.
     const cmd = plan.provider === 'claude' ? ['claude', '--resume', plan.sessionId] : ['codex', 'resume', plan.sessionId];
     console.log(
       plan.ephemeral
-        ? `opening the ${role}'s latest checkpoint session (${plan.sessionId}) for inspection — it is ephemeral, so duet will not resume it: the next ${role} turn seeds a fresh session.`
+        ? `opening the ${role}'s latest checkpoint session (${plan.sessionId}) for inspection — it is ephemeral, so greenflag will not resume it: the next ${role} turn seeds a fresh session.`
         : `handing over the ${role} session (${plan.sessionId})`,
     );
     console.log(`  ${cmd.join(' ')}`);
     console.log(
       plan.ephemeral
         ? `inspect freely — anything you do here stays in this checkpoint's session and won't carry into the next ${role} turn.\n`
-        : `your turns append to the run's transcript; pick duet back up afterwards with duet continue.\n`,
+        : `your turns append to the run's transcript; pick greenflag back up afterwards with greenflag continue.\n`,
     );
     await execa(cmd[0]!, cmd.slice(1), { cwd: state.cwd, stdio: 'inherit', reject: false });
     // Clear any pending record the human has now inspected/finished, re-opening
@@ -1096,7 +1096,7 @@ program
   .option('--wait', 'block until the run reaches its next stop — gate, question, crash, or done — then print; read-only and safe to interrupt. With --json this is the supervision primitive: run it in the background and report when it exits')
   .action(async (runId: string | undefined, opts: { json?: boolean; wait?: boolean; brief?: boolean }) => {
     const cwd = process.cwd();
-    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
+    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with greenflag new (bare opens your editor on a framing draft)');
     if (opts.wait) {
       // Turn-aware: wakes on a worker turn settling (interactive host) as well as
       // a run stop. When a turn woke it, foreground WHY before the status block.
@@ -1119,7 +1119,7 @@ program
   .option('--json', 'emit the full health model (including resolved session paths) for automation')
   .action(async (runId: string | undefined, opts: { json?: boolean }) => {
     const cwd = process.cwd();
-    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
+    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with greenflag new (bare opens your editor on a framing draft)');
     const model = await buildDoctorModel(state, { now: Date.now() });
     console.log(opts.json ? JSON.stringify(model, null, 2) : renderDoctor(model));
   });
@@ -1149,7 +1149,7 @@ program
   .option('--trace', 'emit the interleaved execution timeline (per-phase turn sequence + interventions + ordering drift) instead of the aggregate')
   .action((runId: string | undefined, opts: { json?: boolean; trace?: boolean }) => {
     const cwd = process.cwd();
-    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with duet new (bare opens your editor on a framing draft)');
+    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with greenflag new (bare opens your editor on a framing draft)');
     if (opts.trace) {
       const trace = buildTraceModel(state, Date.now());
       console.log(opts.json ? JSON.stringify(trace, null, 2) : renderTrace(trace));
@@ -1180,7 +1180,7 @@ program
       return;
     }
     if (opts.mermaid) fail('--mermaid is blueprint-only — pass --workflow <name>, or drop --mermaid for the run view.');
-    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with duet new, or pass --workflow <name> for a blueprint.');
+    const state = resolveRun(cwd, runId, 'no runs found in this project — start one with greenflag new, or pass --workflow <name> for a blueprint.');
     const model = buildRunGraphModel(state);
     console.log(opts.json ? renderGraphJson(model) : renderGraph(model));
   });
@@ -1260,7 +1260,7 @@ snippetsCmd
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
     }
-    if (!snippet) fail(`unknown snippet key "${key}" — run "duet snippets" to list valid keys.`);
+    if (!snippet) fail(`unknown snippet key "${key}" — run "greenflag snippets" to list valid keys.`);
     // The stored form: the {{lessons_dir}} token is left unresolved (readable and
     // machine-independent — the serve-time resolution is the orchestrator's concern).
     console.log(`# key: ${snippet.key}`);
@@ -1284,7 +1284,7 @@ workflowsCmd
     try {
       const cwd = process.cwd();
       // `check` provisions the editor scaffolding (the author is working the
-      // file) — unlike `duet graph --workflow`, which resolves read-only.
+      // file) — unlike `greenflag graph --workflow`, which resolves read-only.
       const resolved = await resolveWorkflowSource(cwd, name);
       const config = resolveRunConfig({ workflow: resolved.workflow });
       const model = blueprintModel(resolved.workflow, resolved.source, { bindings: config.bindings, degradedEdges: config.degradedEdges });

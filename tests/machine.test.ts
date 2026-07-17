@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { createActor, fromCallback, waitFor } from 'xstate';
 import type { AnyMachineSnapshot } from 'xstate';
-import { duetMachine, interactiveMachine, machineFor } from '../src/run/machine.ts';
+import { greenflagMachine, interactiveMachine, machineFor } from '../src/run/machine.ts';
 import { WORKFLOWS, phasesOf } from '../src/registry/workflows.ts';
 import type { ShippedWorkflowName } from '../src/registry/workflows.ts';
 import { scriptedMachine } from './helpers/scripted-machine.ts';
@@ -158,7 +158,7 @@ describe('gate and flag-wait guarantees', () => {
     // only on phase.* (from its driver), never on human.*. A phase driver that
     // never resolves holds the run in the phase state so the guarantee is
     // observable without racing the actor's send-back.
-    const machine = duetMachine.provide({ actors: { phaseDriver: fromCallback(() => {}) } });
+    const machine = greenflagMachine.provide({ actors: { phaseDriver: fromCallback(() => {}) } });
     const actor = startActor(machine);
     expect(actor.getSnapshot().value).toBe('frameLoop');
     for (const type of ['human.approve', 'human.reject', 'human.answer'] as const) {

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Vendor duet's PLAN-phase methodology lessons from the author's canonical
+// Vendor greenflag's PLAN-phase methodology lessons from the author's canonical
 // ~/.config/lessons into ./lessons, so the snippets that cite them ship the
 // discipline instead of pointing at a path on the author's machine.
 //
@@ -12,7 +12,7 @@
 //
 // The three-tier chain: mattpocock/skills -> ~/.config/lessons (the author's
 // owned, forked source of truth, which pins its own upstream in .upstream/) ->
-// duet/lessons (this vendored snapshot). We never vendor the source's .upstream/
+// greenflag/lessons (this vendored snapshot). We never vendor the source's .upstream/
 // baseline — that is the author's diff anchor, not something a worker reads.
 //
 // Usage:
@@ -20,7 +20,7 @@
 //   pnpm vendor-lessons --dry-run  show what would change, touch nothing
 //
 // Source defaults to ~/.config/lessons (the neutral, Stow-managed home);
-// override with DUET_LESSONS_DIR if your lessons live elsewhere.
+// override with GREENFLAG_LESSONS_DIR if your lessons live elsewhere.
 
 import { cpSync, existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
@@ -42,14 +42,14 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 // (and its zod/smol-toml graph) for one path segment — so relocate both together.
 const destRoot = path.join(repoRoot, "lessons");
 const srcRoot =
-  process.env.DUET_LESSONS_DIR ?? path.join(homedir(), ".config", "lessons");
+  process.env.GREENFLAG_LESSONS_DIR ?? path.join(homedir(), ".config", "lessons");
 
 const dryRun = process.argv.includes("--dry-run");
 
 if (!existsSync(srcRoot)) {
   console.error(
     `canonical lessons dir not found: ${srcRoot}\n` +
-      `set DUET_LESSONS_DIR to your lessons directory (e.g. ~/.config/lessons)`,
+      `set GREENFLAG_LESSONS_DIR to your lessons directory (e.g. ~/.config/lessons)`,
   );
   process.exit(1);
 }
@@ -68,7 +68,7 @@ for (const name of TOPICS) {
   );
   if (dryRun) continue;
   // Replace the topic dir wholesale so a file deleted upstream doesn't linger in
-  // the snapshot. This only touches the named topic dirs — the duet-authored
+  // the snapshot. This only touches the named topic dirs — the greenflag-authored
   // lessons/README.md (provenance) is never removed.
   rmSync(dest, { recursive: true, force: true });
   cpSync(src, dest, { recursive: true });

@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsdown';
 
 // Publish-only bundle (`pnpm build`, run automatically by `prepack`).
-// Dev and the global `duet` link run src/cli.ts directly — never dist/.
+// Dev and the global `greenflag` link run src/cli.ts directly — never dist/.
 // Output is dist/cli.mjs — publishConfig.bin must match. The workflows entry is
 // the SDK subpath external workflow files import through the loader hook.
 export default defineConfig({

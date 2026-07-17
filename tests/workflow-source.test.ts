@@ -54,7 +54,7 @@ const SDK_SURFACE_FIXTURE = `import {
   type PhaseExpr,
   type WorkflowDefinition,
   type WorkflowDefinitionInput,
-} from 'duet/workflows';
+} from 'greenflag/workflows';
 
 const gate: GateName = 'triage';
 const allBlocks: readonly PhaseExpr[] = [
@@ -100,7 +100,7 @@ function writeRealSdkTsconfig(dir: string): void {
           erasableSyntaxOnly: true,
           verbatimModuleSyntax: true,
           noEmit: true,
-          paths: { 'duet/workflows': [join(process.cwd(), 'src', 'workflows.ts')] },
+          paths: { 'greenflag/workflows': [join(process.cwd(), 'src', 'workflows.ts')] },
           skipLibCheck: true,
         },
         include: ['surface.ts'],
@@ -124,16 +124,16 @@ describe('workflow source loader', () => {
     );
   });
 
-  // Spawns a real `node` to prove the loader hook resolves `duet/workflows` in a
+  // Spawns a real `node` to prove the loader hook resolves `greenflag/workflows` in a
   // fresh process — node startup plus type-stripping plus the SDK import straddles
   // vitest's 5s default, so the test flaked ~half the time under suite parallelism.
   // The bound is raised, not removed: a genuine hang still fails here.
-  test('the Node loader hook resolves duet/workflows for workflow files', async ({ projectDir }) => {
+  test('the Node loader hook resolves greenflag/workflows for workflow files', async ({ projectDir }) => {
     const dir = projectWorkflowDir(projectDir);
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, 'hooked.ts'),
-      `import { build, defineWorkflow, finish, frame } from 'duet/workflows';
+      `import { build, defineWorkflow, finish, frame } from 'greenflag/workflows';
 export default defineWorkflow({
   name: 'hooked',
   title: 'hooked title',
@@ -162,16 +162,16 @@ console.log(resolved.workflow.name + ':' + resolved.source.layer);
     const inputs = await resolveRunInputs(projectDir, { framing: 'brief.md', workflow: 'instant' });
     expect.soft(inputs.workflow).toBe('instant');
     expect.soft(inputs.workflowSpec.displayName).toBe('instant title');
-    expect.soft(inputs.workflowSource).toMatchObject({ layer: 'project', path: join(projectDir, '.duet', 'workflows', 'instant.ts') });
-    expect.soft(readFileSync(join(projectDir, '.duet', 'workflows', 'tsconfig.json'), 'utf8')).toContain('"duet/workflows"');
-    expect.soft(readFileSync(join(projectDir, '.duet', 'workflows', 'duet-workflows.d.ts'), 'utf8')).toContain("declare module 'duet/workflows'");
+    expect.soft(inputs.workflowSource).toMatchObject({ layer: 'project', path: join(projectDir, '.greenflag', 'workflows', 'instant.ts') });
+    expect.soft(readFileSync(join(projectDir, '.greenflag', 'workflows', 'tsconfig.json'), 'utf8')).toContain('"greenflag/workflows"');
+    expect.soft(readFileSync(join(projectDir, '.greenflag', 'workflows', 'greenflag-workflows.d.ts'), 'utf8')).toContain("declare module 'greenflag/workflows'");
 
     const run = createRun({
       cwd: projectDir,
       ...inputs,
       bindings: defaultBindingsFor(inputs.workflowSpec),
     });
-    rmSync(join(projectDir, '.duet', 'workflows', 'instant.ts'));
+    rmSync(join(projectDir, '.greenflag', 'workflows', 'instant.ts'));
 
     const loaded = loadRunState(projectDir, run.runId);
     expect.soft(workflowFor(loaded).name).toBe('instant');
@@ -187,7 +187,7 @@ console.log(resolved.workflow.name + ':' + resolved.source.layer);
     const resolved = await resolveWorkflowSource(projectDir, 'personal', { home });
     expect.soft(resolved.workflow.name).toBe('personal');
     expect.soft(resolved.source.layer).toBe('user');
-    expect.soft(resolved.source.path).toBe(join(home, '.config', 'duet', 'workflows', 'personal.ts'));
+    expect.soft(resolved.source.path).toBe(join(home, '.config', 'greenflag', 'workflows', 'personal.ts'));
   });
 
   test('missing external workflow lookup reports authoring paths without creating absent dirs', async ({ projectDir }) => {
@@ -205,13 +205,13 @@ console.log(resolved.workflow.name + ':' + resolved.source.layer);
     await expect(resolveWorkflowSource(projectDir, 'still-missing', { home })).rejects.toThrow(/workflow "still-missing" was not found/);
     const projectTsconfig = readFileSync(join(projectDirPath, 'tsconfig.json'), 'utf8');
     expect.soft(projectTsconfig).toContain('"erasableSyntaxOnly": true');
-    expect.soft(projectTsconfig).toContain('"duet/workflows"');
+    expect.soft(projectTsconfig).toContain('"greenflag/workflows"');
     expect.soft(existsSync(userDirPath)).toBe(false);
   });
 
   // Runs `tsc --noEmit` twice (the provisioned stub, then the real SDK surface);
   // two typecheck processes never fit vitest's 5s default.
-  test('provisioned duet-workflows.d.ts stays in sync with the real SDK surface', async ({ projectDir }) => {
+  test('provisioned greenflag-workflows.d.ts stays in sync with the real SDK surface', async ({ projectDir }) => {
     const provisionedDir = projectWorkflowDir(projectDir);
     provisionWorkflowDir(provisionedDir);
     writeFileSync(join(provisionedDir, 'surface.ts'), SDK_SURFACE_FIXTURE);
@@ -230,12 +230,12 @@ console.log(resolved.workflow.name + ':' + resolved.source.layer);
     provisionWorkflowDir(projectDirPath);
     provisionWorkflowDir(userDirPath);
 
-    expect.soft(discoverWorkflowSources(projectDir, { home }).map((entry) => entry.name)).not.toContain('duet-workflows.d');
-    expect.soft(definedWorkflowSources(projectDir, 'duet-workflows.d', { home })).toEqual([]);
-    await expect(resolveWorkflowSource(projectDir, 'duet-workflows.d', { home })).rejects.toThrow(
-      /workflow "duet-workflows\.d" was not found[\s\S]*shipped: full, blueprint, relay, short/,
+    expect.soft(discoverWorkflowSources(projectDir, { home }).map((entry) => entry.name)).not.toContain('greenflag-workflows.d');
+    expect.soft(definedWorkflowSources(projectDir, 'greenflag-workflows.d', { home })).toEqual([]);
+    await expect(resolveWorkflowSource(projectDir, 'greenflag-workflows.d', { home })).rejects.toThrow(
+      /workflow "greenflag-workflows\.d" was not found[\s\S]*shipped: full, blueprint, relay, short/,
     );
-    await expect(resolveWorkflowSource(projectDir, 'duet-workflows.d', { home })).rejects.not.toThrow(/duet-workflows\.d\.ts could not be imported/);
+    await expect(resolveWorkflowSource(projectDir, 'greenflag-workflows.d', { home })).rejects.not.toThrow(/greenflag-workflows\.d\.ts could not be imported/);
   });
 
   test('rejects shipped-name and cross-layer collisions before importing a workflow', async ({ projectDir }) => {
@@ -278,16 +278,16 @@ describe('resolveWorkflowSourceReadOnly — the no-provision entry point (the bl
     expect.soft(resolved.workflow.name).toBe('instant');
     expect.soft(resolved.source).toMatchObject({ layer: 'project' });
     // The load-bearing assertion: the dir is byte-for-byte as before — no
-    // tsconfig.json, no duet-workflows.d.ts was written.
+    // tsconfig.json, no greenflag-workflows.d.ts was written.
     expect(readdirSync(dir).sort()).toEqual(before);
 
     // Control: the provisioning entry point on the SAME dir DOES scaffold.
     await resolveWorkflowSource(projectDir, 'instant');
-    expect(readdirSync(dir).sort()).toEqual(['duet-workflows.d.ts', 'instant.ts', 'tsconfig.json']);
+    expect(readdirSync(dir).sort()).toEqual(['greenflag-workflows.d.ts', 'instant.ts', 'tsconfig.json']);
   });
 
   test('a shipped-workflow blueprint neither imports nor writes (fully read-only)', async ({ projectDir }) => {
-    // No .duet/workflows dir exists at all — a shipped read-only resolve must not create it.
+    // No .greenflag/workflows dir exists at all — a shipped read-only resolve must not create it.
     const dir = projectWorkflowDir(projectDir);
     expect(existsSync(dir)).toBe(false);
 

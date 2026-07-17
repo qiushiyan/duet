@@ -25,7 +25,7 @@ import { runHostedPhase } from './host-runner.ts';
 import type { HostedSession, PhaseHost, TurnOutcome } from './host-runner.ts';
 import { fromCallback } from 'xstate';
 import type { EventObject } from 'xstate';
-import { duetMachine, machineFor } from '../../run/machine.ts';
+import { greenflagMachine, machineFor } from '../../run/machine.ts';
 import type { PhaseInput } from '../../run/machine.ts';
 import { createPhaseTools } from '../tools.ts';
 import type { KernelTool } from '../tools.ts';
@@ -113,7 +113,7 @@ export async function runPhase(input: PhaseInput, runTurn: RunOrchestratorTurn =
 
 /** Driver narration → plain stdout (the detached driver's log file). The [tag]
  *  palette is view-time only: picocolors auto-disables off-TTY, so the file stays
- *  plain; `duet logs` and the tmux panes re-apply color where a human watches. */
+ *  plain; `greenflag logs` and the tmux panes re-apply color where a human watches. */
 const driverLog = (line: string): void => console.log(colorizeDriverLine(line));
 
 /**
@@ -298,7 +298,7 @@ async function streamTurn(
                 cause: 'budget',
               }
             : {
-                question: `The orchestrator run ended abnormally (${message.subtype}). Run duet doctor for per-role health, or check the orchestrator log; answer with how to proceed (the session resumes from where it stopped).`,
+                question: `The orchestrator run ended abnormally (${message.subtype}). Run greenflag doctor for per-role health, or check the orchestrator log; answer with how to proceed (the session resumes from where it stopped).`,
                 cause: 'infra',
                 errorClass: 'unknown',
               };
@@ -377,7 +377,7 @@ function basePrompt(
  * an exception reaching here is an unexpected escape, still surfaced as a
  * flag. The headless lifecycle (driveToQuiescence) drives with this machine.
  */
-export function drivenMachineFor(workflow: WorkflowRef): typeof duetMachine {
+export function drivenMachineFor(workflow: WorkflowRef): typeof greenflagMachine {
   return machineFor(workflow).provide({
     actors: {
       phaseDriver: fromCallback<EventObject, PhaseInput>(({ input, sendBack }) => {

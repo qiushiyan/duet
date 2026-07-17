@@ -1,17 +1,25 @@
 {
-  "name": "duet",
-  "version": "0.1.0",
-  "private": true,
+  "name": "greenflag",
+  "version": "0.1.1",
   "description": "Opinionated blocks for AI coding workflows — spec loops, adversarial review, an autonomous build. Run it AFK with human gates.",
+  "keywords": [
+    "ai",
+    "agents",
+    "orchestrator",
+    "claude",
+    "codex",
+    "workflow",
+    "cli"
+  ],
   "license": "MIT",
   "author": "qiushiyan <qiushi.yann@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/qiushiyan/duet.git"
+    "url": "git+https://github.com/qiushiyan/greenflag.git"
   },
   "type": "module",
   "bin": {
-    "duet": "src/surfaces/cli.ts"
+    "greenflag": "src/surfaces/cli.ts"
   },
   "exports": {
     "./workflows": {
@@ -21,7 +29,7 @@
   },
   "publishConfig": {
     "bin": {
-      "duet": "dist/cli.mjs"
+      "greenflag": "dist/cli.mjs"
     }
   },
   "files": [
@@ -32,14 +40,15 @@
     "prompts"
   ],
   "scripts": {
-    "duet": "node src/surfaces/cli.ts",
+    "greenflag": "node src/surfaces/cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "sync-skills": "node scripts/sync-skills.mjs",
     "vendor-lessons": "node scripts/vendor-lessons.mjs",
     "build": "tsdown",
-    "prepack": "pnpm typecheck && pnpm test && pnpm build"
+    "prepack": "pnpm typecheck && pnpm test && pnpm build",
+    "prepublishOnly": "node scripts/guard-publish.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.170",

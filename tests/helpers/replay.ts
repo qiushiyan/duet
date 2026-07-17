@@ -67,12 +67,12 @@ export interface ReplayFixtures {
 
 export const test = base.extend<ReplayFixtures>({
   replayOutDir: async ({}, use) => {
-    const dir = mkdtempSync(join(tmpdir(), 'duet-replay-'));
+    const dir = mkdtempSync(join(tmpdir(), 'greenflag-replay-'));
     await use(dir);
     rmSync(dir, { recursive: true, force: true });
   },
   providerStoreSentinel: async ({}, use) => {
-    const root = mkdtempSync(join(tmpdir(), 'duet-provider-store-'));
+    const root = mkdtempSync(join(tmpdir(), 'greenflag-provider-store-'));
     const configDir = join(root, 'claude-config-sentinel');
     const claudeHome = join(root, 'claude-home-sentinel');
     mkdirSync(join(root, '.claude'), { recursive: true });

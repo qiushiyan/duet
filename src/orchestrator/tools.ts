@@ -678,7 +678,7 @@ export function renderTurnResult(
   // worker saw the prompt and committed work may be on disk, in a resumable
   // session. Resume, never re-send (a re-send would duplicate the conversation).
   // The one exception is an aborted `/compact` of a PERSISTENT role: its session
-  // is un-compacted and bloated, so duet has RESET that role to a fresh session —
+  // is un-compacted and bloated, so greenflag has RESET that role to a fresh session —
   // re-anchor it with recover-context, never resume (the generic resume note would
   // be wrong). Gated by the SAME shouldResetAfterCompactAbort the settle delete
   // reads, so the copy can never claim a reset the settle didn't perform.
@@ -686,7 +686,7 @@ export function renderTurnResult(
     content.push(
       block(
         shouldResetAfterCompactAbort(role, meta.isCompactTurn === true, true)
-          ? `(the /compact turn ran to its cap and was aborted — its session is un-compacted and bloated, so resuming it is the wrong move. duet has RESET the ${role} to a fresh session; re-anchor it by sending the recover-context snippet (a project/status overview + reread), NOT the original /compact or a resume. This is a recovery checkpoint, not a failure.)`
+          ? `(the /compact turn ran to its cap and was aborted — its session is un-compacted and bloated, so resuming it is the wrong move. greenflag has RESET the ${role} to a fresh session; re-anchor it by sending the recover-context snippet (a project/status overview + reread), NOT the original /compact or a resume. This is a recovery checkpoint, not a failure.)`
           : outcome.contextExhausted
             ? `(the worker turn was cut at the session's context cap — it saw your prompt and committed work may be on disk, but the session is nearly full, so a bare resume would run straight back into the same ceiling. Send the ${role} a "/compact " body with your adapted compact-inflight instructions first (a compaction request still fits), then resume with a short continuation to finish the remainder. This is a scheduled maintenance stop, not a failure.)`
             : `(the worker ran to its time cap and was aborted — but it saw your prompt and committed work may be on disk, in a resumable session. Resume that session with a short continuation to finish the remainder; do NOT re-send the original prompt (it would duplicate the conversation). This is a checkpoint, not a failure.)`,
@@ -724,7 +724,7 @@ export function renderTurnResult(
 
 /**
  * The footer's cumulative worker-cost fragment — honest about BOTH providers,
- * mirroring `duet status` semantics: Claude bills in dollars (with a `+` when
+ * mirroring `greenflag status` semantics: Claude bills in dollars (with a `+` when
  * the total is partial/unmetered — an interactive-transport turn reports no
  * cost), Codex bills in tokens. Each side shows only when it has activity, so a
  * Claude-only round reads `claude $1.25` and a Codex-only round reads
@@ -756,7 +756,7 @@ function joinRoles(roles: VoiceAddress[]): string {
  *
  * It does NOT re-teach the fire-and-collect model (keep the session live, fire
  * the other role in parallel, can't-advance-while-uncollected, arm
- * `duet status --wait` before idling): that whole contract is the durable
+ * `greenflag status --wait` before idling): that whole contract is the durable
  * orchestrator identity's §"Fire-and-collect" (prompts/orchestrator-identity.md),
  * fed as a system prompt on every interactive session — so it is compaction-proof
  * and present from turn one. Repeating it on every dispatch was automatic +
@@ -914,8 +914,8 @@ export interface TerminalInput {
 /** The reconnect-orphan refusal copy — branch on whether a resumable session exists. */
 function orphanRefusalText(role: VoiceAddress, state: RunState): string {
   return sessionRecordFor(state, role)
-    ? `The prior turn to the ${role} was orphaned when its session ended — its pending record is still on disk, and that session may still be resumable. Inspect or finish it with \`duet takeover ${role}\`, then re-send. Do not re-send into this role until the orphan is resolved: an immediate re-send would resume and race the orphaned worker on that same session.`
-    : `The prior turn to the ${role} was orphaned before a session id was captured — there is no session to resume, and the old worker process may still be running and editing the repo. Dropping the orphan ABANDONS that in-flight turn: confirm it is done (or accept the risk), then run \`duet takeover ${role}\` to drop the orphan and re-send. Do not re-send until then.`;
+    ? `The prior turn to the ${role} was orphaned when its session ended — its pending record is still on disk, and that session may still be resumable. Inspect or finish it with \`greenflag takeover ${role}\`, then re-send. Do not re-send into this role until the orphan is resolved: an immediate re-send would resume and race the orphaned worker on that same session.`
+    : `The prior turn to the ${role} was orphaned before a session id was captured — there is no session to resume, and the old worker process may still be running and editing the repo. Dropping the orphan ABANDONS that in-flight turn: confirm it is done (or accept the risk), then run \`greenflag takeover ${role}\` to drop the orphan and re-send. Do not re-send until then.`;
 }
 
 // ── The shared terminal rail group — composed by BOTH terminal tools, so the
@@ -945,8 +945,8 @@ export const pendingTurnGateRail: Rail<TerminalInput> = ({ verb }, ctx) => {
     if (ctx.inFlight(role)) return `Collect the ${role}'s turn with check_turns.`;
     // On-disk orphan with no live owner — recover by the role's policy.
     return orphanRecoveryFor(role) === 'discard-and-reseed'
-      ? `The ${role} turn was orphaned, but the ${role} is ephemeral and read-only — resend to it (your next send_prompt clears the stale record and reseeds), or run \`duet takeover ${role}\` to clear it; no human action is needed.`
-      : `The ${role} turn was orphaned when its session ended — recover it with \`duet takeover ${role}\` (its session may still be resumable), then re-send.`;
+      ? `The ${role} turn was orphaned, but the ${role} is ephemeral and read-only — resend to it (your next send_prompt clears the stale record and reseeds), or run \`greenflag takeover ${role}\` to clear it; no human action is needed.`
+      : `The ${role} turn was orphaned when its session ended — recover it with \`greenflag takeover ${role}\` (its session may still be resumable), then re-send.`;
   };
   const action = verb === 'advance the phase' ? 'advance' : 'ask';
   return refuse(
@@ -1152,8 +1152,8 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   // side effects.
   const parkedBrief = (kind: 'advance' | 'flag'): string =>
     kind === 'advance'
-      ? 'This phase is parked at its gate — your advance_phase packet is recorded. Present it to the human and propose the crossing (duet continue --approve "<rider>", or --reject "<feedback>"); a gate is crossed by the human’s tap, never by a tool of yours. Do not start new work — the phase is ending. Re-anchor here any time with get_task.'
-      : 'This phase is parked on a queued question — your ask_human flag is recorded. Present it to the human and wait for their answer (duet continue --answer "<answer>"). Do not start new work until it arrives. Re-anchor here any time with get_task.';
+      ? 'This phase is parked at its gate — your advance_phase packet is recorded. Present it to the human and propose the crossing (greenflag continue --approve "<rider>", or --reject "<feedback>"); a gate is crossed by the human’s tap, never by a tool of yours. Do not start new work — the phase is ending. Re-anchor here any time with get_task.'
+      : 'This phase is parked on a queued question — your ask_human flag is recorded. Present it to the human and wait for their answer (greenflag continue --answer "<answer>"). Do not start new work until it arrives. Re-anchor here any time with get_task.';
 
   // The interactive host's pending-turn lifecycle (async send_prompt) is owned
   // by the injected dispatcher; absent → the headless host, blocking. The
@@ -1168,7 +1168,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   // read). The refusal copy lives in the module-level orphanRefusalText, shared
   // with orphanRail; the orphan POLICY (orphanRecoveryFor) decides which is used.
   const orphanDiscardText = (role: VoiceAddress): string =>
-    `The prior turn to the ${role} was orphaned when its session ended, but the ${role} is ephemeral and read-only — there is nothing to resume and no repo it could have edited, so just resend: your next send_prompt to the ${role} clears the stale record and dispatches the fresh body in one call. (Or run \`duet takeover ${role}\` to clear it by hand — it opens no resume target, since the next turn seeds a new session.)`;
+    `The prior turn to the ${role} was orphaned when its session ended, but the ${role} is ephemeral and read-only — there is nothing to resume and no repo it could have edited, so just resend: your next send_prompt to the ${role} clears the stale record and dispatches the fresh body in one call. (Or run \`greenflag takeover ${role}\` to clear it by hand — it opens no resume target, since the next turn seeds a new session.)`;
 
   // The rail context, built ONCE: the two boolean oracles are the single place
   // the blocking-vs-async host divergence lives. Blocking host: inFlight reads
@@ -1233,7 +1233,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
       resetWedgedSession(role);
       return error(
         block(
-          `The ${role} worker's session hit its context-window ceiling again after an automatic salvage compaction — even freshly compacted it stays too full to work in. duet has RESET the ${role} to a fresh session; re-anchor it with the recover-context snippet (a status overview plus a reread of the committed artifacts), not a resume or a re-send.`,
+          `The ${role} worker's session hit its context-window ceiling again after an automatic salvage compaction — even freshly compacted it stays too full to work in. greenflag has RESET the ${role} to a fresh session; re-anchor it with the recover-context snippet (a status overview plus a reread of the committed artifacts), not a resume or a re-send.`,
         ),
       );
     }
@@ -1244,7 +1244,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     if (!(salvage instanceof Error) && salvage.aborted !== true) {
       return error(
         block(
-          `The ${role} worker's session hit its context-window ceiling — your prompt was rejected before the worker saw it. duet ran an automatic salvage compaction on the session and it succeeded, so the session takes prompts again: re-send this same prompt now. (The salvage used generic keep-the-work instructions; prefer your own adapted compact-for-* at natural boundaries, where you choose what survives.)`,
+          `The ${role} worker's session hit its context-window ceiling — your prompt was rejected before the worker saw it. greenflag ran an automatic salvage compaction on the session and it succeeded, so the session takes prompts again: re-send this same prompt now. (The salvage used generic keep-the-work instructions; prefer your own adapted compact-for-* at natural boundaries, where you choose what survives.)`,
         ),
       );
     }
@@ -1254,7 +1254,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
     if (salvage instanceof Error) resetWedgedSession(role);
     return error(
       block(
-        `The ${role} worker's session hit its context-window ceiling, and the automatic salvage compaction ${salvage instanceof Error ? `also failed (${salvage.message})` : 'was cut at its cap'} — the session was beyond compacting. duet has RESET the ${role} to a fresh session; re-anchor it with the recover-context snippet (a status overview plus a reread of the committed artifacts), not a resume or a re-send.`,
+        `The ${role} worker's session hit its context-window ceiling, and the automatic salvage compaction ${salvage instanceof Error ? `also failed (${salvage.message})` : 'was cut at its cap'} — the session was beyond compacting. greenflag has RESET the ${role} to a fresh session; re-anchor it with the recover-context snippet (a status overview plus a reread of the committed artifacts), not a resume or a re-send.`,
       ),
     );
   };
@@ -1282,7 +1282,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   const tools: Array<KernelTool<any>> = [
     kernelTool(
       'get_task',
-      'Read your task for the current phase — the orchestrator’s entry brief: the documents in scope, the branch policy, the attendance posture, and the worked examples, returned in full every time you call it. Call it at the start of each phase, and to re-anchor on disk truth whenever your context may be stale (your operating instructions name when). Not read-only: the first call in a phase marks the phase started, and a pending piece of human input — a gate-approval rider, a reject’s feedback, or an answer to a queued question — is folded into the brief as an appended block exactly once; a later call returns the brief alone, with nothing left to consume. When the phase is already parked at its gate or flag (you have called advance_phase or ask_human), this instead reports that you are parked and should present the packet and propose duet continue, and performs no side effect.',
+      'Read your task for the current phase — the orchestrator’s entry brief: the documents in scope, the branch policy, the attendance posture, and the worked examples, returned in full every time you call it. Call it at the start of each phase, and to re-anchor on disk truth whenever your context may be stale (your operating instructions name when). Not read-only: the first call in a phase marks the phase started, and a pending piece of human input — a gate-approval rider, a reject’s feedback, or an answer to a queued question — is folded into the brief as an appended block exactly once; a later call returns the brief alone, with nothing left to consume. When the phase is already parked at its gate or flag (you have called advance_phase or ask_human), this instead reports that you are parked and should present the packet and propose greenflag continue, and performs no side effect.',
       {},
       async () => {
         // Parked: a current-phase terminal marker means the orchestrator
@@ -1325,7 +1325,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
             (sent[tag] ??= []).push(role);
           }
         }
-        // Resolve against the run's project root (the `<cwd>/.duet/snippets.toml`
+        // Resolve against the run's project root (the `<cwd>/.greenflag/snippets.toml`
         // project override) and the user config dir; runtimeLibraryContext owns the
         // single OS-home read, which the test suite isolates via $HOME.
         const libraryContext = runtimeLibraryContext(state.cwd);
@@ -1366,7 +1366,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         body: z
           .string()
           .describe(
-            'The full prompt text to send — the template adapted to this run: generality collapsed onto the actual task, discipline intact. A worker reads it cold, so a first prompt of a phase opens with the work (what is being built and the goal this turn) before the role and task, and carries none of duet’s internal vocabulary — arc, gate, or checkpoint names orient you, not the worker.',
+            'The full prompt text to send — the template adapted to this run: generality collapsed onto the actual task, discipline intact. A worker reads it cold, so a first prompt of a phase opens with the work (what is being built and the goal this turn) before the role and task, and carries none of greenflag’s internal vocabulary — arc, gate, or checkpoint names orient you, not the worker.',
           ),
       },
       async (args) => {
@@ -1608,7 +1608,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
           .array(z.object({ title: z.string(), severity: z.enum(['low', 'high']) }))
           .optional()
           .describe(
-            'A structured echo of the genuine human decisions this gate carries — the "things for you to decide" you would otherwise leave only in the prose summary. severity: "high" = a real product/direction call the human must make; "low" = notable but not blocking. A high holds a non-explicit crossing: a pre-authorized gate will not auto-cross over it and a one-tap `duet afk` handoff is refused — both stop for the human so they weigh the call before it ships; an explicit human approval still crosses. A low rides the packet as advisory. Omit the field on a routine convergence with nothing for the human to weigh.',
+            'A structured echo of the genuine human decisions this gate carries — the "things for you to decide" you would otherwise leave only in the prose summary. severity: "high" = a real product/direction call the human must make; "low" = notable but not blocking. A high holds a non-explicit crossing: a pre-authorized gate will not auto-cross over it and a one-tap `greenflag afk` handoff is refused — both stop for the human so they weigh the call before it ships; an explicit human approval still crosses. A low rides the packet as advisory. Omit the field on a routine convergence with nothing for the human to weigh.',
           ),
       },
       async (args) => {
@@ -1653,7 +1653,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
                 // gate does NOT auto-continue here — only the headless driver
                 // auto-crosses — so the message must not promise the next phase
                 // arrives automatically. It says to hand off instead.
-                'this phase’s gate was pre-authorized, so your packet is saved for the human’s later review. On this interactive host the run does NOT auto-continue here — hand off with `duet afk` (or `duet continue --approve --headless`) to run the pre-authorized rest unattended. End your turn with a one-line status.'
+                'this phase’s gate was pre-authorized, so your packet is saved for the human’s later review. On this interactive host the run does NOT auto-continue here — hand off with `greenflag afk` (or `greenflag continue --approve --headless`) to run the pre-authorized rest unattended. End your turn with a one-line status.'
               : 'this phase’s gate was pre-authorized by the human at run start, so your packet is saved for their later review and the run continues immediately. End your turn with a one-line status; the next phase’s instructions arrive as your next message.';
         return ok(block(`Phase advance recorded — ${next}`));
       },
@@ -1678,7 +1678,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
         log(`[propose_snippet_edit] queued for ${args.snippet_key}`);
         return ok(
           block(
-            `Proposal queued (${state.snippetProposals.length} pending) — it appears in duet status and the human reviews it at the end of the run. Continue the phase with your per-turn adaptation in the meantime.`,
+            `Proposal queued (${state.snippetProposals.length} pending) — it appears in greenflag status and the human reviews it at the end of the run. Continue the phase with your per-turn adaptation in the meantime.`,
           ),
         );
       },
@@ -1702,12 +1702,12 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   // near-cap nudge / infra error a blocking send_prompt would have returned),
   // report each still-running duty, and surface any reconnect orphan rather than
   // hide it behind "nothing in flight". Never blocks — "block until ready" lives
-  // in `duet status --wait`, off the session.
+  // in `greenflag status --wait`, off the session.
   if (dispatcher) {
     tools.push(
       kernelTool(
         'check_turns',
-        'Collect the results of worker turns dispatched with send_prompt. On the interactive host send_prompt returns immediately and the turn runs in the background; check_turns is how you pull a finished turn’s response back into the conversation — the worker’s text (with any checkpoint note if it hit its budget cap), or, if the turn stopped short, the prescribed recovery: a budget-control stop (resume the session / raise the budget) or an infrastructure failure (retry once, then ask_human). The same bookkeeping a blocking turn would have done is already committed. It is instant: it delivers whatever has settled, names any duty whose turn is still running (call it again later — or background `duet status --wait` so its settling re-invokes you), and never waits. Collecting a duty’s result re-opens it for the next send_prompt; a phase cannot advance while any dispatched turn is still uncollected.',
+        'Collect the results of worker turns dispatched with send_prompt. On the interactive host send_prompt returns immediately and the turn runs in the background; check_turns is how you pull a finished turn’s response back into the conversation — the worker’s text (with any checkpoint note if it hit its budget cap), or, if the turn stopped short, the prescribed recovery: a budget-control stop (resume the session / raise the budget) or an infrastructure failure (retry once, then ask_human). The same bookkeeping a blocking turn would have done is already committed. It is instant: it delivers whatever has settled, names any duty whose turn is still running (call it again later — or background `greenflag status --wait` so its settling re-invokes you), and never waits. Collecting a duty’s result re-opens it for the next send_prompt; a phase cannot advance while any dispatched turn is still uncollected.',
         {
           raw: z
             .boolean()
@@ -1738,7 +1738,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
               // nearest the idle moment (docs/prompting-and-tool-design.md).
               content.push(
                 block(
-                  `The ${role} turn is still running — collect it on a later check_turns, or arm \`duet status --wait\` so its settling brings you back.`,
+                  `The ${role} turn is still running — collect it on a later check_turns, or arm \`greenflag status --wait\` so its settling brings you back.`,
                 ),
               );
             }
@@ -1766,7 +1766,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   }
 
   /**
-   * Steer delivery rides every tool result (docs/specs/2026-06-12-concierge-package.md):
+   * Steer delivery rides every tool result (docs/automation-design.md §"The steer channel"):
    * after a handler produces its result — refusals included — pending human
    * steers are appended as a tagged block and consumed. Two exceptions, one
    * rule: steers deliver only on results that CONTINUE the phase. A call that
@@ -1826,7 +1826,7 @@ export function createPhaseTools({ state, phase, providers, log, stagedAnswer: i
   ]);
   const phaseEnding = (toolName: string): Refusal =>
     refuse(
-      `This phase is ending — it is parked at its gate or flag and that decision is recorded, so ${toolName} is refused here. Present the packet to the human and cross with duet continue, or re-anchor with get_task; the run proceeds from the decision already made.`,
+      `This phase is ending — it is parked at its gate or flag and that decision is recorded, so ${toolName} is refused here. Present the packet to the human and cross with greenflag continue, or re-anchor with get_task; the run proceeds from the decision already made.`,
     );
   const withPostTerminalRail = (def: KernelTool<any>): KernelTool<any> => ({
     ...def,

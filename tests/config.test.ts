@@ -377,14 +377,14 @@ describe('corpus config — account-level archive root', () => {
   test('absent config keeps corpus off; [corpus].dir resolves once from the same config reader', ({ projectDir }) => {
     expect.soft(resolveRunConfig({ workflow: 'full' }, missing(projectDir)).corpusRoot).toBeUndefined();
 
-    const root = join(projectDir, 'duet-corpus');
+    const root = join(projectDir, 'greenflag-corpus');
     const path = configIn(projectDir, `[corpus]\ndir = "${root}"`);
     expect.soft(resolveRunConfig({ workflow: 'full' }, path).corpusRoot).toBe(root);
   });
 
   test('tilde expands and malformed corpus tables fail closed', ({ projectDir }) => {
-    const homePath = configIn(join(projectDir, 'homey'), '[corpus]\ndir = "~/duet-corpus"');
-    expect.soft(resolveRunConfig({ workflow: 'full' }, homePath).corpusRoot).toMatch(/duet-corpus$/);
+    const homePath = configIn(join(projectDir, 'homey'), '[corpus]\ndir = "~/greenflag-corpus"');
+    expect.soft(resolveRunConfig({ workflow: 'full' }, homePath).corpusRoot).toMatch(/greenflag-corpus$/);
 
     const badTable = configIn(join(projectDir, 'bad-table'), 'corpus = "somewhere"');
     const badDir = configIn(join(projectDir, 'bad-dir'), '[corpus]\ndir = ""');

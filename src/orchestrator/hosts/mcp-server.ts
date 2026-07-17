@@ -22,7 +22,7 @@ import { workflowFor } from '../../run/workflow.ts';
  * interactive Claude Code session connects to. The same KernelTool handlers
  * serve both transports; nothing here knows the Agent SDK.
  *
- * Reached in production only through `duet _mcp <runId> <phase>` (a hidden
+ * Reached in production only through `greenflag _mcp <runId> <phase>` (a hidden
  * developer/test harness — production `_drive` stays in-process). The explicit
  * phase is deliberate: createPhaseTools needs a PhaseName and a quiescent run
  * has no live phase, so inferring it would be guesswork.
@@ -79,7 +79,7 @@ export function buildKernelMcpServer(tools: Array<KernelTool<any>>): McpServer {
 }
 
 /**
- * Serve a run + phase's kernel surface over stdio — the body of `duet _mcp`.
+ * Serve a run + phase's kernel surface over stdio — the body of `greenflag _mcp`.
  * Resolves when the transport closes (the peer disconnected).
  */
 export async function serveKernelStdio(cwd: string, runId: string, phaseRaw: string): Promise<void> {
@@ -106,16 +106,16 @@ export async function serveKernelStdio(cwd: string, runId: string, phaseRaw: str
  * (no hostable phase) are refused rather than served at an invented phase.
  */
 const NOT_HOSTABLE_MESSAGE =
-  'This run is no longer being orchestrated interactively — a headless _drive now owns it, or it has finished or been abandoned. The interactive orchestrator session has nothing left to drive here: end the session. Observe the run with `duet status`; relaunch `duet orchestrate <runId>` only if it becomes interactive again.';
+  'This run is no longer being orchestrated interactively — a headless _drive now owns it, or it has finished or been abandoned. The interactive orchestrator session has nothing left to drive here: end the session. Observe the run with `greenflag status`; relaunch `greenflag orchestrate <runId>` only if it becomes interactive again.';
 
 /**
  * Refusal when this run-scoped server no longer holds the single-writer lease
- * (run-store.ts acquireMcpOwner): a newer `duet orchestrate` over the same run
+ * (run-store.ts acquireMcpOwner): a newer `greenflag orchestrate` over the same run
  * took ownership, so this (superseded) server must write nothing — every tool
  * call is refused, read or write, so no stale-owner mutation can ever land.
  */
 const SUPERSEDED_MESSAGE =
-  'This interactive orchestrator server was superseded by a newer `duet orchestrate` session for the same run, so it is no longer the run’s single writer — every tool call here is refused to keep a stale session from writing over the live one. End this session; observe the run with `duet status`, and relaunch `duet orchestrate <runId>` only if it becomes interactive again.';
+  'This interactive orchestrator server was superseded by a newer `greenflag orchestrate` session for the same run, so it is no longer the run’s single writer — every tool call here is refused to keep a stale session from writing over the live one. End this session; observe the run with `greenflag status`, and relaunch `greenflag orchestrate <runId>` only if it becomes interactive again.';
 
 /** The phase the run-scoped server hosts for a position, or undefined when none can be. */
 function hostablePhase(position: RunPosition): PhaseName | undefined {
@@ -154,7 +154,7 @@ export interface RunScopedKernel {
 
 /**
  * The run-scoped resolver. The tool surface is rebuilt per call against FRESH
- * disk state — so a `duet continue` write from a separate process (a reject or
+ * disk state — so a `greenflag continue` write from a separate process (a reject or
  * answer that re-enters the SAME phase) is seen immediately, not served stale —
  * while the per-phase rails (the same-role in-flight guard, the warn-once set)
  * and providers are preserved across calls within a phase and rebuilt only at a
@@ -273,7 +273,7 @@ export function buildRunScopedKernelServer(cwd: string, runId: string, makeWorke
 }
 
 /**
- * Serve a run's phase-less kernel over stdio — the body of `duet _mcp <runId>`
+ * Serve a run's phase-less kernel over stdio — the body of `greenflag _mcp <runId>`
  * (no phase). The launcher bakes this into the interactive session's
  * `--mcp-config`. Resolves when the transport closes.
  */

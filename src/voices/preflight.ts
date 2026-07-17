@@ -9,11 +9,11 @@ import type { Duty, WorkflowRef } from '../registry/workflows.ts';
 /**
  * The create-time binding preflight. For every binding carrying a knob only the
  * provider can validate — an explicit model, or a native-arg passthrough — it
- * runs one throwaway worker turn at `duet new` and decides: abort run creation
+ * runs one throwaway worker turn at `greenflag new` and decides: abort run creation
  * (the provider rejected the configuration), or warn and proceed. The point is
  * to surface a mistyped model/flag while the human is present, never mid-build.
  *
- * duet stays a conduit for native args: it never parses or judges their content
+ * greenflag stays a conduit for native args: it never parses or judges their content
  * (that was the deleted `--strict-config` re-serializer) — the provider judges
  * them, just early, and `preflightDisposition` reads only the provider's own
  * verdict.
@@ -60,7 +60,7 @@ export interface PreflightDeps {
  * own configuration — a mistyped native flag or an unusable model — a
  * deterministic failure the real run would hit every time. Everything else
  * WARNS: a transient/environmental failure (network, a per-turn timeout, TLS, a
- * missing tmux) must never block a good `duet new`, and an unrecognized failure
+ * missing tmux) must never block a good `greenflag new`, and an unrecognized failure
  * degrades safely to "surfaces at first use" rather than a false abort. A missed
  * bad-model phrasing is the tolerable direction (it fails cleanly at first use);
  * a false abort of a healthy run is not.

@@ -4,9 +4,9 @@ import { localClock, localTime } from './timefmt.ts';
 
 /**
  * View-time colorizing for the run logs. The log files themselves stay plain
- * text (they are inspectable-without-duet artifacts — docs/automation-design.md
+ * text (they are inspectable-without-greenflag artifacts — docs/automation-design.md
  * §"Visualization"); color is applied only where a human is watching: the
- * tmux panes (`tail … | duet _colorize <voice>`) and `duet logs`. picocolors
+ * tmux panes (`tail … | greenflag _colorize <voice>`) and `greenflag logs`. picocolors
  * auto-disables on non-TTY stdout, NO_COLOR, and TERM=dumb, so piping the
  * colorized streams onward degrades to plain text by itself.
  */
@@ -35,7 +35,7 @@ export const VOICE_TMUX_COLOR: Record<Voice, string> = {
   consultant: 'magenta',
 };
 
-/** One painter per voice — the lane hues (maker blue, checker yellow), reused by every view-time surface (log colorizer, `duet graph`). */
+/** One painter per voice — the lane hues (maker blue, checker yellow), reused by every view-time surface (log colorizer, `greenflag graph`). */
 export const VOICE_PAINT: Record<Voice, (s: string) => string> = {
   orchestrator: pc.cyan,
   architect: pc.blue,
@@ -106,7 +106,7 @@ const DRIVER_TAG_PAINT: Record<string, (s: string) => string> = {
   '[driver]': pc.red, // infrastructure failures (the runPhase crash backstop)
 };
 
-/** Colorize one line of driver narration (`duet logs`): known `[tag]` prefixes only. */
+/** Colorize one line of driver narration (`greenflag logs`): known `[tag]` prefixes only. */
 export function colorizeDriverLine(line: string): string {
   for (const [tag, paint] of Object.entries(DRIVER_TAG_PAINT)) {
     if (line.startsWith(tag)) return `${paint(tag)}${line.slice(tag.length)}`;

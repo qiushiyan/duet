@@ -1,6 +1,6 @@
 ---
 name: onboarding
-description: Bootstrap a duet coding session with a topic-scoped mental model — Phase 1 core reads, then a deep dive on the topic — before substantive work on the orchestrator.
+description: Bootstrap a greenflag coding session with a topic-scoped mental model — Phase 1 core reads, then a deep dive on the topic — before substantive work on the orchestrator.
 user-invocable: true
 disable-model-invocation: true
 argument-hint: [topic, e.g. "statechart", "providers", "prompts"]
@@ -9,9 +9,9 @@ allowed-tools: Read, Bash, Agent, Grep, Glob
 
 # Topic-aware onboarding
 
-You're bootstrapping a coding session on duet — the read-only orchestrator that routes a snippet protocol between each stage's two duty workers (a maker and a checker) inside a code-enforced statechart. Build a focused mental model, scoped to the user's topic, before any code-editing. The topic is in `$ARGUMENTS`; empty means general onboarding.
+You're bootstrapping a coding session on greenflag — the read-only orchestrator that routes a snippet protocol between each stage's two duty workers (a maker and a checker) inside a code-enforced statechart. Build a focused mental model, scoped to the user's topic, before any code-editing. The topic is in `$ARGUMENTS`; empty means general onboarding.
 
-duet's mental model and conventions live in `CLAUDE.md` (always loaded). Re-internalize it now if it isn't fresh — the trust gradient, the registry as the single source, and the "invariants that bite if forgotten" are load-bearing.
+greenflag's mental model and conventions live in `CLAUDE.md` (always loaded). Re-internalize it now if it isn't fresh — the trust gradient, the registry as the single source, and the "invariants that bite if forgotten" are load-bearing.
 
 ## Protocol
 
@@ -31,7 +31,7 @@ Ambiguous (no confident match, or several)? Ask one short clarifying question fi
 
 ### 2. Phase 1 — always-on core reads
 
-Regardless of topic, read these three in order. They're the mental model no duet task can skip:
+Regardless of topic, read these three in order. They're the mental model no greenflag task can skip:
 
 1. `CLAUDE.md` — the what / how summary, the Map, and the invariants (the ratified glossary it points to is `CONTEXT.md`). (Re-read if not fresh.)
 2. `docs/automation-design.md` — THE design: the voices, layers, stages/phases/gates, triage rules, branch policy, what-not-to-build.

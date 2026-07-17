@@ -1,7 +1,7 @@
 /**
  * The workflow registry — the single source of truth for the run arcs.
  *
- * duet is workflow-aware: `WORKFLOWS` holds one entry per arc, and each
+ * greenflag is workflow-aware: `WORKFLOWS` holds one entry per arc, and each
  * workflow owns its complete spec — the ordered phases, the stages that
  * partition them (with each stage's duty voices and continuity edges), the
  * entry route, the gate presets, and the force-attended gates. A run records
@@ -124,7 +124,7 @@ const SHIPPED_WORKFLOW_DEFINITIONS = {
     // One interruption, like blueprint/relay: attend Direction (the handoff gate —
     // the research decisions ARE the design), walk away, return to the open PR.
     // Flipped 2026-07-11 from attend-all: every live short run re-set this posture
-    // by hand (`duet afk` at Direction), so the default now encodes the promise.
+    // by hand (`greenflag afk` at Direction), so the default now encodes the promise.
     attend: ['research'],
     presets: { afk: [] },
     phases: [frame({ name: 'research' }), build({ review: 'writable', audit: true }), finish()],
@@ -405,7 +405,7 @@ export const ANYTIME_SNIPPETS: readonly string[] = [
 /**
  * Snippets kept in the library but deliberately not surfaced by default —
  * reachable only via `list_snippets({all:true})`. `compact-for-plan` is the
- * manual after-spec compaction duet replaced with the after-plan
+ * manual after-spec compaction greenflag replaced with the after-plan
  * `compact-for-impl` (docs/automation-design.md §"Worker compaction"); it
  * stays available for a judgment-timed early cut when a long spec phase bloats
  * context, but is not a default template (surfacing it in the plan phase would

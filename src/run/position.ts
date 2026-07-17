@@ -42,7 +42,7 @@ export function aliveDriverPid(state: RunState): number | undefined {
  * with driver liveness and the run-state evidence the driver writes
  * continuously (`phaseStarted`, `pendingQuestion`).
  *
- * A crashed position carries how `duet continue` resumes it: the snapshot is
+ * A crashed position carries how `greenflag continue` resumes it: the snapshot is
  * parked at the stop whose crossing died, so recovery re-utters that
  * crossing — `approve` for a gate the human already approved, `answer` for a
  * flag whose answer was already consumed; absent means there is no snapshot
@@ -64,7 +64,7 @@ export type RunPosition =
 
 export function probeRunPosition(state: RunState): RunPosition {
   // A deliberate abandon wins over every disk signal: the driver was killed,
-  // so the snapshot would otherwise read as a crash. `duet continue` clears
+  // so the snapshot would otherwise read as a crash. `greenflag continue` clears
   // the marker to revive (the underlying stop re-derives from there).
   if (state.abandoned) return { kind: 'abandoned' };
   const stopped = stoppedPosition(state);
@@ -143,14 +143,14 @@ function stoppedPosition(state: RunState): Exclude<RunPosition, { kind: 'running
   }
 
   // A phase-loop snapshot reaches the HEADLESS probe only after an
-  // interactive→headless handoff (`duet continue` at the handoff gate, `duet afk`,
+  // interactive→headless handoff (`greenflag continue` at the handoff gate, `greenflag afk`,
   // or a bare `--headless` mid-phase drop): crossInteractive — or the prior
   // interactive rest — leaves the machine AT a phase loop (e.g. implementLoop), then
   // orchestrationHost is cleared (cli.ts). The pure-headless path never persists a
   // phase loop (driveToQuiescence saves only at quiescent stops), so this branch's
   // gate/flag checks above don't cover it; map it to its own phase. A live driver
   // then surfaces it as `running` there (probeRunPosition); a dead one as a
-  // mid-phase `crashed` that bare `duet continue` re-enters from this very
+  // mid-phase `crashed` that bare `greenflag continue` re-enters from this very
   // snapshot. Without this a handed-off mid-impl run misreports against the
   // entry-phase fallback below (running/crashed in `spec`, not `impl`).
   const loopPhase = phaseLoopOf(wf, value);

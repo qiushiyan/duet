@@ -177,7 +177,7 @@ export function sessionIdForNonce(tail: string, nonce: string): string | undefin
 
 /** The per-turn correlation marker the injection appends to the prompt body. */
 export function turnMarker(nonce: string): string {
-  return `[duet-turn:${nonce}]`;
+  return `[greenflag-turn:${nonce}]`;
 }
 
 /** The prompt body actually submitted: the prompt plus the per-turn nonce the locator matches on. */
@@ -189,8 +189,8 @@ function injectionBody(prompt: string, nonce: string): string {
 
 /**
  * Claude Code's project-directory name for a cwd: the absolute path with its
- * separators (and dots) folded to '-', e.g. `/Users/me/dev/duet` →
- * `-Users-me-dev-duet`. Isolated and best-effort — the exact transform for
+ * separators (and dots) folded to '-', e.g. `/Users/me/dev/greenflag` →
+ * `-Users-me-dev-greenflag`. Isolated and best-effort — the exact transform for
  * unusual characters is a Slice 5 confirmable. Correctness does not depend on
  * getting it right, only performance: `searchDirs` puts the scoped dir FIRST but
  * falls back to the whole projects tree on a miss, so a wrong slug costs a wider

@@ -10,7 +10,7 @@ import { consultantBindingsFor } from '../helpers/fixtures.ts';
 
 /**
  * The parity matrix — deterministic run states for the byte-identical pins
- * (docs/specs/2026-07-03-workflow-vocabulary.md, one-PR plan step 2). Every
+ * (docs/automation-design.md §"The workflow vocabulary"). Every
  * value that interpolates into a rendered surface is FIXED here (runId, branch,
  * framing, spec content, session ids, ledger timestamps), so a pin diff can
  * only mean the rendering changed, never the fixture.

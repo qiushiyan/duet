@@ -18,7 +18,7 @@ import { localStamp } from '../src/view/timefmt.ts';
 
 /**
  * The framings gatherer: the repo-identity stamp createRun records, and the
- * `duet framings` surface that browses the corpus archive merged with the
+ * `greenflag framings` surface that browses the corpus archive merged with the
  * local runs. Filesystem and git run real, in tmpdirs (testing strategy);
  * the corpus config is injected via the surface's `configPath` parameter —
  * the same seam the account default flows through.
@@ -28,7 +28,7 @@ const extraDirs: string[] = [];
 
 /** A throwaway dir beyond the fixture's projectDir, cleaned after each test. */
 function tmpDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'duet-framings-'));
+  const dir = mkdtempSync(join(tmpdir(), 'greenflag-framings-'));
   extraDirs.push(dir);
   return dir;
 }
@@ -263,7 +263,7 @@ describe('buildFramingsModel — merge, dedup, scope', () => {
   });
 });
 
-describe('readArchivedFraming — duet framings show', () => {
+describe('readArchivedFraming — greenflag framings show', () => {
   test('returns the archived framing.md verbatim (exact bytes, frontmatter included)', ({ projectDir }) => {
     const raw = '---\nworkflow: full\n---\n\n# Exact bytes\n\ntrailing spaces  \n';
     const created = createRun({ cwd: projectDir, bindings: defaultBindingsFor('full'), framing: 'body', framingRaw: raw });
@@ -286,7 +286,7 @@ describe('readArchivedFraming — duet framings show', () => {
   test('an unknown runId errors with a pointer to the listing', ({ projectDir }) => {
     const result = readArchivedFraming(projectDir, 'no-such-run', { configPath: join(projectDir, 'no-config.toml') });
 
-    expect('error' in result && result.error).toContain('duet framings');
+    expect('error' in result && result.error).toContain('greenflag framings');
   });
 
   test('a run that archived no framing errors honestly instead of printing nothing', ({ projectDir }) => {
@@ -310,7 +310,7 @@ describe('rendering — view-time localization and ~-shortening only', () => {
     const createdAt = '2026-07-06T12:00:00.000Z';
     const model = {
       scope: 'repo' as const,
-      corpusDir: '/home/u/duet-corpus',
+      corpusDir: '/home/u/greenflag-corpus',
       skipped: 0,
       records: [
         {
@@ -320,7 +320,7 @@ describe('rendering — view-time localization and ~-shortening only', () => {
           cwd: '/home/u/dev/proj-wt',
           repo: { root: '/home/u/dev/proj' },
           source: 'corpus' as const,
-          runDir: '/home/u/duet-corpus/20260706-1200-abcd',
+          runDir: '/home/u/greenflag-corpus/20260706-1200-abcd',
           title: 'Fix the flaky retry',
         },
       ],
@@ -333,7 +333,7 @@ describe('rendering — view-time localization and ~-shortening only', () => {
     expect.soft(text).toContain('full');
     expect.soft(text).toContain('~/dev/proj'); // the stamp's root, home-shortened
     expect.soft(text).toContain('Fix the flaky retry');
-    expect.soft(text).toContain('duet framings show');
+    expect.soft(text).toContain('greenflag framings show');
   });
 
   test('an empty scoped list still surfaces the corpus note', () => {

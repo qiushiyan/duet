@@ -1,4 +1,4 @@
-# duet corpus scripts
+# greenflag corpus scripts
 
 Committed telemetry scripts over the run corpus. They are repo-dev tooling, not a
 product CLI surface: run them with Node 24 directly, for example:
@@ -8,14 +8,14 @@ node scripts/corpus/phase-timings.ts
 node scripts/corpus/turn-stats.ts
 node scripts/corpus/compaction-durations.ts
 node scripts/corpus/grade-precision.ts
-node scripts/corpus/backfill.ts --corpus ~/duet-corpus --sweep ~/dev
+node scripts/corpus/backfill.ts --corpus ~/greenflag-corpus --sweep ~/dev
 ```
 
-By default the scripts read `[corpus] dir` from `~/.config/duet/config.toml`.
+By default the scripts read `[corpus] dir` from `~/.config/greenflag/config.toml`.
 If that has no records, the analysis scripts fall back to a live-run sweep under
 `~/dev` (or the current directory if `~/dev` is absent). Pass `--corpus <dir>`
 or `--sweep <dir>` to override. The sweep uses a readdir walk that deliberately
-enters hidden path components like `.worktrees` and `.duet`; do not replace it
+enters hidden path components like `.worktrees` and `.greenflag`; do not replace it
 with a default glob.
 
 ## Record Shape
@@ -24,13 +24,13 @@ One archived run lives at `<corpusDir>/<runId>/`:
 
 | file | what it carries |
 | --- | --- |
-| `corpus.json` | archive stamp: duet version, source cwd, mirroredAt |
+| `corpus.json` | archive stamp: greenflag version, source cwd, mirroredAt |
 | `state.json`, `machine.json`, `workflow.json` | the product codecs, copied from the run dir |
 | `*.log`, `driver.log` | voice logs plus driver narration |
 | `framing.md`, `notes.md`, `steers/` | human-readable run context and steer channel state |
 | `transcripts/*.jsonl.gz` | provider transcripts captured at terminal events, purge, or backfill |
 
-The corpus is an archive, not a restore path. Local `.duet/runs/<id>/` remains
+The corpus is an archive, not a restore path. Local `.greenflag/runs/<id>/` remains
 the working truth for live commands.
 
 ## Tools

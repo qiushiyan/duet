@@ -1,8 +1,8 @@
 # Documentation standards
 
-duet's docs serve one purpose: give an engineer — human or agent — the **mental model** to understand the orchestrator without reading every source file. They cover architecture, intent, relationships, and the load-bearing constraints; they never duplicate code.
+greenflag's docs serve one purpose: give an engineer — human or agent — the **mental model** to understand the orchestrator without reading every source file. They cover architecture, intent, relationships, and the load-bearing constraints; they never duplicate code.
 
-This file is the canonical home for how duet keeps its docs. `CLAUDE.md` carries the always-loaded summary and points here; the `/onboarding` and `/update-docs` skills in `.claude/skills/` are the two ends of the cadence it governs.
+This file is the canonical home for how greenflag keeps its docs. `CLAUDE.md` carries the always-loaded summary and points here; the `/onboarding` and `/update-docs` skills in `.claude/skills/` are the two ends of the cadence it governs.
 
 ## Documentation shape
 
@@ -43,7 +43,7 @@ The drift to avoid: a feature ships, the spec stays "for history," and now two d
 - `docs/specs/` and `docs/plans/` are forward-looking and dated; they don't become architecture by sitting still.
 - Status lives in two honest places: the README's verified-vs-not line and `open-questions.md`. Don't sprinkle "shipped" / "not yet" markers through the design docs.
 
-## Two conventions that are duet's, not generic
+## Two conventions that are greenflag's, not generic
 
 These already govern the repo (`CLAUDE.md` §Conventions); they bind doc work too:
 
@@ -121,10 +121,10 @@ A doc that gains 10 lines of new content should usually shed 5–10 of redundanc
 
 `/onboarding [topic]` (`.claude/skills/onboarding/SKILL.md`) bootstraps a session with topic-scoped context in two phases:
 
-- **Phase 1 — always-on core reads:** `CLAUDE.md`, `docs/automation-design.md`, `docs/engineering.md`. The mental model no duet task can safely skip.
+- **Phase 1 — always-on core reads:** `CLAUDE.md`, `docs/automation-design.md`, `docs/engineering.md`. The mental model no greenflag task can safely skip.
 - **Phase 2 — topic deep dive:** the design doc(s) and code for the topic. CLAUDE.md indexes the docs, and the `engineering.md` module map is the source of truth for code; the skill's topic table only turns a phrase into a focus.
 
-Keep it lean. Phase 1 is for what an agent *cannot* skip, not what's merely interesting. Litmus: *"Would an agent on a typical duet task produce wrong code without reading this?"* If not, it's Phase 2.
+Keep it lean. Phase 1 is for what an agent *cannot* skip, not what's merely interesting. Litmus: *"Would an agent on a typical greenflag task produce wrong code without reading this?"* If not, it's Phase 2.
 
 **The always-read set has a budget.** Phase 1 (`CLAUDE.md`, `CONTEXT.md`, `docs/automation-design.md`, `docs/engineering.md`) is paid at the start of every session — keep the set **under ~100KB total** (`wc -c`; roughly 25k tokens). When growth pushes it over, the move is a split, not a shrug: the spine keeps the mental model and the mechanism moves to a satellite that Phase 2 routes to by topic. Exceeding the budget is allowed only as a decision recorded here with its why — never as drift.
 
@@ -142,12 +142,12 @@ Keep it lean. Phase 1 is for what an agent *cannot* skip, not what's merely inte
 
 ## Shipped skill maintenance
 
-The repo ships user-facing skills under `skills/` (distinct from the dev-time `.claude/skills/`): **duet-frame** composes a run's setup and emits the `duet new` command, **duet-concierge** starts and supervises runs. They are **prompts**, not docs — so edits follow `docs/prompting-and-tool-design.md` (a thinking framework with its motivation over bare prohibition, no aggressive emphasis, surface the load-bearing *why*) and each skill's established voice, not the design-doc style.
+The repo ships user-facing skills under `skills/` (distinct from the dev-time `.claude/skills/`): **greenflag-frame** composes a run's setup and emits the `greenflag new` command, **greenflag-concierge** starts and supervises runs. They are **prompts**, not docs — so edits follow `docs/prompting-and-tool-design.md` (a thinking framework with its motivation over bare prohibition, no aggressive emphasis, surface the load-bearing *why*) and each skill's established voice, not the design-doc style.
 
-**The trigger is a user-facing capability, not a prose change.** When a change adds or alters one — a `duet new` flag, a setup or gate-posture choice, a run-management verb — ask whether duet-frame should *surface* it (a new setup choice the user makes before launch) or duet-concierge should *relay or read* it (a new verb, or a changed run shape its supervision reports). A feature can add a flag without touching a single `.md`, so a diff-of-docs mindset misses these; make the capability the trigger, caught while reading the diff, not an afterthought.
+**The trigger is a user-facing capability, not a prose change.** When a change adds or alters one — a `greenflag new` flag, a setup or gate-posture choice, a run-management verb — ask whether greenflag-frame should *surface* it (a new setup choice the user makes before launch) or greenflag-concierge should *relay or read* it (a new verb, or a changed run shape its supervision reports). A feature can add a flag without touching a single `.md`, so a diff-of-docs mindset misses these; make the capability the trigger, caught while reading the diff, not an afterthought.
 
-**`tests/skill.test.ts` guards coherence, not completeness.** It pins every verb and flag a skill *names* to the live CLI, so a rename fails in five seconds — but it cannot tell you a skill *should* name a capability it currently omits. A green skill test is not evidence the skills are current; the completeness call is the maintainer's. (Worked example: the consultant's `--consultant` flag shipped while duet-frame silently stopped covering a setup choice users now have, and the skill test stayed green throughout.) One surface gets a stronger guarantee: duet-frame's worked references — the manifest examples (`references/manifest-examples.md`) and the workflow definitions (`references/workflow-definitions.md`) — are *executed* against the real grammar (the framing parse and freeze; the SDK compile, with the shipped-workflow rebuilds pinned byte-identical) — so an example edit lands with its executable pins, and a grammar change surfaces there mechanically rather than by review.
+**`tests/skill.test.ts` guards coherence, not completeness.** It pins every verb and flag a skill *names* to the live CLI, so a rename fails in five seconds — but it cannot tell you a skill *should* name a capability it currently omits. A green skill test is not evidence the skills are current; the completeness call is the maintainer's. (Worked example: the consultant's `--consultant` flag shipped while greenflag-frame silently stopped covering a setup choice users now have, and the skill test stayed green throughout.) One surface gets a stronger guarantee: greenflag-frame's worked references — the manifest examples (`references/manifest-examples.md`) and the workflow definitions (`references/workflow-definitions.md`) — are *executed* against the real grammar (the framing parse and freeze; the SDK compile, with the shipped-workflow rebuilds pinned byte-identical) — so an example edit lands with its executable pins, and a grammar change surfaces there mechanically rather than by review.
 
 ## Maintenance cadence
 
-Review this file, the dev skills (onboarding + update-docs), the shipped skills (duet-frame + duet-concierge), and the shape of `docs/` every 3–6 months or after a major Claude model release. Guardrails written for an older model can become friction for a newer one — instructions that kept past models on track can stop newer ones from making coordinated edits they handle fine. Treat removing stale guidance with the same weight as adding new.
+Review this file, the dev skills (onboarding + update-docs), the shipped skills (greenflag-frame + greenflag-concierge), and the shape of `docs/` every 3–6 months or after a major Claude model release. Guardrails written for an older model can become friction for a newer one — instructions that kept past models on track can stop newer ones from making coordinated edits they handle fine. Treat removing stale guidance with the same weight as adding new.

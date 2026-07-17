@@ -7,7 +7,7 @@ import { gateAttended } from '../run/store.ts';
 import type { RunState } from '../run/store.ts';
 
 /**
- * `duet continue`'s decision, pure and lifted out of the action so it is testable
+ * `greenflag continue`'s decision, pure and lifted out of the action so it is testable
  * without spawning a process (no `_drive`, editor, or git). It generalizes the
  * `takeoverPlan` precedent in cli.ts: the action probes the world, hands the
  * planner already-resolved facts, and executes the returned `ContinueAction`.

@@ -140,7 +140,7 @@ export interface Fixtures {
 
 export const test = base.extend<Fixtures>({
   projectDir: async ({}, use) => {
-    const dir = mkdtempSync(join(tmpdir(), 'duet-test-'));
+    const dir = mkdtempSync(join(tmpdir(), 'greenflag-test-'));
     await use(dir);
     rmSync(dir, { recursive: true, force: true });
   },

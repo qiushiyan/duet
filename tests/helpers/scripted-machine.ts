@@ -2,7 +2,7 @@ import { createActor, fromCallback } from 'xstate';
 import type { EventObject } from 'xstate';
 import type { PhaseInput } from '../../src/orchestrator/hosts/host-runner.ts';
 import type { PhaseEvent } from '../../src/run/phase-events.ts';
-import { duetMachine, interactiveMachine, machineFor } from '../../src/run/machine.ts';
+import { greenflagMachine, interactiveMachine, machineFor } from '../../src/run/machine.ts';
 import type { WorkflowName } from '../../src/registry/workflows.ts';
 import { saveMachineSnapshot } from '../../src/run/store.ts';
 import type { RunState } from '../../src/run/store.ts';
@@ -17,7 +17,7 @@ import type { RunState } from '../../src/run/store.ts';
 export function scriptedMachine(
   script: PhaseEvent[],
   workflow: WorkflowName = 'full',
-): { machine: typeof duetMachine; calls: string[] } {
+): { machine: typeof greenflagMachine; calls: string[] } {
   const calls: string[] = [];
   const machine = machineFor(workflow).provide({
     actors: {
@@ -41,7 +41,7 @@ export function scriptedMachine(
  * the phase loop indefinitely. The model for a hung phase: driveToQuiescence's
  * quiescence timeout must convert this into a crash=flag, not a stranded run.
  */
-export function wedgedMachine(workflow: WorkflowName = 'full'): { machine: typeof duetMachine; calls: string[] } {
+export function wedgedMachine(workflow: WorkflowName = 'full'): { machine: typeof greenflagMachine; calls: string[] } {
   const calls: string[] = [];
   const machine = machineFor(workflow).provide({
     actors: {

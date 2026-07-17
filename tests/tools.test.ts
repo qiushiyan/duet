@@ -908,7 +908,7 @@ describe('send_prompt', () => {
     // The reset is role-policy-gated (shouldResetAfterCompactAbort), NOT hard-coded
     // to the maker: a checker's /compact aborts identically, so settleTurn
     // must reset the REVIEWER session and renderTurnResult must name the checker.
-    // The bug this pins: render claimed "duet has RESET the architect" for ANY
+    // The bug this pins: render claimed "greenflag has RESET the architect" for ANY
     // aborted compact while settle reset nobody but the maker — the two sites
     // disagreeing. Both now read the one predicate, so they move together.
     run.sessions = { 'planning.architect': { provider: 'claude', id: 'impl-keep' }, 'planning.analyst': { provider: 'codex', id: 'rev-old' } };
@@ -2438,7 +2438,7 @@ describe('consultant orphan recovery (discard-and-reseed)', () => {
 
     const blocked = await call('advance_phase', { summary: 's', artifacts: [] });
     expect.soft(blocked.isError).toBe(true);
-    expect.soft(text(blocked)).toContain('duet takeover analyst');
+    expect.soft(text(blocked)).toContain('greenflag takeover analyst');
     expect.soft(text(blocked).toLowerCase()).toContain('resumable');
     // The checker is not ephemeral — the reseed framing must NOT appear for it.
     expect.soft(text(blocked)).not.toContain('reseeds');
@@ -2637,7 +2637,7 @@ describe('advance_phase (the gate packet)', () => {
     const result = await call('advance_phase', { summary: 'converged', artifacts: [] });
 
     expect.soft(text(result)).toContain('pre-authorized');
-    expect.soft(text(result)).toContain('duet afk'); // hand off to run the rest unattended
+    expect.soft(text(result)).toContain('greenflag afk'); // hand off to run the rest unattended
     expect.soft(text(result)).not.toContain('continues immediately');
   });
 
@@ -2804,7 +2804,7 @@ describe('get_task (the brief surface, side-effecting exactly-once)', () => {
 
     const parked = await call('get_task');
     expect.soft(text(parked)).toContain('parked at its gate');
-    expect.soft(text(parked)).toContain('duet continue');
+    expect.soft(text(parked)).toContain('greenflag continue');
     // No side effects: the phase is not marked started, the input not consumed.
     expect.soft(run.phaseStarted.spec).toBeUndefined();
     expect.soft(run.pendingMessage).toEqual({ kind: 'feedback', text: 'should not be consumed' });
@@ -2915,12 +2915,12 @@ describe('the library and the journal', () => {
     expect.soft(library, 'the resolved vendored path a worker receives').toContain(join(LESSONS_DIR, 'codebase-design/deep-modules.md'));
   });
 
-  test('list_snippets serves a project .duet/snippets.toml override (the contextual wire is connected)', async ({ run }) => {
+  test('list_snippets serves a project .greenflag/snippets.toml override (the contextual wire is connected)', async ({ run }) => {
     // The integration altitude: snippets.test.ts proves the merge; this proves
     // tools.ts threads the run's cwd into the resolver so the project override is
     // discovered and served (with no provenance marker on the wire).
-    mkdirSync(join(run.cwd, '.duet'), { recursive: true });
-    writeFileSync(join(run.cwd, '.duet', 'snippets.toml'), '[[snippets]]\nkey = "review-plan"\nexpand = "PROJECT-OVERRIDDEN review-plan body"\n');
+    mkdirSync(join(run.cwd, '.greenflag'), { recursive: true });
+    writeFileSync(join(run.cwd, '.greenflag', 'snippets.toml'), '[[snippets]]\nkey = "review-plan"\nexpand = "PROJECT-OVERRIDDEN review-plan body"\n');
     const { call } = harness(run, { phase: 'plan' });
     const library = text(await call('list_snippets'));
     expect.soft(library).toContain('PROJECT-OVERRIDDEN review-plan body');
@@ -2928,8 +2928,8 @@ describe('the library and the journal', () => {
   });
 
   test('list_snippets fails closed on an unknown-key override — a readable tool error, not a crashed turn', async ({ run }) => {
-    mkdirSync(join(run.cwd, '.duet'), { recursive: true });
-    writeFileSync(join(run.cwd, '.duet', 'snippets.toml'), '[[snippets]]\nkey = "no-such-key"\nexpand = "x"\n');
+    mkdirSync(join(run.cwd, '.greenflag'), { recursive: true });
+    writeFileSync(join(run.cwd, '.greenflag', 'snippets.toml'), '[[snippets]]\nkey = "no-such-key"\nexpand = "x"\n');
     const { call } = harness(run, { phase: 'plan' });
     const result = await call('list_snippets');
     expect.soft(result.isError).toBe(true);
@@ -2990,7 +2990,7 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     checker.resolve({ sessionId: 'rev-1' });
     await flush();
     // Settle committed the durable bookkeeping (round, sent tag, session id) — even
-    // before collect, so duet status stays truthful the instant the worker finished.
+    // before collect, so greenflag status stays truthful the instant the worker finished.
     const settled = loadRunState(projectDir, run.runId);
     expect.soft(settled.rounds.spec).toBe(1);
     expect.soft(settled.sentSnippets?.spec?.analyst).toEqual(['review-spec']);
@@ -3311,7 +3311,7 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
 
     const send = await call('send_prompt', { duty: 'analyst', tag: 'custom', body: 'x' });
     expect.soft(send.isError).toBe(true);
-    expect.soft(allText(send)).toContain('duet takeover analyst');
+    expect.soft(allText(send)).toContain('greenflag takeover analyst');
     expect.soft(allText(send)).toContain('race the orphaned worker'); // the resume-race hazard
   });
 
@@ -3326,7 +3326,7 @@ describe('async send_prompt + check_turns (the interactive host)', () => {
     expect.soft(send.isError).toBe(true);
     expect.soft(allText(send)).toContain('editing the repo');
     expect.soft(allText(send)).toContain('ABANDONS');
-    expect.soft(allText(send)).toContain('duet takeover architect');
+    expect.soft(allText(send)).toContain('greenflag takeover architect');
   });
 
   test('the heartbeat stops at settle — no further "running" lines accrue before collect', async ({ run, onTestFinished }) => {

@@ -5,7 +5,7 @@ import type { RunPosition } from '../src/run/position.ts';
 import { test } from './helpers/fixtures.ts';
 
 /**
- * continuePlanner is the pure decision behind `duet continue` — one case per
+ * continuePlanner is the pure decision behind `greenflag continue` — one case per
  * ContinueAction, built from RunPosition literals and restored-machine fact
  * objects directly, with no `_drive`, editor, or git. The existing end-to-end
  * continue/afk paths (tests/cli.test.ts, continue-input.test.ts, lifecycle.test.ts)

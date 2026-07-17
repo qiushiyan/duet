@@ -23,9 +23,9 @@ import {
 } from '../run/voice-log.ts';
 
 /**
- * `duet stats` — effort per phase, derived at VIEW TIME from the voice logs (the
+ * `greenflag stats` — effort per phase, derived at VIEW TIME from the voice logs (the
  * truth), never from new run-state and never through the status model (status
- * stays cheap and `.duet/`-local; this reaches into the logs like `doctor`
+ * stays cheap and `.greenflag/`-local; this reaches into the logs like `doctor`
  * reaches into transcripts). Two derivations:
  *
  *  - phase windows from the orchestrator log: `◀ harness prompt (phase=X)` opens
@@ -471,7 +471,7 @@ export function buildStatsModel(state: RunState): StatsModel {
 /** The human one-screen render — a phase table, a tag breakdown, and any notes. */
 export function renderStats(model: StatsModel): string {
   const lines: string[] = [];
-  lines.push(`\n━━━ duet stats ${model.runId} ━━━`);
+  lines.push(`\n━━━ greenflag stats ${model.runId} ━━━`);
   if (model.phases.length === 0) {
     lines.push('no phase activity recorded yet.');
   } else {
@@ -501,7 +501,7 @@ export function renderStats(model: StatsModel): string {
 }
 
 /**
- * `duet stats --trace` — the interleaved execution timeline. A third KIND of
+ * `greenflag stats --trace` — the interleaved execution timeline. A third KIND of
  * thing from the aggregate stats model (a log timeline, not a structural
  * projection), so it lives here (stats owns the log format) rather than as a
  * third GraphModel mode. It reuses the existing parse cores — no new graph-owned
@@ -708,7 +708,7 @@ export function buildTraceModel(state: RunState, now: number): TraceModel {
 /** The human render — per phase, the interleaved turn/intervention timeline in chronological order, then any ordering drift. */
 export function renderTrace(model: TraceModel): string {
   const stamp = (ms: number): string => localTime(new Date(ms).toISOString());
-  const lines: string[] = [`\n━━━ duet trace ${model.runId} ━━━`];
+  const lines: string[] = [`\n━━━ greenflag trace ${model.runId} ━━━`];
   if (model.phases.length === 0) lines.push('no phase activity recorded yet.');
   for (const p of model.phases) {
     lines.push(`\n${p.phase}${p.inferredWindow ? '  (window inferred — elapsed approximate)' : ''}`);

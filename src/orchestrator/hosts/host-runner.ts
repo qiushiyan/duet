@@ -213,7 +213,7 @@ function flagTwiceEnded(cwd: string, runId: string, phase: PhaseName): TurnOutco
   queueInfraQuestion(
     cwd,
     runId,
-    `The ${phase} phase's orchestrator twice ended its turn without advancing the phase or asking a question — the run is stuck. Run duet doctor for per-role health, or check the orchestrator log; answer with how to proceed.`,
+    `The ${phase} phase's orchestrator twice ended its turn without advancing the phase or asking a question — the run is stuck. Run greenflag doctor for per-role health, or check the orchestrator log; answer with how to proceed.`,
     'unknown',
   );
   return 'flagged';
@@ -229,7 +229,7 @@ function flagInfra(cwd: string, runId: string, phase: PhaseName, detail: string,
   queueInfraQuestion(
     cwd,
     runId,
-    `The ${phase} phase failed at the infrastructure layer (${detail}). Run duet doctor for per-role health, or check the run's logs; answer with how to proceed — the orchestrator session resumes from its last completed turn.`,
+    `The ${phase} phase failed at the infrastructure layer (${detail}). Run greenflag doctor for per-role health, or check the run's logs; answer with how to proceed — the orchestrator session resumes from its last completed turn.`,
     errorClass,
   );
 }

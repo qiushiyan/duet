@@ -1,6 +1,6 @@
 # Workflow definitions — the SDK, by worked example
 
-When no shipped workflow says what the user means, compose one: a TypeScript file that default-exports `defineWorkflow({ ... })`, importing from `duet/workflows`. duet compiles the file at `duet new` and freezes the result into the run — later edits to the file never touch a live run.
+When no shipped workflow says what the user means, compose one: a TypeScript file that default-exports `defineWorkflow({ ... })`, importing from `greenflag/workflows`. greenflag compiles the file at `greenflag new` and freezes the result into the run — later edits to the file never touch a live run.
 
 The grammar is four blocks in a phase list, plus a gate posture:
 
@@ -11,16 +11,16 @@ The grammar is four blocks in a phase list, plus a gate posture:
 
 `attend` lists the gates the human attends by default (omit = attend all); `presets` are named `gates_at` values a framing or flag can invoke; the `afk` preset (attend none) is provided universally — never write it. Default phase names are the block or artifact names (`frame`, `spec`, `implement`, `finish`); `name:` renames one, and every gate token — `attend`, `presets`, `gates_at` — follows the phase names.
 
-You state the phase list; duet derives the rest from its semantics: the planning/delivery stages, the duty pair each stage runs, session continuity across the stage boundary, the gate copy, the entry route, the per-phase budgets. The vocabulary is closed — every composition must land on shipped prose, and the compiler rejects one that doesn't, naming the valid worlds (e.g. `build({ review: 'fixer' })` after a `plan` doc has no world; `doc('plan')` with no spec before it has nothing to reread). A rejection is the SDK working: report it to the user rather than working around it in the framing prose.
+You state the phase list; greenflag derives the rest from its semantics: the planning/delivery stages, the duty pair each stage runs, session continuity across the stage boundary, the gate copy, the entry route, the per-phase budgets. The vocabulary is closed — every composition must land on shipped prose, and the compiler rejects one that doesn't, naming the valid worlds (e.g. `build({ review: 'fixer' })` after a `plan` doc has no world; `doc('plan')` with no spec before it has nothing to reread). A rejection is the SDK working: report it to the user rather than working around it in the framing prose.
 
-Two authoring layers, no npm install: `.duet/workflows/<name>.ts` for a project shape (add `!/workflows/` to `.duet/.gitignore` to commit it), `~/.config/duet/workflows/<name>.ts` for one the user wants across repos. `duet workflows init <name>` scaffolds a typed starter (or write the file by hand — either way the dir gets a `tsconfig.json` and a typed SDK stub, so the editor typechecks the file as-is), and `duet workflows check <name>` compiles a definition and prints its derived shape without starting a run — run it before handing the user the launch command. The filename must match the `name:` inside, and one name may live in only one layer — a name defined twice (including redefining a shipped name, as examples 1 and 2 do) is a load error, never a silent shadow; the bare `duet workflows` listing surfaces any collision.
+Two authoring layers, no npm install: `.greenflag/workflows/<name>.ts` for a project shape (add `!/workflows/` to `.greenflag/.gitignore` to commit it), `~/.config/greenflag/workflows/<name>.ts` for one the user wants across repos. `greenflag workflows init <name>` scaffolds a typed starter (or write the file by hand — either way the dir gets a `tsconfig.json` and a typed SDK stub, so the editor typechecks the file as-is), and `greenflag workflows check <name>` compiles a definition and prints its derived shape without starting a run — run it before handing the user the launch command. The filename must match the `name:` inside, and one name may live in only one layer — a name defined twice (including redefining a shipped name, as examples 1 and 2 do) is a load error, never a silent shadow; the bare `greenflag workflows` listing surfaces any collision.
 
-Every definition below compiles through duet's real compiler in `tests/skill.test.ts`, and the two rebuilds are pinned **byte-identical** to the shipped registry rows — what you read here is exactly what ships.
+Every definition below compiles through greenflag's real compiler in `tests/skill.test.ts`, and the two rebuilds are pinned **byte-identical** to the shipped registry rows — what you read here is exactly what ships.
 
 ## 1 · relay, rebuilt — the criss-cross is one knob
 
 ```workflow-ts
-import { build, defineWorkflow, doc, finish, frame } from 'duet/workflows';
+import { build, defineWorkflow, doc, finish, frame } from 'greenflag/workflows';
 
 export default defineWorkflow({
   name: 'relay',
@@ -32,12 +32,12 @@ export default defineWorkflow({
 
 This compiles to the shipped relay, byte-for-byte — and swap `'fixer'` back to `'critique'` and you have rebuilt blueprint, so the whole criss-cross is one knob. `review: 'fixer'` derives it all: the delivery checker becomes a **judge** (write access at review — ordinary findings get fixed, not reported back), delivery is **born fresh** (no session continuity from planning; the builder implements the committed spec cold), and the judge owns the build's docs tail and the PR. Everything else — the one attended spec gate, the contract, the doc loop — is blueprint unchanged. With no plan phase after it, that spec carries the whole design, and its gate hands the run straight to the AFK build. **Omitted:** `presets` — `afk` is provided universally, and relay needs no others.
 
-Because `relay` is a shipped name, this exact file is not loadable — `duet new --workflow relay` would find both the shipped workflow and yours and refuse the collision. That is what a rebuild is for: proof the standard library is written in the grammar you're using. To make it yours, rename it, then turn a knob.
+Because `relay` is a shipped name, this exact file is not loadable — `greenflag new --workflow relay` would find both the shipped workflow and yours and refuse the collision. That is what a rebuild is for: proof the standard library is written in the grammar you're using. To make it yours, rename it, then turn a knob.
 
 ## 2 · full, rebuilt — doc chains and the consultant knobs
 
 ```workflow-ts
-import { build, defineWorkflow, doc, finish, frame } from 'duet/workflows';
+import { build, defineWorkflow, doc, finish, frame } from 'greenflag/workflows';
 
 export default defineWorkflow({
   name: 'full',
@@ -54,12 +54,12 @@ export default defineWorkflow({
 });
 ```
 
-Docs chain: the doc nearest the build is delivery's upstream artifact — the plan here — and that decides how the build enters (full's builder compacts its planning session over the committed plan; a spec-only upstream seeds the build from that document instead). The entry route is derived too: `duet new --spec <draft>` enters at the first doc loop. The consultant knobs are per-phase and live only when the run binds a consultant: `audit: true` on the spec has it challenge the bet at that gate; `contract: true` on the plan has it author the acceptance contract there — and declaring a contract anywhere derives the verify checkpoint on the build automatically; you never write verify. Where the contract author sits is derived from the phase list: a doc with a committed document upstream (this plan) authors early and blind to it, while a lone spec authors after its own loop converges. `rounds:` overrides a doc loop's review cap (default 3; blueprint and relay set 2). `attend` names the default posture and each preset a sayable alternative — `overnight` restates the default so the user can invoke it by name; `skip-plan` returns them at the Ship gate. **Omitted:** the `afk` preset (universal); `name:`s — the defaults `frame`/`spec`/`plan`/`implement`/`finish` are already right.
+Docs chain: the doc nearest the build is delivery's upstream artifact — the plan here — and that decides how the build enters (full's builder compacts its planning session over the committed plan; a spec-only upstream seeds the build from that document instead). The entry route is derived too: `greenflag new --spec <draft>` enters at the first doc loop. The consultant knobs are per-phase and live only when the run binds a consultant: `audit: true` on the spec has it challenge the bet at that gate; `contract: true` on the plan has it author the acceptance contract there — and declaring a contract anywhere derives the verify checkpoint on the build automatically; you never write verify. Where the contract author sits is derived from the phase list: a doc with a committed document upstream (this plan) authors early and blind to it, while a lone spec authors after its own loop converges. `rounds:` overrides a doc loop's review cap (default 3; blueprint and relay set 2). `attend` names the default posture and each preset a sayable alternative — `overnight` restates the default so the user can invoke it by name; `skip-plan` returns them at the Ship gate. **Omitted:** the `afk` preset (universal); `name:`s — the defaults `frame`/`spec`/`plan`/`implement`/`finish` are already right.
 
 ## 3 · hotfix — a shape with no shipped name
 
 ```workflow-ts
-import { build, defineWorkflow, finish, frame } from 'duet/workflows';
+import { build, defineWorkflow, finish, frame } from 'greenflag/workflows';
 
 export default defineWorkflow({
   name: 'hotfix',

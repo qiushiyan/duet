@@ -5,13 +5,13 @@ Snippets are the prompt templates the orchestrator sends the workers — they *a
 **The bodies live in two places, and neither is here.** `snippets/` at the repo root is the source of truth — block-named TOML files mirroring the workflow vocabulary. To read a body as *your install* serves it, with any override already applied:
 
 ```console
-$ duet snippets              # every key, and the layer it resolves from
-$ duet snippets show <key>   # one full body
+$ greenflag snippets              # every key, and the layer it resolves from
+$ greenflag snippets show <key>   # one full body
 ```
 
 Reproducing the bodies here would make a second source of truth that drifts from the first the next time a snippet is tuned — so it doesn't. For *how* overriding works — the two override files, precedence, fail-closed — see the README's [Customizing the snippets](../README.md#customizing-the-snippets).
 
-Two conventions you'll meet in any body: a `{{lessons_dir}}` token resolves to duet's vendored methodology lessons at serve time (the worker sees a real path, never the token), and a trailing `---` / `$0` marks the paste point where accompanying material — a handoff report, review feedback — lands.
+Two conventions you'll meet in any body: a `{{lessons_dir}}` token resolves to greenflag's vendored methodology lessons at serve time (the worker sees a real path, never the token), and a trailing `---` / `$0` marks the paste point where accompanying material — a handoff report, review feedback — lands.
 
 ## Families
 
@@ -28,7 +28,7 @@ snippets/
   consultant.toml  the optional advisor's checkpoint prompts
 ```
 
-A phase's snippet list is **derived** from its block and knobs, never hand-listed — so a workflow that composes `doc('spec')` gets the spec family automatically. `list_snippets` shows the orchestrator only the current phase's set plus the anytime helpers; `duet snippets` prints the whole inventory.
+A phase's snippet list is **derived** from its block and knobs, never hand-listed — so a workflow that composes `doc('spec')` gets the spec family automatically. `list_snippets` shows the orchestrator only the current phase's set plus the anytime helpers; `greenflag snippets` prints the whole inventory.
 
 ## The snippets worth overriding
 
@@ -71,7 +71,7 @@ When revising a snippet, match its phase's mindset. An "optimization" that colla
 
 ### What the reading list encodes
 
-The methodology snippets cite duet's vendored lessons, and **read depth is a decision, not a union**: read a lesson deeply where its decisions get made, skim its `## The bar` where they are only constrained. `write-spec` reads the design lessons closely — it commits the module structure, the interfaces, and the seams — and skims the testing bars, because it names *which* behaviors matter and what gets faked where, not how to write the tests. `start-plan` and the build seeds invert that. `review-implementation` skims the design bar only — the reviewer judges a shape it didn't decide, so the lesson is its lens and the vocabulary its findings are written in, which is also what lets the snippet's structural checklist stay two axes (seam cleanliness, preparatory refactoring) instead of restating the lesson. A snippet that cites everything has stopped deciding.
+The methodology snippets cite greenflag's vendored lessons, and **read depth is a decision, not a union**: read a lesson deeply where its decisions get made, skim its `## The bar` where they are only constrained. `write-spec` reads the design lessons closely — it commits the module structure, the interfaces, and the seams — and skims the testing bars, because it names *which* behaviors matter and what gets faked where, not how to write the tests. `start-plan` and the build seeds invert that. `review-implementation` skims the design bar only — the reviewer judges a shape it didn't decide, so the lesson is its lens and the vocabulary its findings are written in, which is also what lets the snippet's structural checklist stay two axes (seam cleanliness, preparatory refactoring) instead of restating the lesson. A snippet that cites everything has stopped deciding.
 
 ## Beyond the phase snippets
 
@@ -81,12 +81,12 @@ The methodology snippets cite duet's vendored lessons, and **read depth is a dec
 
 ## Worked example: overriding `start-plan` to a non-TDD methodology
 
-duet's shipped `start-plan` plans the work as **test-first vertical slices** and cites duet's vendored design and testing lessons (`duet snippets show start-plan` to read it). Suppose you don't work that way — you'd rather build a **walking skeleton** first (a thin end-to-end path through every layer, stubs allowed), then flesh it out slice by slice, verifying by *running the system* rather than test-first. That's a whole-snippet override.
+greenflag's shipped `start-plan` plans the work as **test-first vertical slices** and cites greenflag's vendored design and testing lessons (`greenflag snippets show start-plan` to read it). Suppose you don't work that way — you'd rather build a **walking skeleton** first (a thin end-to-end path through every layer, stubs allowed), then flesh it out slice by slice, verifying by *running the system* rather than test-first. That's a whole-snippet override.
 
-Drop this into your **user** override file, `~/.config/duet/snippets.toml` — a personal methodology preference applies across every project. (Put the identical block in a repo's `.duet/snippets.toml` instead to scope it to that one project — e.g. a repo that genuinely isn't test-first.)
+Drop this into your **user** override file, `~/.config/greenflag/snippets.toml` — a personal methodology preference applies across every project. (Put the identical block in a repo's `.greenflag/snippets.toml` instead to scope it to that one project — e.g. a repo that genuinely isn't test-first.)
 
 ```toml
-# ~/.config/duet/snippets.toml
+# ~/.config/greenflag/snippets.toml
 [[snippets]]
 key = "start-plan"
 expand = '''
@@ -112,14 +112,14 @@ The override replaces `start-plan`'s **entire** body — there's no partial merg
 Confirm it landed:
 
 ```console
-$ duet snippets | grep start-plan
+$ greenflag snippets | grep start-plan
 start-plan        user
 
-$ duet snippets show start-plan      # prints the effective (overridden) body
+$ greenflag snippets show start-plan      # prints the effective (overridden) body
 ```
 
-If you mistype the key (say `start_plan`), the next `list_snippets` / `duet snippets` fails closed, naming the file and the bad key — an override can only *replace* an existing snippet, never add one.
+If you mistype the key (say `start_plan`), the next `list_snippets` / `greenflag snippets` fails closed, naming the file and the bad key — an override can only *replace* an existing snippet, never add one.
 
 ## Before you override: the safety-coupled snippets
 
-The override surface is unrestricted on purpose — every key is overridable. But a few snippets are load-bearing for duet's safety machinery, and a weaker version quietly weakens the guardrail: `consultant-contract` / `consultant-verify` (the acceptance-contract pair a fresh session checks before the Ship gate) and the gate-adjacent prompts (the severity wording the consultant assigns, the `implementation-handoff` that frames the final review). The *structural* gates are code and can't be forged from a prompt — an override can't make an agent cross a human gate — but it can erode the **quality of the signal** that feeds a gate decision. Override those knowingly. The README's [Customizing the snippets](../README.md#customizing-the-snippets) carries the full guidance and the framing-seam boundary (a snippet override customizes the *tool*, never tells duet about your *project* — that's the framing's job).
+The override surface is unrestricted on purpose — every key is overridable. But a few snippets are load-bearing for greenflag's safety machinery, and a weaker version quietly weakens the guardrail: `consultant-contract` / `consultant-verify` (the acceptance-contract pair a fresh session checks before the Ship gate) and the gate-adjacent prompts (the severity wording the consultant assigns, the `implementation-handoff` that frames the final review). The *structural* gates are code and can't be forged from a prompt — an override can't make an agent cross a human gate — but it can erode the **quality of the signal** that feeds a gate decision. Override those knowingly. The README's [Customizing the snippets](../README.md#customizing-the-snippets) carries the full guidance and the framing-seam boundary (a snippet override customizes the *tool*, never tells greenflag about your *project* — that's the framing's job).

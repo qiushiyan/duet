@@ -69,11 +69,11 @@ describe('parseWorkflow', () => {
   });
 
   plain('an unknown workflow fails with the valid set', () => {
-    expect.soft(() => parseWorkflow('xyz')).toThrow(/"xyz" is not a duet workflow.*full, blueprint, relay, short/);
+    expect.soft(() => parseWorkflow('xyz')).toThrow(/"xyz" is not a greenflag workflow.*full, blueprint, relay, short/);
     // The retired spellings reject with the same valid set — a stale framing
-    // fails loudly at duet new, never silently starts the wrong workflow.
-    expect.soft(() => parseWorkflow('spec')).toThrow(/not a duet workflow/);
-    expect.soft(() => parseWorkflow('rir')).toThrow(/not a duet workflow/);
+    // fails loudly at greenflag new, never silently starts the wrong workflow.
+    expect.soft(() => parseWorkflow('spec')).toThrow(/not a greenflag workflow/);
+    expect.soft(() => parseWorkflow('rir')).toThrow(/not a greenflag workflow/);
   });
 });
 
@@ -207,7 +207,7 @@ describe('resolveHumanText (inline / editor / non-TTY sentinel)', () => {
 });
 
 describe('resolveTemplateSeed (the framing draft seed)', () => {
-  const templatesDir = (projectDir: string) => join(projectDir, '.duet', 'templates');
+  const templatesDir = (projectDir: string) => join(projectDir, '.greenflag', 'templates');
 
   test('with no name and no project templates, returns the built-in template', ({ projectDir }) => {
     expect(resolveTemplateSeed(projectDir)).toBe(FRAMING_TEMPLATE);
@@ -220,7 +220,7 @@ describe('resolveTemplateSeed (the framing draft seed)', () => {
     expect(resolveTemplateSeed(projectDir)).toBe('# Problem\nproject default seed');
   });
 
-  test('a named template is read from .duet/templates/<name>.md', ({ projectDir }) => {
+  test('a named template is read from .greenflag/templates/<name>.md', ({ projectDir }) => {
     const dir = templatesDir(projectDir);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'bug.md'), 'bug template body');
@@ -240,7 +240,7 @@ describe('resolveTemplateSeed (the framing draft seed)', () => {
   });
 
   test('a missing template with no templates dir points at how to make one', ({ projectDir }) => {
-    expect(() => resolveTemplateSeed(projectDir, 'bug')).toThrow(/no \.duet\/templates\/ directory yet/);
+    expect(() => resolveTemplateSeed(projectDir, 'bug')).toThrow(/no \.greenflag\/templates\/ directory yet/);
   });
 
   test('a name with a path separator or traversal is rejected before any read', ({ projectDir }) => {
@@ -252,7 +252,7 @@ describe('resolveTemplateSeed (the framing draft seed)', () => {
 
 describe('resolveRunInputs --template (seeding the editor draft)', () => {
   test('--template seeds the draft from the named project template, and the edit is used', async ({ projectDir }) => {
-    const dir = join(projectDir, '.duet', 'templates');
+    const dir = join(projectDir, '.greenflag', 'templates');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'feature.md'), '# Problem\nFEATURE SKELETON\n');
     const editor = join(projectDir, 'editor.sh');
@@ -267,7 +267,7 @@ describe('resolveRunInputs --template (seeding the editor draft)', () => {
   });
 
   test('an untouched named template refuses to start (the guard tracks the seed)', async ({ projectDir }) => {
-    const dir = join(projectDir, '.duet', 'templates');
+    const dir = join(projectDir, '.greenflag', 'templates');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'feature.md'), '# Problem\nFEATURE SKELETON\n');
     vi.stubEnv('VISUAL', '');
@@ -276,7 +276,7 @@ describe('resolveRunInputs --template (seeding the editor draft)', () => {
   });
 
   test('bare entry seeds from a project default.md when present', async ({ projectDir }) => {
-    const dir = join(projectDir, '.duet', 'templates');
+    const dir = join(projectDir, '.greenflag', 'templates');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'default.md'), '# Problem\nDEFAULT SKELETON\n');
     const editor = join(projectDir, 'editor.sh');
@@ -292,12 +292,12 @@ describe('resolveRunInputs --template (seeding the editor draft)', () => {
   test('a stale built-in draft is still caught as untouched after a default.md appears', async ({ projectDir }) => {
     // A prior bare run left an untouched built-in-seeded draft on disk (the
     // abort path preserves it)...
-    mkdirSync(join(projectDir, '.duet'), { recursive: true });
+    mkdirSync(join(projectDir, '.greenflag'), { recursive: true });
     writeFileSync(join(projectDir, DEFAULT_FRAMING_FILE), FRAMING_TEMPLATE);
     // ...then the project gained a default.md — a different seed — before the
     // next run. The bare path reuses the stale draft without reseeding, so the
     // guard must still recognize the built-in template it holds.
-    const dir = join(projectDir, '.duet', 'templates');
+    const dir = join(projectDir, '.greenflag', 'templates');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'default.md'), '# Problem\nDEFAULT SKELETON\n');
     vi.stubEnv('VISUAL', '');
@@ -454,7 +454,7 @@ describe('resolveRunInputs', () => {
     // The editor is the boundary; `true` exits 0 leaving the pre-seeded draft.
     vi.stubEnv('VISUAL', '');
     vi.stubEnv('EDITOR', 'true');
-    mkdirSync(join(projectDir, '.duet'), { recursive: true });
+    mkdirSync(join(projectDir, '.greenflag'), { recursive: true });
     writeFileSync(join(projectDir, DEFAULT_FRAMING_FILE), '# Problem\nwritten by hand');
 
     const inputs = await resolveRunInputs(projectDir, {});
@@ -472,7 +472,7 @@ describe('resolveRunInputs', () => {
   test('bare entry refuses an emptied draft', async ({ projectDir }) => {
     vi.stubEnv('VISUAL', '');
     vi.stubEnv('EDITOR', 'true');
-    mkdirSync(join(projectDir, '.duet'), { recursive: true });
+    mkdirSync(join(projectDir, '.greenflag'), { recursive: true });
     writeFileSync(join(projectDir, DEFAULT_FRAMING_FILE), '  \n');
     await expect(resolveRunInputs(projectDir, {})).rejects.toThrow(/is empty/);
   });
@@ -493,7 +493,7 @@ describe('parseFramingFile — the bind.* manifest tier', () => {
     expect.soft(body).toBe('body\n');
   });
 
-  test('a bind value is validated at parse time — a typo fails at duet new, not at the freeze', () => {
+  test('a bind value is validated at parse time — a typo fails at greenflag new, not at the freeze', () => {
     // One token per case — the full grammar prose is tests/config.test.ts's pin.
     expect.soft(() => parseFramingFile(framed('bind.builder: codux'))).toThrow(/provider must be/);
     expect.soft(() => parseFramingFile(framed('bind.builder: codex:gpt-6@max'))).toThrow(/effort must be/);

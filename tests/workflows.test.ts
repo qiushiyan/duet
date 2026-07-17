@@ -57,7 +57,7 @@ async function checkCli(cwd: string, name: string) {
   return execa(process.execPath, [cliPath, 'workflows', 'check', name], { cwd, reject: false });
 }
 
-describe('duet workflows list', () => {
+describe('greenflag workflows list', () => {
   test('lists shipped, project, and user definitions without importing external files', ({ projectDir }) => {
     const home = join(projectDir, 'home');
     writeProjectWorkflow(projectDir, 'project-arc');
@@ -79,14 +79,14 @@ throw new Error('listing imported me');
 
     expect.soft(out).toContain('shipped');
     expect.soft(out).toMatch(/full\s+Full \(spec/);
-    expect.soft(out).toContain('project · .duet/workflows');
+    expect.soft(out).toContain('project · .greenflag/workflows');
     expect.soft(out).toContain('project-arc');
     expect.soft(out).toContain('broken-but-listed');
-    expect.soft(out).toContain('user · home/.config/duet/workflows');
+    expect.soft(out).toContain('user · home/.config/greenflag/workflows');
     expect.soft(out).toContain('personal');
     expect.soft(out).not.toContain('personal title');
     expect.soft(existsSync(marker), 'list must not import workflow files').toBe(false);
-    expect.soft(existsSync(join(projectDir, '.duet', 'workflows', 'duet-workflows.d.ts')), 'list must not provision typings').toBe(false);
+    expect.soft(existsSync(join(projectDir, '.greenflag', 'workflows', 'greenflag-workflows.d.ts')), 'list must not provision typings').toBe(false);
   });
 
   test('renders collisions in their own section', ({ projectDir }) => {
@@ -98,9 +98,9 @@ throw new Error('listing imported me');
 
     const out = renderWorkflowList(buildWorkflowListModel(projectDir, { home }));
 
-    expect.soft(out).toMatch(/collisions[\s\S]*full\s+shipped \+ project \(\.duet\/workflows\/full\.ts\)/);
-    expect.soft(out).toMatch(/collisions[\s\S]*dup\s+project \(\.duet\/workflows\/dup\.ts\) \+ user \(home\/\.config\/duet\/workflows\/dup\.ts\)/);
-    expect.soft(out).not.toMatch(/project · \.duet\/workflows[\s\S]*\n\s+dup\s/);
+    expect.soft(out).toMatch(/collisions[\s\S]*full\s+shipped \+ project \(\.greenflag\/workflows\/full\.ts\)/);
+    expect.soft(out).toMatch(/collisions[\s\S]*dup\s+project \(\.greenflag\/workflows\/dup\.ts\) \+ user \(home\/\.config\/greenflag\/workflows\/dup\.ts\)/);
+    expect.soft(out).not.toMatch(/project · \.greenflag\/workflows[\s\S]*\n\s+dup\s/);
   });
 
   test('json rows keep the uniform status and sources shape', ({ projectDir }) => {
@@ -113,13 +113,13 @@ throw new Error('listing imported me');
       status: 'collision',
       sources: [
         { layer: 'shipped' },
-        { layer: 'project', path: '.duet/workflows/full.ts' },
+        { layer: 'project', path: '.greenflag/workflows/full.ts' },
       ],
     });
   });
 });
 
-describe('duet workflows check', () => {
+describe('greenflag workflows check', () => {
   test('summarizes a resolved workflow from registry facts', async ({ projectDir }) => {
     writeProjectWorkflow(
       projectDir,
@@ -134,7 +134,7 @@ describe('duet workflows check', () => {
     const out = renderWorkflowCheck(checkModel(resolved), projectDir);
 
     expect.soft(out).toContain('workflow  deep-relay — deep-relay title');
-    expect.soft(out).toContain('source    project · .duet/workflows/deep-relay.ts');
+    expect.soft(out).toContain('source    project · .greenflag/workflows/deep-relay.ts');
     expect.soft(out).toContain('phases (4)');
     expect.soft(out).toContain('spec       doc-loop (spec)');
     // The gate line shows the compact "<X> gate" label, not the full packet heading.
@@ -148,12 +148,12 @@ describe('duet workflows check', () => {
     expect.soft(out).toContain('acceptance contract      authored at spec, verified at implement (when a consultant is bound)');
   });
 
-  test('enriches the summary with config-resolved bindings and per-phase consultant checkpoints (the same spine as duet graph)', async ({ projectDir }) => {
+  test('enriches the summary with config-resolved bindings and per-phase consultant checkpoints (the same spine as greenflag graph)', async ({ projectDir }) => {
     const resolved = await resolveWorkflowSource(projectDir, 'full');
 
     // Without a consultant bound: bindings show the defaults, checkpoints are latent.
     const plain = renderWorkflowCheck(checkModel(resolved), projectDir);
-    expect.soft(plain).toContain('bindings (defaults · resolved from ~/.config/duet/config.toml)');
+    expect.soft(plain).toContain('bindings (defaults · resolved from ~/.config/greenflag/config.toml)');
     expect.soft(plain).toMatch(/architect\s+claude:claude-opus-4-8/);
     expect.soft(plain).toMatch(/analyst\s+codex/);
     expect.soft(plain).toContain('consultant checkpoints   (fire when a consultant is bound)');
@@ -194,7 +194,7 @@ describe('duet workflows check', () => {
   });
 });
 
-describe('duet workflows init', () => {
+describe('greenflag workflows init', () => {
   test('refuses names that already resolve from any layer', ({ projectDir }) => {
     const home = join(projectDir, 'home');
     mkdirSync(userWorkflowDir(home), { recursive: true });
@@ -202,8 +202,8 @@ describe('duet workflows init', () => {
     writeProjectWorkflow(projectDir, 'local');
 
     expect(() => initWorkflowDefinition(projectDir, 'full', { home })).toThrow(/already resolves from shipped/);
-    expect(() => initWorkflowDefinition(projectDir, 'local', { home })).toThrow(/already resolves from project: \.duet\/workflows\/local\.ts/);
-    expect(() => initWorkflowDefinition(projectDir, 'personal', { home })).toThrow(/already resolves from user: home\/\.config\/duet\/workflows\/personal\.ts/);
+    expect(() => initWorkflowDefinition(projectDir, 'local', { home })).toThrow(/already resolves from project: \.greenflag\/workflows\/local\.ts/);
+    expect(() => initWorkflowDefinition(projectDir, 'personal', { home })).toThrow(/already resolves from user: home\/\.config\/greenflag\/workflows\/personal\.ts/);
   });
 
   test('refuses invalid or path-escaping names before writing', ({ projectDir }) => {
@@ -218,17 +218,17 @@ describe('duet workflows init', () => {
     const result = initWorkflowDefinition(projectDir, 'starter-flow');
     const rendered = renderWorkflowInit(result, projectDir);
 
-    expect.soft(rendered).toContain('created .duet/workflows/starter-flow.ts');
-    expect.soft(rendered).toContain('duet workflows check starter-flow');
-    expect.soft(rendered).toContain('duet new --workflow starter-flow');
+    expect.soft(rendered).toContain('created .greenflag/workflows/starter-flow.ts');
+    expect.soft(rendered).toContain('greenflag workflows check starter-flow');
+    expect.soft(rendered).toContain('greenflag new --workflow starter-flow');
     expect.soft(rendered).toContain('!/workflows/');
-    expect.soft(readFileSync(join(projectWorkflowDir(projectDir), 'duet-workflows.d.ts'), 'utf8')).toContain("declare module 'duet/workflows'");
+    expect.soft(readFileSync(join(projectWorkflowDir(projectDir), 'greenflag-workflows.d.ts'), 'utf8')).toContain("declare module 'greenflag/workflows'");
 
     const source = readFileSync(result.path, 'utf8');
-    expect.soft(source).toContain("import { build, defineWorkflow, finish, frame } from 'duet/workflows';");
+    expect.soft(source).toContain("import { build, defineWorkflow, finish, frame } from 'greenflag/workflows';");
     expect.soft(source).toContain("name: 'starter-flow'");
     expect.soft(source).toContain("build({ review: 'writable' })");
-    expect.soft(source).toContain('skills/duet-frame/references/workflow-definitions.md');
+    expect.soft(source).toContain('skills/greenflag-frame/references/workflow-definitions.md');
 
     const checked = await checkCli(projectDir, 'starter-flow');
     expect.soft(checked.exitCode).toBe(0);
@@ -238,7 +238,7 @@ describe('duet workflows init', () => {
 
 describe('workflow SDK rebuild pins — blueprint and short', () => {
   // skill.test.ts pins the full and relay rebuilds byte-identical to the
-  // registry rows (the duet-frame reference's executable workflow-ts examples);
+  // registry rows (the greenflag-frame reference's executable workflow-ts examples);
   // blueprint and short have no reference example, so their
   // SDK-rebuild-equals-registry pins live here.
   const rebuilds = {

@@ -12,6 +12,6 @@ export async function notify(title: string, message: string): Promise<void> {
     const script = `display notification ${JSON.stringify(message)} with title ${JSON.stringify(title)} sound name "Glass"`;
     await execa('osascript', ['-e', script], { timeout: 5_000 });
   } catch {
-    // Deliberately swallowed — duet status carries the same information.
+    // Deliberately swallowed — greenflag status carries the same information.
   }
 }
