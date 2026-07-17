@@ -33,6 +33,7 @@ For code, start there or run `/onboarding [topic]` (`statechart` · `providers` 
 - the open design questions (the roadmap) → `docs/open-questions.md`: triage precision, the worker output schema, a run-level budget, context-band calibration, the consultant's value, codex-as-orchestrator.
 - product direction → `docs/future-directions.md` (check before proposing one).
 - analyzing the run corpus & evaluating changes (the archive, the analytics scripts, replay) → `docs/corpus-runbook.md`.
+- cutting a release (the commands; pnpm-only, and why) → `docs/publish-runbook.md`.
 - how docs are kept → `docs/documentation-standards.md`; status → `README.md`.
 
 **Shipped skills** (prompts, pinned to the CLI by `tests/skill.test.ts`): `skills/greenflag-concierge/` (a Claude Code session as greenflag's remote layer), `skills/greenflag-frame/` (the framing author → `greenflag new --interactive`), `prompts/orchestrator-identity.md` (the interactive orchestrator's identity).
