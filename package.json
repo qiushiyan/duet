@@ -17,6 +17,8 @@
     "type": "git",
     "url": "git+https://github.com/qiushiyan/greenflag.git"
   },
+  "homepage": "https://github.com/qiushiyan/greenflag#readme",
+  "bugs": "https://github.com/qiushiyan/greenflag/issues",
   "type": "module",
   "bin": {
     "greenflag": "src/surfaces/cli.ts"
