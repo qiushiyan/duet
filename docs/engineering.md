@@ -184,7 +184,17 @@ Dev has no build step: Node 24 runs `.ts` directly, and the global `greenflag` c
 
 The split lives in `package.json`: `bin` → `src/surfaces/cli.ts` for dev; `publishConfig.bin` → `dist/cli.mjs`, rewritten by pnpm only in the published tarball. `pnpm build` (tsdown, config in `tsdown.config.ts`) bundles the CLI to `dist/cli.mjs` and emits the SDK subpath as `dist/workflows.mjs` / `dist/workflows.d.mts` for `greenflag/workflows`; publint validates the result. `prepack` chains typecheck → tests → build, so a tarball can't be cut from a broken tree. `dist/` is gitignored and never used in dev.
 
-**Publish with `pnpm publish` — never `npm publish`** (guarded by `prepublishOnly` → `scripts/guard-publish.mjs`, so the wrong path fails loudly instead of shipping). The `bin` rewrite above is the whole reason: rewriting `bin` from `publishConfig` is a pnpm feature, and npm ignores it. Under `npm publish` the tarball keeps `bin` → `src/surfaces/cli.ts`, npm force-includes that file (a bin target bypasses `files`), and Node then refuses to type-strip it inside `node_modules` — so the user's first command dies on `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`. This is not hypothetical: `0.1.0` shipped that way, and because npm never allows republishing a version, the fix cost a version bump and a deprecation. `pnpm pack && tar xzOf *.tgz package/package.json` shows the real `bin` before anything leaves the machine — the check that would have caught it.
+**Releases are changesets-driven, and always reach npm through pnpm.** The loop:
+
+```
+pnpm changeset          # describe the change; pick patch/minor/major
+pnpm changeset version  # applies bumps + writes CHANGELOG.md, consuming the changeset
+git commit              # the release commit — changeset publish assumes it is HEAD
+pnpm release            # = changeset publish: publishes + git-tags
+git push --follow-tags
+```
+
+`changeset publish` skips any version already on npm, and **detects pnpm from the lockfile and spawns `pnpm publish`** — which is load-bearing, not incidental. Rewriting `bin` from `publishConfig` is a pnpm feature that npm ignores: under `npm publish` the tarball keeps `bin` → `src/surfaces/cli.ts`, npm force-includes that file (a bin target bypasses `files`), and Node then refuses to type-strip it inside `node_modules` — so the user's first command dies on `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`. Not hypothetical: `0.1.0` shipped exactly that way, and since npm never allows republishing a version, the fix cost a burned version plus a deprecation. `prepublishOnly` (`scripts/guard-publish.mjs`) therefore refuses any publisher but pnpm — the backstop for the day that detection changes, since the failure is silent at publish time and only visible on a stranger's machine. `pnpm pack && tar xzOf *.tgz package/package.json` shows the real `bin` before anything leaves the machine.
 
 Facts the setup depends on: `snippets/`, `skills/`, `lessons/`, and `prompts/` are listed in `files` because all are resolved package-relative at runtime — `src/orchestrator/library.ts` reads the `snippets/` directory and resolves the `{{lessons_dir}}` token to the vendored `lessons/` methodology (`LESSONS_DIR`), and `src/orchestrator/hosts/orchestrate.ts` feeds `prompts/orchestrator-identity.md` to the launcher (a missing `prompts/` would point the launcher at an unshipped file).
 

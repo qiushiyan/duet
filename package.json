@@ -37,7 +37,8 @@
     "snippets",
     "skills",
     "lessons",
-    "prompts"
+    "prompts",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "greenflag": "node src/surfaces/cli.ts",
@@ -47,6 +48,7 @@
     "sync-skills": "node scripts/sync-skills.mjs",
     "vendor-lessons": "node scripts/vendor-lessons.mjs",
     "build": "tsdown",
+    "release": "changeset publish",
     "prepack": "pnpm typecheck && pnpm test && pnpm build",
     "prepublishOnly": "node scripts/guard-publish.mjs"
   },
@@ -62,6 +64,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.1",
     "@types/node": "^25.9.2",
     "publint": "^0.3.21",
     "tsdown": "^0.22.2",

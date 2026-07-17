@@ -292,6 +292,8 @@ pnpm typecheck
 pnpm test
 ```
 
+Releases run on [changesets](https://github.com/changesets/changesets): `pnpm changeset` to describe a change, `pnpm changeset version` to apply the bump and write the changelog, then `pnpm release` to publish and tag. Publishing goes through pnpm — `npm publish` is refused, for the reason in [`docs/engineering.md`](docs/engineering.md#build--publish).
+
 The codebase's mental model lives in [`docs/engineering.md`](docs/engineering.md) — read it before changing code.
 
 ## License
