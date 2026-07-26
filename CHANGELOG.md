@@ -1,5 +1,12 @@
 # greenflag
 
+## 0.1.3
+
+### Patch Changes
+
+- 3b6a2a7: Add `homepage` and `bugs` so the npm page links back to the repo and its issues.
+- The build-phase review snippets (`review-implementation`, `review-direct`, `review-and-fix`) now open by reading the vendored `collaboration/review-lens.md` — the shared reviewer stance: step back before judging locally, the additive-bias bar for requested tests, right-sizing, Chesterton's fence — and keep only run-specific wiring in their bodies. Ships the new `lessons/collaboration` topic in the package.
+
 ## 0.1.2
 
 ### Patch Changes
