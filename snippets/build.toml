@@ -12,6 +12,8 @@
 # builder), and the build tail (reconcile-docs, ceo-summary — the last build
 # steps before the Ship packet). review-direct and review-and-fix count review
 # rounds through the action catalog (ACTION_CATALOG in src/voices/policy.ts).
+# Every review lens opens on the vendored collaboration/review-lens.md — the
+# shared reviewer stance; snippet bodies keep only run wiring.
 
 [[snippets]]
 key = "compact-for-impl"

@@ -1,7 +1,8 @@
 # The Review Lens
 
 The stance for reviewing another engineer's change — whoever wrote it, whatever
-harness dispatched you. It governs what counts as a finding. The prompt that
+harness dispatched you. It governs what counts as a finding and what earns
+approval. The prompt that
 dispatched you carries the run's contract — the severity ladder, the output
 format, which decisions are settled — and this lesson never overrides it.
 
@@ -65,15 +66,9 @@ cost lands later, on someone else. So the drift is systematic, not occasional �
 toward more coverage instead of judging the coverage that exists, more handling
 instead of asking whether the state is reachable. Naming the bias is what makes
 it checkable: before filing an additive finding, name what it catches and what
-it costs.
-
-## Both biases, one stance
-
-The step-back rule and the additive-bias rule are the same discipline at two
-altitudes: judge the framing before optimizing inside it. For the code, that
-means asking whether a reshape dissolves the problem; for the suite and for
-robustness, it means asking whether the addition earns its keep. A review that
-does both produces fewer findings, each heavier.
+it costs. It is the step-back rule at a second altitude — judge the framing
+before optimizing inside it — and a review that holds both produces fewer
+findings, each heavier.
 
 ---
 
