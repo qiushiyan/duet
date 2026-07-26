@@ -82,7 +82,7 @@ What lands in the document is the winner, not the menu: the chosen structure / A
 
 **Hunt the rabbit holes.** Walk the approach end to end looking for what could quietly eat the build: a technical unknown nobody has proven, a design problem the spec gestures at but doesn't solve, an interdependency that reads simpler than it is. Solve each here, cut it out of scope explicitly, or name it in the open questions. An unnamed hole doesn't disappear — it resurfaces mid-build, where whoever builds has only this document to resolve it with.
 
-If you have remaining product questions or major technical uncertainty, interview me before you write.
+If you have remaining product questions or major technical uncertainty, interview me before you write — one question at a time, each decidable from its text alone: why it matters, what it means in plain product terms, the options with their implications for the real user, and your recommendation.
 </snippet>
 <snippet key="review-spec">
 I've drafted a spec — the design document for this change. Review critically, and verify its problem statements and intended solutions against the actual code.
