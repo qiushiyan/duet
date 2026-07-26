@@ -26,14 +26,15 @@ import { cpSync, existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
-// The vendored set is the dependency closure of the worker-facing PLAN snippets:
-// the two lesson topics start-plan / review-plan / implement-direct cite. An
+// The vendored set is the dependency closure of the worker-facing snippets:
+// the design/testing topics start-plan / review-plan / implement-direct cite,
+// and the collaboration topic the build-phase review lenses read first. An
 // explicit allowlist, not a registry — widen it only when a worker-facing
 // snippet starts citing a new topic. Each topic dir is copied wholesale (its
 // own .upstream/-style siblings never live inside a topic, so nothing is
 // excluded within one); the source's top-level README and .upstream/ are
 // deliberately left out — neither is read by a worker at runtime.
-const TOPICS = ["codebase-design", "testing"];
+const TOPICS = ["codebase-design", "testing", "collaboration"];
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 // This "lessons" segment is the same fact as LESSONS_DIR in src/orchestrator/library.ts (the

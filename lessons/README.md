@@ -2,15 +2,16 @@
 
 These are **vendored snapshots**, not authored here. They are greenflag's quality
 opinion for the planning and build phases — what counts as good design (deep
-modules, seams, the deletion test, illegal states) and good implementation (TDD
-discipline, mocking strategy, the Vitest toolkit). The planning and build
-snippets (`snippets/doc-plan.toml`, `snippets/doc-design.toml`,
+modules, seams, the deletion test, illegal states), good implementation (TDD
+discipline, mocking strategy, the Vitest toolkit), and a sound review stance
+(the step-back lens, the additive-bias bar). The planning and build
+snippets (`snippets/doc-plan.toml`, `snippets/doc-spec.toml`,
 `snippets/build.toml`) cite them by a `{{lessons_dir}}/…` path that
 `src/orchestrator/library.ts` resolves to this directory at serve time, so a
 worker on any install reads the real files, not a path on the author's machine.
 They ship in the npm package (`package.json` `files` includes `lessons`).
 
-## The two topics
+## The three topics
 
 - [`codebase-design/`](codebase-design/) — module-design vocabulary and
   structural patterns: `deep-modules.md` (always), `deepening.md` (when
@@ -19,6 +20,9 @@ They ship in the npm package (`package.json` `files` includes `lessons`).
   `mocking-and-fixtures.md` (always), `test-quality.md` (always — what earns a
   place in the suite, and the shapes that don't), `vitest.md` (TS-Vitest
   projects only).
+- [`collaboration/`](collaboration/) — cross-agent working discipline:
+  `review-lens.md` (the reviewer's stance — the build-phase review lenses read
+  it first).
 
 The snippets carry the reading **arc** (which files, in what order, with the
 conditional gates); these docs carry the **depth** behind each imperative. Each
@@ -41,13 +45,13 @@ mattpocock/skills          ← upstream
 greenflag/lessons/              ← this vendored, shippable copy ({{lessons_dir}})
 ```
 
-- **Canonical (authoring) source:** `~/.config/lessons/{codebase-design,testing}`
+- **Canonical (authoring) source:** `~/.config/lessons/{codebase-design,testing,collaboration}`
   — a neutral, tool-agnostic lessons directory the author manages with Stow,
   also read live by tabtype's snippets. Evolved there, not here.
 - **This copy:** a frozen snapshot greenflag packages and workers read at runtime.
   The source's `.upstream/` diff baseline is **not** vendored — it is the
   author's diff anchor, never read by a worker.
-- **Refresh:** `pnpm vendor-lessons` (copies the two topic dirs in wholesale;
+- **Refresh:** `pnpm vendor-lessons` (copies the topic dirs in wholesale;
   `--dry-run` to preview; `GREENFLAG_LESSONS_DIR` overrides the source). Re-vendoring
   is a deliberate manual step — the mirror of the snippets ⟷ tabtype
   hand-sync, which runs the opposite direction (repo → tabtype). The provenance
