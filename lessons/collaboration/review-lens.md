@@ -42,7 +42,10 @@ Skim these as a lens; the sections below carry the why.
 - **Findings are evidence-backed.** Read the actual code, not just the diff — a
   diff hides the surrounding context that decides whether a change is right.
   Cite the code that proves each finding and give a concrete fix; a "could be
-  cleaner" names the cleaner shape or isn't reported.
+  cleaner" names the cleaner shape or isn't reported. The one finding that
+  needs no code behind it is a violated expectation: where a brief hands you
+  the goal and withholds the design, report the surprise as expectation plus
+  observation — you are the read the next maintainer will get.
 - **Grade the artifact, not the account of it.** The spec, the plan, the commit
   messages, and the implementer's report say what was *intended*; only the code
   says what happens, so a claim in a document is never evidence the behavior
@@ -51,13 +54,11 @@ Skim these as a lens; the sections below carry the why.
   has no code at all (a spec, a doc, a skill), the artifact is the shipped
   text and the rule holds one level up: read it as its reader will, not as its
   author narrates it.
-- **When the brief withholds the design, your confusion is a finding.** A brief
-  that hands you the goal and nothing about how the change chose to reach it is
-  buying the read its next maintainer will get. There an expectation the
-  implementation violates is reported as expectation-plus-observation and needs
-  no proven bug behind it, and the design itself is in scope. When the brief
-  instead fences settled decisions, that fence governs: objections to a fenced
-  item go to its foundational section, with code evidence.
+- **Judge by the standard the work was built to.** When the brief hands you a
+  rulebook the implementer worked under — a house guide, a project doc, a
+  rubric — that is the bar, ahead of your own defaults. Read it before
+  reviewing; a finding that contradicts a standard the work deliberately
+  followed is a disagreement with the standard, and belongs in that form.
 - **Approval is earned by the design, not just working behavior.** Structural
   regressions and missed reshapes block; they are not nits.
 

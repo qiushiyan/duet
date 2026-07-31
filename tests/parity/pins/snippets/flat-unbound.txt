@@ -11,7 +11,11 @@ This turn is analysis, not building — work through the problem and the design 
 Don't patch a flawed design with another patch, and don't shy from structural change when it's justified — but back a "structurally wrong" claim with code and name its cost. Preparatory refactoring is earned only when the structure genuinely blocks the goal, never license to rewrite what merely looks imperfect.
 </snippet>
 <snippet key="compare-notes">
-Another engineer analyzed the same problem independently. Compare notes and build the sharper direction — take what's genuinely stronger in their reasoning and combine it with yours, rather than defending your draft or averaging the two. **Update where they're right; hold where they're not**, and say why — don't shift just because they disagree, and **don't split the difference**. Settle a factual disagreement on what the code actually shows, not on who argued it better; where a difference is a real judgment call rather than a matter of fact, surface it as an open choice rather than forcing agreement.
+Another engineer analyzed the same problem independently. Compare notes and build the sharper direction — take what's genuinely stronger in their reasoning and combine it with yours, rather than defending your draft or averaging the two.
+
+**Start at the goal.** If the two of you named a different real problem or a different underlying goal, settle that before anything else: every approach below it is being weighed against a different target, and that disagreement is usually the most valuable thing in the round.
+
+**Update where they're right; hold where they're not**, and say why — don't shift just because they disagree, and **don't split the difference**. Settle a factual disagreement on what the code actually shows, not on who argued it better; where a difference is a real judgment call rather than a matter of fact, surface it as an open choice rather than forcing agreement.
 
 Their analysis below:
 
