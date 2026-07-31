@@ -43,6 +43,21 @@ Skim these as a lens; the sections below carry the why.
   diff hides the surrounding context that decides whether a change is right.
   Cite the code that proves each finding and give a concrete fix; a "could be
   cleaner" names the cleaner shape or isn't reported.
+- **Grade the artifact, not the account of it.** The spec, the plan, the commit
+  messages, and the implementer's report say what was *intended*; only the code
+  says what happens, so a claim in a document is never evidence the behavior
+  exists. Where the two disagree the code wins, and the disagreement is its own
+  finding — a document describing behavior that isn't there. Where the range
+  has no code at all (a spec, a doc, a skill), the artifact is the shipped
+  text and the rule holds one level up: read it as its reader will, not as its
+  author narrates it.
+- **When the brief withholds the design, your confusion is a finding.** A brief
+  that hands you the goal and nothing about how the change chose to reach it is
+  buying the read its next maintainer will get. There an expectation the
+  implementation violates is reported as expectation-plus-observation and needs
+  no proven bug behind it, and the design itself is in scope. When the brief
+  instead fences settled decisions, that fence governs: objections to a fenced
+  item go to its foundational section, with code evidence.
 - **Approval is earned by the design, not just working behavior.** Structural
   regressions and missed reshapes block; they are not nits.
 
@@ -75,4 +90,6 @@ findings, each heavier.
 > _Lesson · collaboration. Distilled 2026-07 from the twin review prompts that
 > proved these lines in live runs — greenflag's build-phase review snippets
 > (`snippets/build.toml`) and the `/review` dispatch brief. No external
-> upstream; those two prompt surfaces are the baseline._
+> upstream; those two prompt surfaces are the baseline. The artifact-vs-account
+> and withheld-design bars were added 2026-07-31 with `/review`'s fresh-eyes
+> mode._
