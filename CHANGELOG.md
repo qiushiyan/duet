@@ -1,5 +1,11 @@
 # greenflag
 
+## 0.1.6
+
+### Patch Changes
+
+- `compare-notes` now settles the goal before comparing approaches: when the two analyses named a different real problem or underlying goal, that disagreement is resolved first, since every approach below it is being weighed against a different target. Re-vendors `collaboration/review-lens.md` with the matching guidance.
+
 ## 0.1.5
 
 ### Patch Changes

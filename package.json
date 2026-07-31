@@ -1,6 +1,6 @@
 {
   "name": "greenflag",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Opinionated blocks for AI coding workflows — spec loops, adversarial review, an autonomous build. Run it AFK with human gates.",
   "keywords": [
     "ai",
